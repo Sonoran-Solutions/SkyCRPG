@@ -1,0 +1,332 @@
+{
+  "schema": 1,
+  "created": "2026-10-22",
+  "project": {
+    "id": "P-DYL-6",
+    "url": "https://linear.app/devils17/project/skycrpg-3bba43f5930f"
+  },
+  "tickets": [
+    {
+      "key": "P1-01",
+      "id": "DYL-150",
+      "uuid": "e7338853-72e1-46fb-96b4-0235c7a665e4",
+      "title": "Establish reproducible test profiles and independent module skeletons",
+      "phase": 1,
+      "url": "https://linear.app/devils17/issue/DYL-150/p1-01-establish-reproducible-test-profiles-and-independent-module",
+      "dependencies": [],
+      "milestone": "4288d5f3-0f78-4711-9693-547ceff85341"
+    },
+    {
+      "key": "P1-02",
+      "id": "DYL-151",
+      "uuid": "d3e61e92-0499-4ab2-be3e-a35a3a35cab6",
+      "title": "Choose reusable mod components and a compatible runtime intersection",
+      "phase": 1,
+      "url": "https://linear.app/devils17/issue/DYL-151/p1-02-choose-reusable-mod-components-and-a-compatible-runtime",
+      "dependencies": [],
+      "milestone": "4288d5f3-0f78-4711-9693-547ceff85341"
+    },
+    {
+      "key": "P1-03",
+      "id": "DYL-152",
+      "uuid": "a7b86b64-5e89-4f00-8ff6-2736194d3e11",
+      "title": "Prove overhead camera, aiming and obstruction behavior in game",
+      "phase": 1,
+      "url": "https://linear.app/devils17/issue/DYL-152/p1-03-prove-overhead-camera-aiming-and-obstruction-behavior-in-game",
+      "dependencies": [
+        "P1-01",
+        "P1-02"
+      ],
+      "milestone": "4288d5f3-0f78-4711-9693-547ceff85341"
+    },
+    {
+      "key": "P1-04",
+      "id": "DYL-153",
+      "uuid": "f8070587-8720-449c-84b1-babf71836a1a",
+      "title": "Prove the UI, native inventory action and minimap integration in game",
+      "phase": 1,
+      "url": "https://linear.app/devils17/issue/DYL-153/p1-04-prove-the-ui-native-inventory-action-and-minimap-integration-in",
+      "dependencies": [
+        "P1-01",
+        "P1-02"
+      ],
+      "milestone": "4288d5f3-0f78-4711-9693-547ceff85341"
+    },
+    {
+      "key": "P1-05",
+      "id": "DYL-154",
+      "uuid": "9906a547-4320-49c5-a9a4-931c1c42cb74",
+      "title": "Freeze module boundaries, control contracts and the tested support baseline",
+      "phase": 1,
+      "url": "https://linear.app/devils17/issue/DYL-154/p1-05-freeze-module-boundaries-control-contracts-and-the-tested",
+      "dependencies": [
+        "P1-03",
+        "P1-04"
+      ],
+      "milestone": "4288d5f3-0f78-4711-9693-547ceff85341"
+    },
+    {
+      "key": "P1-06",
+      "id": "DYL-155",
+      "uuid": "c7e5f86e-0a5a-4975-ad0a-70f16583480f",
+      "title": "Phase 1 gate — verify two playable prototypes and commit the implementation route",
+      "phase": 1,
+      "url": "https://linear.app/devils17/issue/DYL-155/p1-06-phase-1-gate-verify-two-playable-prototypes-and-commit-the",
+      "dependencies": [
+        "P1-05"
+      ],
+      "milestone": "4288d5f3-0f78-4711-9693-547ceff85341"
+    },
+    {
+      "key": "P2-01",
+      "id": "DYL-156",
+      "uuid": "bdc9ca1b-f9c4-41ed-9593-9b0f2c33808a",
+      "title": "Implement the elevated camera controller and player controls",
+      "phase": 2,
+      "url": "https://linear.app/devils17/issue/DYL-156/p2-01-implement-the-elevated-camera-controller-and-player-controls",
+      "dependencies": [
+        "P1-06"
+      ],
+      "milestone": "59d17f4e-2f69-4b6f-b291-7d23dd675fb2"
+    },
+    {
+      "key": "P2-02",
+      "id": "DYL-157",
+      "uuid": "b5e6f8d0-c79d-45fd-95c3-278db70158bd",
+      "title": "Handle camera collision and tight-interior fallback",
+      "phase": 2,
+      "url": "https://linear.app/devils17/issue/DYL-157/p2-02-handle-camera-collision-and-tight-interior-fallback",
+      "dependencies": [
+        "P2-01"
+      ],
+      "milestone": "59d17f4e-2f69-4b6f-b291-7d23dd675fb2"
+    },
+    {
+      "key": "P2-03",
+      "id": "DYL-158",
+      "uuid": "bcdf39f7-e423-4d81-b90d-044b81e1df28",
+      "title": "Integrate combat aiming, target lock and world interaction",
+      "phase": 2,
+      "url": "https://linear.app/devils17/issue/DYL-158/p2-03-integrate-combat-aiming-target-lock-and-world-interaction",
+      "dependencies": [
+        "P2-01"
+      ],
+      "milestone": "59d17f4e-2f69-4b6f-b291-7d23dd675fb2"
+    },
+    {
+      "key": "P2-04",
+      "id": "DYL-159",
+      "uuid": "7537e0b8-354f-43c9-bdbd-af5e851d13c0",
+      "title": "Implement camera lifecycle handoff and safe recovery",
+      "phase": 2,
+      "url": "https://linear.app/devils17/issue/DYL-159/p2-04-implement-camera-lifecycle-handoff-and-safe-recovery",
+      "dependencies": [
+        "P2-02",
+        "P2-03"
+      ],
+      "milestone": "59d17f4e-2f69-4b6f-b291-7d23dd675fb2"
+    },
+    {
+      "key": "P2-05",
+      "id": "DYL-160",
+      "uuid": "6a34e707-3952-41bd-8d6e-e046f1d88b04",
+      "title": "Build the core CRPG HUD and player status layout",
+      "phase": 2,
+      "url": "https://linear.app/devils17/issue/DYL-160/p2-05-build-the-core-crpg-hud-and-player-status-layout",
+      "dependencies": [
+        "P1-06"
+      ],
+      "milestone": "59d17f4e-2f69-4b6f-b291-7d23dd675fb2"
+    },
+    {
+      "key": "P2-06",
+      "id": "DYL-161",
+      "uuid": "8f36c0c7-f116-4818-ad52-65fbca092ade",
+      "title": "Connect an eight-slot hotbar to native favorites and equipment actions",
+      "phase": 2,
+      "url": "https://linear.app/devils17/issue/DYL-161/p2-06-connect-an-eight-slot-hotbar-to-native-favorites-and-equipment",
+      "dependencies": [
+        "P2-05"
+      ],
+      "milestone": "59d17f4e-2f69-4b6f-b291-7d23dd675fb2"
+    },
+    {
+      "key": "P2-07",
+      "id": "DYL-162",
+      "uuid": "0508d806-77b2-4444-a7a7-756d4bdac272",
+      "title": "Phase 2 gate — accept the camera MVP candidate and playable HUD",
+      "phase": 2,
+      "url": "https://linear.app/devils17/issue/DYL-162/p2-07-phase-2-gate-accept-the-camera-mvp-candidate-and-playable-hud",
+      "dependencies": [
+        "P2-02",
+        "P2-03",
+        "P2-04",
+        "P2-06"
+      ],
+      "milestone": "59d17f4e-2f69-4b6f-b291-7d23dd675fb2"
+    },
+    {
+      "key": "P3-01",
+      "id": "DYL-163",
+      "uuid": "21cb49ab-a8df-487d-8b8d-362ca6623e07",
+      "title": "Implement authoritative inventory snapshots and item actions",
+      "phase": 3,
+      "url": "https://linear.app/devils17/issue/DYL-163/p3-01-implement-authoritative-inventory-snapshots-and-item-actions",
+      "dependencies": [
+        "P2-07"
+      ],
+      "milestone": "b4a5b4f3-b630-425d-bf75-2c82b6b5f1e5"
+    },
+    {
+      "key": "P3-02",
+      "id": "DYL-164",
+      "uuid": "eef2b4e7-52f5-4291-9179-97982b6e2f8a",
+      "title": "Build the grid inventory and equipment presentation",
+      "phase": 3,
+      "url": "https://linear.app/devils17/issue/DYL-164/p3-02-build-the-grid-inventory-and-equipment-presentation",
+      "dependencies": [
+        "P3-01"
+      ],
+      "milestone": "b4a5b4f3-b630-425d-bf75-2c82b6b5f1e5"
+    },
+    {
+      "key": "P3-03",
+      "id": "DYL-165",
+      "uuid": "a6395135-e2ff-418d-99e9-578a02b346ab",
+      "title": "Add follower status portraits through the selected provider",
+      "phase": 3,
+      "url": "https://linear.app/devils17/issue/DYL-165/p3-03-add-follower-status-portraits-through-the-selected-provider",
+      "dependencies": [
+        "P2-07"
+      ],
+      "milestone": "b4a5b4f3-b630-425d-bf75-2c82b6b5f1e5"
+    },
+    {
+      "key": "P3-04",
+      "id": "DYL-166",
+      "uuid": "176d27b7-79a5-4375-ba26-2a40819b1392",
+      "title": "Integrate the minimap and replace the Skyrim compass safely",
+      "phase": 3,
+      "url": "https://linear.app/devils17/issue/DYL-166/p3-04-integrate-the-minimap-and-replace-the-skyrim-compass-safely",
+      "dependencies": [
+        "P2-07"
+      ],
+      "milestone": "b4a5b4f3-b630-425d-bf75-2c82b6b5f1e5"
+    },
+    {
+      "key": "P3-05",
+      "id": "DYL-167",
+      "uuid": "1dca752b-843a-4f66-b961-5a03579700e2",
+      "title": "Handle UI menu focus, pause semantics and save/load lifecycle",
+      "phase": 3,
+      "url": "https://linear.app/devils17/issue/DYL-167/p3-05-handle-ui-menu-focus-pause-semantics-and-saveload-lifecycle",
+      "dependencies": [
+        "P3-02",
+        "P3-03",
+        "P3-04"
+      ],
+      "milestone": "b4a5b4f3-b630-425d-bf75-2c82b6b5f1e5"
+    },
+    {
+      "key": "P3-06",
+      "id": "DYL-168",
+      "uuid": "a7c1427b-ef7a-414c-8298-9e5de8b541f1",
+      "title": "Finish controller navigation, UI scaling and readable layouts",
+      "phase": 3,
+      "url": "https://linear.app/devils17/issue/DYL-168/p3-06-finish-controller-navigation-ui-scaling-and-readable-layouts",
+      "dependencies": [
+        "P3-02",
+        "P3-03",
+        "P3-04"
+      ],
+      "milestone": "b4a5b4f3-b630-425d-bf75-2c82b6b5f1e5"
+    },
+    {
+      "key": "P3-07",
+      "id": "DYL-169",
+      "uuid": "57c7b63e-9cd1-4d5e-9d5a-c1c356de4678",
+      "title": "Phase 3 gate — accept the UI MVP candidate and combined vertical slice",
+      "phase": 3,
+      "url": "https://linear.app/devils17/issue/DYL-169/p3-07-phase-3-gate-accept-the-ui-mvp-candidate-and-combined-vertical",
+      "dependencies": [
+        "P3-05",
+        "P3-06"
+      ],
+      "milestone": "b4a5b4f3-b630-425d-bf75-2c82b6b5f1e5"
+    },
+    {
+      "key": "P4-01",
+      "id": "DYL-170",
+      "uuid": "6174ffc6-1f83-4a8f-bc95-1dd19f595f04",
+      "title": "Resolve integration blockers and verify failure/disable behavior",
+      "phase": 4,
+      "url": "https://linear.app/devils17/issue/DYL-170/p4-01-resolve-integration-blockers-and-verify-failuredisable-behavior",
+      "dependencies": [
+        "P3-07"
+      ],
+      "milestone": "cd1ff0a2-9871-47fd-b056-da33b6fe0fbb"
+    },
+    {
+      "key": "P4-02",
+      "id": "DYL-171",
+      "uuid": "c596404b-ab1c-46c8-a63d-7d7dd2672a4e",
+      "title": "Package reproducible independent camera and UI release candidates",
+      "phase": 4,
+      "url": "https://linear.app/devils17/issue/DYL-171/p4-02-package-reproducible-independent-camera-and-ui-release",
+      "dependencies": [
+        "P4-01"
+      ],
+      "milestone": "cd1ff0a2-9871-47fd-b056-da33b6fe0fbb"
+    },
+    {
+      "key": "P4-03",
+      "id": "DYL-172",
+      "uuid": "75b17079-2b25-43b3-98eb-2ca04fdee360",
+      "title": "Measure frame cost, inventory latency and resource stability",
+      "phase": 4,
+      "url": "https://linear.app/devils17/issue/DYL-172/p4-03-measure-frame-cost-inventory-latency-and-resource-stability",
+      "dependencies": [
+        "P4-01"
+      ],
+      "milestone": "cd1ff0a2-9871-47fd-b056-da33b6fe0fbb"
+    },
+    {
+      "key": "P4-04",
+      "id": "DYL-173",
+      "uuid": "c44ba69f-caaf-405b-9664-f7180c67b7f4",
+      "title": "Run the final supported-profile regression and inventory integrity matrix",
+      "phase": 4,
+      "url": "https://linear.app/devils17/issue/DYL-173/p4-04-run-the-final-supported-profile-regression-and-inventory",
+      "dependencies": [
+        "P4-02",
+        "P4-03"
+      ],
+      "milestone": "cd1ff0a2-9871-47fd-b056-da33b6fe0fbb"
+    },
+    {
+      "key": "P4-05",
+      "id": "DYL-174",
+      "uuid": "a0b87a85-151f-4a73-9daa-4896c11dcd5e",
+      "title": "Finalize installation, controls, limitations and third-party attribution",
+      "phase": 4,
+      "url": "https://linear.app/devils17/issue/DYL-174/p4-05-finalize-installation-controls-limitations-and-third-party",
+      "dependencies": [
+        "P4-02"
+      ],
+      "milestone": "cd1ff0a2-9871-47fd-b056-da33b6fe0fbb"
+    },
+    {
+      "key": "P4-06",
+      "id": "DYL-175",
+      "uuid": "257cb256-f6b5-4c36-98f4-6a525a4118e3",
+      "title": "Phase 4 gate — owner playtest and camera/UI MVP acceptance",
+      "phase": 4,
+      "url": "https://linear.app/devils17/issue/DYL-175/p4-06-phase-4-gate-owner-playtest-and-cameraui-mvp-acceptance",
+      "dependencies": [
+        "P4-04",
+        "P4-05"
+      ],
+      "milestone": "cd1ff0a2-9871-47fd-b056-da33b6fe0fbb"
+    }
+  ]
+}
