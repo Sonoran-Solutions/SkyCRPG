@@ -29,8 +29,13 @@ jobs:
   windows-x64:
     runs-on: windows-2022
     timeout-minutes: 15
+    env:
+      # Build the branch head, not the pull_request merge commit, so logs and archive names match the PR head.
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SOURCE_SHA }}
 
       - name: Toolchain versions
         shell: pwsh
@@ -42,13 +47,13 @@ jobs:
       - name: Configure and build
         shell: pwsh
         run: |
-          cmake --preset windows-x64-release -DSKYCRPG_SOURCE_COMMIT=${{ github.sha }}
+          cmake --preset windows-x64-release -DSKYCRPG_SOURCE_COMMIT=${{ env.SOURCE_SHA }}
           cmake --build --preset windows-x64-release
 
       - name: Reproducibility check (second clean build directory)
         shell: pwsh
         run: |
-          cmake -S . -B build/repro -G "Visual Studio 17 2022" -A x64 -DSKYCRPG_SOURCE_COMMIT=${{ github.sha }}
+          cmake -S . -B build/repro -G "Visual Studio 17 2022" -A x64 -DSKYCRPG_SOURCE_COMMIT=${{ env.SOURCE_SHA }}
           cmake --build build/repro --config Release
           $failed = $false
           foreach ($m in @('camera/Release/SkyCRPG_Camera.dll', 'ui/Release/SkyCRPG_UI.dll')) {
@@ -61,15 +66,15 @@ jobs:
 
       - name: Package
         shell: pwsh
-        run: python tools/package.py --build-dir build/windows-x64-release --commit ${{ github.sha }}
+        run: python tools/package.py --build-dir build/windows-x64-release --commit ${{ env.SOURCE_SHA }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
-          name: skycrpg-packages-${{ github.sha }}
+          name: skycrpg-packages-${{ env.SOURCE_SHA }}
           path: dist/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
-          name: skycrpg-pdb-${{ github.sha }}
+          name: skycrpg-pdb-${{ env.SOURCE_SHA }}
           path: build/windows-x64-release/modules/*/Release/*.pdb

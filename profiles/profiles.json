@@ -1,0 +1,6 @@
+{
+  "baseline": { "packages": [], "purpose": "Game + SKSE64 2.3.1 only; reference behavior and route timing." },
+  "camera-only": { "packages": ["SkyCRPG_Camera"], "purpose": "Camera package with ordinary UI." },
+  "ui-only": { "packages": ["SkyCRPG_UI"], "purpose": "UI package with ordinary camera." },
+  "combined": { "packages": ["SkyCRPG_Camera", "SkyCRPG_UI"], "purpose": "Both packages; minimal combined-load smoke." }
+}
