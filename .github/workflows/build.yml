@@ -1,0 +1,75 @@
+name: build
+
+# Windows x64 build and packaging for the SkyCRPG SKSE plugins.
+# Docs-only changes do not trigger it. Artifacts contain only SkyCRPG's own files.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "shared/**"
+      - "tools/package.py"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "modules/**"
+      - "shared/**"
+      - "tools/package.py"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        shell: pwsh
+        run: |
+          cmake --version
+          python --version
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -format text | Select-String '^(displayName|catalog_productDisplayVersion|installationVersion):'
+
+      - name: Configure and build
+        shell: pwsh
+        run: |
+          cmake --preset windows-x64-release -DSKYCRPG_SOURCE_COMMIT=${{ github.sha }}
+          cmake --build --preset windows-x64-release
+
+      - name: Reproducibility check (second clean build directory)
+        shell: pwsh
+        run: |
+          cmake -S . -B build/repro -G "Visual Studio 17 2022" -A x64 -DSKYCRPG_SOURCE_COMMIT=${{ github.sha }}
+          cmake --build build/repro --config Release
+          $failed = $false
+          foreach ($m in @('camera/Release/SkyCRPG_Camera.dll', 'ui/Release/SkyCRPG_UI.dll')) {
+            $a = (Get-FileHash "build/windows-x64-release/modules/$m").Hash
+            $b = (Get-FileHash "build/repro/modules/$m").Hash
+            "$m  $a  $b"
+            if ($a -ne $b) { $failed = $true }
+          }
+          if ($failed) { throw "DLLs differ between clean build directories" }
+
+      - name: Package
+        shell: pwsh
+        run: python tools/package.py --build-dir build/windows-x64-release --commit ${{ github.sha }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skycrpg-packages-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skycrpg-pdb-${{ github.sha }}
+          path: build/windows-x64-release/modules/*/Release/*.pdb
