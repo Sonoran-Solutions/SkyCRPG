@@ -75,8 +75,17 @@ def load_active() -> dict | None:
 
 
 def skyrim_pids() -> list[int]:
-    out = subprocess.run(["pgrep", "-f", "SkyrimSE.exe"], capture_output=True, text=True).stdout
-    return [int(p) for p in out.split() if int(p) != os.getpid()]
+    """PIDs whose argv[0] is SkyrimSE.exe (Wine shows a Windows path), not any command mentioning it."""
+    pids = []
+    for proc in Path("/proc").iterdir():
+        if proc.name.isdigit():
+            try:
+                argv0 = (proc / "cmdline").read_bytes().split(b"\0")[0].decode(errors="replace")
+            except OSError:
+                continue
+            if argv0.replace("\\", "/").rsplit("/", 1)[-1].lower() == "skyrimse.exe":
+                pids.append(int(proc.name))
+    return pids
 
 
 def cmd_init(args) -> None:
@@ -225,7 +234,8 @@ def expected_logs(profile: str) -> list[str]:
 def collect(profile: str, run_dir: Path, started: float) -> dict:
     run_dir.mkdir(parents=True, exist_ok=True)
     found = {}
-    for name in ["skse64.log", "skse64_loader.log"] + [f"{p}.log" for p in PROFILES]:
+    packages = sorted({pkg for spec in PROFILES.values() for pkg in spec["packages"]})
+    for name in ["skse64.log", "skse64_loader.log"] + [f"{p}.log" for p in packages]:
         path = SKSE_LOGS / name
         if path.exists() and path.stat().st_mtime >= started:
             shutil.copy2(path, run_dir / name)

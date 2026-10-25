@@ -1,6 +1,6 @@
 # P1 environment record (DYL-150 / P1-01)
 
-Captured: 2026-10-25 by read-only inspection of the owner's workstation. Nothing in this file is a SkyCRPG runtime result; load and route results are in [BUILD_AND_TEST.md](../../BUILD_AND_TEST.md) and [runtime-matrix.md](../../compatibility/runtime-matrix.md).
+Captured: 2026-10-25 by read-only inspection of the owner's workstation (sections Game through Build toolchain). The [load evidence](#p1-01-load-evidence) section below records the P1-01 runtime results; procedures are in [BUILD_AND_TEST.md](../../BUILD_AND_TEST.md) and tested combinations in [runtime-matrix.md](../../compatibility/runtime-matrix.md).
 
 Labels: **OBSERVED** = read directly from files/commands on the host. **REPORTED** = from an upstream page, not verified locally. **ASSUMED** = working assumption awaiting evidence.
 
@@ -18,7 +18,7 @@ Credentials, Steam account identifiers, depot keys, save character names and oth
 | Install path | `~/.local/share/Steam/steamapps/common/Skyrim Special Edition` (15 GB, installed 2026-10-22) | OBSERVED |
 | Content | Base game + Dawnguard/Hearthfires/Dragonborn + the four free Creation Club files (Fish, Survival Mode, Curios, Adv. Dwemer Spheres) + `_ResourcePack`. **No Anniversary Upgrade content installed.** | OBSERVED (`Data/`) |
 | Launch history on this host | Never launched: `LastPlayed 0`, no `Skyrim.ini`/`plugins.txt` generated in the Proton prefix | OBSERVED |
-| SKSE | **Not installed** (no `skse64_loader.exe`, no `Data/SKSE`) | OBSERVED |
+| SKSE | Not installed at capture. Owner downloaded SKSE64 2.3.1 from Nexus (archive sha256 `7bad616ed360823a027f8828801d91e3a4aa2eacd952023af7f3e31adb2ae250`). It is deployed only while a test profile is active and removed afterwards. | OBSERVED |
 | Address Library | **Not installed** | OBSERVED |
 | Other mods | None (vanilla `Data/`) | OBSERVED |
 | Display settings (`Skyrim/SkyrimPrefs.ini` template) | 1920x1080, windowed (`bFull Screen=0`, `bBorderless=0`) | OBSERVED |
@@ -58,9 +58,60 @@ Upstream support for this executable (REPORTED, 2026-10-25): the official [SKSE 
 
 ## Immediate blockers and risks
 
-1. **SKSE 2.3.1 is not installed.** Every native load check is BLOCKED until the owner approves obtaining it (Nexus download) and installing its loader/runtime DLL into the game directory. SKSE's files are additive and removable; nothing in the base game is overwritten.
+1. ~~SKSE 2.3.1 not installed~~. Resolved: the owner supplied the 2.3.1 archive, and `tools/profile.py` deploys it per profile. SKSE's files are additive; nothing in the base game is overwritten.
 2. **1.7.104 is a new runtime line.** CommonLib forks, Address Library v5-format support and candidate providers (TDM, SmoothCam, SkyUI/minimap stacks) may not yet support it. DYL-151 must check the exact runtime intersection; the SkyCRPG skeletons deliberately avoid CommonLib and Address Library so they do not prejudge that choice.
 3. **No local game controller.** Controller acceptance (U6) cannot be run on this host until one is attached.
 4. **No mod manager.** Isolated profiles are implemented with a small manifest-tracked deploy script instead of MO2. Adopting MO2 under Proton later is possible but needs its own install/approval.
 5. **Saves are old (2021).** Copied saves may fail on 1.7.104; a fresh new-game fixture save may be needed for the route.
 6. **Shared workstation.** The GPU/display and RAM are also used by other workloads; game jobs need exclusive access and one Skyrim process at a time.
+
+## P1-01 load evidence
+
+Run 2026-10-25 on this host with owner approval. Each launch was automated with `tools/profile.py launch --until-loaded --timeout 300 --settle 30` and stopped by the tool, and each left no remaining processes. Common to every run:
+
+- Executable: `SkyrimSE.exe` 1.7.104.0, sha256 `846efccf…1402f`.
+- SKSE: 64 2.3.1. Loader sha256 `cde6ae26e7340a59c72fc113e7e5534087db5a86b7cb833876d2d1d84a39dd59`; `skse64_1_7_104.dll` sha256 `d5158f8c61a2257138692940ed27048c40d6ff62676e64791bdc83d4549fb94e`.
+- Proton: Experimental `experimental-11.0-20261014`, DXVK v3.1.1-97, Steam Linux Runtime 4.
+- Display and input: 1920x1080 windowed, keyboard/mouse.
+- Packages: from commit `ec34e4d717ed6ad145341e6d543255fbd2266fec` ([CI run 40246039569](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40246039569)). Hashes are in [BUILD_AND_TEST.md](../../BUILD_AND_TEST.md#p1-01-verification-2026-10-25).
+
+| Profile | Start (local, -0700) | Result | `skse64.log` sha256 | Module log sha256 |
+| --- | --- | --- | --- | --- |
+| baseline | 16:46:40 | PASS: SKSE init, 0 plugins, data loaded (msg 8) | `548c3305…27e5b` | none |
+| camera-only | 16:47:28 | PASS: `SkyCRPG_Camera.dll` loaded correctly (handle 1) | `9e54361e…30f25` | Camera `19913f1d…33e65` |
+| ui-only | 16:48:19 | PASS: `SkyCRPG_UI.dll` loaded correctly (handle 1) | `9c7c12df…946e7` | UI `0120f18b…f2ef` |
+| combined | 16:49:04 | PASS: both loaded correctly (handles 1, 2) | `0b2e2a4c…8c6` | Camera `c4d76580…8d00`, UI `08755f49…c3fa` |
+
+Excerpts, with home path shortened to `~`:
+
+```text
+# baseline skse64.log
+SKSE64 runtime: initialize (version = 2.3.1 01070680 01DD64DB16681E69, os = 6.2 (9200))
+scanning plugin directory Z:~\...\Skyrim Special Edition\Data\SKSE\Plugins\
+init complete
+dispatch message (8) to plugin listeners
+
+# camera-only skse64.log
+checking plugin SkyCRPG_Camera.dll
+plugin SkyCRPG_Camera.dll (00000001 SkyCRPG Camera 00000010) loaded correctly (handle 1)
+
+# camera-only SkyCRPG_Camera.log
+SkyCRPG Camera 0.0.1 loaded at 2026-10-25T23:47:30Z
+source commit: ec34e4d717ed6ad145341e6d543255fbd2266fec
+skse: 2.3.1.0 (0x02030010)
+runtime: 1.7.104.0 (0x01070680)
+settings: Z:~\...\Data\SKSE\Plugins\SkyCRPG_Camera.ini (found, iLogLevel=1)
+runtime check: PASS pinned 1.7.104
+
+# ui-only skse64.log (no Camera plugin scanned)
+checking plugin SkyCRPG_UI.dll
+plugin SkyCRPG_UI.dll (00000001 SkyCRPG UI 00000010) loaded correctly (handle 1)
+
+# combined skse64.log
+plugin SkyCRPG_Camera.dll (00000001 SkyCRPG Camera 00000010) loaded correctly (handle 1)
+plugin SkyCRPG_UI.dll (00000001 SkyCRPG UI 00000010) loaded correctly (handle 2)
+```
+
+The full logs, `run.json` files and Proton logs stay in the profile staging directory `/srv/storage/Projects/SkyCRPG/profiles/<profile>/runs/` and are not committed, because Proton logs contain local paths.
+
+Not established by these runs: whether any save loads; camera, HUD or inventory behavior; performance; controller input; any provider or Address Library compatibility. The baseline route is NOT_RUN and will be played by the owner (see [BUILD_AND_TEST.md](../../BUILD_AND_TEST.md#baseline-route-owner-not_run)).
