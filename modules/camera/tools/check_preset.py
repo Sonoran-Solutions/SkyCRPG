@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PRESET = ROOT / "config" / "SmoothCamPreset0.json"
+ACTIVE_CONFIG = ROOT / "config" / "SmoothCam.json"
 TDM_FRAGMENT = ROOT / "config" / "TrueDirectionalMovement-settings.fragment.ini"
 SMOOTHCAM_COMMIT = "e0afd09aff26e5849dac461252e5bffbd5b69d62"
 DEFAULT_SOURCE = Path(os.environ.get(
@@ -98,6 +99,10 @@ def source_schema(source_root: Path) -> tuple[set[str], set[str], set[str], dict
             "SmoothCam MCM disable control changed")
     require("config->modDisabled = !config->modDisabled;" in camera_cpp,
             "SmoothCam toggle key no longer switches modDisabled")
+    require(re.search(r"code\s*=\s*static_cast<int32_t>\(ev->idCode\)", camera_cpp) is not None,
+            "SmoothCam keyboard key handling no longer uses the event idCode")
+    require(re.search(r"code\s*==\s*config->modToggleKey", camera_cpp) is not None,
+            "SmoothCam emergency key no longer compares against modToggleKey")
     require(re.search(r'IMPL_GETTER\("ModEnabled",\s*modDisabled\)', papyrus_cpp) is not None,
             "SmoothCam MCM ModEnabled polarity mapping changed; inspect before relying on disable control")
     require("void Camera::Camera::OnTogglePOV" in camera_cpp
@@ -146,11 +151,20 @@ def main() -> None:
     offset_keys, user_keys, state_keys, offset_defaults = source_schema(args.smoothcam_source)
 
     preset = json.loads(PRESET.read_text(encoding="utf-8"))
+    active = json.loads(ACTIVE_CONFIG.read_text(encoding="utf-8"))
     require(set(preset) == {"name", "config"}, "preset envelope must contain exactly name and config")
     require(preset["name"] == "SkyCRPG Camera feasibility candidate", "unexpected preset name")
     config = preset["config"]
+    require(set(active).issubset(user_keys), f"unknown active UserConfig fields: {set(active) - user_keys}")
+    require(active.get("modToggleKey") == 66 and type(active.get("modToggleKey")) is int,
+            "active config must bind DIK_F8 (66) as SmoothCam's keyboard emergency toggle")
+    require(active.get("modDisabled") is False,
+            "active config must start enabled so F8 can hand back to vanilla camera")
+    require(active == config,
+            "startup config and MCM preset must carry the same candidate offsets and emergency binding")
     require(set(config).issubset(user_keys), f"unknown UserConfig fields: {set(config) - user_keys}")
-    require(set(config).issubset(state_keys), "candidate may only configure source-declared offset groups")
+    require(set(config) - {"modDisabled", "modToggleKey"} <= state_keys,
+            "candidate may only configure source-declared offset groups plus emergency controls")
 
     # The pinned MCM SliderSetting source defaults to [-100, 100]. Keep every
     # supplied numeric offset inside that UI-supported range and finite.
@@ -162,6 +176,8 @@ def main() -> None:
     require((minimum, maximum) == (-100.0, 100.0), "SmoothCam MCM default offset slider range changed")
 
     for state, offset in config.items():
+        if state in {"modDisabled", "modToggleKey"}:
+            continue
         require(isinstance(offset, dict), f"{state} offset must be a JSON object")
         require(set(offset).issubset(offset_keys), f"{state} has unknown OffsetGroup fields: {set(offset) - offset_keys}")
         for key, value in offset.items():

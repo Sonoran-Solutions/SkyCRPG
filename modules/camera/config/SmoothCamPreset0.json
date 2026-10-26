@@ -1,6 +1,8 @@
 {
   "name": "SkyCRPG Camera feasibility candidate",
   "config": {
+    "modDisabled": false,
+    "modToggleKey": 66,
     "standing": {
       "sideOffset": 0.0,
       "upOffset": 80.0,

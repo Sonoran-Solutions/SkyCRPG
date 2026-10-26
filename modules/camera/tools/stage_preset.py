@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage the original SmoothCam preset as a deterministic, config-only archive."""
+"""Stage original SmoothCam startup configuration and MCM preset deterministically."""
 
 import argparse
 import hashlib
@@ -11,8 +11,10 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PRESET = ROOT / "config" / "SmoothCamPreset0.json"
+ACTIVE_CONFIG = ROOT / "config" / "SmoothCam.json"
 PINNED_SMOOTHCAM_SOURCE = "e0afd09aff26e5849dac461252e5bffbd5b69d62"
 INSTALL_PATH = "SKSE/Plugins/SmoothCamPreset0.json"
+ACTIVE_INSTALL_PATH = "SKSE/Plugins/SmoothCam.json"
 FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 
 
@@ -29,6 +31,7 @@ def main() -> None:
         raise SystemExit("error: --commit must be a full 40-character Git SHA")
 
     preset_bytes = PRESET.read_bytes()
+    active_bytes = ACTIVE_CONFIG.read_bytes()
     parsed = json.loads(preset_bytes)
     if set(parsed) != {"name", "config"}:
         raise SystemExit("error: unexpected SmoothCam preset envelope")
@@ -39,10 +42,14 @@ def main() -> None:
         "provider_source_commit": PINNED_SMOOTHCAM_SOURCE,
         "install_root": "Data/",
         "third_party_payloads": [],
-        "files": {INSTALL_PATH: sha256(preset_bytes)},
+        "files": {
+            ACTIVE_INSTALL_PATH: sha256(active_bytes),
+            INSTALL_PATH: sha256(preset_bytes),
+        },
     }
     manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
     archive_files = {
+        ACTIVE_INSTALL_PATH: active_bytes,
         INSTALL_PATH: preset_bytes,
         "SkyCRPG_Camera_Config.manifest.json": manifest_bytes,
     }
