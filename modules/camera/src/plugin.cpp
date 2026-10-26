@@ -18,6 +18,7 @@
 
 namespace {
 using namespace skycrpg::camera;
+constexpr REL::Version supportedRuntime{1,7,104,0};
 // Exact 1.7.104 member layout audited independently of vtable declarations.
 static_assert(offsetof(RE::ThirdPersonState,targetZoomOffset) == 0x74);
 static_assert(offsetof(RE::ThirdPersonState,freeRotation) == 0xD4);
@@ -304,12 +305,12 @@ extern "C" __declspec(dllexport) constinit SKSE::PluginVersionData SKSEPlugin_Ve
     data.PluginName("SkyCRPG Camera"); data.AuthorName("devils_17");
     data.UsesAddressLibrary(); data.UsesUpdatedStructs();
     data.versionIndependenceEx |= SKSE::PluginVersionData::kVersionIndependentEx_AddressLibraryV5;
-    data.CompatibleVersions({SKSE::RUNTIME_SSE_1_7_104});
+    data.CompatibleVersions({supportedRuntime});
     data.xseMinimum = REL::Version{2,3,1,0}.pack();
     return data;
 }();
 extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const SKSE::LoadInterface* skse) {
-    if (!skse || skse->IsEditor() || skse->RuntimeVersion() != SKSE::RUNTIME_SSE_1_7_104 || skse->SKSEVersion() != REL::Version{2,3,1,0}.pack()) return false;
+    if (!skse || skse->IsEditor() || skse->RuntimeVersion() != supportedRuntime || skse->SKSEVersion() != REL::Version{2,3,1,0}.pack()) return false;
     std::ofstream(std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera.log",std::ios::trunc).close();
     log("SkyCRPG Camera " SKYCRPG_VERSION " source " SKYCRPG_SOURCE_COMMIT "; native input policy, no camera transform writes.");
     log("runtime check: PASS pinned 1.7.104; exact SKSE 2.3.1; Address Library format 5");
