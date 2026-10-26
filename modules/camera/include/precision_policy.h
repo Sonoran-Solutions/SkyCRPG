@@ -3,11 +3,16 @@
 #include "policy.h"
 
 namespace skycrpg::camera {
-// A manual precision session grants permission to return from the native view
-// only while the camera provider and world remain valid. Menu focus merely
-// postpones an explicit return; it does not itself change camera ownership.
-// Never force a view transition from this predicate.
+// Claim only an immediately observed transition from an eligible third-person
+// state. A late, unrelated first-person transition cannot claim a session.
+constexpr bool claimPrecisionOwnership(Context before, Context after) {
+    return before.prerequisites && before.world && !before.special && !before.menu &&
+        !before.firstPerson && after.prerequisites && after.world && !after.special &&
+        after.firstPerson;
+}
+// Retain only while the provider, world and owned first-person state remain
+// valid. Never force a camera transition from this predicate.
 constexpr bool retainPrecisionOwnership(Context c, bool owned) {
-    return owned && c.prerequisites && c.world && !c.special;
+    return owned && c.prerequisites && c.world && !c.special && c.firstPerson;
 }
 } // namespace skycrpg::camera
