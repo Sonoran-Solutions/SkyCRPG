@@ -59,7 +59,8 @@ signals; this does not establish gameplay behavior.
 ```bash
 python3 modules/ui/tools/build_scaleform.py \
   --skyui /tmp/skycrpg-ui-skyui-v6.11 \
-  --out /tmp/skycrpg-ui-candidate-v611 \
+  --nexus-interface /tmp/skycrpg-ui-nexus-bsa/interface \
+  --out /tmp/skycrpg-ui-candidate-nexus611 \
   --java /tmp/skycrpg-ui-toolchain/jdk-17.0.21+9-jre/bin/java
 SKYCRPG_SKYUI_SOURCE=/tmp/skycrpg-ui-skyui-v6.11 \
   python3 -m unittest discover -s modules/ui/tests -v
@@ -76,18 +77,18 @@ identical; original art introduces no item transaction calls. A bounded FFDec
 export/decompile confirmed `skycrpgMove`, cell paint and grid geometry in compiled
 `inventorylists.swf`. Decompile verifies bytecode inclusion, not native execution.
 
-Local artifacts: `/tmp/skycrpg-ui-candidate-v611/` (`build.json`, compiler logs,
+Local artifacts: `/tmp/skycrpg-ui-candidate-nexus611/` (`build.json`, compiler logs,
 `Data/Interface/inventorymenu.swf`, `skyui/inventorylists.swf`, `hudmenu.swf`).
 Earlier diagnostic export/logs: `/tmp/skycrpg-ui-candidate-2/`.
 
 | Artifact | SHA-256 |
 | --- | --- |
-| Base `inventorymenu.swf` | `915f8e688ab6a529aefa3cf46f4ab3a5805bc4ba22fb9f50f1aa591d577edb6d` |
-| Base `skyui/inventorylists.swf` | `3ac8dd993fe693386c65ccf9a33c73151004f87c2634b06c95069ba524b3d033` |
-| Base `hudmenu.swf` | `b586c7e1b13b4eee83e820566027243314d5019dbefc36bcac85f247325a22db` |
-| Candidate `inventorymenu.swf` | `9dd9e54834d5dcda3e42cada3a2127c4b70f61b3df33382a8738c838ead6c70b` |
-| Candidate `skyui/inventorylists.swf` | `648242319b9ac7ef1b0b1382f3857a546fd2c2927767a9a4e2086e1dad355220` |
-| Candidate `hudmenu.swf` | `4e2f44ec8e74464a102b443150ee4c8a43b3ceadf60e82298b21a142eb0f689c` |
+| Base `inventorymenu.swf` | `9225ed93e1589e69f6d5305299e8e6847aaaea1323a3c39ba88360803c3d49a6` |
+| Base `skyui/inventorylists.swf` | `6a762b62dbc58d8ea871620e181b1e950abd32b0cfd726ed44d1aba350469061` |
+| Base `hudmenu.swf` | `e8277c1fedcda3ac8c159441f4e7c55b62fbe564ec3cc1bd602b70427f0a47cf` |
+| Candidate `inventorymenu.swf` | `ff0f4ddd38da00f9df7680a0e687cdf6c41bfa27027fc903fc478615dfa87aae` |
+| Candidate `skyui/inventorylists.swf` | `8d810de2fe022da0d88fd160fa60c2bfdef2a2f6499541094d359a20fca20fb0` |
+| Candidate `hudmenu.swf` | `c42e7a26bb276bc8ee0a2f877c2248e8bb8bcd73bee9798119ae3ebdddde3e38` |
 | FFDec CLI JAR | `5eb6b2bae13a2cc8905b2f8338996701e04eb651ab224043948fabbec942735e` |
 | FFDec implementation JAR | `baccc02d815aa651ffd11bb6dfc5edfde0fff8d768305f5ce7e7704c19fcd323` |
 | Temurin JRE 17.0.21+9 Linux x64 archive | `9f41bf88c7900c7097444a1bdeb84146ae692bc08842490ab098063c74bf9a8a` |
@@ -95,9 +96,9 @@ Earlier diagnostic export/logs: `/tmp/skycrpg-ui-candidate-2/`.
 ## Minimap, follower and hotbar probes
 
 Selected external route: Dragon's Eye settings fork **1.7.5**, Infinity UI NG
-**2.1.3**, LMU settings fork **1.3.4**, plus SkyUI 6.11. Provider binaries/archive
-hashes and actual resolved winners are parent integration evidence, not supplied
-by this source build. No provider is embedded in the candidate.
+**2.1.3**, LMU settings fork **1.3.4**, plus SkyUI 6.11. Acquired archives and
+resolved winners are parent integration evidence. Read-only package inspection
+is recorded below. No provider is embedded in the candidate.
 
 DEM `include/MiniMap.h` identifies `_level0.HUDMovieBaseInstance.Minimap`;
 `source/MessageListeners.cpp` handles IUI patch messages and can abort startup
@@ -176,3 +177,57 @@ in-game checks. No equipment silhouette, full HUD skin, new hotbar backend,
 container/barter replacement, follower command system or minimap renderer is
 claimed. This candidate makes the native integration concrete and reviewable;
 DYL-153 remains open until its required gameplay proof exists.
+
+## Acquired-package reconciliation (before gameplay)
+
+The acquired Nexus SkyUI **6.11** archive's `SkyUI_SE.bsa` was parsed read-only
+externally (BSA105, archive flags3, seven folder blocks, 71 files, no compression).
+The three real shipped SWFs were extracted to `/tmp/skycrpg-ui-nexus-bsa/interface/`.
+**They differ from GitHub's source-tree SWFs.** Earlier `/tmp/skycrpg-ui-candidate-v611/`
+is a compile probe only; the final candidate above uses the actual BSA SWFs as
+base art/timeline and replaces the five inspected classes with patched v6.11
+source. The builder's `--nexus-interface` checks their exact acquired hashes.
+All three final candidates compile successfully against those actual bases.
+
+Export/decompile inspection of the acquired binary confirms InventoryMenu's real
+`AttemptEquip`, `ItemSelect`, `CheckForMouseEquip`, `setConfig`/item-list layout,
+the original list `itemIndex` mapping and `TabularListEntry.setEntry`. The actual
+HUD exposes `InitExtensions`, `lastHealthMeterPercent`, `lastMagickaMeterPercent`
+and `lastStaminaMeterPercent`; the native setters retain percentages before
+survival penalty adjustment. The diagnostic therefore shows native **percentages**,
+not absolute actor values. `HUDMovieBaseInstance.Minimap` is DEM's documented
+attachment; the label observes it without asserting renderer health.
+
+Runtime packages are at `/srv/storage/Projects/SkyCRPG/session-20261026/extracted/`;
+archive hashes are in that session's `acquired.json`/`extracted.json`. FOMOD inspection
+confirms **Common + Line-17** for DEM/InfinityUI/LMU, never their SE-AE16 lines.
+DEM's Common tree has both the required `Minimap.swf` attachment and its relative
+`!assets/MinimapArt.swf`. The preflight now requires the latter too.
+
+| Acquired Line-17 file | SHA-256 |
+| --- | --- |
+| InfinityUI.dll | `53ef0932485ee1bb281cc4b2baad1fe91e368b9d656989071747b2f1316a85ed` |
+| DragonsEyeMinimap.dll | `918fc9b3f4bf284fb1ae8d028370ebd20908d2750f4706383fe56012bddc5c1a` |
+| LocalMapUpgrade.dll | `f0fb1c9c822133f9e4ece866fc4f6190424dcafac35e040cd0b4cd037340b3d5` |
+| DEM Minimap.swf | `dabdfeb3454d0a40d347ad56ab3e252578a9607e9d7d873d8e70183ffc1dd4e5` |
+| DEM MinimapArt.swf | `8eebe684e51f914863918cc46ea14dbf572f766ba4c1be3a99747fdc41dd81ef` |
+
+Shipped DEM INI has `uAnchor=1` (top right), `fScale=0.5`,
+`bShowOnGameStart=1`, scan-code37 **K** hide/tap or hold-to-pan, and scan-code38
+**L** zoom. Its ring defaults **on** (`[Compass] bCompassRing=1`); parent should
+stage `bCompassRing=0` while retaining Skyrim's compass. LMU defaults
+`bLocalMapBorder=0`, so no optional border artwork is required. The diagnostic
+HUD does not own these provider INIs. No minimap readiness/compass handoff PASS
+is implied by these config checks.
+
+Party Sheet's actual package confirms additive `*_party_whitelist.ini`,
+`*_party_blacklist.ini`, `*_party_allies.ini` and `*activeeffects_blacklist.ini`
+configuration files. Whitelist entries require Plugin|BaseID plus an active
+Follow AI package; plain display names are rejected there. These are configuration
+interfaces, not a public actor-data API; the safe unavailable-data fallback remains.
+
+Parent staging map: each final candidate `Data/Interface/<path>` goes to the same
+relative path beneath the UI profile's Data overlay, winning over SkyUI's BSA.
+Retain the external SkyUI ESP/BSA and all dependencies. Parent records deployed
+file winners, actual runtime evidence and cleanup. This worker has not deployed
+these generated derivative files or incorporated provider assets into Git.

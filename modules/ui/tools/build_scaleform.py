@@ -18,6 +18,11 @@ BASE_SWFS = {
     "skyui/inventorylists.swf": "3ac8dd993fe693386c65ccf9a33c73151004f87c2634b06c95069ba524b3d033",
     "hudmenu.swf": "b586c7e1b13b4eee83e820566027243314d5019dbefc36bcac85f247325a22db",
 }
+NEXUS_BASE_SWFS = {
+    "inventorymenu.swf": "9225ed93e1589e69f6d5305299e8e6847aaaea1323a3c39ba88360803c3d49a6",
+    "skyui/inventorylists.swf": "6a762b62dbc58d8ea871620e181b1e950abd32b0cfd726ed44d1aba350469061",
+    "hudmenu.swf": "e8277c1fedcda3ac8c159441f4e7c55b62fbe564ec3cc1bd602b70427f0a47cf",
+}
 SOURCES = {
     "ItemMenus/InventoryMenu.as": "71142a8bfa6851b7c250f9ef255a386f800dccd59d7c080be8e798b9c0cabd1d",
     "Common/skyui/components/list/ScrollingList.as": "af6ddbd9d66385024c614afce7deffffa1346ade09cae25838058ec544b2ba4c",
@@ -63,6 +68,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skyui", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--nexus-interface", type=Path,
+                        help="Extracted Interface folder from acquired Nexus SkyUI6.11 BSA; exact hashes checked")
     parser.add_argument("--java", type=Path)
     parser.add_argument("--prepare-only", action="store_true")
     args = parser.parse_args()
@@ -80,8 +87,10 @@ def main():
         if sha(source) != expected:
             parser.error(f"Provider source drift: {name}")
         texts[name] = transform(name, source.read_text())
-    for name, expected in BASE_SWFS.items():
-        if sha(provider / "data/interface" / name) != expected:
+    base = args.nexus_interface.resolve() if args.nexus_interface else provider / "data/interface"
+    base_hashes = NEXUS_BASE_SWFS if args.nexus_interface else BASE_SWFS
+    for name, expected in base_hashes.items():
+        if sha(base / name) != expected:
             parser.error(f"Provider SWF drift: {name}")
     targets = {
         "inventorymenu.swf": ["ItemMenus/InventoryMenu.as"],
@@ -89,6 +98,7 @@ def main():
         "hudmenu.swf": ["Vanilla/HUDMenu.as"],
     }
     manifest = {"skyui_commit": commit, "status": "PREPARED", "source_sha256": SOURCES,
+                "base": "Nexus6.11 acquired BSA" if args.nexus_interface else "GitHub source-tree SWFs (compile probe)",
                 "patch_sha256": {p.name: sha(p) for p in (ROOT / "scaleform").glob("*.inc")},
                 "ffdec_cli_sha256": sha(provider / "tools/FFDec/ffdec-cli.jar"),
                 "inputs": {}, "outputs": {}, "jobs": []}
@@ -99,7 +109,7 @@ def main():
             file = stage / "__Packages" / name.split("/", 1)[1]
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_text(texts[name])
-        source_swf = provider / "data/interface" / target
+        source_swf = base / target
         manifest["inputs"][target] = sha(source_swf)
         if args.prepare_only:
             continue

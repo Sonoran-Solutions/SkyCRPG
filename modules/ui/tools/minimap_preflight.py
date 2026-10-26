@@ -16,6 +16,7 @@ REQUIRED = (
     "SKSE/Plugins/InfinityUI.dll",
     "SKSE/Plugins/LocalMapUpgrade.dll",
     "Interface/InfinityUI/HUDMenu/HUDMovieBaseInstance/Minimap.swf",
+    "Interface/InfinityUI/HUDMenu/HUDMovieBaseInstance/!assets/MinimapArt.swf",
 )
 
 
