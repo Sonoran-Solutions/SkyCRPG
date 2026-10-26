@@ -1,6 +1,6 @@
 # DYL-152 / P1-03 camera feasibility spike
 
-Updated 2026-10-26. **Recommendation: continue with SmoothCam 1.8.1 as the only third-person camera writer, using an original provider-format framing preset. Do not add a second transform controller at this point.** This is a source/config feasibility result; the game route remains **NOT_RUN** and no camera behavior is accepted.
+Updated 2026-10-26. **Recommendation: continue with SmoothCam 1.8.1 as the only third-person camera writer, using an original provider-format framing preset. Do not add a second transform controller at this point.** Provider startup passed on the real host, but gameplay remains **NOT_RUN** and no camera behavior is accepted. The first owner route was interrupted by a desktop memory-pressure failure; the monitored recovery route is pending.
 
 ## Candidate route
 
@@ -21,7 +21,8 @@ For precise bow/spell aiming, compare SmoothCam's built-in ranged framing and ra
 | Emergency provider/native POV recovery controls | **PASS (static)** | SmoothCam 1.8.1 source confirms its keyboard event id is compared to `modToggleKey` and toggles `modDisabled`; the active config selects F8 (`66`) and starts enabled. Its MCM source also exposes Disable SmoothCam and Force camera to thirdperson. POV events are routed to the provider handler. Live handoff remains NOT_RUN. |
 | TDM camera auto-adjust disable value | **PASS (static)** | TDM 2.3.1 source enum: `kDisable=0`, `kDuringSprint=1`, `kAlways=2`. |
 | TDM target-lock fallback | **PASS (static)** | Source enum: `kLocked=0`, `kRelaxed=1`; no disabled enum value. Clear bindings as listed above. |
-| Open road: framing, pitch, recenter, movement | **NOT_RUN** | No game launch/deployment in this worker lane. |
+| Provider startup | **PASS (load only)** | Run20261026T071539: MCM Helper, SmoothCam, TDM and camera skeleton loaded;30-second settle, no leftovers. See shared session logs. |
+| Open road: framing, pitch, recenter, movement | **NOT_RUN** | Owner had not begun when the desktop session failed in run20261026T072045. |
 | Tight Nordic room, corridor, doorway: collision and close fallback | **NOT_RUN** | Provider collision path is retained; actual wall/floor recovery is not proven by source inspection. |
 | Melee readability and camera control | **NOT_RUN** | No gameplay session. |
 | Bow and aimed spell accuracy / activation prompts | **NOT_RUN** | No gameplay session; native POV aiming fallback needs a live check. |
@@ -36,7 +37,7 @@ Source/config PASS does not satisfy P1-03's in-game acceptance. The assigned sha
 | --- | --- | --- |
 | Skyrim | Steam 1.7.104.0 | DYL-150 environment record; worker did not launch or alter the game. |
 | SKSE | 2.3.1 Steam | DYL-150 load-only skeleton baseline. |
-| Address Library | 13 | Candidate prerequisite from DYL-151; not installed or tested by this worker. |
+| Address Library | 13 | Acquired13 and loaded with the selected providers on the shared host; package hash in dependency lock. |
 | SmoothCam | 1.8.1 Beta1.8.1; AE 1.7.99+ package line | External archive `/tmp/skycrpg-dyl151-audit/SmoothCam-Beta1.8.1.zip`; archive SHA-256 `efed5592257aa67d92beb48f9d6f8cacb00c1784491cfb9c748bec9a9ec5d07b`; inspected source checkout commit `e0afd09aff26e5849dac461252e5bffbd5b69d62`. Do not redistribute archive/DLL. |
 | TDM | 2.3.1 | Archive SHA-256 `0593379072997689f3d1db2302b0bf060c0ddc116743ab9585feaf328bec0b0f`; installed package defaults inspected from session extraction. Source audit checkout `/tmp/skycrpg-dyl151-audit/TrueDirectionalMovement`. |
 | MCM Helper | 1.6.3 | Archive SHA-256 `505af9c27062febd497be09b661d5df82e013ae4a205ffbec99698adf4503f52`. |
@@ -47,3 +48,7 @@ The candidate JSON and TDM settings fragment are original configuration; no thir
 ## Bounded game route for the integrator
 
 Use a copied exterior/interior save pair in the isolated `camera-only` profile. Record host, executable, provider versions and hashes, profile manifest, run ID and timestamped captures. Install the staged `SmoothCam.json` as the provider startup configuration; load slot 1 from MCM only if tuning/reloading the matching preset. Confirm F8 returns to the vanilla third-person camera, then check: (1) open road walk/run/sprint and recenter; (2) melee movement/readability; (3) bow, aimed spell and activation prompts with explicit close-view fallback; (4) a narrow corridor and doorway, confirming walls/floors still occlude and the camera returns closer without lockup; (5) ten overhead/native POV handoffs; (6) the paired interior/exterior transition. Stop after a first failure, record it, and only repeat after a named change. Keep crashes/aim behavior distinct from the successful load-only result in DYL-150.
+
+## Runtime interruption and retry
+
+See [session evidence](session-2026-10-26.md) for timestamps and logs. The first interactive run ended after systemd-oomd killed GNOME Shell under memory pressure; the root memory contributor is unresolved. A post-reboot launch failed because Steam was not running. Steam was restored before changed-condition run20261026T073401, which reached plugin/data-load markers under a memory watchdog. Owner gameplay report pending. Controller is available through owner playtesting; camera controller acceptance is not yet established.
