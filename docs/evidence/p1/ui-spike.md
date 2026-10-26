@@ -1,6 +1,6 @@
 # P1-04 / DYL-153 — native UI candidate
 
-2026-10-26. **Owner UI-only route and final controller correction PASS (owner-observed). Automatic compass replacement and full follower/hotbar remain open.**
+2026-10-26. **Owner UI-only route, final controller correction and combined checkpoint PASS (owner-observed). Automatic compass replacement and full follower/hotbar remain open.**
 This is an original AS2 grid/HUD patch built against external SkyUI Community
 6.11, not a screenshot or replacement inventory database. No game was launched
 or deployed by this worker. Parent owns the shared game schedule and packages.
@@ -136,13 +136,13 @@ unchanged; no Windows native build is required for these AS2 changes.
 | Source native delegate/focus preservation and fail-closed anchors | PASS |
 | Missing map loose-file prerequisite detection | PASS (expected BLOCKED report) |
 | UI-only live grid/HUD | PASS (owner screenshots show native presentation; see provenance below) |
-| Real weapon equip and unequip exactly once; counts/carry weight | PASS owner-confirmed run071034 on previous candidate; changed candidate retest NOT_RUN |
+| Real weapon equip and unequip exactly once; counts/carry weight | PASS owner-confirmed run071034 and final corrected candidate regression075205 |
 | Distinct same-base instance traits/ownership | NOT_RUN |
 | Map visible inside/outside | PASS owner-confirmed run071034 on previous candidate |
-| Precise map positioning | NOT_RUN |
+| Minimap positioning | PASS for selected upper-right placement in combined capture; other anchors/scales NOT_RUN |
 | Native compass usable with minimap hidden | PASS owner-confirmed run071034 on previous candidate |
 | Provider-absent startup recovery | NOT_RUN |
-| Combined-load smoke | NOT_RUN |
+| Combined-load smoke | PASS all8 DLLs plus owner checkpoint075556, clean exit and captures |
 | Focused controller grid/category navigation and equip/unequip regression | PASS owner-confirmed run075205 on imported-class candidate |
 | Full modal/controller/layout matrix | NOT_RUN |
 
@@ -181,6 +181,10 @@ in-game checks. No equipment silhouette, full HUD skin, new hotbar backend,
 container/barter replacement, follower command system or minimap renderer is
 claimed. This candidate makes the native integration concrete and reviewable;
 DYL-153 remains open until its required gameplay proof exists.
+
+## Historical build/retest notes
+
+The following sections retain the sequence of attempts and their then-current results. The current acceptance table above and final075205/075556 records supersede earlier pending/NOT_RUN statuses.
 
 ## Acquired-package reconciliation (before gameplay)
 
@@ -489,9 +493,7 @@ interfaces were probed only, not accepted as implemented. The minimap's native
 compass remains visible: automatic readiness-driven compass replacement is still
 open, as are provider-absent startup, distinct same-base ownership/instance
 fixtures and the full modal/controller/layout matrix. Previous owner run071034
-records map inside/outside and usable compass with map hidden. Combined smoke
-is parent-owned and was running as075556 when this report was updated; no result
-is inferred here. No Phase1 contract is frozen and no Phase2 work is included.
+records map inside/outside and usable compass with map hidden. Combined smoke075556 subsequently passed startup and the owner checkpoint with captures; see final section. No Phase1 contract is frozen and no Phase2 work is included.
 
 Reviewable focused provenance is committed in
 [ui-spike-provenance](ui-spike-provenance/build.json): exact bounded compiler
@@ -503,3 +505,10 @@ commands/PIDs/input-output hashes and exit results,
 [source provenance](ui-spike-provenance/source-provenance.json). These small
 records contain no SWFs, assets, third-party source dumps or exported movie trees.
 Parent's shared indexed runtime logs supply the separate native startup/run proof.
+
+
+## Combined checkpoint075556 and final restoration
+
+**PASS** all8 DLLs loaded and owner combined Camera+UI checkpoint, clean QUIT/exit0, no leftover processes. Owner states the build looks good. [Grid/native item preview](captures/combined-20261026-grid.png) shows selected Footwraps, native preview/weight, controller action prompts and293/300 carry weight. [Overhead/minimap capture](captures/combined-20261026-topdown-minimap.png) shows map/HUD alongside Camera; [capture provenance](captures/combined-captures.json) preserves original bytes and timestamps/hashes. Owner also reports camera pitch resets after cell loading while zoom persists; this is a Camera lifecycle failure explicitly deferred without blocking these PRs, recorded in DYL-159.
+
+Final UI-only artifact digest`1e25367e992e029be27738c707a5b6424fe5bbd5e81d1d7ccab944b09fc7af5e`; combined`8a31a81a18b196cf51431f570d609f8b0cf0375f967299ac75a22488432ef307`. See [canonical file hashes](tested-artifacts.json), [native build inputs](native-package-inputs.json), provider package hashes in dependency-lock.md and indexed runtime logs. All146 pre-existing original/copied files unchanged, original INIs/plugin list restored, no active profile/game process. DYL-153 is In Review; PR4 remains unmerged with auto-merge disabled. No Phase2 work started.
