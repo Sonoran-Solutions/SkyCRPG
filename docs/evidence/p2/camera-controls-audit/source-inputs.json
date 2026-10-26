@@ -78,5 +78,33 @@
   {
     "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/RE/P/PlayerCamera.cpp",
     "sha256": "29b25e2ed41d8be204f3fb687c7e37e3297f537a4c84805dc44dbdcadf776e55"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/P/PlayerControls.h",
+    "sha256": "6e551fc95b179698e98e388d06bb3d8e8c4bdbbb912da0aa47aa8a2d9fceaae8"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/P/PlayerControlsData.h",
+    "sha256": "1fa08b120bd59a31ad73360dcc611bef526a7a4636e30022edeef7cc884e2155"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/C/ControlMap.h",
+    "sha256": "332a4f3aaa7e26668f1586f638911ae5340c70323fd5b7155003f934eb07fda8"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/U/UserEvents.h",
+    "sha256": "10d4f29ba8789bdb6a2467513a7ae679511fd666461300d9e970eb1735c3aea8"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/RE/C/ControlMap.cpp",
+    "sha256": "676b21b318006403eb3d0e0d4c873f9b03980edccceec7e8befaaa20e407563c"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/camera-layout-audit.py",
+    "sha256": "11441462a137054226d4b4fe40baffa8bfd298f6226720d25411771fd0b36926"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/REL/RuntimeDataAccessors.h",
+    "sha256": "be9a4b8942b7f519fe3faa55a6fb69d67d7e60fedacb30909e715f7a0010463e"
   }
 ]

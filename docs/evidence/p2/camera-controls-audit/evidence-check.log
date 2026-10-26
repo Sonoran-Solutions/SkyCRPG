@@ -1,6 +1,9 @@
 {
   "result": "PASS",
   "checks": [
+    "JSON layout-offsets.json",
+    "JSON layout-audit-job.json",
+    "JSON initial-ci.json",
     "JSON native-audit-job.json",
     "JSON evidence-check-job.json",
     "JSON source-inputs.json",
@@ -11,11 +14,14 @@
     "link camera-controls-audit/native-mapping.json",
     "link camera-controls-audit/source-inputs.json",
     "link ../../../modules/camera/include/third_party/NOTICE.md",
+    "link camera-controls-audit/layout-audit-job.json",
+    "link camera-controls-audit/layout-offsets.json",
     "link camera-controls-audit/native-audit-job.json",
     "link camera-controls-audit/policy-test-job.json",
     "link camera-controls-audit/policy-test.log",
     "link camera-controls-audit/evidence-check-job.json",
     "link camera-controls-audit/evidence-check.log",
+    "link camera-controls-audit/initial-ci.json",
     "source /srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/include/SmoothCamAPI.h",
     "source /srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/include/config.h",
     "source /srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/source/thirdperson.cpp",
@@ -36,6 +42,13 @@
     "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/SKSE/Interfaces.cpp",
     "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/SKSE/API.cpp",
     "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/RE/P/PlayerCamera.cpp",
+    "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/P/PlayerControls.h",
+    "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/P/PlayerControlsData.h",
+    "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/C/ControlMap.h",
+    "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/U/UserEvents.h",
+    "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/RE/C/ControlMap.cpp",
+    "source /srv/storage/Projects/SkyCRPG/session-20261026/camera-layout-audit.py",
+    "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/REL/RuntimeDataAccessors.h",
     "candidate modules/camera/CMakeLists.txt",
     "candidate modules/camera/src/plugin.cpp",
     "candidate modules/camera/include/policy.h",
@@ -43,5 +56,5 @@
     "candidate modules/camera/config/SkyCRPG_Camera.ini",
     "single guarded native hook installation; no raw transform assignments; logger/preflight marker"
   ],
-  "count": 41
+  "count": 54
 }
