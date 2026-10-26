@@ -31,6 +31,13 @@ SOURCES = {
     "Common/skyui/components/list/TabularListEntry.as": "52093027024bc0b089a7c752be6edcd3fa3767cda9f1d65a7e9f14e4432dd8e5",
     "Vanilla/HUDMenu.as": "de9d6d2a3e5bca549b2a699fa334d32396f9671ab68a81e9a185ce9ec45a5eb5",
 }
+# InventoryLists is defined in both the menu and its imported symbol movie.
+# Patch both: the registered external symbol supplies the live panel instance.
+TARGETS = {
+    "inventorymenu.swf": ["ItemMenus/InventoryMenu.as", "ItemMenus/InventoryLists.as"],
+    "skyui/inventorylists.swf": [n for n in SOURCES if n.startswith("Common/")] + ["ItemMenus/InventoryLists.as"],
+    "hudmenu.swf": ["Vanilla/HUDMenu.as"],
+}
 
 
 def sha(path):
@@ -96,18 +103,13 @@ def main():
     for name, expected in base_hashes.items():
         if sha(base / name) != expected:
             parser.error(f"Provider SWF drift: {name}")
-    targets = {
-        "inventorymenu.swf": ["ItemMenus/InventoryMenu.as", "ItemMenus/InventoryLists.as"],
-        "skyui/inventorylists.swf": [n for n in SOURCES if n.startswith("Common/")],
-        "hudmenu.swf": ["Vanilla/HUDMenu.as"],
-    }
     manifest = {"skyui_commit": commit, "status": "PREPARED", "source_sha256": SOURCES,
                 "base": "Nexus6.11 acquired BSA" if args.nexus_interface else "GitHub source-tree SWFs (compile probe)",
                 "patch_sha256": {p.name: sha(p) for p in (ROOT / "scaleform").glob("*.inc")},
                 "ffdec_cli_sha256": sha(provider / "tools/FFDec/ffdec-cli.jar"),
                 "inputs": {}, "outputs": {}, "jobs": []}
     out.mkdir(parents=True)
-    for target, names in targets.items():
+    for target, names in TARGETS.items():
         stage = out / "staging" / target
         for name in names:
             file = stage / "__Packages" / name.split("/", 1)[1]

@@ -12,6 +12,12 @@ spec.loader.exec_module(builder)
 
 
 class PatchContract(unittest.TestCase):
+    def test_imported_panel_and_menu_both_receive_routing(self):
+        # Real SWF linkage: menu imports symbol InventoryLists from the external
+        # list movie, which registers it to its own InventoryLists class.
+        for movie in ("inventorymenu.swf", "skyui/inventorylists.swf"):
+            self.assertIn("ItemMenus/InventoryLists.as", builder.TARGETS[movie])
+
     def test_ambiguous_or_missing_anchor_refused(self):
         for text in ("nothing", "anchor anchor"):
             with self.assertRaises(ValueError):

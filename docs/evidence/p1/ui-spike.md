@@ -372,3 +372,59 @@ escape. Confirm once after returning to a selected weapon, then confirm once
 again; record equip/unequip/count/weight before and after. Check category-entry
 Confirm itself performs no item action. Parent owns process tracking, deployment,
 logs and teardown, followed by any combined smoke.
+
+## Controller retest074633 — imported class omission
+
+**FAIL (owner-observed)**: after parent deployed exact corrected hashes
+`inventorymenu5b474c27…` and `inventorylistsbee2ca0f…`, Right still changed
+Iron Arrow's category to Apparel. The parent confirmed the deployed winners
+and a clean prior undeploy. Run20261026T074633 quit cleanly without leftovers.
+The earlier source/stub tests and single-movie bytecode check did not prove
+which duplicate class supplied the live imported panel.
+
+Actual acquired SWF binary tags establish the missing linkage:
+
+- `inventorymenu.swf` ImportAssets2 tag71 imports symbol **InventoryLists**,
+  local character5, from **skyui/InventoryLists.swf**. It separately exports
+  its own `__Packages.InventoryLists` definition as character11.
+- `skyui/inventorylists.swf` exports the **InventoryLists** symbol as character100
+  and its own `__Packages.InventoryLists` as character113. Its initialization
+  calls `Object.registerClass("InventoryLists",InventoryLists)`.
+- The failed candidate's decompiled menu definition had corrected routing,
+  while its imported movie's definition still had the original category-first
+  handler. This is a concrete packaging omission. Source `swfsources.cmake`
+  also includes InventoryLists.as in both movie targets.
+
+Changed hypothesis/correction: compile the original routing patch into **both**
+InventoryLists definitions. No new dispatcher, synthetic activation or inventory
+backend is introduced. Both source variants retain all native delegate/focus
+calls. Non-player menus sharing the imported panel stay behind the existing
+`itemList.skycrpgGrid` guard. Their cross-menu lifecycle still needs runtime
+coverage; compilation does not establish runtime ownership or acceptance.
+
+Builder `TARGETS` now explicitly includes `ItemMenus/InventoryLists.as` in
+**inventorymenu.swf and skyui/inventorylists.swf**. A fifth focused test fails
+if either target omits it. The source callback/navigation test still passes.
+This addresses the confirmed imported movie boundary rather than repeating
+the same build input/hypothesis. No extra diagnostics or action hooks were needed.
+
+New candidate:
+`/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/Data/Interface/`.
+All three compile jobs **PASS** sequentially at512MiB heap/600s limit. Five source
+checks and the actual-source callback/navigation logic check **PASS**. Bounded
+export/decompile now verifies routing before category handling in **both**
+compiled `__Packages.InventoryLists` classes, retained imported-symbol class
+registration and unchanged two native ItemSelect call sites. Job manifests,
+logs, hashes and `bytecode-check.json` persist beside the candidate. Raw acquired
+linkage extraction is `ui-controller-fix/actual-class-linkage.json`.
+
+| Data/Interface winner | SHA-256 |
+| --- | --- |
+| inventorymenu.swf (unchanged from failed correction) | `5b474c27fd84f1e82022bde4b79184d14b1334bf4f5f8ec8739d8e4b47215f80` |
+| skyui/inventorylists.swf (new imported-class correction) | `7f0ce7fa3eec3845fc9cfce3776beba7f89cf2e6b9fe21d2851886deca852cd8` |
+| hudmenu.swf (unchanged) | `c42e7a26bb276bc8ee0a2f877c2248e8bb8bcd73bee9798119ae3ebdddde3e38` |
+
+Owner retest of this new imported-class candidate is **NOT_RUN**. Parent owns
+deployment, controller/action checks and any combined smoke. Previous owner
+UI/action/map PASS remains valid only for its recorded candidate; neither the
+failed correction nor this compiled correction is promoted to gameplay PASS.
