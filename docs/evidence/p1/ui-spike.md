@@ -45,7 +45,11 @@ Verified primary interfaces are in the pinned external SkyUI files:
 `InventoryDataSetter.as` and `Vanilla/HUDMenu.as`.
 [Source tag](https://github.com/doodlum/SkyUI-Community/tree/v6.11/source/actionscript).
 
-## Reproduction and bounded jobs
+## Current reproduction
+
+Use the pinned SkyUI source checkout and the acquired Nexus6.11 BSA Interface directory (not the different GitHub binary files). Run `python3 modules/ui/tools/build_scaleform.py --skyui <source-checkout> --nexus-interface <extracted-Interface> --java <Java17-executable> --out <new-external-directory>`. The builder verifies source/base hashes, compiles with a512MiB heap, and records commands/PIDs/timeouts/logs and output hashes in build.json. Final outputs: inventorymenu`5b474c27fd84f1e82022bde4b79184d14b1334bf4f5f8ec8739d8e4b47215f80`; inventorylists`7f0ce7fa3eec3845fc9cfce3776beba7f89cf2e6b9fe21d2851886deca852cd8`; HUD`c42e7a26bb276bc8ee0a2f877c2248e8bb8bcd73bee9798119ae3ebdddde3e38`. Stage them over required SkyUI in an isolated UI-only profile with the pinned map trio. Use the clean Helgen fixture and the controller/action route below. Persisted tested candidate: `/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/`.
+
+## Initial build history and bounded jobs
 
 Prerequisites: external SkyUI source **v6.11**, commit
 `3d537a366f1a45c14a7012ea0aa00be18108f073`, bundled FFDec **26.0.0**, Java 17.
