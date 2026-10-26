@@ -53,8 +53,8 @@ class Clip {
     this[name] = clip;
     return clip;
   }
-  createTextField(name) {
-    this[name] = new TextField();
+  createTextField(name, depth, x, y, width, height) {
+    this[name] = Object.assign(new TextField(), {_x: x, _y: y, _width: width, _height: height});
     // MovieClip.createTextField is intentionally modeled as void; callers must
     // address the created field by its native timeline member name.
   }
@@ -158,6 +158,12 @@ assert.equal(originalStatus.meters.meter0.value.appliedFormat.args[0], '$Everywh
 assert.equal(originalStatus.meters.meter0.value.appliedFormat.args[1], 12, 'future meter text inherits the HUD value size');
 assert.equal(originalStatus.meters.meter0.value.appliedFormat.args[2], 0xE8E1D1, 'future meter text inherits the HUD value color');
 assert.equal(originalStatus.meters.meter0.bar._y, 18, 'bar sits below its label');
+for (let i = 0; i < 3; i++) {
+  const meter = originalStatus.meters['meter' + i];
+  assert.equal(meter.value._x + meter.value._width, 136, 'right-aligned percent ends at its own 136px bar edge');
+  if (i < 2) assert.equal(originalStatus.meters['meter' + (i + 1)]._x - (meter._x + meter.value._x + meter.value._width), 6,
+    'percentage right edge leaves 6px before next meter label origin');
+}
 assert.equal(menu.Health._visible, false, 'custom bars replace native duplicates only after live data');
 assert.equal(menu.Magica._visible, false);
 assert.equal(menu.Stamina._visible, false);

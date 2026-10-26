@@ -20,3 +20,5 @@ Resource snapshot correction: `resource-*` files record the changed candidate an
 `geometry-*` records the bounded AS2 diagnostic-only follow-up and latest HUD SWF hash. Native source remains `e49fc30`.
 
 `coordinates-*` records the Stage-to-HUDMenu coordinate correction; `runtime-route-2-*` preserves the failed second route proving valid data but an offscreen panel. Latest SWF identity is in the coordinate build manifest; native remains `e49fc30`.
+
+`runtime-route-3-*` preserves bounded UI-only live resource/layout/menu PASS, including original paired sprint captures. `spacing-*` records the later AS2-only 136px text-edge correction; that new SWF awaits combined smoke.

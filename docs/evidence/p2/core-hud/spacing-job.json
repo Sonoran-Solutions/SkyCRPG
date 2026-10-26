@@ -1,0 +1,18 @@
+{
+  "owner": "ui_native DYL-160",
+  "purpose": "Validate percentage field right edge136 and6px gap to next meter label; preserve existing resource/coordinate contracts",
+  "command": [
+    "/home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "modules/ui/tests/hud_contract.js",
+    "modules/ui",
+    "/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11"
+  ],
+  "timeout_seconds": 120,
+  "deadline": "120s from launch",
+  "log": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-resource-validation/spacing-harness.log",
+  "completion": "exit0 and harness PASS",
+  "cleanup": "kill owned process on timeout; retain logs",
+  "pid": 195619,
+  "exit_code": 0,
+  "elapsed_seconds": 0.064
+}

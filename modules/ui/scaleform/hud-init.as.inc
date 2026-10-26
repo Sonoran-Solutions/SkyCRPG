@@ -65,7 +65,7 @@
             skycrpgMeter.label.selectable = false;
             skycrpgMeter.label.text = skycrpgLabels[skycrpgIndex];
             skycrpgMeter.label.setTextFormat(new TextFormat("$EverywhereFont", 12, 0xD8C69B, true));
-            skycrpgMeter.createTextField("value", 2, 112, 0, 32, 16);
+            skycrpgMeter.createTextField("value", 2, 104, 0, 32, 16);
             skycrpgMeter.value.selectable = false;
             skycrpgMeter.value.autoSize = "right";
             // drawPercent assigns text later, so use the future-text format.
