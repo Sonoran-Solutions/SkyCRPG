@@ -1,13 +1,15 @@
 {
-  "source_commit": "9100a1d952c8f47c541bc2d9fa7c6082958f4db5",
+  "source_commit": "6544f75e749d46a3eeaa6b8728091f64964aae19",
   "source_branch": "phase2/dyl-160-hud",
-  "native_build_status": "INITIAL_FAIL_C1189; include order fixed in this source commit; rerun pending",
+  "native_build_status": "Parent CI run 40378242755 targeted the include-order revision; its result is not asserted here. Latest source commit 6544f75 adds exact SKSE 2.3.1 guard and awaits native build.",
   "settings_parser_sha256": "0582979421798c58f34295692883adadc2f40c8d895217e7f0685fe47a49a2b1",
-  "address_library_pin_sha256": "88d6093098a4f8794ea5518b51e6fd83110d2d5d1c502727e48736deeffea000",
   "module_cmake_sha256": "5617e14011d0211e1555d80e7b399416fa57e79faebf1ca1a87ee057fab8fdb3",
-  "scope_note": "Native source includes exact Address Library prerequisite guard and atomically publishes Scaleform config with hudEnabled last. Scaleform SWF source and hash are unchanged from earlier build manifest.",
-  "plugin_cpp_sha256": "9102247f227e54eb77a43db79a831aede6b7a2c44cd574125267d1e0749c9d0d",
-  "source_contract_test_sha256": "fb324c96f2124bba9565b99b3a8bfe2dc8d3a5b6ef047387bc10fb62fec41aca",
+  "scope_note": "Native source includes exact Address Library and SKSE 2.3.1 prerequisite guards and atomically publishes Scaleform settings with hudEnabled last. Latest native source hashes are listed above.",
+  "plugin_cpp_sha256": "73c7ef6598cfb931d90b1919496bc4bd0edb3f0e4dbbae68df05b9abc64ee7b3",
+  "source_contract_test_sha256": "398a57c84f05e366ef9077347e3d6a2bc465f276c584a8d2d5b208c92e8068af",
   "include_order_fix": "CommonLib SKSE/SKSE.h and RE/GFx headers precede skycrpg/skeleton.h; pinned REX/W32/BASE.h forbids prior Windows API inclusion.",
-  "address_library_pin_header_sha256": "88d6093098a4f8794ea5518b51e6fd83110d2d5d1c502727e48736deeffea000"
+  "address_library_pin_header_sha256": "88d6093098a4f8794ea5518b51e6fd83110d2d5d1c502727e48736deeffea000",
+  "skse_version_pin_header_sha256": "69f42e622886611d5f79c26d60f4a957ae86382c2e2fe644b4d51434e88a0abe",
+  "loader_guard": "Reject null interface or skseVersion other than exact SKSE 2.3.1 (0x02030010) before LoadSkeleton and CommonLib initialization; compile-time assertion matches shared kSKSE_2_3_1.",
+  "callback_refresh": "FadeOutStamina records the live aPercent as lastStaminaMeterPercent and marks receipt before the unchanged native fade/current/target assignments."
 }

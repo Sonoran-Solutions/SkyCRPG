@@ -1,3 +1,5 @@
-Command: /srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java -Xmx512m -Djava.awt.headless=true -jar /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/tools/FFDec/ffdec-cli.jar -export script /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/export/hud /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/Data/Interface/hudmenu.swf
-Result: PASS, exit code 0, export time 0.890s
-Verified output: __Packages/HUDMenu.as; callback receipt flags, post-Stage.scaleMode init and post-ShowElements synchronization present.
+Command: /srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java -Xmx512m -Djava.awt.headless=true -jar /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/tools/FFDec/ffdec-cli.jar -export script /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026d/export/hud /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026d/Data/Interface/hudmenu.swf
+Result: PASS, exit code 0, elapsed 0.871s.
+Static export checks: `setNewTextFormat` is present for the dynamically updated percent field; injected `FadeOutStamina` hook marks receipt and refreshes last stamina percent before native fade/current/target code. FFDec emitted an external-asset import warning during export; the HUDMenu script export completed.
+Exported HUDMenu.as SHA-256: e2fe2be18e6fdb5411b4cc90c1804e5bac8ac6111ef94b1e0aa9fd855f534a8c.
+Export inspection is static; it is not an engine/runtime test. Exported third-party source remains outside Git.

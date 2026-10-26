@@ -1,0 +1,31 @@
+{
+  "review": "PASS_SOURCE_REVIEW_AND_HARNESS; RUNTIME_NOT_RUN",
+  "pinned_as2_api_source": {
+    "path": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/commonlib-7.2.0/Flash/AS2/CLIK/TextField.as",
+    "lines": "66-73",
+    "detail": "The intrinsic TextField API declares getNewTextFormat/setNewTextFormat separately from getTextFormat/setTextFormat.",
+    "sha256": "0cb0a1f5021b1c3a074b57eed24321be8bad17aae8014379257a3a670b48fc94"
+  },
+  "bundled_usage_examples": [
+    {
+      "path": "/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/source/actionscript/HUDWidgets/skyui/widgets/activeeffects/ActiveEffect.as",
+      "lines": "134-140",
+      "detail": "SkyUI sets a new format then assigns later text.",
+      "sha256": "eb592e0f91b269ed00ff9c5ad5efa13f047734ced146859d428e3d43d372e3d5"
+    },
+    {
+      "path": "/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/source/actionscript/Vanilla/Console.as",
+      "lines": "39-47",
+      "detail": "SkyUI saves and applies each field new format before assigning initial text.",
+      "sha256": "26185b603d41549f696968a15718a71656848724cc75754106a3ca2b8d7fe9c9"
+    }
+  ],
+  "hud_change": "meter value uses setNewTextFormat before drawPercent performs later value.text assignments; title, labels and party status strings are assigned before setTextFormat.",
+  "verification": "test_scaleform_contract.py checks ordering; hud_contract.js models current-text vs future-text formats and asserts the displayed percentages inherit font/size/color; compiled hudmenu.swf export contains setNewTextFormat.",
+  "source_commit": "6544f75e749d46a3eeaa6b8728091f64964aae19",
+  "scaleform_sha256": "5497d93e5eaa1cd5bed99305f4f7e2f769e5ae158b8ec0241fc11243badf3e2e",
+  "limitations": [
+    "Intrinsic declaration and bundled usage are source references, not a running Scaleform runtime.",
+    "No proprietary SWF or exported source is stored in this evidence directory."
+  ]
+}

@@ -12,7 +12,7 @@
   "base": "Nexus6.11 acquired BSA",
   "patch_sha256": {
     "grid-methods.as.inc": "c1c1a2ddecc5e2a1b76591604cd385b10dd49f9b2d9ecdf5e57100abc41afbfb",
-    "hud-init.as.inc": "544adbe7bacc7688d0238fc54de85ace41f469cd22bba3dbf9d25019377539bb",
+    "hud-init.as.inc": "d8a733cd40d68a97d9291e4774e4e21dd61bc4b5df5e646c80927e5e9398bd3a",
     "grid-routing.as.inc": "8922656eaed4555d63b1da1ae68a4bef2a79ad5dd4841bbc5dae0331ad1cd5ff"
   },
   "ffdec_cli_sha256": "5eb6b2bae13a2cc8905b2f8338996701e04eb651ab224043948fabbec942735e",
@@ -24,7 +24,7 @@
     "hudmenu.swf": "e8277c1fedcda3ac8c159441f4e7c55b62fbe564ec3cc1bd602b70427f0a47cf"
   },
   "outputs": {
-    "hudmenu.swf": "bef13e3819082612669ae6bcbc7a2e5cd9d0898bef7c72974f0055666e7715b6"
+    "hudmenu.swf": "5497d93e5eaa1cd5bed99305f4f7e2f769e5ae158b8ec0241fc11243badf3e2e"
   },
   "jobs": [
     {
@@ -41,17 +41,18 @@
         "abort",
         "-importScript",
         "/srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface/hudmenu.swf",
-        "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/Data/Interface/hudmenu.swf",
-        "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/staging/hudmenu.swf"
+        "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026d/Data/Interface/hudmenu.swf",
+        "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026d/staging/hudmenu.swf"
       ],
       "timeout_seconds": 600,
       "owner": "DYL-160",
-      "log": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/hudmenu.swf.log",
+      "log": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026d/hudmenu.swf.log",
       "completion": "zero exit and nonempty SWF",
       "cleanup": "kill compiler process on timeout; retain logs",
-      "pid": 130895,
-      "elapsed_seconds": 0.765,
+      "pid": 154745,
+      "elapsed_seconds": 0.715,
       "exit_code": 0
     }
-  ]
+  ],
+  "repo_source_commit": "6544f75e749d46a3eeaa6b8728091f64964aae19"
 }

@@ -1,6 +1,6 @@
 {
   "owner": "DYL-160 UI worker",
-  "source_commit": "9100a1d952c8f47c541bc2d9fa7c6082958f4db5",
+  "source_commit": "6544f75e749d46a3eeaa6b8728091f64964aae19",
   "bounded_jobs": [
     {
       "purpose": "Focused settings, exact pinned source transform, and HUD lifecycle/data/layout validation",
@@ -121,6 +121,53 @@
         "diff_check": "PASS"
       },
       "native_rerun": "NOT_RUN by UI worker; parent owns native build."
+    },
+    {
+      "purpose": "Validate AS2 future-text formatting, native stamina fade synchronization and exact SKSE version guard; rebuild/export only HUD movie.",
+      "recorded_before_run": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-text-fade-skse-job.json",
+      "tests": {
+        "source_contracts": {
+          "command": "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+          "timeout_seconds": 600,
+          "result": "PASS, 13 tests, 0 skipped"
+        },
+        "hud_harness": {
+          "command": "/home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node modules/ui/tests/hud_contract.js modules/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11",
+          "timeout_seconds": 600,
+          "result": "PASS after correcting stale post-fade test expectation; actual native callback bodies modeled"
+        },
+        "parser_and_pin": {
+          "command": "g++ -std=c++20 -Wall -Wextra -Werror modules/ui/tests/hud_settings_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test && /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test",
+          "timeout_seconds": 600,
+          "result": "PASS, exact SKSE version pin assertions and parser/address pin assertions"
+        }
+      },
+      "scaleform_build": {
+        "command": "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 modules/ui/tools/build_scaleform.py --skyui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 --nexus-interface /srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface --java /srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java --target hudmenu.swf --owner DYL-160 --out /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026d",
+        "timeout_seconds": 600,
+        "heap_mib": 512,
+        "pid": 154745,
+        "elapsed_seconds": 0.715,
+        "exit_code": 0,
+        "hudmenu_sha256": "5497d93e5eaa1cd5bed99305f4f7e2f769e5ae158b8ec0241fc11243badf3e2e"
+      },
+      "static_export": {
+        "timeout_seconds": 600,
+        "heap_mib": 512,
+        "process_session_id": 1635,
+        "elapsed_seconds": 0.871,
+        "exit_code": 0,
+        "hudmenu_as_sha256": "e2fe2be18e6fdb5411b4cc90c1804e5bac8ac6111ef94b1e0aa9fd855f534a8c",
+        "command": "/srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java -Xmx512m -Djava.awt.headless=true -jar /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/tools/FFDec/ffdec-cli.jar -export script /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026d/export/hud /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026d/Data/Interface/hudmenu.swf"
+      },
+      "logs": [
+        "source-tests.log",
+        "hud-harness.log",
+        "settings-parser.log",
+        "hudmenu-export.log"
+      ],
+      "native_build": "No duplicate build; parent CI was already running for prior source commit. Current native commit still needs parent build.",
+      "runtime": "No Skyrim launch/deployment."
     }
   ]
 }

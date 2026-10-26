@@ -1,5 +1,3 @@
 Compile: g++ -std=c++20 -Wall -Wextra -Werror modules/ui/tests/hud_settings_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test
-Compile exit code: 0
-Run: /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test
-Run exit code: 0
-Assertions include the exact runtime payload SHA-256 accepted, archive SHA-256 and empty digest rejected.
+Compile and run exit code: 0
+Assertions cover exact Address Library digest, exact SKSE 2.3.1 version accepted, wrong SKSE version and zero rejected, plus versioned settings defaults/malformed input/clamping.
