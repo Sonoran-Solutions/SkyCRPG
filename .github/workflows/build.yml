@@ -75,6 +75,7 @@ jobs:
           path: ~/AppData/Local/vcpkg/archives
           key: windows-static-vcpkg-${{ hashFiles('vcpkg.json') }}
       - name: Cache pinned source dependency build
+        id: dependency-cache
         uses: actions/cache@v4
         with:
           path: |
@@ -98,6 +99,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/package.py --build-dir build/windows-x64-release --commit $env:SOURCE_SHA --module '${{ matrix.module }}'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # A plugin compile error must not discard a successful source dependency build.
+      - name: Preserve dependency cache on a failed adapter build
+        if: failure() && steps.dependency-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/windows-x64-release/_deps
+            build/windows-x64-release/vcpkg_installed
+          key: commonlib-static-ae-${{ runner.os }}-${{ env.ImageVersion }}-${{ hashFiles('cmake/CommonLib.cmake', 'vcpkg.json') }}
       - uses: actions/upload-artifact@v5
         with:
           name: skycrpg-${{ matrix.module }}-${{ env.SOURCE_SHA }}
