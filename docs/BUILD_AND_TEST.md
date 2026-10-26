@@ -26,6 +26,7 @@ Status (2026-10-25, P1-01 / DYL-150): Windows x64 build, packaging and isolated 
 | `shared/include/skycrpg/skeleton.h` | Build-time header: the SKSE plugin ABI subset plus the load-log writer. Each DLL compiles its own copy, and nothing is exported between the modules. |
 | `tools/package.py` | Deterministic archives, manifests, `SHA256SUMS`, independence checks |
 | `tools/profile.py`, `profiles/profiles.json` | Isolated baseline/camera-only/ui-only/combined profiles on the Proton host |
+| `tests/test_profile_tool.py`, `.github/workflows/profile-tool.yml` | Fixture checks for the profile tool (no game) |
 | `.github/workflows/build.yml` | Windows x64 build, reproducibility check, packaging, artifacts |
 
 The skeletons are plain SKSE plugins. Each exports `SKSEPlugin_Version`, pinned to runtime 1.7.104 with SKSE 2.3.1 as the minimum, plus `SKSEPlugin_Load`. They use no game addresses or structures, so they need neither CommonLib nor Address Library, and the DYL-151 stack choice stays open. On load, each writes its own log and reads its own settings file, then does nothing else.
@@ -71,7 +72,9 @@ python tools/package.py --build-dir build/windows-x64-release --commit <sha>
 Rules the tool enforces:
 
 - It verifies the recorded 1.7.104.0 exe hash before deploying.
-- It never overwrites a file it does not own. Every written file and directory is recorded in `profiles/active.json`. `undeploy` removes exactly those files, after re-checking their hashes.
+- It validates the whole deployment before the first write. SKSE and archive entries must be relative paths, free of `..`, backslashes, drive letters and symlinks, and they must resolve inside the game directory (SKSE executables) or `Data/` (everything else). No two sources may claim the same path, compared case-insensitively as Wine does. It never overwrites a file it does not own.
+- Every file and directory is recorded in the `profiles/active.json` journal **before** it is created. Files are written to a `*.skycrpg-partial` temporary and hard-linked into place without overwriting. A deploy interrupted at any point is recovered by a normal `undeploy`.
+- `undeploy` removes only paths whose content still matches what the tool wrote. That includes `SkyrimCustom.ini`, which must match the exact tool-written bytes. Any changed path is kept and reported. The command exits 3 and the profile is marked `needs_reconciliation`, which blocks the next deploy. Inspect the kept paths, then run `undeploy --release-kept`.
 - Only one profile is deployed at a time. `launch` refuses while any `SkyrimSE.exe` is running.
 - Saves are isolated through a tool-owned `SkyrimCustom.ini` (`SLocalSavePath=SkyCRPG\<profile>\Saves\`). This lies outside the Steam Cloud root `My Games/Skyrim Special Edition/Saves`, so test saves are not synced and the owner's saves are only ever read (copied by `init`).
 - Every launched process carries a `SKYCRPG_RUN_ID` environment tag. Cleanup stops only tagged processes and then confirms they are gone.
@@ -95,7 +98,31 @@ python3 -I tools/profile.py launch --until-loaded --timeout 300 --settle 30
 python3 -I tools/profile.py undeploy
 ```
 
-`launch --until-loaded` returns `LOADED` once a fresh `skse64.log` and the profile's module logs exist while `SkyrimSE.exe` runs. It then waits `--settle` seconds and stops the run. `launch --interactive --timeout 1200` waits for the player to quit, which is the 20-minute route budget. Each run is collected under `<profile>/runs/<timestamp>/`, with `run.json` (command, PID, result, log hashes, leftover processes), SKSE/module logs and the Proton log. Proton logs contain local paths; keep them out of the repo.
+`launch --until-loaded` records `LOADED` only when positive markers newer than the launch are present while `SkyrimSE.exe` runs. The markers are:
+
+- SKSE 2.3.1 initialized for runtime `01070680`;
+- data load reached (message 8);
+- `plugin <package>.dll (...) loaded correctly` for each package in the profile;
+- each module log's `runtime check: PASS`.
+
+The markers are re-checked after `--settle` seconds, and then the run is stopped. Otherwise the result is `EXITED` (the process ended first), `TIMEOUT`, or `LOAD_FAILED` (logs exist but a marker is missing or rejected); `run.json` lists the missing markers. `launch --interactive --timeout 1200` waits for the player to quit, which is the 20-minute route budget; it succeeds (`QUIT`) only if the load markers were verified before the player quit. Each run is collected under `<profile>/runs/<timestamp>/`, with `run.json` (command, PID, result, log hashes, leftover processes), SKSE/module logs and the Proton log. Proton logs contain local paths; keep them out of the repo.
+
+Exit status: 0 success; 1 error, refused deploy or unsuccessful launch; 2 processes from the run still alive after cleanup; 3 undeploy kept changed paths. Automation must treat any nonzero status as a failed check.
+
+**Fixture checks.** `tests/test_profile_tool.py` runs the tool against a temporary fake game tree and fake launch processes; it never touches a real install. It covers:
+
+- traversal, absolute, backslash, colliding and symlinked paths are refused with zero writes;
+- a deploy/undeploy round trip leaves the game tree unchanged;
+- a preexisting identical file is left in place;
+- an edited `SkyrimCustom.ini` or a changed deployed file is preserved;
+- an interruption at each write stage is recoverable;
+- launch outcomes: verified load, early exit, timeout, rejected plugin, stale logs, and interactive quit with and without a verified load.
+
+The `profile-tool` workflow runs these checks on `ubuntu-24.04` when the tool, profiles or tests change (10-minute budget). To run them locally:
+
+```bash
+python3 -I -m unittest discover -s tests -v
+```
 
 Side effects outside the tool's manifest: on its first launch the game itself created `Skyrim.INI` and `SkyrimPrefs.ini` in My Games, and `Creations/`, `Mods/` and `Data/ShaderCache/` in the install. That is normal first-run behavior. Collected module logs also remain in `My Games/.../SKSE/` between runs; `launch` only accepts logs newer than its own start.
 
@@ -119,7 +146,7 @@ Source and artifacts: commit `ec34e4d717ed6ad145341e6d543255fbd2266fec`, [CI run
 | Combined minimal load | PASS (load only) | Both plugins loaded correctly (handles 1 and 2); separate logs |
 | Baseline outdoor/interior route | NOT_RUN | Owner will play it; procedure below |
 
-Log excerpts and hashes are in [environment.md](evidence/p1/environment.md#p1-01-load-evidence). A load PASS proves only that SKSE loaded the plugin and the game reached data load under this stack. It says nothing about camera behavior, inventory integrity or provider compatibility.
+The load checks above ran with the profile tool as of `ec34e4d` plus the log-collection fix. The later safety/reporting rewrite (review of PR #1) has not been rerun against the game. Its positive load markers were checked offline against the four real run logs: all four satisfy their own profile's markers, and camera-only logs fail the ui-only markers. Log excerpts and hashes are in [environment.md](evidence/p1/environment.md#p1-01-load-evidence). A load PASS proves only that SKSE loaded the plugin and the game reached data load under this stack. It says nothing about camera behavior, inventory integrity or provider compatibility.
 
 ## Baseline route (owner, NOT_RUN)
 
