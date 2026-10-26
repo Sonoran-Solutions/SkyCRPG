@@ -1,7 +1,7 @@
 {
-  "source_commit": "6544f75e749d46a3eeaa6b8728091f64964aae19",
+  "source_commit": "48bc91a52bf8e7577726ec061a081e1b92b0d5f5",
   "source_branch": "phase2/dyl-160-hud",
-  "native_build_status": "Parent CI run 40378242755 targeted the include-order revision; its result is not asserted here. Latest source commit 6544f75 adds exact SKSE 2.3.1 guard and awaits native build.",
+  "native_build_status": "PASS in workflow run 40380891419; package uploaded. Workflow itself failed only on diagnostics upload glob (EPERM); exact-path workflow fix commit 33a1454 awaits verification.",
   "settings_parser_sha256": "0582979421798c58f34295692883adadc2f40c8d895217e7f0685fe47a49a2b1",
   "module_cmake_sha256": "5617e14011d0211e1555d80e7b399416fa57e79faebf1ca1a87ee057fab8fdb3",
   "scope_note": "Native source includes exact Address Library and SKSE 2.3.1 prerequisite guards and atomically publishes Scaleform settings with hudEnabled last. Latest native source hashes are listed above.",
@@ -11,5 +11,11 @@
   "address_library_pin_header_sha256": "88d6093098a4f8794ea5518b51e6fd83110d2d5d1c502727e48736deeffea000",
   "skse_version_pin_header_sha256": "69f42e622886611d5f79c26d60f4a957ae86382c2e2fe644b4d51434e88a0abe",
   "loader_guard": "Reject null interface or skseVersion other than exact SKSE 2.3.1 (0x02030010) before LoadSkeleton and CommonLib initialization; compile-time assertion matches shared kSKSE_2_3_1.",
-  "callback_refresh": "FadeOutStamina records the live aPercent as lastStaminaMeterPercent and marks receipt before the unchanged native fade/current/target assignments."
+  "callback_refresh": "FadeOutStamina records the live aPercent as lastStaminaMeterPercent and marks receipt before the unchanged native fade/current/target assignments.",
+  "native_code_commit": "6544f75e749d46a3eeaa6b8728091f64964aae19",
+  "plugin_dll_sha256": "75edeb3148b47e796a4fc4c2e66c1d9497d3a163398771569417b6f0c0457876",
+  "package_archive_sha256": "dff065973160a38a529c2aec175dbfe1926c30953583520da7191a34f2bca385",
+  "package_manifest_sha256": "a262fd2008df89e9fd6f09ed5a68c260879023126e707575ff73982fdc523319",
+  "ci_artifact_id": "12677992408",
+  "runtime": "NOT_RUN"
 }

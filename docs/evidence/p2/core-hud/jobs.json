@@ -1,6 +1,6 @@
 {
   "owner": "DYL-160 UI worker",
-  "source_commit": "6544f75e749d46a3eeaa6b8728091f64964aae19",
+  "source_commit": "48bc91a52bf8e7577726ec061a081e1b92b0d5f5",
   "bounded_jobs": [
     {
       "purpose": "Focused settings, exact pinned source transform, and HUD lifecycle/data/layout validation",
@@ -168,6 +168,31 @@
       ],
       "native_build": "No duplicate build; parent CI was already running for prior source commit. Current native commit still needs parent build.",
       "runtime": "No Skyrim launch/deployment."
+    },
+    {
+      "purpose": "Final Windows UI native build/package/upload and separate workflow diagnostic upload disposition",
+      "workflow_run_id": "40380891419",
+      "source_commit": "48bc91a52bf8e7577726ec061a081e1b92b0d5f5",
+      "native_code_commit": "6544f75e749d46a3eeaa6b8728091f64964aae19",
+      "log_paths": {
+        "build": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-final-build.log",
+        "diagnostic_failure": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-final-failure.log"
+      },
+      "results": {
+        "native_compile": "PASS",
+        "package": "PASS; archive and five entries independently match manifest",
+        "package_artifact_upload": "PASS; artifact ID 12677992408",
+        "workflow_overall": "FAIL only in build-diagnostics upload due EPERM traversing cached OpenVR macOS symlink"
+      },
+      "dll_sha256": "75edeb3148b47e796a4fc4c2e66c1d9497d3a163398771569417b6f0c0457876",
+      "package_sha256": "dff065973160a38a529c2aec175dbfe1926c30953583520da7191a34f2bca385",
+      "workflow_fix": {
+        "commit": "33a1454",
+        "status": "PENDING_VERIFICATION",
+        "details": "Parent restricted diagnostic upload to exact target paths."
+      },
+      "initial_c1189_failure": "Retained as historical failure in earlier bounded job and native-ci-initial.json; corrected before this successful compile.",
+      "runtime": "NOT_RUN."
     }
   ]
 }
