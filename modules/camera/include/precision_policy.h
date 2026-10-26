@@ -10,9 +10,14 @@ constexpr bool claimPrecisionOwnership(Context before, Context after) {
         !before.firstPerson && after.prerequisites && after.world && !after.special && !after.menu &&
         after.firstPerson;
 }
-// Retain only while the provider, world and owned first-person state remain
-// valid. Never force a camera transition from this predicate.
-constexpr bool retainPrecisionOwnership(Context c, bool owned) {
-    return owned && c.prerequisites && c.world && !c.special && c.firstPerson;
+// `hardSpecial` excludes only the two control-map enabled flags: mounts,
+// swimming, killmoves, special camera states, missing control interfaces and
+// scripted/beast/FOV modes remain hard invalidations even during a menu.
+// Menu focus may temporarily disable the control-map flags without revoking a
+// valid first-person session. Menu focus still blocks F6 via toggleRequest.
+// Never force a camera transition from this predicate.
+constexpr bool retainPrecisionOwnership(Context c, bool owned, bool hardSpecial) {
+    return owned && c.prerequisites && c.world && c.firstPerson && !hardSpecial &&
+        (c.menu || !c.special);
 }
 } // namespace skycrpg::camera
