@@ -1,0 +1,10 @@
+test_ambiguous_or_missing_anchor_refused (test_scaleform_contract.PatchContract.test_ambiguous_or_missing_anchor_refused) ... ok
+test_imported_panel_and_menu_both_receive_routing (test_scaleform_contract.PatchContract.test_imported_panel_and_menu_both_receive_routing) ... ok
+test_native_transaction_and_focus_calls_preserved (test_scaleform_contract.PatchContract.test_native_transaction_and_focus_calls_preserved) ... ok
+test_original_art_has_no_transaction_dispatch (test_scaleform_contract.PatchContract.test_original_art_has_no_transaction_dispatch) ... ok
+test_painting_does_not_change_navigation_focus (test_scaleform_contract.PatchContract.test_painting_does_not_change_navigation_focus) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.001s
+
+OK

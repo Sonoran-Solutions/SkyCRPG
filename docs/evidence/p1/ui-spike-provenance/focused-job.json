@@ -1,0 +1,15 @@
+{
+  "purpose": "Focused regression for duplicate/imported class coverage and unchanged native actions",
+  "commands": [
+    "SKYCRPG_SKYUI_SOURCE=<pinned-source> python3 -m unittest discover -s modules/ui/tests -v",
+    "bundled-node modules/ui/tests/navigation_contract.js modules/ui <pinned-source>"
+  ],
+  "timeout_seconds": 600,
+  "owner": "DYL-153",
+  "completion": "five source checks PASS and navigation/callback logic PASS",
+  "cleanup": "timeout kills own test process",
+  "logs": [
+    "source-tests.log",
+    "navigation.log"
+  ]
+}

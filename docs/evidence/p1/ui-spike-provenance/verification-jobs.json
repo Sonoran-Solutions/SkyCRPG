@@ -1,0 +1,42 @@
+[
+  {
+    "purpose": "Verify routing in BOTH InventoryLists owners and imported symbol registration",
+    "command": [
+      "/srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java",
+      "-Xmx512m",
+      "-Djava.awt.headless=true",
+      "-jar",
+      "/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/tools/FFDec/ffdec-cli.jar",
+      "-export",
+      "script",
+      "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/export/inventorymenu",
+      "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/Data/Interface/inventorymenu.swf"
+    ],
+    "timeout_seconds": 600,
+    "owner": "DYL-153",
+    "completion": "exit0, both InventoryLists.handleInput definitions routed before categories, imported registration retained",
+    "cleanup": "kill own Java process on timeout",
+    "pid": 30715,
+    "exit_code": 0
+  },
+  {
+    "purpose": "Verify routing in BOTH InventoryLists owners and imported symbol registration",
+    "command": [
+      "/srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java",
+      "-Xmx512m",
+      "-Djava.awt.headless=true",
+      "-jar",
+      "/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/tools/FFDec/ffdec-cli.jar",
+      "-export",
+      "script",
+      "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/export/inventorylists",
+      "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/Data/Interface/skyui/inventorylists.swf"
+    ],
+    "timeout_seconds": 600,
+    "owner": "DYL-153",
+    "completion": "exit0, both InventoryLists.handleInput definitions routed before categories, imported registration retained",
+    "cleanup": "kill own Java process on timeout",
+    "pid": 30877,
+    "exit_code": 0
+  }
+]
