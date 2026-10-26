@@ -1,0 +1,35 @@
+name: profile-tool
+
+# Fixture checks for tools/profile.py against a fake game tree and fake launch processes.
+# Never downloads or starts Skyrim; runs only when the tool, its profiles or its tests change.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/profile.py"
+      - "profiles/**"
+      - "tests/**"
+      - ".github/workflows/profile-tool.yml"
+  pull_request:
+    paths:
+      - "tools/profile.py"
+      - "profiles/**"
+      - "tests/**"
+      - ".github/workflows/profile-tool.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Compile
+        run: python3 -m py_compile tools/profile.py tools/package.py
+      - name: Fixture tests
+        run: python3 -I -m unittest discover -s tests -v
