@@ -221,7 +221,8 @@ void SampleHotbar(std::uint64_t generation)
 				extra->HasType<RE::ExtraWorn>() || extra->HasType<RE::ExtraWornLeft>() };
 		}
 	}
-	for (std::size_t i = 0; i < slots.size() && i < magic->hotkeys.size(); ++i) {
+	// BSTArray::size_type is uint32_t; the fixed eight-slot bound avoids narrowing.
+	for (RE::BSTArray<RE::TESForm*>::size_type i = 0; i < 8 && i < magic->hotkeys.size(); ++i) {
 		auto* form = magic->hotkeys[i];
 		if (!form) continue;
 		const auto* name = form->GetName();
