@@ -20,6 +20,8 @@ The high-level action table includes future work. The DYL-156 candidate table be
 
 An action bar that merely draws icons is incomplete. Input must be usable and reflect actual selected/equipped state. No new spell cooldown, autoplay rotation, party order or turn-control binding is planned.
 
+The DYL-161 candidate shows actual numbered native bindings first and fills unused spaces with other native favorites marked `FAV`. A `FAV` label is not a numbered hotkey: select that item through the native Favorites menu using the controller. Favorites beyond eight remain in that menu. This path is pending controller gameplay validation; there is no direct controller cycling between custom slots. The candidate does not use SkyUI's multi-action groups as single hotbar actions.
+
 ## Phase 2 Camera candidate — DYL-156
 
 These mappings describe the new candidate; [Camera evidence](evidence/p2/camera-controls.md) separately records build and gameplay validation. Native movement/combat/activation remain unchanged, with TDM movement-only and SmoothCam as the only normal third-person transform writer.
