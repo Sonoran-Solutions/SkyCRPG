@@ -100,6 +100,18 @@ class PatchContract(unittest.TestCase):
         self.assertIn("skycrpgSettings != undefined", (builder.ROOT / "scaleform/hud-init.as.inc").read_text())
         self.assertIn("native HUD fallback retained", plugin)
 
+    def test_scaleform_settings_publish_enable_gate_last(self):
+        plugin = (builder.ROOT / "src/plugin.cpp").read_text()
+        callback = plugin.split("bool RegisterSkyCRPGUI(", 1)[1].split("\n}\n}", 1)[0]
+        members = [callback.index(f'SetMember("{member}"') for member in
+                   ("hudScale", "hudOffsetX", "hudOffsetY", "hudEnabled")]
+        self.assertEqual(members, sorted(members))
+        enabled = members[-1]
+        self.assertLess(callback.rindex("SetNumber", 0, enabled), enabled)
+        self.assertIn("return root->SetMember(\"hudEnabled\", value);", callback)
+        for member in ("hudScale", "hudOffsetX", "hudOffsetY"):
+            self.assertIn(f'if (!root->SetMember("{member}", value)) return false;', callback)
+
     def test_pinned_address_library_guard_precedes_commonlib_init(self):
         plugin = (builder.ROOT / "src/plugin.cpp").read_text()
         pin = (builder.ROOT / "src/address_library_pin.h").read_text()

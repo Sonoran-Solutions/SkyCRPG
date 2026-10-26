@@ -142,14 +142,16 @@ bool RegisterSkyCRPGUI(RE::GFxMovieView*, RE::GFxValue* root)
 		return false;
 	}
 	RE::GFxValue value;
-	value.SetBoolean(g_hudSettings.enabled);
-	if (!root->SetMember("hudEnabled", value)) return false;
 	value.SetNumber(g_hudSettings.scalePercent);
 	if (!root->SetMember("hudScale", value)) return false;
 	value.SetNumber(g_hudSettings.offsetX);
 	if (!root->SetMember("hudOffsetX", value)) return false;
 	value.SetNumber(g_hudSettings.offsetY);
-	return root->SetMember("hudOffsetY", value);
+	if (!root->SetMember("hudOffsetY", value)) return false;
+	// This is the readiness/enable gate read by HUDMenu. Publish it only once
+	// every numeric setting is present so a partial GFx object stays inert.
+	value.SetBoolean(g_hudSettings.enabled);
+	return root->SetMember("hudEnabled", value);
 }
 }
 
