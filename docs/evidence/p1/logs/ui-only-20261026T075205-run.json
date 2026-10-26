@@ -1,0 +1,28 @@
+{
+  "profile": "ui-only",
+  "run_id": "9b1905a329d74daf8a40f372f08e94ad",
+  "pid": 32065,
+  "command": [
+    "/home/dq/.local/share/Steam/steamapps/common/SteamLinuxRuntime_4/_v2-entry-point",
+    "--verb=waitforexitandrun",
+    "--",
+    "/home/dq/.local/share/Steam/steamapps/common/Proton - Experimental/proton",
+    "waitforexitandrun",
+    "/home/dq/.local/share/Steam/steamapps/common/Skyrim Special Edition/skse64_loader.exe"
+  ],
+  "mode": "interactive",
+  "started": "2026-10-26T07:52:05-0700",
+  "timeout_s": 1200,
+  "result": "QUIT",
+  "success": true,
+  "exit_code": 0,
+  "load_problems": [],
+  "ended": "2026-10-26T07:55:03-0700",
+  "logs": {
+    "skse64.log": "97f6f29a568127480125c87569ff241ca21de8e218d93a60cbfcc8001e664dbc",
+    "skse64_loader.log": "9dbb43d59e94159423fab9790dd833a0d89891769ac6a189f081edd77874622d",
+    "SkyCRPG_UI.log": "522655e4c05a0da1a82d584ff0f164a4232db770bdce50698c0bed65adbcc04d"
+  },
+  "leftover_pids": [],
+  "skyrim_running_after": []
+}

@@ -1,0 +1,10 @@
+[07:15:42.653] [ 388 ] [I] SmoothCam v0-0-1-3
+[07:15:42.653] [ 388 ] [I] Reading config file
+[07:15:42.653] [ 388 ] [I] Registering plugin interfaces
+[07:15:42.653] [ 388 ] [I] Attaching render subsystem hooks
+[07:15:42.653] [ 388 ] [I] Hooking render startup method
+[07:15:42.654] [ 388 ] [I] Hooking render shutdown method
+[07:15:42.654] [ 388 ] [I] loaded
+[07:15:42.658] [ 388 ] [I] Added API consumer 'TrueDirectionalMovement'
+[07:15:43.734] [ 388 ] [I] Hooking D3D11
+

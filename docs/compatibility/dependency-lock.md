@@ -1,6 +1,6 @@
 # Dependency selection record — DYL-151
 
-Updated 2026-10-25. **Recommendation lock, not an installed/tested-stack lock.**
+Updated 2026-10-26. **Recommendation lock plus acquired package hashes; gameplay stack not yet accepted.**
 [ADR-001](../decisions/ADR-001-stack.md) is proposed; P1-03/P1-04 provide feature evidence and P1-05 freezes it.
 
 ## Evidence levels
@@ -8,18 +8,18 @@ Updated 2026-10-25. **Recommendation lock, not an installed/tested-stack lock.**
 | Level | Meaning / current result |
 | --- | --- |
 | Upstream documentation/source | **PASS (desk inspection only)** for the linked versions/interfaces below; runtime claims remain the authors' claims. |
-| Observed installed environment | DYL-150 snapshot `cd49b3c`: Steam **1.7.104.0**, Ubuntu 26.04.1, Proton Experimental `experimental-11.0-20261014`; **SKSE/Address Library/providers absent**. |
-| DYL-150 compile/load evidence | No logs/artifact hashes supplied at reconciliation. **NOT_RUN here**; consult that worker's BUILD_AND_TEST and runtime-matrix before promoting any result. |
-| SkyCRPG feature behavior | **NOT_RUN for every component**; no camera, inventory, HUD, hotbar or minimap behavior is PASS. |
+| Historical pre-install snapshot | DYL-150 snapshot `cd49b3c`: Steam **1.7.104.0**, Ubuntu 26.04.1, Proton Experimental `experimental-11.0-20261014`; **SKSE/Address Library/providers absent**. |
+| Current load evidence | Rewritten profile baseline, UI-only providers and camera-only providers passed bounded startup on2026-10-26. See session evidence/logs; startup does not prove gameplay. |
+| SkyCRPG feature behavior | UI grid, native equip/unequip, minimap and compass fallback **PASS (owner-observed)** on2026-10-26; corrected controller grid navigation **PASS (owner-observed)** after two failed candidates. Camera owner route recovered after desktop OOM: melee/fallback usable, top-down ranged aiming and load-transition pitch persistence **FAIL**. Combined startup/owner checkpoint **PASS**. See session evidence. |
 
 Executable SHA-256 from [DYL-150](https://github.com/Sonoran-Solutions/SkyCRPG/blob/cd49b3cfc73278350342db4ae7a27c3b5e6a9644/docs/evidence/p1/environment.md):
 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f` (Steam build 24914197).
-No native Windows playtest or other storefront/runtime is selected. Controller hardware is absent.
+No native Windows playtest or other storefront/runtime is selected. Controller hardware is available through owner playtesting as of the UI route on2026-10-26.
 
 ## Selected candidates and exact upstream files
 
 Nexus file IDs below come from the selected file's manual-download/version-history links, not inferred from
-page version headings. Except SmoothCam, **archive bytes, archive license contents and SHA-256 are NOT_ACQUIRED**.
+page version headings. The initial audit acquired only SmoothCam. The orchestrator acquired the selected Nexus files on 2026-10-26; the archive hashes and selected runtime paths below supersede that acquisition gap. Runtime compatibility still needs separate evidence.
 A source tag is not proof that a Nexus binary was built from that source. Verify manifest, DLL file version,
 build line, notices and SHA-256 when acquired; never substitute a newer file silently.
 
@@ -39,7 +39,7 @@ build line, notices and SHA-256 when acquired; never substitute a newer file sil
 
 Hotbar uses original presentation with the pinned native/SkyUI interfaces; **no separate hotbar provider is required**.
 The display grid is original layout work over the selected SkyUI entries/actions, not an acquired grid dependency.
-All selected game behavior remains NOT_RUN, including on Proton; no author statement establishes Proton compatibility.
+See session evidence for the limited Proton owner playtest results; no author statement establishes compatibility.
 
 ## Alternative/reference pins
 
@@ -53,7 +53,7 @@ All selected game behavior remains NOT_RUN, including on Proton; no author state
 
 ## Verified SmoothCam archive hashes
 
-Only inspected outside the repository; no DLL installed or executed. Source release metadata and downloaded bytes agree.
+Originally inspected outside the repository. The selected AE DLL subsequently passed camera-only startup on2026-10-26; owner route confirms melee/fallback but top-down ranged aiming fails. Source release metadata and downloaded bytes agree.
 
 | Material | SHA-256 |
 | --- | --- |
@@ -74,15 +74,40 @@ Only inspected outside the repository; no DLL installed or executed. Source rele
 | CommonLib 7.2.0 | COPYING and EXCEPTIONS.md: GPL-3.0 with modding/linking exceptions, corresponding source obligations. This does not select SkyCRPG's original-work license. Review linked derivative's distribution terms before shipping it. |
 | Inventory Reforged / Glasswork | Nexus permissions allow credited modifications; no blanket source/asset grant for all embedded third-party material is inferred. Reference only in recommended route. |
 
-## Intended install order and ownership (future spike, not executed)
+## Install order and ownership
 
 1. DYL-150 verifies vanilla baseline and matched SKSE 2.3.1. Keep its plain independent DLL loads free of providers.
 2. Add Address Library 13; verify expected database filename. Add SkyUI 6.11 for provider configuration/UI patch base.
 3. Camera-only: TDM 2.3.1, MCM Helper 1.6.3, SmoothCam 1.8.1 correct AE DLL, original Camera configuration.
-4. UI-only: Infinity UI NG 2.1.3 → LMU fork 1.3.4 → DEM fork 1.7.5, each 1.7 DLL; Party Sheet 3.7; original UI patch/config.
+4. UI-only: Infinity UI NG 2.1.3 → LMU fork 1.3.4 → DEM fork 1.7.5, each 1.7 DLL; Party Sheet 3.7; original UI patch/config. Optional Party Sheet is inspected only and was not deployed.
 5. Loose player inventory patch wins over SkyUI only for its owned screen. No Inventory Reforged/Grid Inventory or second HUD/compass owner in the first profile. Respect actual archive path case under Linux staging.
 6. Verify required SWF files before enabling the minimap DLL: the stock fork can terminate on incomplete installation. Full provider absence is a different fallback case from corrupt partial installation.
 7. Combined profile contains union of dependencies, with disjoint Camera/UI configs and no required cross-module DLL service. Record exact winning files/INI deltas and hashes in spike evidence.
 
 Do not promote this table to tested until actual archives and independent feature proofs are attached. A minimal
 DLL load does not establish any of these provider combinations. Remaining checks are listed in REUSE_RESEARCH.
+
+## P1-03/P1-04 acquired packages (2026-10-26)
+
+Archives remain outside Git. Each exact file was downloaded through the authenticated Nexus browser, hashed, and safely extracted outside the game/repository. A version in this table is an acquired package, not a gameplay PASS.
+
+| Archive | SHA-256 |
+| --- | --- |
+| `Infinity UI 192919 2.1.3 2026-10-22T23-53Z PuQ2UKDH1.zip` | `c7a3b4d11f485a52f8fd49a2df2a0ffc7fa6cd0a953795518f3861deab2b8c83` |
+| `Local Map Upgrade 189625 1.3.4 2026-10-25T07-00Z aChSzYJnN.zip` | `403343518bef794b2b781d2847f3468c3ebb7fd5c5ed628b9f322b9d39a0aed4` |
+| `True Directional Movement 51614 2.3.1 2026-09-01T17-15Z PuQ2UKIMI.7z` | `0593379072997689f3d1db2302b0bf060c0ddc116743ab9585feaf328bec0b0f` |
+| `Skyrim Party Sheet 167538 3.7 2026-10-11T10-24Z VMSnJr6UF.zip` | `f980e34cd2f0a32abe0b5150c0d673017d53399df6a7dd5240c96f53ed21f83d` |
+| `Address Library All in One (1.7.104.0) v13 32444 13 2026-08-27T15-29Z Ae46W7Fw2.zip` | `be0c7c07fb63fd1c1403690d4797c7a8fdf8799118acceb605f285d7b0ee055f` |
+| `Dragon's Eye Minimap SKSE Menu Framework 189534 1.7.5 2026-10-25T08-00Z Ks18n0khS.zip` | `27d27d380e6d9e885e4461006ff25e9f79d45d12985c88d77f8cdba47e1c4af8` |
+| `MCM Helper 53000 1.6.3 2026-08-26T18-07Z kATsMWjPO.7z` | `505af9c27062febd497be09b661d5df82e013ae4a205ffbec99698adf4503f52` |
+| `SkyUI-12604-6-11-1778020881.zip` | `4eb0c9fc5241e5c3dd2fd773ee8a89627c924bf4445cf70373d3a4c7c4393ff1` |
+
+Selected payloads: Address Library `SKSE/Plugins/versionlib-1-7-104-0.bin`; SmoothCam `00 Data/AE/SmoothCam.dll`; MCM Helper `SkyrimSE` DLL + ESL-flagged ESP + BSA; each map provider `Common` assets + `Line-17` DLL. Never combine their SE/AE16 and Line-17 DLLs. The map trio's GPL/NOTICE files remain with external staging. Optional Party Sheet was acquired for interface inspection, not installed in the first UI test. No provider assets are committed or redistributed.
+
+SkyUI Nexus 6.11 contains an ESP/BSA; its shipped inventory/HUD SWFs differ from the GitHub source-tree binaries. The UI builder verifies both source and actual Nexus-base hashes and generates the local candidate from the acquired BSA. See ui-spike.md on the DYL-153 branch. Dragon's Eye's page advertises 1.7.6 now, but file 825711 downloaded as the requested **1.7.5**; no version substitution was made.
+
+The merged foundation's SKSE2.3.1 load-only evidence is real, and the rewritten profile tool passed baseline run `20261026T065153` on 2026-10-26. This supersedes the initial reconciliation row that had no loader logs. Feature and controller acceptance remain separate.
+
+## Tested scope and exact local artifacts
+
+Camera-only, UI-only and combined provider load checks passed on Steam1.7.104.0, SKSE2.3.1, Address Library13, Ubuntu26.04.1/Proton `experimental-11.0-20261014-x86_64`. Owner gameplay results and failures are in session evidence; this is not a wider runtime/platform certification. SKSE2.3.1 archive SHA-256 `7bad616ed360823a027f8828801d91e3a4aa2eacd952023af7f3e31adb2ae250`. [Canonical installed-file hashes](../evidence/p1/tested-artifacts.json) distinguish each tested artifact; [native build manifests](../evidence/p1/native-package-inputs.json) pin skeleton DLL source/archive hashes. Party Sheet3.7 was inspected only and never installed. No provider stack was silently upgraded.

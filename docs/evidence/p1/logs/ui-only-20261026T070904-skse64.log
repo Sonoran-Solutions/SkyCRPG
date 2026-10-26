@@ -1,0 +1,87 @@
+SKSE64 runtime: initialize (version = 2.3.1 01070680 01DD6553906D2BBC, os = 6.2 (9200))
+imagebase = 0000000140000000
+reloc mgr imagebase = 0000000140000000
+plugin directory = Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins\
+scanning plugin directory Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins\
+checking plugin DragonsEyeMinimap.dll
+checking plugin InfinityUI.dll
+checking plugin LocalMapUpgrade.dll
+checking plugin SkyCRPG_UI.dll
+preinit complete
+config path = Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\skse.ini
+loading plugin "DragonsEyeMinimap"
+registering plugin listener for SKSE at 1 of 6
+loading plugin "InfinityUI"
+plugin 2 allocated 84 bytes from branch pool
+registering plugin listener for SKSE at 2 of 6
+loading plugin "LocalMapUpgrade"
+registering plugin listener for SKSE at 3 of 6
+plugin 3 allocated 42 bytes from branch pool
+loading plugin "SkyCRPG UI"
+plugin DragonsEyeMinimap.dll (00000001 DragonsEyeMinimap 01070050) loaded correctly (handle 1)
+plugin InfinityUI.dll (00000001 InfinityUI 02010030) loaded correctly (handle 2)
+plugin LocalMapUpgrade.dll (00000001 LocalMapUpgrade 01030040) loaded correctly (handle 3)
+plugin SkyCRPG_UI.dll (00000001 SkyCRPG UI 00000010) loaded correctly (handle 4)
+dispatch message (0) to plugin listeners
+sending message type 0 to plugin 1
+dispatch message (-1707140088) to plugin listeners
+registering plugin listener for InfinityUI at 1 of 6
+registering plugin listener for LocalMapUpgrade at 1 of 6
+sending message type 0 to plugin 2
+dispatch message (-1707140088) to plugin listeners
+sending message type 0 to plugin 3
+dispatch message (-1707140088) to plugin listeners
+registering plugin listener for InfinityUI at 3 of 6
+dispatched message.
+dispatch message (1) to plugin listeners
+sending message type 1 to plugin 1
+sending message type 1 to plugin 2
+sending message type 1 to plugin 3
+dispatch message (-1707140088) to plugin listeners
+dispatched message.
+init complete
+hooked dinput
+dispatch message (6) to plugin listeners
+sending message type 6 to plugin 1
+sending message type 6 to plugin 2
+sending message type 6 to plugin 3
+dispatched message.
+Reading translations from Interface\Translations\SkyUI_SE_ENGLISH.txt...
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+dispatched message.
+dispatch message (8) to plugin listeners
+sending message type 8 to plugin 1
+dispatch message (-1707140088) to plugin listeners
+sending message type 8 to plugin 2
+dispatch message (-1707140088) to plugin listeners
+sending message type 8 to plugin 3
+dispatch message (0) to plugin listeners
+sending message type 0 to plugin 1
+dispatched message.
+dispatch message (1) to plugin listeners
+sending message type 1 to plugin 1
+dispatched message.
+dispatch message (-1707140088) to plugin listeners
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+dispatched message.

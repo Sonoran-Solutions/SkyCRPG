@@ -1,51 +1,27 @@
 # Current status
 
-Updated: 2026-10-25 (P1-01 progress).
+Updated: 2026-10-26 after owner Phase1 spike playtests.
 
-## Project state
+PR1 (foundation) and PR2 (research) are merged. DYL-150/151 remain Done. DYL-152/153 are **In Review**, with two independent unmerged PRs and auto-merge disabled. This is a playable feasibility result with explicit limits, not a complete MVP or support certification.
 
-Planning initialized. No SkyCRPG implementation, in-game proof, supported runtime, packaged build or owner acceptance exists yet. The four-phase plan and initial tickets are the deliverable of this setup.
-
-**P1-01 / DYL-150 progress (in review, PR [#1](https://github.com/Sonoran-Solutions/SkyCRPG/pull/1)):**
-
-- Environment recorded in [evidence/p1/environment.md](evidence/p1/environment.md): Steam `SkyrimSE.exe` 1.7.104.0 on Ubuntu 26.04 under Proton Experimental 11, RTX 3080, no controller, no mod manager.
-- Independent `SkyCRPG_Camera` and `SkyCRPG_UI` load-only SKSE skeletons. They build reproducibly on the Windows x64 CI runner and package into separate archives with disjoint paths, settings and logs.
-- Isolated baseline/camera-only/ui-only/combined profiles via `tools/profile.py`.
-- Launch-result re-review correction (2026-10-26): crashes during settle and nonzero interactive exits after loading fail; both regressions and all 22 Python fixtures PASS. The rewritten tool's first live use remains NOT_RUN; see [BUILD_AND_TEST.md](BUILD_AND_TEST.md).
-- In-game load checks PASS (load only) for all four profiles on SKSE 2.3.1. See [BUILD_AND_TEST.md](BUILD_AND_TEST.md) and [runtime-matrix.md](compatibility/runtime-matrix.md).
-- Still open: the baseline outdoor/interior route (NOT_RUN, owner to play), and agreement with DYL-151 on the provider stack for runtime 1.7.104. No camera or UI behavior exists yet.
-
-- Repository: https://github.com/Sonoran-Solutions/SkyCRPG
-- Linear project: https://linear.app/devils17/project/skycrpg-3bba43f5930f
-- MVP: [MVP_SCOPE.md](MVP_SCOPE.md)
-- Roadmap: [ROADMAP.md](ROADMAP.md)
-
-## Ready now
-
-| Task | Start condition |
+| Ticket / PR | Current evidence |
 | --- | --- |
-| [DYL-150 / P1-01](https://linear.app/devils17/issue/DYL-150/p1-01-establish-reproducible-test-profiles-and-independent-module) — environment, profiles and two module skeletons | In review; baseline route NOT_RUN. |
-| [DYL-151 / P1-02](https://linear.app/devils17/issue/DYL-151/p1-02-choose-reusable-mod-components-and-a-compatible-runtime) — reusable components and runtime intersection | Ready; can run alongside P1-01. |
+| DYL-152 / [PR3](https://github.com/Sonoran-Solutions/SkyCRPG/pull/3) | **PASS (owner-observed)** pulled-back exploration, qualified melee usability, first-person precision fallback, activation and ten F8 pairs. **FAIL** top-down third-person bow/spell aim. **FAIL** pitch persistence across loading screens; zoom persists. Owner explicitly defers pitch repair without blocking these PRs. |
+| DYL-153 / [PR4](https://github.com/Sonoran-Solutions/SkyCRPG/pull/4) | **PASS (owner-observed)** UI-only ordinary camera, live grid, native equip/unequip/counts/weight, one action per activation, corrected controller grid/category navigation, minimap indoors/outdoors and compass fallback. Initial two controller attempts failed; imported-class correction passed. |
+| Combined Camera + UI | **PASS (bounded startup and owner checkpoint)** run20261026T075556, all8 DLLs loaded, clean exit, top-down/minimap and selected-grid captures. Pitch-persistence limitation above remains. |
 
-P1-03 and P1-04 become ready after those tasks converge on the provisional stack. Do not start broad implementation before the in-game feasibility proofs and module contracts.
+## Architecture and remaining decisions
 
-## Phase gates
+Reuse SmoothCam1.8.1 framing/collision and TDM2.3.1 directional movement; keep lock-on disabled. Native first-person aiming is proven. A small original adapter is recommended for persistent pitch and explicit exclusive targeting handoff, but is not implemented/proven. TDM lock-on writes camera rotations and does not request SmoothCam camera ownership, so enabling both is not an accepted route. No large custom camera is selected.
 
-| Gate | State |
-| --- | --- |
-| Phase 1 — prototypes and stack | IN_PROGRESS (P1-01 in review) |
-| Phase 2 — camera candidate and playable HUD | NOT_STARTED |
-| Phase 3 — UI candidate and combined route | NOT_STARTED |
-| Phase 4 — packaged MVP acceptance | NOT_STARTED |
+Reuse native InventoryMenu/Scaleform/SkyUI backing entries and action callbacks, including both imported InventoryLists classes. Native counts and weight remain authoritative. Keep the map trio and visible native compass fallback. Automatic compass replacement, complete follower data and eight-slot hotbar remain later implementation requirements; follower/hotbar probes are not full acceptance.
 
-## Known open items
+Senior review must ratify these boundaries and outstanding checks before DYL-154 freezes contracts. Pitch persistence is tracked on DYL-159 and aiming on DYL-158, both still Backlog. DYL-154 can start after that review; it and Phase2 have **NOT_RUN / not started**. No MVP requirement is silently removed.
 
-Runtime/host selection, exact providers, rendering route, original-work license and the engineering choices in ADR-001 are intentionally pending. The working native-weight/player-inventory/controller scope is documented, not misrepresented as separately approved owner decisions.
+## Foundation and restoration
 
-## Update discipline
+- Rewritten profile tool real-host deploy/load/undeploy: **PASS**. Replacement clean Helgen cave/exterior route: **PASS (owner-observed)** with captures. Old heavily modded2021 fixture: **FAIL** to load, preserved separately.
+- Controller hardware is available through owner playtesting; grid navigation was actually exercised. Complete baseline/controller and supported-profile matrices remain **NOT_RUN**, not assumed from this route. DYL-150 is not reopened.
+- Final preservation: **PASS**, all146 pre-existing save/copy hashes unchanged, original INIs and Plugins.txt restored, no active deployment or Skyrim process. Test fixtures and archives remain external.
 
-Implementation PRs update this page with completed scope, source/evidence pointers, blockers and the next ready task. Linear carries assignment/status/dependencies. No source file is marked shipped on the basis of a plan or concept screenshot.
-
-## Tracking initialization
-
-26 tickets created: DYL-150 through DYL-175, across four project milestones. DYL-150 and DYL-151 are Todo; subsequent work starts in Backlog with native blocker relations. The component audit may start alongside environment discovery, but final runtime selection waits for the actual environment facts. No issue is assigned to an agent or marked In Progress by the planning setup.
+See [session evidence](evidence/p1/session-2026-10-26.md), [exact tested artifacts](evidence/p1/tested-artifacts.json), [package hashes](compatibility/dependency-lock.md), the camera/UI spike reports on their PR branches, and [ADR-001](decisions/ADR-001-stack.md). Tight-ceiling/doorway recovery, full controller coverage, native Windows, unsupported camera states and the full supported-profile matrix are not certified by these bounded runs.

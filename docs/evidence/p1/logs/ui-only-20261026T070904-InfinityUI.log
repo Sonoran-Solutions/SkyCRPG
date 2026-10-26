@@ -1,0 +1,9 @@
+10/26/26 - 07:09:07.108758 [info] Loading InfinityUI 2-1-3-0...
+10/26/26 - 07:09:07.108758 [info] [AddressLibrary] runtime 1-7-104-0 (AE); opened "Data/SKSE/Plugins/versionlib-1-7-104-0.bin": present
+10/26/26 - 07:09:07.108758 [info] Log level 2 - 0 trace, 1 debug, 2 info, 3 warning, 4 error, 5 critical; lines below it are dropped. Set uLogLevel in InfinityUI.ini (0 captures everything).
+10/26/26 - 07:09:07.108758 [info] Game 1-7-104-0 - Skyrim 1.7.x build line
+10/26/26 - 07:09:07.108758 [info] Hooked BSScaleformManager::LoadMovie (+0x116FDA0): Advance call at +0x1170139, InitExtensions call at +0x1170160
+10/26/26 - 07:09:07.108758 [info] Succesfully loaded!
+10/26/26 - 07:09:07.113758 [warning] Failed to dispatch message to devbench
+10/26/26 - 07:09:11.830805 [warning] Failed to dispatch message to devbench
+10/26/26 - 07:09:11.830805 [info] DevBench not detected; skipping the "infinityui.state" tool

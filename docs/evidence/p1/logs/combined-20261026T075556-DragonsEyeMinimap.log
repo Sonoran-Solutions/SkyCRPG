@@ -1,0 +1,61 @@
+[07:55:58.669] [ 372 ] [I] DragonsEyeMinimap v1-7-5-0
+[07:55:58.669] [ 372 ] [I] Log level 2 (info). Capturing: info, warning, error, critical.
+[07:55:58.669] [ 372 ] [I] Suppressed at this level: trace, debug. Set uLogLevel=0 in DragonsEyeMinimap.ini to capture everything.
+[07:55:58.669] [ 372 ] [I] Succesfully loaded!
+[07:55:58.697] [ 372 ] [W] Failed to dispatch message to devbench
+[07:55:58.697] [ 372 ] [I] Successfully registered for Infinity UI messages!
+[07:55:58.697] [ 372 ] [I] Successfully registered for Local Map Upgrade messages!
+[07:55:58.697] [ 372 ] [I] SKSE Menu Framework is not installed; settings will be read from the INI only
+[07:56:03.363] [ 616 ] [I] strings: 90 text(s) read for "english" from DragonsEyeMinimap_english.txt (game language)
+[07:56:03.363] [ 616 ] [W] Failed to dispatch message to devbench
+[07:56:03.363] [ 616 ] [I] DevBench not detected; the dem.control driving tool is unavailable this session (the minimap works normally)
+[07:56:26.249] [ 584 ] [I] Started loading patches
+[07:56:26.253] [ 584 ] [I] Minimap stage: 1280x720
+[07:56:26.253] [ 584 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 560.55255, _y -456.60764 (art -40.946217,-18.842365 to 102.797424,114.73805, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:26.253] [ 584 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 560.55255, _y -456.60764 (art 519.6038,-475.49237 to 663.3474,-341.91196, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:26.254] [ 584 ] [I] Finished loading HUD patches
+[07:56:26.254] [ 584 ] [I] Visibility gate: IsVisible=true IsShown=false | localMap_=false enabled=false displayObj.IsDisplayObject=true GetDisplayInfo=true
+[07:56:28.690] [ 372 ] [I] HUD mode flags assigned on the minimap clip: All, Favor, StealthMode, Swimming, HorseMode, WarHorseMode - ShowElements can now keep it visible
+[07:56:28.690] [ 372 ] [I] HUD mode flags OWNED by the minimap clip: All, Favor, StealthMode, Swimming, HorseMode, WarHorseMode
+[07:56:28.690] [ 372 ] [I] HUD mode flags MISSING: InventoryMode, TweenMode, BookMode, DialogueMode, BarterMode, WorldMapMode, MovementDisabled, CartMode, SleepWaitMode, JournalMode, VATSPlayback
+[07:56:28.690] [ 372 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 563.7994, _y -470.46548 (art 556.02747,-461.63452 to 660.1006,-357.61954, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.690] [ 372 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 563.7994, _y -470.46548 (art 559.2274,-475.48453 to 663.3006,-371.46954, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.690] [ 372 ] [I] Title layout: gap 12.25, group height 64.85, name offset 0, hint offset 37.05
+[07:56:28.704] [ 584 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 519.48193, _y -493.65012 (art 586.5123,-452.2999 to 707.61804,-331.26953, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.704] [ 584 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 519.48193, _y -493.65012 (art 542.2123,-475.4999 to 663.31805,-354.46954, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.704] [ 584 ] [I] Visibility gate: IsVisible=true IsShown=true | localMap_=true enabled=true displayObj.IsDisplayObject=true GetDisplayInfo=true
+[07:56:28.704] [ 584 ] [I] HUD Opacity setting resolved as "fHUDOpacity" in SkyrimPrefs.ini
+[07:56:28.704] [ 584 ] [I] Map.MapMarker.ExtraIconTypes completed from 6 to 10 symbols - the item markers Local Map Item Markers contributes now draw on the minimap
+[07:56:28.704] [ 584 ] [I] CompassRing: clip created on the HUD root at depth 0
+[07:56:28.704] [ 584 ] [I] CompassRing: registered in HudElements (now 26 elements) with modes All, Favor, DialogueMode, StealthMode, Swimming, HorseMode, WarHorseMode
+[07:56:28.704] [ 584 ] [I] CompassRing: first draw - rect (1159,0)-(1280,121) centre (1219,61) radius 58 shownRect true mapVisible true
+[07:56:28.720] [ 584 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 510.16437, _y -486.8341 (art 534.4972,-482.31592 to 672.6356,-344.25717, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.720] [ 584 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 510.1644, _y -486.8341 (art 525.19714,-475.4659 to 663.3356,-337.40717, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.736] [ 584 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 510.1644, _y -486.8341 (art 525.19714,-475.4659 to 663.3356,-337.40717, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.780] [ 372 ] [I] Minimap visibility changed: false -> true | HUD modes: All
+[07:56:28.784] [ 440 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 500.82504, _y -480.01773 (art 517.50714,-482.2823 to 672.6749,-327.18866, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.784] [ 440 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 500.82507, _y -480.01773 (art 508.15714,-475.48227 to 663.3249,-320.38867, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.793] [ 428 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 500.82507, _y -480.01773 (art 508.15714,-475.48227 to 663.3249,-320.38867, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.804] [ 440 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 491.5075, _y -473.20172 (art 500.442,-482.29828 to 672.64246,-310.17633, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.804] [ 440 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 491.50757, _y -473.20172 (art 491.142,-475.4983 to 663.3424,-303.3763, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.820] [ 444 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 491.50757, _y -473.20172 (art 491.142,-475.4983 to 663.3424,-303.3763, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.837] [ 436 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 491.50757, _y -473.20172 (art 491.142,-475.4983 to 663.3424,-303.3763, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.853] [ 424 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 482.2932, _y -466.38556 (art 483.32697,-482.31445 to 672.55676,-293.16083, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.853] [ 424 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 482.2932, _y -466.38556 (art 474.07697,-475.46445 to 663.30676,-286.31085, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.870] [ 428 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 482.2932, _y -466.38556 (art 474.07697,-475.46445 to 663.30676,-286.31085, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.886] [ 436 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 482.2932, _y -466.38556 (art 474.07697,-475.46445 to 663.30676,-286.31085, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.903] [ 428 ] [I] Display applied: anchor 1, offset (0, 0), scale 0.5 -> _x 482.2932, _y -466.38556 (art 474.07697,-475.46445 to 663.30676,-286.31085, screen -616.65,-475.45 to 663.35,244.55)
+[07:56:28.903] [ 428 ] [I] Display settled at _x 482.25, _y -466.4 after 12 re-applies
+[07:56:29.691] [ 440 ] [I] Visibility settled after 0 re-assertion(s) and 60 stable frames; leaving it to the game from here
+[07:57:08.819] [ 372 ] [W] Shadow scene has no portal-shared node (children capacity 10); skipping its culling
+[07:57:36.021] [ 432 ] [I] Visibility gate: IsVisible=false IsShown=true | localMap_=true enabled=true displayObj.IsDisplayObject=true GetDisplayInfo=true
+[07:57:36.021] [ 432 ] [I] CompassRing gate with the map hidden: ringOn false, gameplay true (paused false), mapVisible false -> ring hidden
+[07:57:36.031] [ 372 ] [I] Minimap visibility changed: true -> false | HUD modes: All -> JournalMode
+[07:57:37.414] [ 372 ] [I] Minimap visibility changed: false -> true | HUD modes: All
+[07:57:37.425] [ 372 ] [I] Visibility gate: IsVisible=true IsShown=true | localMap_=true enabled=true displayObj.IsDisplayObject=true GetDisplayInfo=true
+[07:57:37.691] [ 424 ] [I] Visibility gate: IsVisible=false IsShown=true | localMap_=true enabled=true displayObj.IsDisplayObject=true GetDisplayInfo=true
+[07:57:37.705] [ 372 ] [I] Minimap visibility changed: true -> false | HUD modes: All -> TweenMode
+[07:58:06.405] [ 372 ] [I] Minimap visibility changed: false -> true | HUD modes: All
+[07:58:06.417] [ 372 ] [I] Visibility gate: IsVisible=true IsShown=true | localMap_=true enabled=true displayObj.IsDisplayObject=true GetDisplayInfo=true
+[07:58:07.359] [ 432 ] [I] Visibility gate: IsVisible=false IsShown=true | localMap_=true enabled=true displayObj.IsDisplayObject=true GetDisplayInfo=true
+[07:58:07.366] [ 372 ] [I] Minimap visibility changed: true -> false | HUD modes: All -> JournalMode
