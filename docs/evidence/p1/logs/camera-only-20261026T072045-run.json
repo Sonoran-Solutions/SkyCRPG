@@ -1,0 +1,28 @@
+{
+  "profile": "camera-only",
+  "run_id": "db1ce8721002426fa45603a76496bffe",
+  "pid": 3148273,
+  "command": [
+    "/home/dq/.local/share/Steam/steamapps/common/SteamLinuxRuntime_4/_v2-entry-point",
+    "--verb=waitforexitandrun",
+    "--",
+    "/home/dq/.local/share/Steam/steamapps/common/Proton - Experimental/proton",
+    "waitforexitandrun",
+    "/home/dq/.local/share/Steam/steamapps/common/Skyrim Special Edition/skse64_loader.exe"
+  ],
+  "mode": "interactive",
+  "started": "2026-10-26T07:20:45-0700",
+  "timeout_s": 1200,
+  "result": "EXITED",
+  "success": false,
+  "exit_code": 1,
+  "load_problems": [],
+  "ended": "2026-10-26T07:22:29-0700",
+  "logs": {
+    "skse64.log": "4ff1d87e50bdd6df38b24848cade73be2554a9b17fe9cafca4cc86c7f17b5a72",
+    "skse64_loader.log": "1253293ea918ec81bd5b537146432d48dddca80cfd7e2d0273f44c37e7d97c76",
+    "SkyCRPG_Camera.log": "320fe8d69f48ecb4b6747376c54c53eaefc4139926b45d17aa7a5ba0a242dc73"
+  },
+  "leftover_pids": [],
+  "skyrim_running_after": []
+}

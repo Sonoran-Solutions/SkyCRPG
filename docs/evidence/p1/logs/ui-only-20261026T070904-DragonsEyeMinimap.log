@@ -1,0 +1,11 @@
+[07:09:07.107] [ 384 ] [I] DragonsEyeMinimap v1-7-5-0
+[07:09:07.107] [ 384 ] [I] Log level 2 (info). Capturing: info, warning, error, critical.
+[07:09:07.107] [ 384 ] [I] Suppressed at this level: trace, debug. Set uLogLevel=0 in DragonsEyeMinimap.ini to capture everything.
+[07:09:07.107] [ 384 ] [I] Succesfully loaded!
+[07:09:07.113] [ 384 ] [W] Failed to dispatch message to devbench
+[07:09:07.113] [ 384 ] [I] Successfully registered for Infinity UI messages!
+[07:09:07.113] [ 384 ] [I] Successfully registered for Local Map Upgrade messages!
+[07:09:07.113] [ 384 ] [I] SKSE Menu Framework is not installed; settings will be read from the INI only
+[07:09:11.830] [ 628 ] [I] strings: 90 text(s) read for "english" from DragonsEyeMinimap_english.txt (game language)
+[07:09:11.830] [ 628 ] [W] Failed to dispatch message to devbench
+[07:09:11.830] [ 628 ] [I] DevBench not detected; the dem.control driving tool is unavailable this session (the minimap works normally)

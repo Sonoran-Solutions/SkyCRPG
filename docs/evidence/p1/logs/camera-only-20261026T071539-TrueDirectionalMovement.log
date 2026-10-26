@@ -1,0 +1,29 @@
+[07:15:42.656] [ 388 ] [I] TrueDirectionalMovement v2-3-1-0
+[07:15:42.656] [ 388 ] [I] Registered papyrus functions
+[07:15:42.656] [ 388 ] [W] Failed to obtain Dodge Framework API
+[07:15:42.656] [ 388 ] [I] Obtained SmoothCamAPI
+[07:15:42.656] [ 388 ] [W] Failed to obtain TrueHUD API
+[07:15:42.656] [ 388 ] [W] Failed to obtain IDRC API
+[07:15:42.656] [ 388 ] [W] Failed to obtain OAR Functions API
+[07:15:42.656] [ 388 ] [W] Failed to obtain Dodge Framework API
+[07:15:42.656] [ 388 ] [W] Failed to obtain TrueHUD API
+[07:15:42.656] [ 388 ] [W] Failed to obtain IDRC API
+[07:15:42.656] [ 388 ] [W] Failed to obtain OAR Functions API
+[07:15:45.511] [ 608 ] [I] Registered TrueDirectionalMovement_MCM class
+[07:15:45.511] [ 608 ] [I] Registered TrueDirectionalMovement class
+[07:15:48.157] [ 628 ] [W] Failed to obtain Dodge Framework API
+[07:15:48.157] [ 628 ] [W] Failed to obtain TrueHUD API
+[07:15:48.157] [ 628 ] [W] Failed to obtain IDRC API
+[07:15:48.157] [ 628 ] [W] Failed to obtain OAR Functions API
+[07:15:48.157] [ 628 ] [I] Registered class RE::InputEvent
+[07:15:48.157] [ 628 ] [I] Registered struct SKSE::CrosshairRefEvent
+[07:15:48.157] [ 628 ] [I] Registered struct RE::TESDeathEvent
+[07:15:48.157] [ 628 ] [I] Registered struct RE::TESEnterBleedoutEvent
+[07:15:48.157] [ 628 ] [I] Registered all event handlers
+[07:15:48.157] [ 628 ] [I] Initializing...
+[07:15:48.157] [ 628 ] [I] ...success
+[07:15:48.157] [ 628 ] [I] Reading .toml files...
+[07:15:48.157] [ 628 ] [I]   Reading Data/SKSE/Plugins/TrueDirectionalMovement/TrueDirectionalMovement_base.toml...
+[07:15:48.158] [ 628 ] [I] ...success
+[07:15:48.158] [ 628 ] [I] Reading MCM .ini...
+[07:15:48.158] [ 628 ] [I] ...success
