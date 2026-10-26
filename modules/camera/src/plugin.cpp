@@ -296,7 +296,7 @@ extern "C" __declspec(dllexport) constinit SKSE::PluginVersionData SKSEPlugin_Ve
     return data;
 }();
 extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const SKSE::LoadInterface* skse) {
-    if (!skse || skse->IsEditor() || skse->RuntimeVersion() != SKSE::RUNTIME_SSE_1_7_104 || skse->SKSEVersion() != REL::Version{2,3,1,0}) return false;
+    if (!skse || skse->IsEditor() || skse->RuntimeVersion() != SKSE::RUNTIME_SSE_1_7_104 || skse->SKSEVersion() != REL::Version{2,3,1,0}.pack()) return false;
     std::ofstream(std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera.log",std::ios::trunc).close();
     log("SkyCRPG Camera " SKYCRPG_VERSION " source " SKYCRPG_SOURCE_COMMIT "; native input policy, no camera transform writes.");
     log("runtime check: PASS pinned 1.7.104; exact SKSE 2.3.1; Address Library format 5");
