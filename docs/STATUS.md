@@ -8,7 +8,7 @@ PR #1 (foundation) and PR #2 (dependency research) are merged. DYL-150 and DYL-1
 
 | Ticket | Branch / review | State |
 | --- | --- | --- |
-| DYL-152 / P1-03 | `spike/dyl-152-camera`, [draft PR #3](https://github.com/Sonoran-Solutions/SkyCRPG/pull/3) | In Progress. Original SmoothCam framing candidate, source-derived schema checks and deterministic config archive. Provider startup passed; gameplay remains NOT_RUN after desktop memory-pressure failure. Held pitch/recenter remain open. |
+| DYL-152 / P1-03 | `spike/dyl-152-camera`, [draft PR #3](https://github.com/Sonoran-Solutions/SkyCRPG/pull/3) | In Progress. Original SmoothCam framing candidate, source-derived schema checks and deterministic config archive. Recovered owner route: movement/melee usable, first-person precision and camera recovery PASS; top-down third-person ranged aiming FAIL. Existing targeting alternative under investigation; held pitch/recenter remain open. |
 | DYL-153 / P1-04 | `spike/dyl-153-ui`, [draft PR #4](https://github.com/Sonoran-Solutions/SkyCRPG/pull/4) | In Progress. Native SkyUI-backed inventory-grid/HUD candidate compiled against acquired Nexus 6.11 assets; owner verified inventory actions, counts/weight, minimap and compass fallback; controller grid navigation failed and is being fixed. |
 
 Both PRs remain unmerged, auto-merge disabled, for senior review. Workers own separate module/evidence files. The orchestrator owns dependency staging, shared docs, plugin activation and the serial game-test schedule.

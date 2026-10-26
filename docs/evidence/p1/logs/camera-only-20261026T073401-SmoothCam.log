@@ -1,0 +1,14 @@
+[07:34:03.595] [ 364 ] [I] SmoothCam v0-0-1-3
+[07:34:03.595] [ 364 ] [I] Reading config file
+[07:34:03.596] [ 364 ] [I] Registering plugin interfaces
+[07:34:03.596] [ 364 ] [I] Attaching render subsystem hooks
+[07:34:03.596] [ 364 ] [I] Hooking render startup method
+[07:34:03.596] [ 364 ] [I] Hooking render shutdown method
+[07:34:03.596] [ 364 ] [I] loaded
+[07:34:03.600] [ 364 ] [I] Added API consumer 'TrueDirectionalMovement'
+[07:34:05.645] [ 364 ] [I] Hooking D3D11
+
+[07:35:12.312] [ 364 ] [I] Looking for compatible mods
+[07:35:12.312] [ 364 ] [I] ImprovedCamera.dll beta 1.0.0.4 not found, running without compatibility.
+[07:35:12.312] [ 364 ] [I] Creating the camera
+[07:35:12.313] [ 364 ] [I] Attaching deferred detours
