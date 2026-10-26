@@ -1,0 +1,41 @@
+{
+  "purpose": "Phase2 combined bounded owner gameplay route",
+  "owner": "orchestrator",
+  "timeout_s": 600,
+  "deadline_utc": "2026-10-26T19:47:55.482125+00:00",
+  "cleanup": "stop only matching SKYCRPG_RUN_ID processes, then runtime_profile.py restore combined-route-1",
+  "log": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/combined-route-1/game.log",
+  "telemetry": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/combined-route-1/memory.jsonl",
+  "guard": "stop at MemAvailable<4GiB or full memory pressure avg10>10%",
+  "command": [
+    "/usr/bin/python3",
+    "-u",
+    "-I",
+    "tools/profile.py",
+    "launch",
+    "--interactive",
+    "--timeout",
+    "600"
+  ],
+  "profile_manifest": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/combined-route-1/active-at-deploy.json",
+  "supervisor_pid": 197265,
+  "profile_pid": 197328,
+  "run_file": "/srv/storage/Projects/SkyCRPG/profiles/combined/runs/20261026T123755/run.json",
+  "run_id": "52b5f11b872b43c29747541646e08017",
+  "leftover_pids": [],
+  "stop_reason": null,
+  "exit_code": 0,
+  "ended": 1793043688.5305855,
+  "provider_logs": {
+    "TrueDirectionalMovement.log": "f5371575e6205e750cc18745b2dc21836e3e41545c6e2e8e877c3ae7b08e6ded",
+    "LocalMapUpgrade.log": "00bc4472fb990f08ba9887c9cca409c44349fd974b57e8155169d70b0c61cab9",
+    "skse64_loader.log": "2287a17f528b56c5592ffc0412b1e06de64b41fea4d89cfb9df94586de4d1d48",
+    "InfinityUI.log": "aa15041f62c289f9151f5777eb162c2cbf36e883d7b263ef076f9043feb8fafa",
+    "DragonsEyeMinimap.log": "0405cb3291c12769b4976e8f9f699f9570520a4be385462071050e16d12f3454",
+    "SmoothCam.log": "40e5a621a7c9700c2dadda6bfd91a523920cb8ca68e54218dcdb85842de4fb9c",
+    "SkyCRPG_UI.log": "15fb867503ae700bdc06ec11e0ea0ab3d5daa1e0e51de14dc6d0eb2fe5c75b25",
+    "SkyCRPG_Camera.log": "938210d14e06ea2ae895d30716870af24cd74217ab5872d246352feb6ce5b9b5",
+    "skse64.log": "398d976c34f10598627573da682ca98651f0f27d57d94aa6a14e1b5f72dff7ac",
+    "MCMHelper.log": "cae952a576a8412ae167524f83d0ecba8a9fdabdeeb1bfcab2d84637ca149d7f"
+  }
+}

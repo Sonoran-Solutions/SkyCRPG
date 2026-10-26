@@ -1,0 +1,16 @@
+{
+  "purpose": "Docs-only verify combined smoke identities/capture/cleanup and senior-review correction records while final both-target CI/host verification remain pending",
+  "owner": "camera worker",
+  "command": "timeout --signal=TERM 600s python3 /srv/storage/Projects/SkyCRPG/session-p2-20261026/check-camera-combined-docs.py",
+  "log": "docs/evidence/p2/camera-controls-audit/combined-docs-check.log",
+  "planned_at": "2026-10-26T19:50:26.267179+00:00",
+  "deadline": "2026-10-26T20:00:26.267179+00:00",
+  "timeout_seconds": 600,
+  "completion_signal": "exit0/PASS combined hash/scope/history/links/privacy plus unchanged product source hashes",
+  "cleanup": "Read-only evidence/source hash checks, no implementation, native build, push, game or save operation",
+  "status": "PASS",
+  "exit_code": 0,
+  "handle": "functions.exec/c20718",
+  "completion_recorded_at": "2026-10-26T19:51:13.616651+00:00",
+  "cleanup_result": "Docs/metadata hashes and local links PASS; unchanged product tests/native runtime evidence reused; no build/push/game"
+}

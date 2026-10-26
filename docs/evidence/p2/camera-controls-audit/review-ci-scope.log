@@ -1,0 +1,11 @@
+test_both_module_changes (test_ci_scope.ScopeTests.test_both_module_changes) ... ok
+test_explicit_dispatch_remains_bounded (test_ci_scope.ScopeTests.test_explicit_dispatch_remains_bounded) ... ok
+test_leaf_changes_stay_focused (test_ci_scope.ScopeTests.test_leaf_changes_stay_focused) ... ok
+test_missing_or_unclassified_diff_is_conservative (test_ci_scope.ScopeTests.test_missing_or_unclassified_diff_is_conservative) ... ok
+test_shared_build_and_packaging_changes_override_either_module (test_ci_scope.ScopeTests.test_shared_build_and_packaging_changes_override_either_module) ... ok
+test_workflow_uses_tested_selector_and_triggers_its_inputs (test_ci_scope.ScopeTests.test_workflow_uses_tested_selector_and_triggers_its_inputs) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.000s
+
+OK
