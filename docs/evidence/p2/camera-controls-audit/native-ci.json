@@ -27,7 +27,7 @@
   "workflow_fix": {
     "commit": "7ad3396bb72517ce42446f53f116410b45c4d426",
     "scope": ".github/workflows/build.yml diagnostics paths only; no native code/configuration changes",
-    "verification": "NOT_RUN / pending orchestrator verification"
+    "verification": "PASS: complete Camera-only workflow 40385191497 at source 37008f2, including both artifact uploads"
   },
   "initial_native_failure": "Retained separately in initial-ci.json for run40375266551; no history relabeling",
   "runtime_at_compile_record": "NOT_RUN: native compile/package does not prove in-game behavior",
@@ -35,5 +35,26 @@
     "result": "PASS bounded owner route20261026T115627",
     "evidence": "../camera-controls-runtime/owner-observation.json",
     "scope": "Exterior stable pitch/movement, mouse yaw/zoom, F7,F6/menu and native controller movement/yaw; broader runtime remains NOT_RUN"
+  },
+  "workflow_verification": {
+    "result": "PASS",
+    "run": "https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40385191497",
+    "source_commit": "37008f2efc9850c057149f42c1e16bdce1da7d1e",
+    "github_status": "completed",
+    "github_conclusion": "success",
+    "jobs": {
+      "scope": "success",
+      "windows-x64 (camera)": "success"
+    },
+    "selected_step_conclusions": {
+      "Configure and build selected target": "success",
+      "candidate artifact upload": "success",
+      "narrow diagnostics upload": "success"
+    },
+    "verification": "Read-only gh run view 40385191497 confirmed head/status/conclusion and both upload steps",
+    "observed_utc": "2026-10-26T19:20:34.634163+00:00",
+    "scope": "Camera-only complete workflow and diagnostics path fix; no Camera implementation/configuration change",
+    "runtime_artifact_identity": "Owner-tested artifact remains source 8a681390db5b36c2b6fb4fcb056c0abc0e085a35, DLL aedc9d53e7c7d85719fb600fe8b71129cc9aab1f67f92cffe10ea499f106d024; verification rebuild is not substituted as gameplay evidence",
+    "combined_runtime": "NOT_RUN / remains open"
   }
 }
