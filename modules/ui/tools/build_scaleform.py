@@ -121,7 +121,7 @@ def main():
             parser.error("--java is required unless --prepare-only")
         output = out / "Data/Interface" / target
         output.parent.mkdir(parents=True, exist_ok=True)
-        command = [str(args.java), "-Djava.awt.headless=true", "-jar", str(provider / "tools/FFDec/ffdec-cli.jar"),
+        command = [str(args.java), "-Xmx512m", "-Djava.awt.headless=true", "-jar", str(provider / "tools/FFDec/ffdec-cli.jar"),
                    "-config", "autoDeobfuscate=false,decompile=false", "-onerror", "abort",
                    "-importScript", str(source_swf), str(output), str(stage)]
         log = out / (target.replace("/", "-") + ".log")

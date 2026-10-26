@@ -321,3 +321,54 @@ returns focus to grid, delegating original rollover behavior to BasicList. This
 prevents a repaint or restored selection from implicitly leaving category mode.
 A fourth source check enforces this input/presentation boundary. These callback
 checks still use native-menu stubs and do not certify Scaleform event scheduling.
+
+## Corrected candidate compile (persistent host inputs)
+
+After the parent's monitored camera route ended cleanly, the compile hold was
+released. **PASS**: all three corrected candidates compiled against the same
+actual Nexus6.11 BSA base hashes, with a fixed **512MiB Java heap** (`-Xmx512m`),
+600-second per-job limits, sequential execution, explicit PIDs/logs and cleanup.
+Elapsed compiler times were0.514s,0.565s and0.765s. No game was launched/deployed
+by this worker. Corrected gameplay navigation/action regression remains
+**NOT_RUN pending owner retest**; the previous candidate's owner PASS checks
+remain separately recorded above.
+
+Candidate root:
+`/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-controller-fix/`.
+`build.json` records all exact commands, input/patch/output hashes, process IDs,
+timeouts, durations and exit codes. Bounded export/decompile checks under the
+same heap limit confirm grid routing occurs before native category handling,
+category-focus logic exists in bytecode, painting has no focus mutation and the
+mouse rollover delegates to its native parent. See `verification-jobs.json`,
+`bytecode-check.json` and export logs in that same local artifact directory.
+
+| Corrected Data/Interface winner | SHA-256 |
+| --- | --- |
+| inventorymenu.swf | `5b474c27fd84f1e82022bde4b79184d14b1334bf4f5f8ec8739d8e4b47215f80` |
+| skyui/inventorylists.swf | `bee2ca0fb283bfb24dc674c9f442f1cd52de5dc7078a6ad0315f45ec53211a4e` |
+| hudmenu.swf (unchanged) | `c42e7a26bb276bc8ee0a2f877c2248e8bb8bcd73bee9798119ae3ebdddde3e38` |
+
+Four focused source safety checks and the Node actual-source callback/navigation
+regression **PASS** after the final changes. Results/job records persist in
+`session-20261026/ui-controller-fix/`. The legacy-category-first variant still
+fails its adjacent-cell assertion, demonstrating this test detects the reported
+consumer-order regression.
+
+Rebuild with persistent recovered inputs (new output directory required):
+
+```bash
+python3 modules/ui/tools/build_scaleform.py \
+  --skyui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 \
+  --nexus-interface /srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface \
+  --out <new-persistent-output> \
+  --java /srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java
+```
+
+Parent retest: stage these winners, open Weapons, select Iron Arrow and press
+Right once (stick and D-pad separately): Iron Battleaxe should become selected
+with Weapons retained. Check adjacent/vertical movement, then Up from row0,
+two successive category switches, Down to grid, and an empty Favorites category
+escape. Confirm once after returning to a selected weapon, then confirm once
+again; record equip/unequip/count/weight before and after. Check category-entry
+Confirm itself performs no item action. Parent owns process tracking, deployment,
+logs and teardown, followed by any combined smoke.
