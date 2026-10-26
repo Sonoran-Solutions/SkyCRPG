@@ -18,6 +18,16 @@
 
 namespace {
 using namespace skycrpg::camera;
+// Exact 1.7.104 member layout audited independently of vtable declarations.
+static_assert(offsetof(RE::ThirdPersonState,targetZoomOffset) == 0x74);
+static_assert(offsetof(RE::ThirdPersonState,freeRotation) == 0xD4);
+static_assert(offsetof(RE::ThirdPersonState,freeRotationEnabled) == 0xDC);
+static_assert(offsetof(RE::ThirdPersonState,stateNotActive) == 0xDD);
+static_assert(offsetof(RE::PlayerControls,data) == 0x24);
+static_assert(offsetof(RE::PlayerControlsData,fovSlideMode) == 0x27);
+static_assert(offsetof(RE::PlayerControlsData,povScriptMode) == 0x28);
+static_assert(offsetof(RE::PlayerControlsData,povBeastMode) == 0x29);
+static_assert(offsetof(RE::ControlMap::RUNTIME_DATA,enabledControls) == 0x30);
 Settings settings;
 bool ready = false, loading = true, ownFirstPerson = false, recenter = false;
 SmoothCamAPI::IVSmoothCam3* provider = nullptr;
@@ -149,7 +159,9 @@ Context context(bool allowZoomSlide = false) {
     c.special = (!c.firstPerson && camera->currentState->id != RE::CameraState::kThirdPerson) ||
         player->IsOnMount() || player->IsInKillMove() || player->AsActorState()->IsSwimming();
     const auto controls = RE::PlayerControls::GetSingleton();
-    if (!controls || controls->blockPlayerInput || controls->data.povScriptMode || controls->data.povBeastMode || (controls->data.fovSlideMode && !allowZoomSlide)) c.special = true;
+    const auto controlMap = RE::ControlMap::GetSingleton();
+    if (!controlMap || !controlMap->IsLookingControlsEnabled() || !controlMap->IsPOVSwitchControlsEnabled()) c.special = true;
+    if (!controls || controls->data.povScriptMode || controls->data.povBeastMode || (controls->data.fovSlideMode && !allowZoomSlide)) c.special = true;
     if (!c.firstPerson && camera->currentState->id == RE::CameraState::kThirdPerson &&
         static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) c.special = true;
     c.menu = focused();
