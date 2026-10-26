@@ -1,6 +1,6 @@
 # DYL-152 / P1-03 camera feasibility spike
 
-Updated 2026-10-26. **Recommendation: continue with SmoothCam 1.8.1 as the only third-person camera writer, using an original provider-format framing preset. Do not add a second transform controller at this point.** Provider startup passed on the real host, but gameplay remains **NOT_RUN** and no camera behavior is accepted. The first owner route was interrupted by a desktop memory-pressure failure; the monitored recovery route is pending.
+Updated 2026-10-26. **Recommendation: continue with SmoothCam 1.8.1 as the only third-person camera writer, using an original provider-format framing preset. Do not add a second transform controller at this point.** The recovered owner route demonstrates usable pulled-back movement/melee and first-person precision fallback. **FAIL** for top-down third-person bow/spell aiming: projectiles aim at the player's feet. Provider configuration alone does not satisfy the ranged-combat requirement; an existing targeting alternative is under investigation.
 
 ## Candidate route
 
@@ -22,12 +22,13 @@ For precise bow/spell aiming, compare SmoothCam's built-in ranged framing and ra
 | TDM camera auto-adjust disable value | **PASS (static)** | TDM 2.3.1 source enum: `kDisable=0`, `kDuringSprint=1`, `kAlways=2`. |
 | TDM target-lock fallback | **PASS (static)** | Source enum: `kLocked=0`, `kRelaxed=1`; no disabled enum value. Clear bindings as listed above. |
 | Provider startup | **PASS (load only)** | Run20261026T071539: MCM Helper, SmoothCam, TDM and camera skeleton loaded;30-second settle, no leftovers. See shared session logs. |
-| Open road: framing, pitch, recenter, movement | **NOT_RUN** | Owner had not begun when the desktop session failed in run20261026T072045. |
+| Open road: movement and framing | **PASS (owner-observed, qualified)** | Run20261026T073401: owner considers quick MVP usable. Stable held pitch/recenter not separately established. |
 | Tight Nordic room, corridor, doorway: collision and close fallback | **NOT_RUN** | Provider collision path is retained; actual wall/floor recovery is not proven by source inspection. |
-| Melee readability and camera control | **NOT_RUN** | No gameplay session. |
-| Bow and aimed spell accuracy / activation prompts | **NOT_RUN** | No gameplay session; native POV aiming fallback needs a live check. |
-| Ten toggle/handoff cycles | **NOT_RUN** | No gameplay session. |
-| Interior/exterior transition | **NOT_RUN** | No gameplay session. |
+| Melee readability and camera control | **PASS (owner-observed, qualified)** | Owner reports melee is just about fine; no quantitative target readability measure. |
+| Top-down third-person bow and aimed spells | **FAIL** | Owner reports arrows/spells aim at player feet. This reproduces a provider/configuration limitation for current framing. |
+| First-person precision fallback / world activation | **PASS (owner-observed)** | Owner explicitly confirms first person works and object activation remained usable. |
+| Ten F8 toggle/handoff pairs | **PASS (owner-observed)** | Owner confirms all ten requested pairs restored normal third person and returned reliably. |
+| Interior/exterior transition | **PASS (owner-observed)** | Owner confirms cave/outdoor transition remained usable. |
 
 Source/config PASS does not satisfy P1-03's in-game acceptance. The assigned shared-install owner must install the selected external dependencies in an isolated camera-only profile and capture the bounded route before P1-05 can freeze this stack.
 
@@ -51,4 +52,6 @@ Use a copied exterior/interior save pair in the isolated `camera-only` profile. 
 
 ## Runtime interruption and retry
 
-See [session evidence](session-2026-10-26.md) for timestamps and logs. The first interactive run ended after systemd-oomd killed GNOME Shell under memory pressure; the root memory contributor is unresolved. A post-reboot launch failed because Steam was not running. Steam was restored before changed-condition run20261026T073401, which reached plugin/data-load markers under a memory watchdog. Owner gameplay report pending. Controller is available through owner playtesting; camera controller acceptance is not yet established.
+See [session evidence](session-2026-10-26.md) for timestamps and logs. The first interactive run ended after systemd-oomd killed GNOME Shell under memory pressure; the root memory contributor is unresolved. A post-reboot launch failed because Steam was not running. Steam was restored before changed-condition run20261026T073401, which reached plugin/data-load markers under a memory watchdog. Owner gameplay report is recorded above. Recovery run exited cleanly07:42:59 with no leftovers; minimum17.13GiB available RAM and zero full pressure avg10. Controller is available; complete input coverage remains broader than these owner checks.
+
+The next bounded alternative is TDM's existing lock-on/projectile aiming, contingent on verifying camera ownership and input conflicts in source. This is investigation, not acceptance or a new large custom controller. First-person aiming remains the proven precision fallback. No camera screenshot/video was supplied for this run; evidence is explicit owner report plus timestamped loader/provider/run logs.
