@@ -1,6 +1,6 @@
 # P1-04 / DYL-153 — native UI candidate
 
-2026-10-26. **Owner UI route PASS for live grid/actions/map; controller horizontal navigation FAIL, correction awaiting retest.**
+2026-10-26. **Owner UI-only route and final controller correction PASS (owner-observed). Automatic compass replacement and full follower/hotbar remain open.**
 This is an original AS2 grid/HUD patch built against external SkyUI Community
 6.11, not a screenshot or replacement inventory database. No game was launched
 or deployed by this worker. Parent owns the shared game schedule and packages.
@@ -143,7 +143,8 @@ unchanged; no Windows native build is required for these AS2 changes.
 | Native compass usable with minimap hidden | PASS owner-confirmed run071034 on previous candidate |
 | Provider-absent startup recovery | NOT_RUN |
 | Combined-load smoke | NOT_RUN |
-| Controller navigation/activation and modal focus | FAIL horizontal navigation; correction retest NOT_RUN |
+| Focused controller grid/category navigation and equip/unequip regression | PASS owner-confirmed run075205 on imported-class candidate |
+| Full modal/controller/layout matrix | NOT_RUN |
 
 On an isolated copied save, install the selected external dependencies and stage
 the three candidate SWFs as winners. Record source/package hashes and all winners.
@@ -428,3 +429,66 @@ Owner retest of this new imported-class candidate is **NOT_RUN**. Parent owns
 deployment, controller/action checks and any combined smoke. Previous owner
 UI/action/map PASS remains valid only for its recorded candidate; neither the
 failed correction nor this compiled correction is promoted to gameplay PASS.
+
+## Final imported-class controller retest075205 — PASS
+
+**PASS (owner-observed)** on the final imported-routing candidate. After the
+parent requested the focused checklist, the owner's exact response was:
+
+> Ok everything passed for the UI fix, it's working as intended now
+
+This confirms the requested Right **Iron Arrow → Iron Battleaxe** selection,
+Up/Down grid rows, Up from the first row into categories, Left/Right category
+changes and Down/Confirm back into the grid without an item action. The focused
+equip/unequip regression passed with one action per activation and unchanged
+counts/carry weight. This is the owner's reported behavior, distinct from
+compilation/stub-test evidence. Prior controller failures remain recorded in
+this report; run074633's failed candidate is not relabeled PASS.
+
+The parent deployed final generated winners from implementation source
+`1be22bbbb0b0519e0b3c876ce4929a395541161d`:
+
+| Final tested Data/Interface winner | SHA-256 |
+| --- | --- |
+| inventorymenu.swf | `5b474c27fd84f1e82022bde4b79184d14b1334bf4f5f8ec8739d8e4b47215f80` |
+| skyui/inventorylists.swf | `7f0ce7fa3eec3845fc9cfce3776beba7f89cf2e6b9fe21d2851886deca852cd8` |
+| hudmenu.swf | `c42e7a26bb276bc8ee0a2f877c2248e8bb8bcd73bee9798119ae3ebdddde3e38` |
+
+Run **20261026T075205**, UI-only,07:52:05–07:55:03 America/Phoenix:
+**QUIT**, success=true, exit0, no load problems, no leftover/game processes.
+The parent's memory watchdog had no intervention (`stop_reason=null`).
+Local evidence is `/srv/storage/Projects/SkyCRPG/profiles/ui-only/runs/20261026T075205/`;
+job/telemetry are `session-20261026/ui-imported-retest-job.json` and
+`ui-imported-retest-memory.jsonl`. The UI worker performed no deploy/game launch.
+
+| Runtime record | SHA-256 |
+| --- | --- |
+| run.json | `9be43ba2636bf63674aff40d8c4798362d5ab90782f2b1eefca93f565401e7a4` |
+| skse64.log | `97f6f29a568127480125c87569ff241ca21de8e218d93a60cbfcc8001e664dbc` |
+| skse64_loader.log | `9dbb43d59e94159423fab9790dd833a0d89891769ac6a189f081edd77874622d` |
+| SkyCRPG_UI.log | `522655e4c05a0da1a82d584ff0f164a4232db770bdce50698c0bed65adbcc04d` |
+| InfinityUI.log | `e2d5af3719603b8b8b2d23327adca4314816e5e2452743929d1099453bc9416a` |
+| LocalMapUpgrade.log | `f41d399306f9669752239fdd66b7d218558c239d9e3ecb39190d3738f502ced7` |
+| DragonsEyeMinimap.log | `bb47138cfa7d92f5f570274fc13fa7365b47d2ba44409c87eb98ba499d3ef4aa` |
+
+Runtime remains Steam1.7.104.0/SKSE2.3.1 on the recorded Proton host. The loaded
+UI DLL is the unchanged load-only build reporting source`d1f6193`; the functional
+controller patch is the generated SWF source/hash above, not a new DLL claim.
+The SKSE log lists DEM/InfinityUI/LMU/UI only; no Camera DLL, SmoothCam or TDM.
+UI-only with the native camera is independently usable for this focused proof.
+
+**Proven minimal strategy:** native InventoryMenu/Scaleform presentation over
+live backing entries and native equip/unequip callbacks, with original bounded
+input routing. Five source checks, all three bounded compile jobs, both compiled
+class-handler inspections and the actual-source callback/navigation regression
+remain PASS; no unchanged build/tests were repeated for this report-only update.
+The owner route supplies the missing game evidence.
+
+**Remaining scope:** complete eight-slot hotbar/follower UI and observer/dispatch
+interfaces were probed only, not accepted as implemented. The minimap's native
+compass remains visible: automatic readiness-driven compass replacement is still
+open, as are provider-absent startup, distinct same-base ownership/instance
+fixtures and the full modal/controller/layout matrix. Previous owner run071034
+records map inside/outside and usable compass with map hidden. Combined smoke
+is parent-owned and was running as075556 when this report was updated; no result
+is inferred here. No Phase1 contract is frozen and no Phase2 work is included.
