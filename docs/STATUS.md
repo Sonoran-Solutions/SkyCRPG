@@ -1,51 +1,35 @@
 # Current status
 
-Updated: 2026-10-25 (P1-01 progress).
+Updated: 2026-10-26 (P1-03/P1-04 execution).
 
-## Project state
+PR #1 (foundation) and PR #2 (dependency research) are merged. DYL-150 and DYL-151 are Done in Linear. Independent load-only DLLs and a provisional provider stack exist; no playable SkyCRPG MVP or frozen support claim exists.
 
-Planning initialized. No SkyCRPG implementation, in-game proof, supported runtime, packaged build or owner acceptance exists yet. The four-phase plan and initial tickets are the deliverable of this setup.
+## Active feasibility work
 
-**P1-01 / DYL-150 progress (in review, PR [#1](https://github.com/Sonoran-Solutions/SkyCRPG/pull/1)):**
+| Ticket | Branch / review | State |
+| --- | --- | --- |
+| DYL-152 / P1-03 | `spike/dyl-152-camera`, [draft PR #3](https://github.com/Sonoran-Solutions/SkyCRPG/pull/3) | In Progress. Original SmoothCam framing candidate, source-derived schema checks and deterministic config archive. Held pitch/recenter and gameplay acceptance remain open. |
+| DYL-153 / P1-04 | `spike/dyl-153-ui`, [draft PR #4](https://github.com/Sonoran-Solutions/SkyCRPG/pull/4) | In Progress. Native SkyUI-backed inventory-grid/HUD candidate compiled against acquired Nexus 6.11 assets; real inventory/minimap gameplay acceptance remains open. |
 
-- Environment recorded in [evidence/p1/environment.md](evidence/p1/environment.md): Steam `SkyrimSE.exe` 1.7.104.0 on Ubuntu 26.04 under Proton Experimental 11, RTX 3080, no controller, no mod manager.
-- Independent `SkyCRPG_Camera` and `SkyCRPG_UI` load-only SKSE skeletons. They build reproducibly on the Windows x64 CI runner and package into separate archives with disjoint paths, settings and logs.
-- Isolated baseline/camera-only/ui-only/combined profiles via `tools/profile.py`.
-- Launch-result re-review correction (2026-10-26): crashes during settle and nonzero interactive exits after loading fail; both regressions and all 22 Python fixtures PASS. The rewritten tool's first live use remains NOT_RUN; see [BUILD_AND_TEST.md](BUILD_AND_TEST.md).
-- In-game load checks PASS (load only) for all four profiles on SKSE 2.3.1. See [BUILD_AND_TEST.md](BUILD_AND_TEST.md) and [runtime-matrix.md](compatibility/runtime-matrix.md).
-- Still open: the baseline outdoor/interior route (NOT_RUN, owner to play), and agreement with DYL-151 on the provider stack for runtime 1.7.104. No camera or UI behavior exists yet.
+Both PRs remain unmerged, auto-merge disabled, for senior review. Workers own separate module/evidence files. The orchestrator owns dependency staging, shared docs, plugin activation and the serial game-test schedule.
 
-- Repository: https://github.com/Sonoran-Solutions/SkyCRPG
-- Linear project: https://linear.app/devils17/project/skycrpg-3bba43f5930f
-- MVP: [MVP_SCOPE.md](MVP_SCOPE.md)
-- Roadmap: [ROADMAP.md](ROADMAP.md)
+## Foundation follow-up
 
-## Ready now
+- Rewritten `tools/profile.py` real-host deploy/load/undeploy: **PASS (load only)** on merged main `c5297d5`, run `20261026T065153`. No leftover game processes; original save/configuration hashes preserved.
+- Original 2021 copied fixture: **FAIL** to load; owner identified it as heavily modded. The application's clean exit was not gameplay acceptance.
+- Owner-requested replacement vanilla1.7.104 Helgen cave/exterior fixtures acquired externally. Bounded baseline route: **PASS (owner-observed)** with interior/exterior captures and clean exit, run `20261026T070429`.
+- Controller: **BLOCKED**, no hardware. DYL-150 is not reopened; these results explicitly qualify its completion record.
 
-| Task | Start condition |
-| --- | --- |
-| [DYL-150 / P1-01](https://linear.app/devils17/issue/DYL-150/p1-01-establish-reproducible-test-profiles-and-independent-module) — environment, profiles and two module skeletons | In review; baseline route NOT_RUN. |
-| [DYL-151 / P1-02](https://linear.app/devils17/issue/DYL-151/p1-02-choose-reusable-mod-components-and-a-compatible-runtime) — reusable components and runtime intersection | Ready; can run alongside P1-01. |
-
-P1-03 and P1-04 become ready after those tasks converge on the provisional stack. Do not start broad implementation before the in-game feasibility proofs and module contracts.
+See [session evidence](evidence/p1/session-2026-10-26.md), the separate camera/UI spike reports on their branches, and [dependency lock](compatibility/dependency-lock.md). Package acquisition, compilation and plugin loading do not prove camera or inventory behavior.
 
 ## Phase gates
 
 | Gate | State |
 | --- | --- |
-| Phase 1 — prototypes and stack | IN_PROGRESS (P1-01 in review) |
-| Phase 2 — camera candidate and playable HUD | NOT_STARTED |
-| Phase 3 — UI candidate and combined route | NOT_STARTED |
-| Phase 4 — packaged MVP acceptance | NOT_STARTED |
+| Phase 1 — prototypes and stack | In progress; feature routes and review pending |
+| DYL-154 / P1-05 — freeze contracts | BLOCKED pending both reviewed spikes and responsible integration choices |
+| Phase 2 — camera candidate and playable HUD | NOT_RUN / not started |
+| Phase 3 — UI candidate and combined route | NOT_RUN / not started |
+| Phase 4 — packaged MVP acceptance | NOT_RUN / not started |
 
-## Known open items
-
-Runtime/host selection, exact providers, rendering route, original-work license and the engineering choices in ADR-001 are intentionally pending. The working native-weight/player-inventory/controller scope is documented, not misrepresented as separately approved owner decisions.
-
-## Update discipline
-
-Implementation PRs update this page with completed scope, source/evidence pointers, blockers and the next ready task. Linear carries assignment/status/dependencies. No source file is marked shipped on the basis of a plan or concept screenshot.
-
-## Tracking initialization
-
-26 tickets created: DYL-150 through DYL-175, across four project milestones. DYL-150 and DYL-151 are Todo; subsequent work starts in Backlog with native blocker relations. The component audit may start alongside environment discovery, but final runtime selection waits for the actual environment facts. No issue is assigned to an agent or marked In Progress by the planning setup.
+No runtime downgrade, inventory-capacity redesign, second camera writer, broad provider fork or minimap removal has been selected. ADR-001 remains proposed. Native compass stays visible in the UI spike until reliable map readiness/restoration is established; this is a safety default and an open MVP requirement, not acceptance of duplicate navigation for the final UI.
