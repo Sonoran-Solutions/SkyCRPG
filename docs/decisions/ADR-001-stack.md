@@ -4,6 +4,15 @@ Status: **PROPOSED — desk recommendation reconciled with environment; gameplay
 Date: 2026-10-25. Research owner: DYL-151 / P1-02. P1-03/P1-04 supply proofs; P1-05 freezes architecture.
 This ADR does not amend owner product decisions or select a license for original SkyCRPG work.
 
+
+## Execution update — 2026-10-26
+
+PR1 and PR2 are merged; DYL-150/151 are Done. Their historical reconciliation notes below describe the earlier audit snapshot, not current acquisition state. The rewritten profile tool now has live load-only proof and an owner-observed vanilla cave/exterior baseline route with captures; see [session evidence](../evidence/p1/session-2026-10-26.md). Pinned Nexus packages are acquired and hashed in the dependency lock. Provider/gameplay acceptance is still separate.
+
+P1-03 implements an original SmoothCam framing preset with no second transform writer. Source inspection finds no held-pitch/recenter config setter; those remain unproven and a small original adapter is only justified after a reproduced provider limitation. P1-04 compiles an original three-column presentation over native SkyUI backing entries/callbacks and a diagnostic HUD against the acquired Nexus6.11 assets. The native compass remains visible while minimap clip attachment is only diagnostic; automatic compass handoff is unimplemented. No renderer, controller or native-action acceptance is inferred from compilation.
+
+These are candidates under review, not a contract freeze. No original-work license, runtime change, inventory-capacity change or broad custom camera/backend is selected. DYL-154 and Phase2 remain gated.
+
 ## Context
 
 Camera and UI must install independently while sharing one real executable baseline. Reuse existing

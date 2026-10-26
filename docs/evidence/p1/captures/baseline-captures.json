@@ -1,0 +1,14 @@
+[
+  {
+    "file": "baseline-20261026-exterior.png",
+    "sha256": "5b74c210cc6bff196452137cc12675be200a7bf59201b918d2d4500e5bebccc5",
+    "received_file_mtime": "2026-10-26T07:07:19.175685-07:00",
+    "source": "owner-provided chat screenshot; received time is not a proven capture time"
+  },
+  {
+    "file": "baseline-20261026-interior.png",
+    "sha256": "0adb48f669ea049cc5cec8dc364722871dbb58e91117edc8edf2aae5e2e96cf3",
+    "received_file_mtime": "2026-10-26T07:07:42.361917-07:00",
+    "source": "owner-provided chat screenshot; received time is not a proven capture time"
+  }
+]
