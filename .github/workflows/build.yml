@@ -74,6 +74,13 @@ jobs:
         with:
           path: ~/AppData/Local/vcpkg/archives
           key: windows-static-vcpkg-${{ hashFiles('vcpkg.json') }}
+      - name: Cache pinned source dependency build
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/windows-x64-release/_deps
+            build/windows-x64-release/vcpkg_installed
+          key: commonlib-static-ae-${{ runner.os }}-${{ env.ImageVersion }}-${{ hashFiles('cmake/CommonLib.cmake', 'vcpkg.json') }}
       - name: Configure and build selected target
         shell: pwsh
         run: |
