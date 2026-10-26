@@ -5,12 +5,16 @@
          Shared.GlobalFunc.IsKeyPressed(details))
       {
          var skycrpgNav = details.navEquivalent;
+         if(skycrpgList.getListEnumSize() == 0) skycrpgList.skycrpgCategoryFocus = true;
          if(skycrpgList.skycrpgCategoryFocus)
          {
             if(skycrpgNav == gfx.ui.NavigationCode.DOWN || skycrpgNav == gfx.ui.NavigationCode.ENTER)
             {
-               skycrpgList.skycrpgCategoryFocus = false;
-               skycrpgList.selectDefaultIndex(true);
+               if(skycrpgList.getListEnumSize() > 0)
+               {
+                  skycrpgList.skycrpgCategoryFocus = false;
+                  skycrpgList.selectDefaultIndex(true);
+               }
                return true;
             }
             if(skycrpgNav == gfx.ui.NavigationCode.UP) return true;
@@ -19,7 +23,7 @@
          else
          {
             if(skycrpgNav == gfx.ui.NavigationCode.UP &&
-               skycrpgList.getSelectedListEnumIndex() < 3 && skycrpgList.selectedIndex != -1)
+               (skycrpgList.selectedIndex == -1 || skycrpgList.getSelectedListEnumIndex() < 3))
             {
                skycrpgList.selectedIndex = -1;
                skycrpgList.skycrpgCategoryFocus = true;

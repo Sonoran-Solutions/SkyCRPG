@@ -40,6 +40,11 @@ class PatchContract(unittest.TestCase):
             for forbidden in ("GameDelegate", "ItemSelect", "ItemDrop", "EquipItem", "formId"):
                 self.assertNotIn(forbidden, source)
 
+    def test_painting_does_not_change_navigation_focus(self):
+        source = (builder.ROOT / "scaleform/grid-methods.as.inc").read_text()
+        paint = source.split("public function skycrpgPaintCell", 1)[1].split("private function onItemRollOver", 1)[0]
+        self.assertNotIn("skycrpgCategoryFocus", paint)
+
 
 if __name__ == "__main__":
     unittest.main()

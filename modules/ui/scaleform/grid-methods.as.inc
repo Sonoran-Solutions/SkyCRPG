@@ -32,7 +32,6 @@
             if (child instanceof MovieClip || child instanceof TextField) child._visible = false;
         }
         var selected = entry == this.selectedEntry;
-        if (selected) this.skycrpgCategoryFocus = false;
         clip.clear();
         clip.lineStyle(1, selected ? 0xDFC174 : 0x777777, 100);
         clip.beginFill(selected ? 0x48402A : 0x16191D, 95);
@@ -46,4 +45,12 @@
         tf.text = text + "\nCount " + count + "  W " + (entry.infoWeight === undefined ? "?" : (entry.infoWeight == null ? 0 : entry.infoWeight)) +
             (entry.equipState > 0 ? "  [E]" : "");
         tf.setTextFormat(new TextFormat("$EverywhereFont", 13, entry.enabled == false ? 0x888888 : 0xF0E8D8));
+    }
+
+    // Input changes focus; repainting/refreshing a selected cell never does.
+    private function onItemRollOver(a_index: Number)
+    {
+        if (this.skycrpgGrid && !this.isListAnimating && !this.disableInput && !this.disableSelection)
+            this.skycrpgCategoryFocus = false;
+        super.onItemRollOver(a_index);
     }

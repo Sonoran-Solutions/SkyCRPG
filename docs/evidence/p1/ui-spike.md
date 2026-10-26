@@ -281,7 +281,7 @@ acceptance. Source safety checks also verify injected routing precedes the real
 category call and preserve all native delegate/focus calls.
 
 ```bash
-<node> modules/ui/tests/navigation_contract.js modules/ui
+<node> modules/ui/tests/navigation_contract.js modules/ui <pinned-SkyUI-checkout>
 # Expected assertion failure demonstrates the old consumer order:
 <node> modules/ui/tests/navigation_contract.js modules/ui --legacy-category-first
 ```
@@ -306,3 +306,18 @@ The controller correction changes input routing, so its navigation and native
 action regression retest remain **NOT_RUN**; earlier PASS evidence is preserved,
 not reused to certify the changed route. Provider-absent startup and distinct
 same-base instance/ownership scenarios still lack scoped proof.
+
+Category edge review also inspected the actual pinned callback chain:
+`CategoryList.onItemPress` dispatches `itemPress`, which calls
+`InventoryLists.onCategoriesItemPress` → `showItemsList`; the latter clears
+item selection, resets scroll, changes the filters, and requests an update.
+`ItemMenu.onCategoryChange` is empty. The focused harness now executes these
+actual methods to check two successive native category changes retain category
+focus and Down returns to the grid. It also checks empty Favorites/search
+enumerations can escape through categories, including when no item was selected.
+
+Painting no longer changes focus at all: an input-only mouse-rollover override
+returns focus to grid, delegating original rollover behavior to BasicList. This
+prevents a repaint or restored selection from implicitly leaving category mode.
+A fourth source check enforces this input/presentation boundary. These callback
+checks still use native-menu stubs and do not certify Scaleform event scheduling.
