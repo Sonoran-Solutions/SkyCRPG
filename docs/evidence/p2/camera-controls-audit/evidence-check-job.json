@@ -1,22 +1,22 @@
 {
-  "purpose": "Verify bounded layout audit evidence and final source after removing unverified field and fixing CI SDK constant",
+  "purpose": "Verify evidence/source hashes after nonfinite dependent-zoom fallback correction and nine-pair focused regression",
   "owner": "camera worker",
   "command": "timeout --signal=TERM 600s python3 /srv/storage/Projects/SkyCRPG/session-20261026/validate-camera-evidence.py",
   "log": "docs/evidence/p2/camera-controls-audit/evidence-check.log",
   "timeout_seconds": 600,
-  "planned_at": "2026-10-26T18:29:09.526291+00:00",
-  "deadline": "2026-10-26T18:39:09.526291+00:00",
+  "planned_at": "2026-10-26T18:31:48.314479+00:00",
+  "deadline": "2026-10-26T18:41:48.314479+00:00",
   "completion_signal": "exit0 with PASS/count report",
   "cleanup": "Bounded owned Python command only; no game processes or deployment; retain logs",
   "status": "PASS",
   "previous_run": {
-    "handle": "functions.exec/19e9c0",
+    "handle": "functions.exec/c9b58d",
     "status": "PASS",
     "exit_code": 0,
-    "completion_recorded_at": "2026-10-26T18:20:18.438138+00:00"
+    "completion_recorded_at": "2026-10-26T18:29:30.492632+00:00"
   },
   "exit_code": 0,
-  "handle": "functions.exec/c9b58d",
-  "completion_recorded_at": "2026-10-26T18:29:30.492632+00:00",
-  "cleanup_result": "Synchronous exit0; no exec session, native build or game process created"
+  "handle": "functions.exec/b9dc64",
+  "completion_recorded_at": "2026-10-26T18:31:54.080390+00:00",
+  "cleanup_result": "Synchronous exit0; no native build/game process created"
 }

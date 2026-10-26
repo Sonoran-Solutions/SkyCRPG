@@ -1,12 +1,12 @@
-508940d1b9d2286b96f23d581b3b1e5d03d33147a79d7a0dc8a91aa62aaef0f8  docs/evidence/p2/camera-controls.md
-87c3682aad49556c8dd4bd8e7887ce8d78e835f794eb996c6895db09f01a54af  docs/evidence/p2/camera-controls-audit/candidate-source-hashes.json
-0f7ce8cb8891f0de7ba9b392d9c4886dc4263d1854a73052ed6c88caaa0cc4b1  docs/evidence/p2/camera-controls-audit/evidence-check-job.json
+ca1841419664df7462b6dc581da8f0e39b2fc2f05a5489a661e7bf51a457b611  docs/evidence/p2/camera-controls.md
+819a3cce40af745b14f3241c37bd8c6acb1c1352bcfb3f88483e01307e57a042  docs/evidence/p2/camera-controls-audit/candidate-source-hashes.json
+59d7a7819617159094215247899cf94ff46270d8a9023e3fd43c04e7e1e974ac  docs/evidence/p2/camera-controls-audit/evidence-check-job.json
 47ab3d5c856357cc90f524ec7482b6abe3e5343fdad4cd866fa7394c3225fd18  docs/evidence/p2/camera-controls-audit/evidence-check.log
 86971c03b2891e86a61e11a4d2ef77bde97ee1b1ae6822e0a8bb7659811d0b9e  docs/evidence/p2/camera-controls-audit/initial-ci.json
 2e433514fa451672235d3ccde783592f1961842dfe8312cf2da4a5e93b17c992  docs/evidence/p2/camera-controls-audit/layout-audit-job.json
 d86dd9487f056f7f51a0291b6153c159f133edd1eb95056c7695eba7d7f37475  docs/evidence/p2/camera-controls-audit/layout-offsets.json
 0a5730ec3bae28d14c4a4c7640be72b83ecede8c4acfc73276d36302faf29ce7  docs/evidence/p2/camera-controls-audit/native-audit-job.json
 64e889163dbf50840c12873ba611f1b75532abb7a940695e51352b7f3c932db9  docs/evidence/p2/camera-controls-audit/native-mapping.json
-ac63b4b61f7dd801ffee2cecddc0edc54ad0e671710a0ec3e5ccc63e6c790905  docs/evidence/p2/camera-controls-audit/policy-test-job.json
+44ac43fd3e51bebe5fac5fd3c296a945b38d62a493e1d3e2d3dcfd401952b848  docs/evidence/p2/camera-controls-audit/policy-test-job.json
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  docs/evidence/p2/camera-controls-audit/policy-test.log
 280d66e31af57d23798aa79f0f62ffd7366be154ceb17569314b464f30713315  docs/evidence/p2/camera-controls-audit/source-inputs.json
