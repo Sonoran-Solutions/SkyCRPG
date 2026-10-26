@@ -1,0 +1,31 @@
+{
+  "review_status": "PASS_SOURCE_REVIEW_RUNTIME_NOT_RUN",
+  "source_tag": "v2.3.1",
+  "source_commit": "7ff865f4a27d6dc936ab5fd0533ff2d706c8f857",
+  "runtime_pin": "Skyrim 1.7.104 / SKSE 2.3.1",
+  "findings": [
+    {
+      "file": "skse64/Hooks_Scaleform.cpp",
+      "lines": "50-68",
+      "detail": "RegisterScaleformPlugin stores each plugin's callback in the list when CommonLib registers it during SKSEPlugin_Load."
+    },
+    {
+      "file": "skse64/Hooks_Scaleform.cpp",
+      "lines": "1535-1609",
+      "detail": "InstallHooks creates the view's plugin objects, calls each registered callback, stores the result at skse.plugins.<name>, and publishes the global skse object."
+    },
+    {
+      "file": "skse64/Hooks_Scaleform.cpp",
+      "lines": "1614-1619",
+      "detail": "InstallHooks_Entry calls InstallHooks(view) before the original GFx view operation continues."
+    },
+    {
+      "file": "skse64/skse64.cpp",
+      "lines": "170-185",
+      "detail": "SKSE initializes, installs the plugin load phase and calls LoadComplete before committing its runtime hooks."
+    }
+  ],
+  "conclusion": "The settings callback is registered during native plugin load and exposed on each Scaleform view before that view continues initialization. HUDMenu.InitExtensions reads skse.plugins.SkyCRPGUI from the view global. This source review supports the intended availability ordering; only an in-game route can confirm the actual menu/timeline sequence.",
+  "runtime_confirmation": "NOT_RUN",
+  "source_dump_included": false
+}

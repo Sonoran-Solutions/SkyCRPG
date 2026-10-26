@@ -100,6 +100,19 @@ class PatchContract(unittest.TestCase):
         self.assertIn("skycrpgSettings != undefined", (builder.ROOT / "scaleform/hud-init.as.inc").read_text())
         self.assertIn("native HUD fallback retained", plugin)
 
+    def test_pinned_address_library_guard_precedes_commonlib_init(self):
+        plugin = (builder.ROOT / "src/plugin.cpp").read_text()
+        pin = (builder.ROOT / "src/address_library_pin.h").read_text()
+        cmake = (builder.ROOT / "CMakeLists.txt").read_text()
+        load = plugin.index("bool SKSEPlugin_Load")
+        verify = plugin.index("VerifyPinnedAddressLibrary()", load)
+        init = plugin.index("SKSE::Init(", load)
+        self.assertLess(verify, init)
+        self.assertLess(plugin.index("return false;", verify), init)
+        self.assertIn("versionlib-1-7-104-0.bin", pin)
+        self.assertIn("8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842", pin)
+        self.assertIn("bcrypt", cmake)
+
     def test_scaleform_builder_can_compile_only_the_changed_hud(self):
         source = TOOL.read_text()
         self.assertIn('choices=sorted(TARGETS)', source)

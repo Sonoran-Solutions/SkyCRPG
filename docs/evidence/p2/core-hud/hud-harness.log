@@ -1,0 +1,3 @@
+Command: /home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node modules/ui/tests/hud_contract.js modules/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11
+PASS: live native meter data, fallback, mode visibility, teardown and 720p/1080p bounds
+Exit code: 0

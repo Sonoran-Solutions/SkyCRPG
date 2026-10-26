@@ -1,9 +1,16 @@
 #include "../src/hud_settings.h"
+#include "../src/address_library_pin.h"
 
 #include <cassert>
 
 int main()
 {
+	using skycrpg::ui::IsPinnedAddressLibrarySha256;
+	assert(std::wstring_view(skycrpg::ui::kPinnedAddressLibraryFile) == L"versionlib-1-7-104-0.bin");
+	assert(IsPinnedAddressLibrarySha256("8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842"));
+	assert(!IsPinnedAddressLibrarySha256("be0c7c07fb63fd1c1403690d4797c7a8fdf8799118acceb605f285d7b0ee055f"));
+	assert(!IsPinnedAddressLibrarySha256(""));
+
 	using skycrpg::ui::ParseHudSettings;
 	auto defaults = ParseHudSettings(L"1", L"", L"", L"", L"");
 	assert(defaults.settings.enabled);

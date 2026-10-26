@@ -1,0 +1,37 @@
+{
+  "status": "PASS_STATIC_BYTECODE_EXPORT",
+  "skse_release": "2.3.1",
+  "skse_source_tag": "v2.3.1",
+  "skse_source_commit": "7ff865f4a27d6dc936ab5fd0533ff2d706c8f857",
+  "skyui_commit": "3d537a366f1a45c14a7012ea0aa00be18108f073",
+  "scaleform_candidate_sha256": "bef13e3819082612669ae6bcbc7a2e5cd9d0898bef7c72974f0055666e7715b6",
+  "ffdec_exported_hudmenu_as_sha256": "257c0cfc1a914bd6a3971dc34d186022c8f14bbc896044c87a755811a802abff",
+  "source_contracts_present": {
+    "init_after_stage_show_all": true,
+    "health_callback_receipt": true,
+    "magicka_callback_receipt": true,
+    "stamina_callback_receipt": true,
+    "replacement_requires_three_received_values": true,
+    "native_penalty_percentages_applied": true,
+    "invalid_values_restore_native_meter_mode_visibility": true,
+    "post_ShowElements_custom_visibility_sync": true,
+    "reinitialization_clears_onEnterFrame_and_removes_owned_clips": true,
+    "native_rollover_and_activation_untouched": true
+  },
+  "timing_review": {
+    "status": "SOURCE_SUPPORTED_RUNTIME_NOT_RUN",
+    "register_api": "SKSEScaleformInterface v2 Register(name, callback) stores the callback during SKSEPlugin_Load.",
+    "view_initialization": "Hooks_Scaleform InstallHooks iterates registered callbacks and installs each object under skse.plugins.<name> before publishing the global skse object for the view.",
+    "order": "InstallHooks_Entry invokes InstallHooks before the original GFx view operation. This makes the registered object available when the view initializes its HUD script; runtime confirmation is still NOT_RUN.",
+    "source_locations": [
+      "skse64/Hooks_Scaleform.cpp:50-68 (registration)",
+      "skse64/Hooks_Scaleform.cpp:1535-1605 (callback and global installation)",
+      "skse64/Hooks_Scaleform.cpp:1615-1622 (hook entry ordering)",
+      "skse64/skse64.cpp:165-185 (plugin load phases and LoadComplete)"
+    ]
+  },
+  "limitations": [
+    "Static export and source review do not prove Scaleform engine invocation, pixel layout, native resource visibility in-game, or live interaction behavior.",
+    "No proprietary SWF, exported ActionScript dump, third-party source file, or game asset is included in this repository."
+  ]
+}

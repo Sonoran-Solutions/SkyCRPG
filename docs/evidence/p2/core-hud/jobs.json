@@ -1,0 +1,76 @@
+{
+  "owner": "DYL-160 UI worker",
+  "source_commit": "pending guard follow-up commit",
+  "bounded_jobs": [
+    {
+      "purpose": "Focused settings, exact pinned source transform, and HUD lifecycle/data/layout validation",
+      "commands": [
+        "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+        "/home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node modules/ui/tests/hud_contract.js modules/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11",
+        "g++ -std=c++20 -Wall -Wextra -Werror modules/ui/tests/hud_settings_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test",
+        "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test"
+      ],
+      "timeout_seconds_each": 600,
+      "results": {
+        "source_contracts": "PASS, 10 tests, 0 skipped (guard-order/digest-pin contract included)",
+        "hud_harness": "PASS, actual meter setters and native CheckAgainstHudMode/ShowElements functions exercised",
+        "settings_parser_compile_and_assertions": "PASS"
+      },
+      "logs": [
+        "source-tests.log",
+        "hud-harness.log",
+        "settings-parser.log"
+      ]
+    },
+    {
+      "purpose": "Compile the changed HUD Scaleform target only against pinned acquired Nexus SkyUI 6.11 SWF base",
+      "command": "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 modules/ui/tools/build_scaleform.py --skyui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 --nexus-interface /srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface --java /srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java --target hudmenu.swf --owner DYL-160 --out /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c",
+      "timeout_seconds": 600,
+      "java_heap_mib": 512,
+      "java_pid": 130895,
+      "elapsed_seconds": 0.765,
+      "exit_code": 0,
+      "result": "PASS, COMPILED_NOT_RUN",
+      "inputs": {
+        "skyui_commit": "3d537a366f1a45c14a7012ea0aa00be18108f073",
+        "base_hudmenu_sha256": "e8277c1fedcda3ac8c159441f4e7c55b62fbe564ec3cc1bd602b70427f0a47cf"
+      },
+      "output_hudmenu_sha256": "bef13e3819082612669ae6bcbc7a2e5cd9d0898bef7c72974f0055666e7715b6",
+      "detail": "No inventory SWFs rebuilt. Full compiler command, FFDec JAR hash, source hashes and input/output manifest are in build.json."
+    },
+    {
+      "purpose": "Statically inspect compiled HUD movie ActionScript export",
+      "command": "/srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java -Xmx512m -Djava.awt.headless=true -jar /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/tools/FFDec/ffdec-cli.jar -export script /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/export/hud /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/Data/Interface/hudmenu.swf",
+      "timeout_seconds": 600,
+      "heap_mib": 512,
+      "session_id": 56918,
+      "exit_code": 0,
+      "elapsed_seconds": 0.89,
+      "result": "PASS, static inspection only",
+      "log": "hudmenu-export.log",
+      "verification": "export-verification.json"
+    },
+    {
+      "purpose": "Native Windows/CommonLib plugin build and in-game runtime checks",
+      "result": "NOT_RUN by UI worker; parent owns the Windows build and shared Skyrim runtime schedule."
+    },
+    {
+      "purpose": "Verify exact Address Library prerequisite pin and guard-before-CommonLib source ordering",
+      "recorded_before_run": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-address-guard-job.json",
+      "commands": [
+        "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+        "g++ -std=c++20 -Wall -Wextra -Werror modules/ui/tests/hud_settings_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test",
+        "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test"
+      ],
+      "timeout_seconds_each": 600,
+      "results": {
+        "source_contracts": "PASS, 10 tests, 0 skipped",
+        "digest_pin_and_settings_assertions": "PASS, compiler and binary exit 0"
+      },
+      "logs": [
+        "address-library-guard-tests.log"
+      ],
+      "limit": "Does not execute BCrypt on Windows or test SKSE/CommonLib runtime; native build pending."
+    }
+  ]
+}

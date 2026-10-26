@@ -1,0 +1,12 @@
+# DYL-160 compact provenance
+
+These source logs and manifests are review metadata only. They contain no external SkyUI source files, exported ActionScript dump, proprietary SWF, game asset, or save.
+
+- [build.json](build.json) — exact HUD-only build command, pinned source/base hashes, Java/FFDec process data and generated artifact hash.
+- [jobs.json](jobs.json) — bounded test/build/export commands, owners, limits and completion status.
+- [source-tests.log](source-tests.log), [hud-harness.log](hud-harness.log), [settings-parser.log](settings-parser.log) — focused test result summaries.
+- [hudmenu-export.log](hudmenu-export.log), [export-verification.json](export-verification.json), [skse-scaleform-timing.json](skse-scaleform-timing.json) — FFDec export result, expected-source checks and SKSE Scaleform registration timing review against tag `v2.3.1`.
+- [address-library-guard.json](address-library-guard.json), [address-library-guard-tests.log](address-library-guard-tests.log) — exact prerequisite pin, fail-closed behavior, and focused source/parser checks.
+- [SHA256SUMS](SHA256SUMS) — hashes for the files in this provenance folder.
+
+The built `hudmenu.swf` and FFDec-exported `HUDMenu.as` remain outside Git in the session candidate directory named in the parent [core HUD report](../core-hud.md).

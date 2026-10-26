@@ -1,0 +1,13 @@
+Address Library guard focused validation
+
+Pre-run record: /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-address-guard-job.json
+
+Command:
+SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v
+Result: PASS, 10 tests, 0 skipped, exit 0. Includes exact filename/digest pin and VerifyPinnedAddressLibrary-before-SKSE::Init source contract.
+
+Command:
+g++ -std=c++20 -Wall -Wextra -Werror modules/ui/tests/hud_settings_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test && /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test
+Result: PASS, compile and assertions exit 0. Tests exact runtime payload hash accepted; archive hash and empty digest rejected, plus settings parser defaults/version/clamps.
+
+Limits: Linux source/pin checks do not execute Windows BCrypt file hashing or SKSE/CommonLib; native Windows build and game runtime remain NOT_RUN. No game launch or deployment.
