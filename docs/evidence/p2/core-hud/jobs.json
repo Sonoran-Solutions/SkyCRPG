@@ -1,0 +1,198 @@
+{
+  "owner": "DYL-160 UI worker",
+  "source_commit": "48bc91a52bf8e7577726ec061a081e1b92b0d5f5",
+  "bounded_jobs": [
+    {
+      "purpose": "Focused settings, exact pinned source transform, and HUD lifecycle/data/layout validation",
+      "commands": [
+        "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+        "/home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node modules/ui/tests/hud_contract.js modules/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11",
+        "g++ -std=c++20 -Wall -Wextra -Werror modules/ui/tests/hud_settings_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test",
+        "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test"
+      ],
+      "timeout_seconds_each": 600,
+      "results": {
+        "source_contracts": "PASS, 10 tests, 0 skipped (guard-order/digest-pin contract included)",
+        "hud_harness": "PASS, actual meter setters and native CheckAgainstHudMode/ShowElements functions exercised",
+        "settings_parser_compile_and_assertions": "PASS"
+      },
+      "logs": [
+        "source-tests.log",
+        "hud-harness.log",
+        "settings-parser.log"
+      ]
+    },
+    {
+      "purpose": "Compile the changed HUD Scaleform target only against pinned acquired Nexus SkyUI 6.11 SWF base",
+      "command": "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 modules/ui/tools/build_scaleform.py --skyui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 --nexus-interface /srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface --java /srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java --target hudmenu.swf --owner DYL-160 --out /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c",
+      "timeout_seconds": 600,
+      "java_heap_mib": 512,
+      "java_pid": 130895,
+      "elapsed_seconds": 0.765,
+      "exit_code": 0,
+      "result": "PASS, COMPILED_NOT_RUN",
+      "inputs": {
+        "skyui_commit": "3d537a366f1a45c14a7012ea0aa00be18108f073",
+        "base_hudmenu_sha256": "e8277c1fedcda3ac8c159441f4e7c55b62fbe564ec3cc1bd602b70427f0a47cf"
+      },
+      "output_hudmenu_sha256": "bef13e3819082612669ae6bcbc7a2e5cd9d0898bef7c72974f0055666e7715b6",
+      "detail": "No inventory SWFs rebuilt. Full compiler command, FFDec JAR hash, source hashes and input/output manifest are in build.json."
+    },
+    {
+      "purpose": "Statically inspect compiled HUD movie ActionScript export",
+      "command": "/srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java -Xmx512m -Djava.awt.headless=true -jar /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/tools/FFDec/ffdec-cli.jar -export script /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/export/hud /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/Data/Interface/hudmenu.swf",
+      "timeout_seconds": 600,
+      "heap_mib": 512,
+      "session_id": 56918,
+      "exit_code": 0,
+      "elapsed_seconds": 0.89,
+      "result": "PASS, static inspection only",
+      "log": "hudmenu-export.log",
+      "verification": "export-verification.json"
+    },
+    {
+      "purpose": "Native Windows/CommonLib plugin build and in-game runtime checks",
+      "result": "NOT_RUN by UI worker; parent owns the Windows build and shared Skyrim runtime schedule."
+    },
+    {
+      "purpose": "Verify exact Address Library prerequisite pin and guard-before-CommonLib source ordering",
+      "recorded_before_run": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-address-guard-job.json",
+      "commands": [
+        "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+        "g++ -std=c++20 -Wall -Wextra -Werror modules/ui/tests/hud_settings_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test",
+        "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test"
+      ],
+      "timeout_seconds_each": 600,
+      "results": {
+        "source_contracts": "PASS, 10 tests, 0 skipped",
+        "digest_pin_and_settings_assertions": "PASS, compiler and binary exit 0"
+      },
+      "logs": [
+        "address-library-guard-tests.log"
+      ],
+      "limit": "Does not execute BCrypt on Windows or test SKSE/CommonLib runtime; native build pending."
+    },
+    {
+      "purpose": "Verify the CommonLib public consumer umbrella include and ordering before RE headers",
+      "recorded_before_run": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-public-header-job.json",
+      "commands": [
+        "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+        "g++ -std=c++20 -Wall -Wextra -Werror modules/ui/tests/hud_settings_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test && /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test"
+      ],
+      "timeout_seconds_each": 600,
+      "results": {
+        "public_header_order_contract": "PASS; 10 tests, 0 skipped",
+        "portable_parser_and_pin_assertions": "PASS; compile and execution exit 0"
+      },
+      "log": "source-tests.log",
+      "native_build": "Not started by UI worker; parent CI dependency build already in progress."
+    },
+    {
+      "purpose": "Regression-check atomic publication of validated HUD settings and enable/readiness gate",
+      "recorded_before_run": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-bridge-atomic-job.json",
+      "commands": [
+        "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+        "git diff --check"
+      ],
+      "timeout_seconds_each": 600,
+      "results": {
+        "source_contracts": "PASS, 11 tests, 0 skipped",
+        "diff_check": "PASS"
+      },
+      "log": "bridge-atomicity-tests.log",
+      "native_build": "Not started; no duplicate native build or game run."
+    },
+    {
+      "purpose": "Correct CommonLib include ordering after initial UI Windows build C1189 and recheck source contracts",
+      "initial_native_failure": {
+        "workflow_run_id": "40375300872",
+        "status": "FAIL",
+        "diagnostic": "C1189: Windows API detected before CommonLib; full log /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-initial-failure.log"
+      },
+      "fix_commit": "9100a1d952c8f47c541bc2d9fa7c6082958f4db5",
+      "recorded_before_run": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-include-order-job.json",
+      "commands": [
+        "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+        "git diff --check"
+      ],
+      "timeout_seconds_each": 600,
+      "results": {
+        "source_contracts": "PASS, 11 tests, 0 skipped",
+        "diff_check": "PASS"
+      },
+      "native_rerun": "NOT_RUN by UI worker; parent owns native build."
+    },
+    {
+      "purpose": "Validate AS2 future-text formatting, native stamina fade synchronization and exact SKSE version guard; rebuild/export only HUD movie.",
+      "recorded_before_run": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-text-fade-skse-job.json",
+      "tests": {
+        "source_contracts": {
+          "command": "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+          "timeout_seconds": 600,
+          "result": "PASS, 13 tests, 0 skipped"
+        },
+        "hud_harness": {
+          "command": "/home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node modules/ui/tests/hud_contract.js modules/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11",
+          "timeout_seconds": 600,
+          "result": "PASS after correcting stale post-fade test expectation; actual native callback bodies modeled"
+        },
+        "parser_and_pin": {
+          "command": "g++ -std=c++20 -Wall -Wextra -Werror modules/ui/tests/hud_settings_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test && /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test",
+          "timeout_seconds": 600,
+          "result": "PASS, exact SKSE version pin assertions and parser/address pin assertions"
+        }
+      },
+      "scaleform_build": {
+        "command": "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 modules/ui/tools/build_scaleform.py --skyui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 --nexus-interface /srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface --java /srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java --target hudmenu.swf --owner DYL-160 --out /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026d",
+        "timeout_seconds": 600,
+        "heap_mib": 512,
+        "pid": 154745,
+        "elapsed_seconds": 0.715,
+        "exit_code": 0,
+        "hudmenu_sha256": "5497d93e5eaa1cd5bed99305f4f7e2f769e5ae158b8ec0241fc11243badf3e2e"
+      },
+      "static_export": {
+        "timeout_seconds": 600,
+        "heap_mib": 512,
+        "process_session_id": 1635,
+        "elapsed_seconds": 0.871,
+        "exit_code": 0,
+        "hudmenu_as_sha256": "e2fe2be18e6fdb5411b4cc90c1804e5bac8ac6111ef94b1e0aa9fd855f534a8c",
+        "command": "/srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java -Xmx512m -Djava.awt.headless=true -jar /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/tools/FFDec/ffdec-cli.jar -export script /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026d/export/hud /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026d/Data/Interface/hudmenu.swf"
+      },
+      "logs": [
+        "source-tests.log",
+        "hud-harness.log",
+        "settings-parser.log",
+        "hudmenu-export.log"
+      ],
+      "native_build": "No duplicate build; parent CI was already running for prior source commit. Current native commit still needs parent build.",
+      "runtime": "No Skyrim launch/deployment."
+    },
+    {
+      "purpose": "Final Windows UI native build/package/upload and separate workflow diagnostic upload disposition",
+      "workflow_run_id": "40380891419",
+      "source_commit": "48bc91a52bf8e7577726ec061a081e1b92b0d5f5",
+      "native_code_commit": "6544f75e749d46a3eeaa6b8728091f64964aae19",
+      "log_paths": {
+        "build": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-final-build.log",
+        "diagnostic_failure": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-final-failure.log"
+      },
+      "results": {
+        "native_compile": "PASS",
+        "package": "PASS; archive and five entries independently match manifest",
+        "package_artifact_upload": "PASS; artifact ID 12677992408",
+        "workflow_overall": "FAIL only in build-diagnostics upload due EPERM traversing cached OpenVR macOS symlink"
+      },
+      "dll_sha256": "75edeb3148b47e796a4fc4c2e66c1d9497d3a163398771569417b6f0c0457876",
+      "package_sha256": "dff065973160a38a529c2aec175dbfe1926c30953583520da7191a34f2bca385",
+      "workflow_fix": {
+        "commit": "33a1454",
+        "status": "PENDING_VERIFICATION",
+        "details": "Parent restricted diagnostic upload to exact target paths."
+      },
+      "initial_c1189_failure": "Retained as historical failure in earlier bounded job and native-ci-initial.json; corrected before this successful compile.",
+      "runtime": "NOT_RUN."
+    }
+  ]
+}

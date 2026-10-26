@@ -1,0 +1,31 @@
+{
+  "result": "PASS",
+  "scope": "UI-only ordinary-camera live health/magicka/stamina display and 1080p layout; owner-observed sprint stamina change",
+  "quote": "Ok it's working now and confirmed they work, took a before an after picture of sprinting draining stamina sucesfully",
+  "observed_resource": {
+    "stamina_before_percent": 100,
+    "stamina_after_percent": 53,
+    "health_percent": 100,
+    "magicka_percent": 100
+  },
+  "captures": {
+    "before-sprint": {
+      "file": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-route-3/before-sprint.png",
+      "sha256": "470e4f901a78ec2a2ed759f81c55f88580c1d6e7ee46800ec7f174af36c67553"
+    },
+    "after-sprint": {
+      "file": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-route-3/after-sprint.png",
+      "sha256": "07fdeecf794b247c9e250d3a74b00216872858ade82badec035cad5099795cbc"
+    }
+  },
+  "native_source": "e49fc30aebb008377e9a010e96757444c0f684c6",
+  "native_dll_sha256": "29381c08436486fda835206dceebaac73b1902f7f13af9a3f8d25b070d6fe136",
+  "swf_source": "e2128ab887f961318614fb7a12f2b1ca765dcd82",
+  "swf_sha256": "eef2936eae0da412ad46f24ff929a1841b2a0c149660cc35750d2de3290700ac",
+  "other_checks": "Native prompts and scale/reset not individually reported; combined smoke pending.",
+  "recorded_utc": "2026-10-26T19:34:10.577045+00:00",
+  "menu_observation": {
+    "quote": "also confirmed menu open/close works without duplicating anything",
+    "result": "PASS"
+  }
+}

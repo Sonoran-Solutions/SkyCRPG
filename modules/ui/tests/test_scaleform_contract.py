@@ -51,6 +51,134 @@ class PatchContract(unittest.TestCase):
         paint = source.split("public function skycrpgPaintCell", 1)[1].split("private function onItemRollOver", 1)[0]
         self.assertNotIn("skycrpgCategoryFocus", paint)
 
+    def test_hud_uses_resource_snapshot_and_native_interaction_authority(self):
+        source = (builder.ROOT / "scaleform/hud-init.as.inc").read_text()
+        self.assertIn("bridge.getPlayerResources()", source)
+        self.assertIn("now + 100", source)
+        self.assertNotIn("hud.lastHealthMeterPercent", source)
+        self.assertIn("native crosshair/rollover remains visible", source)
+        self.assertNotIn("SetCrosshairTarget", source)
+        self.assertNotIn("Activate", source)
+        self.assertIn("hud.Health._visible = modeVisible ? false", source)
+        self.assertIn("hud.Magica._visible = modeVisible ? false", source)
+        self.assertIn("hud.Stamina._visible = modeVisible ? false", source)
+        self.assertIn("skse.plugins.SkyCRPGUI", source)
+        self.assertIn("CheckAgainstHudMode", source)
+        self.assertIn("this.HudElements.push(skycrpg)", source)
+        self.assertIn("skycrpg.onEnterFrame = function()", source)
+        self.assertIn("this.SkyCRPGStatus.onEnterFrame = null", source)
+        self.assertNotIn("addEventListener", source)
+        self.assertNotIn("RolloverText", source)
+
+    @unittest.skipUnless(os.environ.get("SKYCRPG_SKYUI_SOURCE"), "external pinned SkyUI checkout required")
+    def test_hud_builder_preserves_native_meter_callbacks_and_modes(self):
+        root = Path(os.environ["SKYCRPG_SKYUI_SOURCE"])
+        source = root / "source/actionscript/Vanilla/HUDMenu.as"
+        self.assertEqual(builder.sha(source), builder.SOURCES["Vanilla/HUDMenu.as"])
+        original = source.read_text()
+        candidate = builder.transform("Vanilla/HUDMenu.as", original)
+        for setter in ("SetHealthMeterPercent", "SetMagickaMeterPercent", "SetStaminaMeterPercent", "FadeOutStamina"):
+            pattern = rf"function {setter}\([^)]*\)\s*\{{.*?\n   \}}"
+            self.assertEqual(re.search(pattern, original, re.S).group(), re.search(pattern, candidate, re.S).group())
+        self.assertIn("this.SkyCRPGStatus._visible = skycrpgVisible;", candidate)
+        self.assertIn("this._skycrpgMetersSuppressed = skycrpgVisible;", candidate)
+        self.assertEqual(builder.sha(source), builder.SOURCES["Vanilla/HUDMenu.as"])
+
+    def test_hud_settings_are_versioned_bounded_and_missing_bridge_safe(self):
+        config = (builder.ROOT / "config/SkyCRPG_UI.ini").read_text()
+        plugin = (builder.ROOT / "src/plugin.cpp").read_text()
+        parser = (builder.ROOT / "src/hud_settings.h").read_text()
+        for value in ("iVersion=1", "bEnabled=1", "iScalePercent=100", "iOffsetX=0", "iOffsetY=0"):
+            self.assertIn(value, config)
+        for bound in ("85, 115", "-120, 120", "-60, 60"):
+            self.assertIn(bound, parser)
+        self.assertIn("SKSE::GetScaleformInterface()", plugin)
+        self.assertIn("RegisterSkyCRPGUI", plugin)
+        self.assertIn("skycrpgSettings != undefined", (builder.ROOT / "scaleform/hud-init.as.inc").read_text())
+        self.assertIn("native HUD fallback retained", plugin)
+
+    def test_hud_formats_dynamic_text_with_new_text_format(self):
+        source = (builder.ROOT / "scaleform/hud-init.as.inc").read_text()
+        field_setup = source.index('skycrpgMeter.value.setNewTextFormat(')
+        dynamic_assignment = source.index('this.value.text = Math.round(bounded) + "%";')
+        self.assertLess(field_setup, dynamic_assignment)
+        self.assertNotIn('skycrpgMeter.value.setTextFormat(', source)
+        # Other HUD text is assigned before its one-time format application.
+        for field in ("skycrpg.title", "skycrpgMeter.label", "skycrpgParty.heading", "skycrpgParty.availability"):
+            assign = source.index(field + ".text =")
+            format_call = source.index(field + ".setTextFormat(", assign)
+            self.assertLess(assign, format_call)
+
+    def test_native_loader_rejects_non_pinned_or_null_skse(self):
+        plugin = (builder.ROOT / "src/plugin.cpp").read_text()
+        pin = (builder.ROOT / "src/skse_version_pin.h").read_text()
+        load = plugin.index("bool SKSEPlugin_Load")
+        version_guard = plugin.index("if (!skseInterface || !skycrpg::ui::IsPinnedSkseVersion(skseInterface->skseVersion))", load)
+        skeleton = plugin.index("skycrpg::LoadSkeleton(kModule, skseInterface)", load)
+        init = plugin.index("SKSE::Init(", load)
+        self.assertLess(version_guard, skeleton)
+        self.assertLess(version_guard, init)
+        self.assertIn("0x02030010U", pin)
+        self.assertIn("== skse::kSKSE_2_3_1", plugin)
+        self.assertIn("IsPinnedSkseVersion(0x02030010U)", (builder.ROOT / "tests/hud_settings_test.cpp").read_text())
+
+    def test_scaleform_settings_publish_enable_gate_last(self):
+        plugin = (builder.ROOT / "src/plugin.cpp").read_text()
+        callback = plugin.split("bool RegisterSkyCRPGUI(", 1)[1].split("\n}\n}", 1)[0]
+        members = [callback.index(f'SetMember("{member}"') for member in
+                   ("hudScale", "hudOffsetX", "hudOffsetY", "hudEnabled")]
+        self.assertEqual(members, sorted(members))
+        enabled = members[-1]
+        self.assertLess(callback.rindex("SetNumber", 0, enabled), enabled)
+        self.assertIn("return root->SetMember(\"hudEnabled\", value);", callback)
+        for member in ("hudScale", "hudOffsetX", "hudOffsetY"):
+            self.assertIn(f'if (!root->SetMember("{member}", value)) return false;', callback)
+
+    def test_pinned_address_library_guard_precedes_commonlib_init(self):
+        plugin = (builder.ROOT / "src/plugin.cpp").read_text()
+        pin = (builder.ROOT / "src/address_library_pin.h").read_text()
+        cmake = (builder.ROOT / "CMakeLists.txt").read_text()
+        self.assertLess(plugin.index("#include <SKSE/SKSE.h>"), plugin.index("#include <skycrpg/skeleton.h>"))
+        self.assertLess(plugin.index("#include <RE/G/GFxValue.h>"), plugin.index("#include <skycrpg/skeleton.h>"))
+        self.assertLess(plugin.index("#include <SKSE/SKSE.h>"), plugin.index("#include <RE/G/GFxMovieView.h>"))
+        self.assertNotIn("#include <SKSE/API.h>", plugin)
+        load = plugin.index("bool SKSEPlugin_Load")
+        verify = plugin.index("VerifyPinnedAddressLibrary()", load)
+        init = plugin.index("SKSE::Init(", load)
+        self.assertLess(verify, init)
+        self.assertLess(plugin.index("return false;", verify), init)
+        self.assertIn("versionlib-1-7-104-0.bin", pin)
+        self.assertIn("8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842", pin)
+        self.assertIn("bcrypt", cmake)
+
+    def test_resource_reads_use_game_tasks_with_bounded_cache_and_load_invalidation(self):
+        plugin = (builder.ROOT / "src/plugin.cpp").read_text()
+        task = plugin.split("void SamplePlayerResources", 1)[1].split("class PlayerResources", 1)[0]
+        handler = plugin.split("class PlayerResources", 1)[1].split("bool RegisterSkyCRPGUI", 1)[0]
+        self.assertIn("GetActorValue(values[i])", task)
+        self.assertIn("GetActorValueMax(values[i])", task)
+        self.assertIn("Is3DLoaded()", task)
+        self.assertNotIn("RE::PlayerCharacter", handler)
+        self.assertIn("AddTask([generation]()", handler)
+        self.assertIn("!g_resources.pending", handler)
+        self.assertIn("std::chrono::milliseconds(500)", handler)
+        self.assertIn("generation != g_resources.generation", task)
+        lifecycle = plugin.split("void ResourceLifecycle", 1)[1].split("void SamplePlayerResources", 1)[0]
+        for message in ("kPreLoadGame", "kPostLoadGame", "kNewGame"):
+            self.assertIn(message, lifecycle)
+        self.assertIn("g_resources.available = false", lifecycle)
+        self.assertIn("++g_resources.generation", lifecycle)
+        self.assertIn("std::scoped_lock lock(g_resources.mutex)", lifecycle)
+        self.assertIn("std::scoped_lock lock(g_resources.mutex)", task)
+        self.assertIn("params.retVal->SetUndefined()", handler)
+        self.assertIn("if (!_loggedValid.exchange(true))", handler)
+        self.assertIn("if (!_loggedUnavailable.exchange(true))", handler)
+
+    def test_scaleform_builder_can_compile_only_the_changed_hud(self):
+        source = TOOL.read_text()
+        self.assertIn('choices=sorted(TARGETS)', source)
+        self.assertIn('args.target or list(TARGETS)', source)
+
 
 if __name__ == "__main__":
     unittest.main()

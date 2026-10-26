@@ -1,0 +1,10 @@
+{
+  "result": "PASS",
+  "run": 40386173282,
+  "url": "https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40386173282",
+  "source": "e49fc30aebb008377e9a010e96757444c0f684c6",
+  "dll_sha256": "29381c08436486fda835206dceebaac73b1902f7f13af9a3f8d25b070d6fe136",
+  "archive_sha256": "12a496dfd935bc0ebfd9e125255a2db86d60f06b19bebe62703a9accc17157b7",
+  "manifest": "resource-native-manifest.json",
+  "note": "Built native resource snapshot DLL; later commits changed AS2/evidence/shared workflow only. Both-target final-head Windows validation remains integrator-owned."
+}

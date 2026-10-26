@@ -1,0 +1,18 @@
+{
+  "owner": "ui_native DYL-160",
+  "purpose": "Correct percent scale basis normalization after harness rejected 100x overscaling; validate recorded translation/nonunit/nested scales",
+  "command": [
+    "/home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "modules/ui/tests/hud_contract.js",
+    "modules/ui",
+    "/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11"
+  ],
+  "timeout_seconds": 120,
+  "deadline": "120s from launch",
+  "log": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-resource-validation/coordinates-harness.log",
+  "completion": "exit0 and harness PASS",
+  "cleanup": "kill owned process on timeout; retain logs",
+  "pid": 192255,
+  "exit_code": 0,
+  "elapsed_seconds": 0.064
+}

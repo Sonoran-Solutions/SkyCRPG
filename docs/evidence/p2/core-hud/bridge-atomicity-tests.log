@@ -1,0 +1,8 @@
+Scaleform settings publication fail-safe regression
+
+Pre-run record: /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-bridge-atomic-job.json
+Command: SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v
+Result: PASS, 11 tests, 0 skipped, exit 0.
+Regression asserts hudScale/hudOffsetX/hudOffsetY are published before hudEnabled, every numeric SetMember failure returns before enabling, and hudEnabled is the final return gate.
+
+No native build or game runtime was started by the UI worker. Parent owns native CI; this evidence validates source contract only.

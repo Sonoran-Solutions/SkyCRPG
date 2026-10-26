@@ -1,0 +1,18 @@
+{
+  "owner": "ui_native DYL-160",
+  "purpose": "Verify setup and first-render geometry diagnostics are bounded to two logs and resource harness remains passing",
+  "command": [
+    "/home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "modules/ui/tests/hud_contract.js",
+    "modules/ui",
+    "/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11"
+  ],
+  "timeout_seconds": 120,
+  "deadline": "120s after launch",
+  "log": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-resource-validation/geometry-job.log",
+  "cleanup": "kill owned subprocess on timeout; retain log",
+  "completion": "exit0 and harness PASS",
+  "pid": 187689,
+  "exit_code": 0,
+  "elapsed_seconds": 0.032
+}

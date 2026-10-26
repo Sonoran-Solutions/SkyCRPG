@@ -1,0 +1,17 @@
+{
+  "status": "PASS_STATIC_BYTECODE_EXPORT",
+  "checks": {
+    "helper_defined": true,
+    "two_parent_global_to_local_calls": true,
+    "converted_position": true,
+    "scale_compensated": true,
+    "both_panel_calls": true,
+    "global_geometry_log": true,
+    "resource_snapshot": true
+  },
+  "exported_source_sha256": "951dad561c5d8650e434b5ad7d3e4143b2d31b4ca7f25d060fbc2cefddc75b1f",
+  "exported_source_path": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-coordinates-candidate-20261026/export/scripts/__Packages/HUDMenu.as",
+  "native_source": "unchanged e49fc30",
+  "runtime": "NOT_RUN changed coordinates",
+  "inspection_note": "FFDec rewrites local variable names; initial literal source-name matcher rejected expected renaming. Verified exported conversion structure instead; no compiler retry."
+}

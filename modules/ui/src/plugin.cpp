@@ -1,8 +1,276 @@
-// SkyCRPG UI — P1-01 load-only skeleton. No gameplay behavior.
+// SkyCRPG UI — validated, read-only HUD settings and resource bridge.
+#include <SKSE/SKSE.h>
+#include <RE/G/GFxMovieView.h>
+#include <RE/G/GFxValue.h>
+#include <RE/G/GFxFunctionHandler.h>
+#include <RE/P/PlayerCharacter.h>
+
+// CommonLib's REX/W32 headers must precede the Windows API headers pulled by
+// the shared skeleton. Keep the skeleton below every CommonLib include.
 #include <skycrpg/skeleton.h>
+#include "hud_settings.h"
+#include "address_library_pin.h"
+#include "skse_version_pin.h"
+#include "resource_snapshot.h"
+
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include <bcrypt.h>
 
 namespace {
 constexpr skycrpg::ModuleInfo kModule{ "SkyCRPG UI", L"SkyCRPG_UI", SKYCRPG_VERSION, SKYCRPG_SOURCE_COMMIT };
+static_assert(skycrpg::ui::kPinnedSkseVersion == skse::kSKSE_2_3_1);
+skycrpg::ui::HudSettings g_hudSettings{};
+
+enum class AddressLibraryStatus
+{
+	Valid,
+	Missing,
+	FileError,
+	CryptoError,
+	HashMismatch
+};
+
+struct AddressLibraryResult
+{
+	AddressLibraryStatus status{ AddressLibraryStatus::FileError };
+	DWORD systemError{};
+	std::string sha256;
+};
+
+skycrpg::ui::ParseResult ReadHudSettings(const std::wstring& iniPath)
+{
+	std::array<wchar_t, 32> version{};
+	std::array<wchar_t, 32> enabled{};
+	std::array<wchar_t, 32> scale{};
+	std::array<wchar_t, 32> offsetX{};
+	std::array<wchar_t, 32> offsetY{};
+	GetPrivateProfileStringW(L"Settings", L"iVersion", L"", version.data(), static_cast<DWORD>(version.size()), iniPath.c_str());
+	GetPrivateProfileStringW(L"HUD", L"bEnabled", L"", enabled.data(), static_cast<DWORD>(enabled.size()), iniPath.c_str());
+	GetPrivateProfileStringW(L"HUD", L"iScalePercent", L"", scale.data(), static_cast<DWORD>(scale.size()), iniPath.c_str());
+	GetPrivateProfileStringW(L"HUD", L"iOffsetX", L"", offsetX.data(), static_cast<DWORD>(offsetX.size()), iniPath.c_str());
+	GetPrivateProfileStringW(L"HUD", L"iOffsetY", L"", offsetY.data(), static_cast<DWORD>(offsetY.size()), iniPath.c_str());
+	return skycrpg::ui::ParseHudSettings(version.data(), enabled.data(), scale.data(), offsetX.data(), offsetY.data());
+}
+
+AddressLibraryResult VerifyPinnedAddressLibrary()
+{
+	const auto path = skycrpg::ThisModuleDirectory() + skycrpg::ui::kPinnedAddressLibraryFile;
+	const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (file == INVALID_HANDLE_VALUE) {
+		const DWORD error = GetLastError();
+		return { error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ? AddressLibraryStatus::Missing : AddressLibraryStatus::FileError,
+			error, {} };
+	}
+
+	BCRYPT_ALG_HANDLE algorithm = nullptr;
+	BCRYPT_HASH_HANDLE hash = nullptr;
+	DWORD objectBytes = 0;
+	DWORD resultBytes = 0;
+	std::vector<UCHAR> hashObject;
+	std::array<UCHAR, 32> digest{};
+	std::array<UCHAR, 65536> buffer{};
+	AddressLibraryStatus status = AddressLibraryStatus::CryptoError;
+	DWORD systemError = ERROR_SUCCESS;
+	bool readFailed = false;
+	bool hashFailed = false;
+	std::string actual;
+
+	if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0 &&
+		BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&objectBytes), sizeof(objectBytes), &resultBytes, 0) >= 0 &&
+		objectBytes > 0) {
+		hashObject.resize(objectBytes);
+		if (BCryptCreateHash(algorithm, &hash, hashObject.data(), objectBytes, nullptr, 0, 0) >= 0) {
+			for (;;) {
+				DWORD bytesRead = 0;
+				if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &bytesRead, nullptr)) {
+					readFailed = true;
+					systemError = GetLastError();
+					break;
+				}
+				if (bytesRead == 0) {
+					break;
+				}
+				if (BCryptHashData(hash, buffer.data(), bytesRead, 0) < 0) {
+					hashFailed = true;
+					break;
+				}
+			}
+			if (readFailed) {
+				status = AddressLibraryStatus::FileError;
+			} else if (!hashFailed && BCryptFinishHash(hash, digest.data(), static_cast<ULONG>(digest.size()), 0) >= 0) {
+				constexpr char hex[] = "0123456789abcdef";
+				actual.reserve(digest.size() * 2);
+				for (const UCHAR byte : digest) {
+					actual.push_back(hex[byte >> 4]);
+					actual.push_back(hex[byte & 0x0F]);
+				}
+				status = skycrpg::ui::IsPinnedAddressLibrarySha256(actual) ? AddressLibraryStatus::Valid : AddressLibraryStatus::HashMismatch;
+			}
+		}
+	}
+	if (hash) BCryptDestroyHash(hash);
+	if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
+	CloseHandle(file);
+	return { status, systemError, actual };
+}
+
+void AppendModuleLog(const char* message)
+{
+	const auto logPath = skycrpg::LogDirectory() + kModule.fileStem + L".log";
+	FILE* log = nullptr;
+	if (_wfopen_s(&log, logPath.c_str(), L"a") == 0 && log) {
+		std::fputs(message, log);
+		std::fclose(log);
+	}
+}
+
+void LogHudSettings(const std::wstring& iniPath, const skycrpg::ui::ParseResult& parsed)
+{
+	const auto logPath = skycrpg::LogDirectory() + kModule.fileStem + L".log";
+	FILE* log = nullptr;
+	if (_wfopen_s(&log, logPath.c_str(), L"a") != 0 || !log) {
+		return;
+	}
+	const auto& settings = parsed.settings;
+	std::fwprintf(log, L"HUD settings: %ls; version=%ls; enabled=%d (valid=%d); scale=%d%% (valid=%d clamped=%d); offset=(%d,%d) (valid=%d/%d clamped=%d/%d)\n",
+		iniPath.c_str(), parsed.supportedVersion ? L"1" : L"unsupported/defaults", settings.enabled,
+		parsed.enabledWasValid, settings.scalePercent, parsed.scaleWasValid, parsed.scaleWasClamped,
+		settings.offsetX, settings.offsetY, parsed.offsetXWasValid, parsed.offsetYWasValid,
+		parsed.offsetXWasClamped, parsed.offsetYWasClamped);
+	std::fclose(log);
+}
+
+using ResourceClock = std::chrono::steady_clock;
+struct ResourceCache {
+	std::mutex mutex;
+	std::array<skycrpg::ui::ResourceValue, 3> values{};
+	ResourceClock::time_point sampled{};
+	std::uint64_t generation{};
+	bool available{};
+	bool pending{};
+	bool loaded{};
+} g_resources;
+
+void ResourceLifecycle(SKSE::MessagingInterface::Message* message)
+{
+	if (!message) return;
+	if (message->type != SKSE::MessagingInterface::kPreLoadGame &&
+		message->type != SKSE::MessagingInterface::kPostLoadGame &&
+		message->type != SKSE::MessagingInterface::kNewGame) return;
+	std::scoped_lock lock(g_resources.mutex);
+	++g_resources.generation;
+	g_resources.available = false;
+	g_resources.loaded = message->type == SKSE::MessagingInterface::kNewGame ||
+		(message->type == SKSE::MessagingInterface::kPostLoadGame && message->data != nullptr);
+}
+
+// Runs on the SKSE game task queue. No actor or GFx pointers cross threads.
+void SamplePlayerResources(std::uint64_t generation)
+{
+	std::scoped_lock lock(g_resources.mutex);
+	g_resources.pending = false;
+	if (!g_resources.loaded || generation != g_resources.generation) return;
+	g_resources.available = false;
+	auto* player = RE::PlayerCharacter::GetSingleton();
+	if (!player || !player->Is3DLoaded()) return;
+	constexpr std::array values{ RE::ActorValue::kHealth, RE::ActorValue::kMagicka, RE::ActorValue::kStamina };
+	std::array<skycrpg::ui::ResourceValue, 3> resources{};
+	for (std::size_t i = 0; i < values.size(); ++i) {
+		resources[i] = { player->AsActorValueOwner()->GetActorValue(values[i]), player->GetActorValueMax(values[i]) };
+		if (!skycrpg::ui::IsValidResource(resources[i])) return;
+	}
+	g_resources.values = resources;
+	g_resources.sampled = ResourceClock::now();
+	g_resources.available = true;
+}
+
+// One process-owned handler, matching pinned SKSE ScaleformCallbacks.h caching.
+// It stores no movie/actor pointers; only copied numbers reach Scaleform.
+class PlayerResources final : public RE::GFxFunctionHandler
+{
+public:
+	void Call(Params& params) override
+	{
+		if (!params.retVal) return;
+		params.retVal->SetUndefined();
+		if (!params.movie) return;
+		std::array<skycrpg::ui::ResourceValue, 3> resources{};
+		bool available = false;
+		bool request = false;
+		std::uint64_t generation = 0;
+		{
+			std::scoped_lock lock(g_resources.mutex);
+			available = g_resources.loaded && g_resources.available &&
+				ResourceClock::now() - g_resources.sampled <= std::chrono::milliseconds(500);
+			if (available) resources = g_resources.values;
+			if (g_resources.loaded && !g_resources.pending) {
+				g_resources.pending = true;
+				generation = g_resources.generation;
+				request = true;
+			}
+		}
+		if (request) SKSE::GetTaskInterface()->AddTask([generation]() { SamplePlayerResources(generation); });
+		if (!available) {
+			LogUnavailable();
+			return;
+		}
+		RE::GFxValue snapshot;
+		params.movie->CreateObject(&snapshot);
+		constexpr std::array currentNames{ "health", "magicka", "stamina" };
+		constexpr std::array maxNames{ "healthMax", "magickaMax", "staminaMax" };
+		for (std::size_t i = 0; i < resources.size(); ++i) {
+			RE::GFxValue value;
+			value.SetNumber(resources[i].current);
+			if (!snapshot.SetMember(currentNames[i], value)) return;
+			value.SetNumber(resources[i].maximum);
+			if (!snapshot.SetMember(maxNames[i], value)) return;
+		}
+		*params.retVal = snapshot;
+		if (!_loggedValid.exchange(true)) {
+			std::array<char, 256> message{};
+			std::snprintf(message.data(), message.size(), "HUD resource snapshot: first valid current/max H=%.3f/%.3f M=%.3f/%.3f S=%.3f/%.3f\n",
+				resources[0].current, resources[0].maximum, resources[1].current, resources[1].maximum, resources[2].current, resources[2].maximum);
+			AppendModuleLog(message.data());
+		}
+	}
+private:
+	void LogUnavailable()
+	{
+		if (!_loggedUnavailable.exchange(true)) {
+			AppendModuleLog("HUD resource snapshot: first unavailable/invalid sample; native fallback retained\n");
+		}
+	}
+	std::atomic_bool _loggedValid{};
+	std::atomic_bool _loggedUnavailable{};
+};
+
+bool RegisterSkyCRPGUI(RE::GFxMovieView* movie, RE::GFxValue* root)
+{
+	if (!movie || !root) {
+		return false;
+	}
+	RE::GFxValue function;
+	static auto* handler = new PlayerResources();
+	movie->CreateFunction(&function, handler);
+	if (!root->SetMember("getPlayerResources", function)) return false;
+	RE::GFxValue value;
+	value.SetNumber(g_hudSettings.scalePercent);
+	if (!root->SetMember("hudScale", value)) return false;
+	value.SetNumber(g_hudSettings.offsetX);
+	if (!root->SetMember("hudOffsetX", value)) return false;
+	value.SetNumber(g_hudSettings.offsetY);
+	if (!root->SetMember("hudOffsetY", value)) return false;
+	// This is the readiness/enable gate read by HUDMenu. Publish it only once
+	// every numeric setting is present so a partial GFx object stays inert.
+	value.SetBoolean(g_hudSettings.enabled);
+	return root->SetMember("hudEnabled", value);
+}
 }
 
 extern "C" {
@@ -13,15 +281,74 @@ __declspec(dllexport) constinit skse::PluginVersionData SKSEPlugin_Version{
 	.name = "SkyCRPG UI",
 	.author = "SkyCRPG",
 	.supportEmail = "",
-	.versionIndependenceEx = skse::PluginVersionData::kVersionIndependentEx_NoStructUse,
+	// This DLL uses SKSE Scaleform/GFx structures; it is runtime-pinned.
+	.versionIndependenceEx = 0,
 	.versionIndependence = 0,
 	.compatibleVersions = { skse::kRuntime_1_7_104, 0 },
 	.seVersionRequired = skse::kSKSE_2_3_1,
 };
 
-__declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* skse)
+__declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* skseInterface)
 {
-	return skycrpg::LoadSkeleton(kModule, skse);
+	if (!skseInterface || !skycrpg::ui::IsPinnedSkseVersion(skseInterface->skseVersion)) {
+		return false;
+	}
+	if (!skycrpg::LoadSkeleton(kModule, skseInterface)) {
+		return false;
+	}
+	const auto addressLibrary = VerifyPinnedAddressLibrary();
+	if (addressLibrary.status != AddressLibraryStatus::Valid) {
+		std::array<char, 256> message{};
+		switch (addressLibrary.status) {
+		case AddressLibraryStatus::Missing:
+			std::snprintf(message.data(), message.size(), "Address Library guard: FAIL missing %ls; expected v13 / 1.7.104 exact SHA-256 %.*s; CommonLib initialization skipped\n",
+				skycrpg::ui::kPinnedAddressLibraryFile, static_cast<int>(skycrpg::ui::kPinnedAddressLibrarySha256.size()), skycrpg::ui::kPinnedAddressLibrarySha256.data());
+			break;
+		case AddressLibraryStatus::FileError:
+			std::snprintf(message.data(), message.size(), "Address Library guard: FAIL file I/O for %ls (Win32 error %lu); CommonLib initialization skipped\n",
+				skycrpg::ui::kPinnedAddressLibraryFile, addressLibrary.systemError);
+			break;
+		case AddressLibraryStatus::CryptoError:
+			std::snprintf(message.data(), message.size(), "Address Library guard: FAIL SHA-256 verification unavailable for %ls; CommonLib initialization skipped\n",
+				skycrpg::ui::kPinnedAddressLibraryFile);
+			break;
+		case AddressLibraryStatus::HashMismatch:
+			std::snprintf(message.data(), message.size(), "Address Library guard: FAIL %ls has SHA-256 %s; expected v13 / 1.7.104 %.*s; CommonLib initialization skipped\n",
+				skycrpg::ui::kPinnedAddressLibraryFile, addressLibrary.sha256.c_str(),
+				static_cast<int>(skycrpg::ui::kPinnedAddressLibrarySha256.size()), skycrpg::ui::kPinnedAddressLibrarySha256.data());
+			break;
+		case AddressLibraryStatus::Valid:
+			break;
+		}
+		AppendModuleLog(message.data());
+		return false;
+	}
+	std::array<char, 256> addressLog{};
+	std::snprintf(addressLog.data(), addressLog.size(), "Address Library guard: PASS %ls (v13 / 1.7.104, SHA-256 %s)\n",
+		skycrpg::ui::kPinnedAddressLibraryFile, addressLibrary.sha256.c_str());
+	AppendModuleLog(addressLog.data());
+	const auto iniPath = skycrpg::ThisModuleDirectory() + kModule.fileStem + L".ini";
+	const auto parsed = ReadHudSettings(iniPath);
+	g_hudSettings = parsed.settings;
+	LogHudSettings(iniPath, parsed);
+
+	// Pinned CommonLib supplies GFx and read-only player actor values.
+	// No actor state is written and the shared load ABI stays untouched.
+	SKSE::Init(reinterpret_cast<const SKSE::LoadInterface*>(skseInterface), false);
+	const auto* tasks = SKSE::GetTaskInterface();
+	const auto* messaging = SKSE::GetMessagingInterface();
+	if (!tasks || !messaging || !messaging->RegisterListener("SKSE", ResourceLifecycle)) {
+		AppendModuleLog("HUD resource task/lifecycle registration: FAIL; native HUD fallback retained\n");
+		return true;
+	}
+	const auto* scaleform = SKSE::GetScaleformInterface();
+	if (!scaleform || !scaleform->Register(&RegisterSkyCRPGUI, "SkyCRPGUI")) {
+		AppendModuleLog("Scaleform settings registration: FAIL; native HUD fallback retained\n");
+		return true;
+	}
+	AppendModuleLog("scope extension: read-only HUD settings and player current/effective maximum snapshots; no gameplay writes\n");
+	AppendModuleLog("Scaleform settings registration: PASS read-only\n");
+	return true;
 }
 
 }

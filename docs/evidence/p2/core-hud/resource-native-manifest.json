@@ -1,0 +1,30 @@
+{
+  "package": "SkyCRPG_UI",
+  "version": "0.0.1",
+  "source_commit": "e49fc30aebb008377e9a010e96757444c0f684c6",
+  "archive": "SkyCRPG_UI-0.0.1-e49fc30.zip",
+  "archive_sha256": "12a496dfd935bc0ebfd9e125255a2db86d60f06b19bebe62703a9accc17157b7",
+  "install_root": "Data/",
+  "files": {
+    "Docs/SkyCRPG_UI/CommonLibSSE-NG-COPYING": "72d2f09334f8b87dded94a833ba7da05e5280e77a037ca23b251f96eae4cf719",
+    "Docs/SkyCRPG_UI/CommonLibSSE-NG-EXCEPTIONS.md": "d3a3ec90e21ae118d3653d0834a2f6d1e6d32b773cc185023824992ad4bdcfce",
+    "Docs/SkyCRPG_UI/build-inputs.md": "aa56f526b6760d59018fec59d60a40ccfe7bd7f69d8ab18fcf90684510eab2f8",
+    "SKSE/Plugins/SkyCRPG_UI.dll": "29381c08436486fda835206dceebaac73b1902f7f13af9a3f8d25b070d6fe136",
+    "SKSE/Plugins/SkyCRPG_UI.ini": "de4162addb6df41b4d915dc7ca2a609cc6dadea8f7d62d5644bbfe43b63c229b"
+  },
+  "dll_imports": [
+    "KERNEL32.dll",
+    "SHELL32.dll",
+    "USER32.dll",
+    "VERSION.dll",
+    "bcrypt.dll",
+    "ole32.dll"
+  ],
+  "runtime": "SkyrimSE.exe 1.7.104.0 (Steam)",
+  "requires": [
+    "SKSE64 2.3.1",
+    "Address Library 13",
+    "SkyUI Community 6.11"
+  ],
+  "requires_skycrpg_modules": []
+}

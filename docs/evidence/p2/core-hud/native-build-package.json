@@ -1,0 +1,55 @@
+{
+  "workflow_run_id": "40380891419",
+  "workflow_source_commit": "48bc91a52bf8e7577726ec061a081e1b92b0d5f5",
+  "native_code_commit": "6544f75e749d46a3eeaa6b8728091f64964aae19",
+  "native_build": {
+    "status": "PASS",
+    "target": "SkyCRPG_UI",
+    "platform": "Windows x64 / Skyrim runtime 1.7.104",
+    "compiler": "MSVC 19.44.35229.0",
+    "result": "SkyCRPG_UI.vcxproj produced SkyCRPG_UI.dll",
+    "dll_sha256": "75edeb3148b47e796a4fc4c2e66c1d9497d3a163398771569417b6f0c0457876",
+    "imports": [
+      "KERNEL32.dll",
+      "SHELL32.dll",
+      "USER32.dll",
+      "VERSION.dll",
+      "bcrypt.dll",
+      "ole32.dll"
+    ]
+  },
+  "package": {
+    "status": "PASS",
+    "manifest_path": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/dist-ui/SkyCRPG_UI.manifest.json",
+    "manifest_sha256": "a262fd2008df89e9fd6f09ed5a68c260879023126e707575ff73982fdc523319",
+    "archive_path": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/dist-ui/SkyCRPG_UI-0.0.1-48bc91a.zip",
+    "archive_sha256": "dff065973160a38a529c2aec175dbfe1926c30953583520da7191a34f2bca385",
+    "verified": "Archive entry set and SHA-256 for all five files matched downloaded manifest; ZIP hash matched SHA256SUMS."
+  },
+  "package_upload": {
+    "status": "PASS",
+    "artifact_id": "12677992408",
+    "artifact_name": "skycrpg-ui-48bc91a52bf8e7577726ec061a081e1b92b0d5f5",
+    "uploaded_artifact_zip_sha256": "b8f08f113ac950db09465db1d4b757859e040658917d86d9b47eafdbcad130e5",
+    "url": "https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40380891419/artifacts/12677992408"
+  },
+  "workflow_overall": "FAIL_ONLY_DIAGNOSTICS_UPLOAD",
+  "diagnostics_upload_failure": {
+    "step": "actions/upload-artifact@v5 build-diagnostics-ui",
+    "error": "EPERM: operation not permitted while statting cached CommonLib path extern/openvr/bin/osx64/OpenVR.framework/Headers",
+    "full_log_path": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-final-failure.log",
+    "cause": "Broad diagnostic upload glob traversed cached OpenVR macOS framework symlink."
+  },
+  "workflow_fix": {
+    "commit": "33a1454",
+    "change": "Parent narrowed diagnostic upload to exact selected-target paths.",
+    "verification": "PENDING; no rerun performed by UI worker."
+  },
+  "previous_failure_history": {
+    "workflow_run_id": "40375300872",
+    "failure": "Initial C1189 due Windows API headers preceding CommonLib.",
+    "resolution": "Include order fixed before successful build; original failure remains recorded in native-ci-initial.json."
+  },
+  "hudmenu_sha256": "5497d93e5eaa1cd5bed99305f4f7e2f769e5ae158b8ec0241fc11243badf3e2e",
+  "runtime_status": "NOT_RUN; no game launch/deployment by UI worker."
+}

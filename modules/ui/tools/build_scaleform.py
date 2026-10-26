@@ -70,7 +70,23 @@ def transform(name, text):
         anchor = "public function setEntry(a_entryObject: Object, a_state: ListState)\n    {"
         text = replace_once(text, anchor, anchor + "\n        if (a_state.list.skycrpgGrid) {\n            a_state.list.skycrpgPaintCell(this, a_entryObject);\n            return;\n        }")
     elif name.endswith("HUDMenu.as"):
-        anchor = "function InitExtensions()\n   {"
+        mode_anchor = "         _loc2_ = _loc2_ + 1;\n      }\n   }\n   function SetLocationName(aLocation)"
+        mode_sync = """         _loc2_ = _loc2_ + 1;
+      }
+      if (this.SkyCRPGStatus != undefined) {
+         var skycrpgDataReady = this.SkyCRPGStatus._skycrpgDataReady == true;
+         var skycrpgVisible = skycrpgDataReady && this.CheckAgainstHudMode(this.SkyCRPGStatus);
+         this.SkyCRPGStatus._visible = skycrpgVisible;
+         this.SkyCRPGPartyArea._visible = this.CheckAgainstHudMode(this.SkyCRPGPartyArea);
+         this._skycrpgMetersSuppressed = skycrpgVisible;
+         this.Health._visible = skycrpgVisible ? false : this.CheckAgainstHudMode(this.Health);
+         this.Magica._visible = skycrpgVisible ? false : this.CheckAgainstHudMode(this.Magica);
+         this.Stamina._visible = skycrpgVisible ? false : this.CheckAgainstHudMode(this.Stamina);
+      }
+   }
+   function SetLocationName(aLocation)"""
+        text = replace_once(text, mode_anchor, mode_sync)
+        anchor = 'Stage.scaleMode = "showAll";'
         text = replace_once(text, anchor, anchor + "\n" + (ROOT / "scaleform/hud-init.as.inc").read_text())
     return text
 
@@ -82,6 +98,9 @@ def main():
     parser.add_argument("--nexus-interface", type=Path,
                         help="Extracted Interface folder from acquired Nexus SkyUI6.11 BSA; exact hashes checked")
     parser.add_argument("--java", type=Path)
+    parser.add_argument("--target", choices=sorted(TARGETS), action="append",
+                        help="Compile only this changed SWF; repeat to select multiple targets (default: all)")
+    parser.add_argument("--owner", default="DYL-153", help="Evidence owner recorded in build.json")
     parser.add_argument("--prepare-only", action="store_true")
     args = parser.parse_args()
     provider = args.skyui.resolve()
@@ -107,9 +126,12 @@ def main():
                 "base": "Nexus6.11 acquired BSA" if args.nexus_interface else "GitHub source-tree SWFs (compile probe)",
                 "patch_sha256": {p.name: sha(p) for p in (ROOT / "scaleform").glob("*.inc")},
                 "ffdec_cli_sha256": sha(provider / "tools/FFDec/ffdec-cli.jar"),
+                "targets": args.target or list(TARGETS),
+                "owner": args.owner,
                 "inputs": {}, "outputs": {}, "jobs": []}
     out.mkdir(parents=True)
-    for target, names in TARGETS.items():
+    for target in manifest["targets"]:
+        names = TARGETS[target]
         stage = out / "staging" / target
         for name in names:
             file = stage / "__Packages" / name.split("/", 1)[1]
@@ -128,7 +150,7 @@ def main():
                    "-importScript", str(source_swf), str(output), str(stage)]
         log = out / (target.replace("/", "-") + ".log")
         job = {"purpose": "Compile original grid/HUD patch into external SkyUI SWF", "command": command,
-               "timeout_seconds": 600, "owner": "DYL-153", "log": str(log),
+               "timeout_seconds": 600, "owner": args.owner, "log": str(log),
                "completion": "zero exit and nonempty SWF", "cleanup": "kill compiler process on timeout; retain logs"}
         manifest["jobs"].append(job)
         (out / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")

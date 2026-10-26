@@ -1,0 +1,29 @@
+{
+  "status": "COMPILED_NOT_RUN",
+  "runtime": "NOT_RUN for changed candidate; initial route FAIL retained",
+  "apis": {
+    "commonlib_commit": "7a60f4de (pinned 7.2.0 checkout)",
+    "current": "ActorValueOwner virtual slot01 GetActorValue",
+    "effective_maximum": "Actor.cpp351: GetPermanentActorValue + GetActorValueModifier(kTemporary)",
+    "player_singleton": "AE403521",
+    "temporary_modifier": "AE38469",
+    "gf\u0445": "GFxFunctionHandler::Call; GFxMovie CreateObject/CreateFunction; one process-owned handler matching pinned SKSE ScaleformCallbacks.h cache ownership"
+  },
+  "address_library": {
+    "file": "versionlib-1-7-104-0.bin",
+    "sha256": "8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842",
+    "format": 5,
+    "header_bytes": 96,
+    "id_38469_offset": "0x6c5440",
+    "id_403521_offset": "0x3230778"
+  },
+  "lifecycle": {
+    "queue": "pinned SKSE Hooks_Threads.cpp19\u201339: BSTaskPool ProcessTasks -> Run/Dispose",
+    "load": "Hooks_SaveLoad.cpp45\u201354: pre-load message precedes load target, post-load follows; data=(void*)result length1",
+    "cache": "mutex numeric POD, one pending request, generation invalidation, 500ms maximum age, no captured actor/movie pointers",
+    "startup": "disabled until successful post-load or new-game message",
+    "poll": "existing child onEnterFrame, maximum10Hz; no catch-up loop"
+  },
+  "display": "clamp 100*current/effectiveMax to0..100; do not reapply native penalty; native setter/fade bodies unchanged",
+  "limits": "Portable/source tests do not prove native threading or runtime values. Native DLL compile and UI-only/combined gameplay remain root-owned gates."
+}

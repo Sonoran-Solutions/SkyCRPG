@@ -1,0 +1,11 @@
+{
+  "result": "PASS",
+  "mismatch": [],
+  "active_profile": null,
+  "game_pids": [],
+  "ended": "2026-10-26T19:42:50.170168+00:00",
+  "changed_owned_config_files": 1,
+  "normal_exit": true,
+  "default_ui_scale_restored": 100,
+  "note": "Integrator verified normal Quit and restored defaults; private save/co-save backups remain outside Git. No live hot reload claimed."
+}

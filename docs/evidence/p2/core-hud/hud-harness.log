@@ -1,0 +1,4 @@
+Command: /home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node modules/ui/tests/hud_contract.js modules/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11
+Result: PASS, actual pinned native HUDMenu setter/FadeOutStamina/ShowElements/CheckAgainstHudMode bodies exercised.
+Checks include 50% stamina followed by FadeOutStamina(100), overlay refresh to 100%, and unchanged native fade animation/current/target assignments; dynamic text retains its configured font/size/color after assignment; native meter fallback, invalid data, penalties, mode lifecycle, teardown, 720p/1080p layout bounds.
+One earlier harness assertion expected the pre-fade stamina value after deliberately mutating it to 100; corrected the subsequent penalty expectation to 50% and reran successfully. No Skyrim process was launched.

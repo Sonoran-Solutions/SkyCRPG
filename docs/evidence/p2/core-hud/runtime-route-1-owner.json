@@ -1,0 +1,9 @@
+{
+  "result": "FAIL",
+  "report": "I don't actually see my health/stamina/magicka anywhere",
+  "scope": "Required resource HUD not visible in actual UI-only gameplay",
+  "source_commit": "48bc91a52bf8e7577726ec061a081e1b92b0d5f5",
+  "hud_sha256": "5497d93e5eaa1cd5bed99305f4f7e2f769e5ae158b8ec0241fc11243badf3e2e",
+  "recorded_utc": "2026-10-26T19:13:02.521114+00:00",
+  "other_gameplay_checks": "NOT_RUN/unreported"
+}

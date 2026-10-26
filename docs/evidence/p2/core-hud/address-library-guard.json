@@ -1,0 +1,11 @@
+{
+  "status": "SOURCE_GUARD_IMPLEMENTED; NATIVE_BUILD_PENDING",
+  "file": "Data/SKSE/Plugins/versionlib-1-7-104-0.bin",
+  "format": "Address Library 13 / Skyrim runtime 1.7.104",
+  "expected_sha256": "8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842",
+  "pin_source": "docs/compatibility/dependency-lock.md; exact installed payload hash",
+  "gate": "Runs after shared runtime-only LoadSkeleton guard and before SKSE::Init/CommonLib GFx address use.",
+  "failure_behavior": "Return false on missing file, path/file I/O error, BCrypt SHA-256 failure, or digest mismatch; no Scaleform settings bridge is registered, so native HUD remains available.",
+  "scope_limit": "Hashes the bounded exact expected file; does not parse Address Library format or validate every relocation. No game state, camera state, or writes.",
+  "native_build": "NOT_RUN by UI worker; parent owns Windows build."
+}

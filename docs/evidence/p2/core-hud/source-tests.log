@@ -1,0 +1,6 @@
+Command: SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v
+Result: PASS
+Ran 13 tests in 0.002s
+OK
+Exit code: 0
+Covers pinned source transforms, `setNewTextFormat` for later meter text, FadeOutStamina receipt/cache injection, atomic bridge publication, CommonLib include ordering, and exact SKSE/Address Library guards.
