@@ -1,0 +1,13 @@
+{
+  "result": "PASS",
+  "combined_run": "20261026T123755",
+  "camera_runtime_source": "8a681390db5b36c2b6fb4fcb056c0abc0e085a35",
+  "combined_capture_verified": true,
+  "reused_ci_scope_tests": 6,
+  "final_both_target_ci": "NOT_RUN/pending final review head",
+  "senior_review": "HOLD; correction source/tests recorded, no approval claimed",
+  "local_links_checked": 42,
+  "product_source_hashes_unchanged": true,
+  "failure_history_retained": true,
+  "save_bytes_committed": false
+}

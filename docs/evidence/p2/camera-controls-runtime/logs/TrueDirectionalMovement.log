@@ -1,0 +1,36 @@
+[11:56:29.648] [ 384 ] [I] TrueDirectionalMovement v2-3-1-0
+[11:56:29.648] [ 384 ] [I] Registered papyrus functions
+[11:56:29.648] [ 384 ] [W] Failed to obtain Dodge Framework API
+[11:56:29.648] [ 384 ] [I] Obtained SmoothCamAPI
+[11:56:29.648] [ 384 ] [W] Failed to obtain TrueHUD API
+[11:56:29.648] [ 384 ] [W] Failed to obtain IDRC API
+[11:56:29.648] [ 384 ] [W] Failed to obtain OAR Functions API
+[11:56:29.648] [ 384 ] [W] Failed to obtain Dodge Framework API
+[11:56:29.648] [ 384 ] [W] Failed to obtain TrueHUD API
+[11:56:29.648] [ 384 ] [W] Failed to obtain IDRC API
+[11:56:29.648] [ 384 ] [W] Failed to obtain OAR Functions API
+[11:56:32.096] [ 608 ] [I] Registered TrueDirectionalMovement_MCM class
+[11:56:32.096] [ 608 ] [I] Registered TrueDirectionalMovement class
+[11:56:34.324] [ 628 ] [I] TrueDirectionalMovement::RequestPluginAPI called, InterfaceVersion 4
+[11:56:34.324] [ 628 ] [I] TrueDirectionalMovement::RequestPluginAPI returned the API singleton
+[11:56:34.324] [ 628 ] [W] Failed to obtain Dodge Framework API
+[11:56:34.324] [ 628 ] [W] Failed to obtain TrueHUD API
+[11:56:34.324] [ 628 ] [W] Failed to obtain IDRC API
+[11:56:34.324] [ 628 ] [W] Failed to obtain OAR Functions API
+[11:56:34.324] [ 628 ] [I] Registered class RE::InputEvent
+[11:56:34.324] [ 628 ] [I] Registered struct SKSE::CrosshairRefEvent
+[11:56:34.324] [ 628 ] [I] Registered struct RE::TESDeathEvent
+[11:56:34.324] [ 628 ] [I] Registered struct RE::TESEnterBleedoutEvent
+[11:56:34.324] [ 628 ] [I] Registered all event handlers
+[11:56:34.324] [ 628 ] [I] Initializing...
+[11:56:34.324] [ 628 ] [I] ...success
+[11:56:34.324] [ 628 ] [I] Reading .toml files...
+[11:56:34.324] [ 628 ] [I]   Reading Data/SKSE/Plugins/TrueDirectionalMovement/TrueDirectionalMovement_base.toml...
+[11:56:34.324] [ 628 ] [I] ...success
+[11:56:34.324] [ 628 ] [I] Reading MCM .ini...
+[11:56:34.324] [ 628 ] [I] ...success
+[11:56:50.982] [ 384 ] [W] Failed to obtain Dodge Framework API
+[11:56:50.982] [ 384 ] [W] Failed to obtain TrueHUD API
+[11:56:50.982] [ 384 ] [W] Failed to obtain IDRC API
+[11:56:50.982] [ 384 ] [W] Failed to obtain OAR Functions API
+[11:56:50.982] [ 384 ] [I] Registered struct RE::BSAnimationGraphEvent

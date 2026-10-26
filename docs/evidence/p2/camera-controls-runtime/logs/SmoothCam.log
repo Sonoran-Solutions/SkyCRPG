@@ -1,0 +1,15 @@
+[11:56:29.645] [ 384 ] [I] SmoothCam v0-0-1-3
+[11:56:29.645] [ 384 ] [I] Reading config file
+[11:56:29.646] [ 384 ] [I] Registering plugin interfaces
+[11:56:29.646] [ 384 ] [I] Attaching render subsystem hooks
+[11:56:29.646] [ 384 ] [I] Hooking render startup method
+[11:56:29.646] [ 384 ] [I] Hooking render shutdown method
+[11:56:29.646] [ 384 ] [I] loaded
+[11:56:29.648] [ 384 ] [I] Added API consumer 'TrueDirectionalMovement'
+[11:56:29.649] [ 384 ] [I] Added API consumer 'SkyCRPG Camera'
+[11:56:30.592] [ 384 ] [I] Hooking D3D11
+
+[11:56:50.983] [ 384 ] [I] Looking for compatible mods
+[11:56:50.983] [ 384 ] [I] ImprovedCamera.dll beta 1.0.0.4 not found, running without compatibility.
+[11:56:50.983] [ 384 ] [I] Creating the camera
+[11:56:50.983] [ 384 ] [I] Attaching deferred detours

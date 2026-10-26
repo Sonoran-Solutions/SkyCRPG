@@ -1,0 +1,18 @@
+{
+  "result": "PASS",
+  "restoration_record_sha256": "412641d2c91e54aefdad67b7ce56734f84a59410ffa382ba87141ef9cc67e878",
+  "before_inventory_comparison": "PASS, equality verified by orchestrator at Camera cleanup; reused while UI-only is subsequently deployed",
+  "mismatch": [],
+  "active_profile_at_camera_cleanup": null,
+  "game_pids_at_camera_cleanup": [],
+  "camera_cleanup_utc": "2026-10-26T19:05:58.670618+00:00",
+  "owned_ini_after_route_sha256": "cdf7c71900e1e919706368d26dad17ff1629e9919a473db24d21ae706f706ce7",
+  "user_requested_character_retention": true,
+  "preserved_save_cosave_files": 20,
+  "backup_manifest_sha256": "ca68f06c9baa5f734cbbe42050fd98bcb75ba0850c72ee398876c66b2778f6a2",
+  "preservation_utc": "2026-10-26T19:05:58.553343+00:00",
+  "backup_file_hash_verification": "PASS by orchestrator; exact local backup manifest retained externally",
+  "copied_fixture_pairs": 2,
+  "fixture_scope": "Latest manual checkpoint and exterior checkpoint; isolated camera-only fixtures",
+  "privacy": "Save/co-save bytes, character identifiers, personal names and save filenames omitted"
+}

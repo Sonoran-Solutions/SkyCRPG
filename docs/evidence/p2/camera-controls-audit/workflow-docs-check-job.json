@@ -1,0 +1,16 @@
+{
+  "purpose": "Final docs-only workflow verification reconciliation, preserving historical failure and owner-tested runtime artifact identity",
+  "owner": "camera worker",
+  "command": "timeout --signal=TERM 600s python3 /srv/storage/Projects/SkyCRPG/session-p2-20261026/check-camera-workflow-docs.py",
+  "log": "docs/evidence/p2/camera-controls-audit/workflow-docs-check.log",
+  "planned_at": "2026-10-26T19:20:34.634454+00:00",
+  "deadline": "2026-10-26T19:30:34.634454+00:00",
+  "timeout_seconds": 600,
+  "completion_signal": "exit0 with PASS for exact workflow source/result, history, runtime artifact and local links",
+  "cleanup": "Docs metadata read/check only; no native build, game, push or source/config changes",
+  "status": "PASS",
+  "exit_code": 0,
+  "handle": "functions.exec/06248c",
+  "completion_recorded_at": "2026-10-26T19:21:00.583547+00:00",
+  "cleanup_result": "Synchronous exit0; documentation reconciliation only, product tests/runtime evidence reused"
+}

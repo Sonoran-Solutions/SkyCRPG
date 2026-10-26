@@ -72,6 +72,9 @@ def package_files(name: str, module_dir: str, build_dir: Path) -> dict[str, Path
     return {
         f"SKSE/Plugins/{name}.dll": dll,
         f"SKSE/Plugins/{name}.ini": ROOT / module_dir / "config" / f"{name}.ini",
+        f"Docs/{name}/CommonLibSSE-NG-COPYING": ROOT / "LICENSES/CommonLibSSE-NG-COPYING",
+        f"Docs/{name}/CommonLibSSE-NG-EXCEPTIONS.md": ROOT / "LICENSES/CommonLibSSE-NG-EXCEPTIONS.md",
+        f"Docs/{name}/build-inputs.md": ROOT / "cmake/README.md",
     }
 
 
@@ -89,12 +92,15 @@ def main() -> None:
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=ROOT / "dist")
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--module", choices=["camera", "ui"], help="Package only the independently built target")
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
     owners: dict[str, str] = {}
     sums = []
     for name, module_dir in PACKAGES.items():
+        if args.module and module_dir != f"modules/{args.module}":
+            continue
         sources = package_files(name, module_dir, args.build_dir)
         contents = {arc: src.read_bytes() for arc, src in sources.items()}
 
@@ -122,7 +128,7 @@ def main() -> None:
             "files": {arc: sha256(data) for arc, data in sorted(contents.items())},
             "dll_imports": sorted(imports),
             "runtime": RUNTIME,
-            "requires": REQUIRES,
+            "requires": REQUIRES + ["Address Library 13", "SkyUI Community 6.11"] + (["SmoothCam 1.8.1", "True Directional Movement 2.3.1", "MCM Helper 1.6.3"] if name == "SkyCRPG_Camera" else []),
             "requires_skycrpg_modules": [],
         }
         (args.out / f"{name}.manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

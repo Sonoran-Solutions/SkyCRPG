@@ -1,0 +1,23 @@
+{
+  "purpose": "Read-only audit exact1.7.104 camera and PlayerControls member offsets against selected CommonLib; no build/game launch",
+  "owner": "camera worker",
+  "command": "timeout --signal=TERM 600s python3 /srv/storage/Projects/SkyCRPG/session-20261026/camera-layout-audit.py",
+  "log": "/srv/storage/Projects/SkyCRPG/session-20261026/camera-layout-audit.log",
+  "planned_at": "2026-10-26T18:21:56.128141+00:00",
+  "deadline": "2026-10-26T18:31:56.128141+00:00",
+  "timeout_seconds": 600,
+  "completion_signal": "exit0 with mapped function RVAs and external disassembly outputs",
+  "cleanup": "Read-only executable inputs, no game processes; owned Python/objdump exit under timeout",
+  "status": "PASS",
+  "exit_code": 0,
+  "pid": 142320,
+  "handle": "functions.exec/c95ec2",
+  "elapsed_seconds": 0.089979,
+  "completion_recorded_at": "2026-10-26T18:27:58.829925+00:00",
+  "cleanup_result": "Read-only Python/objdump returned exit0; no build or game process launched",
+  "supplemental_inspection": [
+    "Native boolean displacement scan (0x1D9) and associated external objdump excerpts: no verified PlayerControls use",
+    "ControlMap native getter RVA0xA25230 and ToggleControls RVA0xCEFAA0 read offset0x120; getter bit1 matches kLooking",
+    "Native POV helper RVA0x7AE030 reads bit5 and PC bytes0x4C/0x4D; native reset clears these bytes"
+  ]
+}

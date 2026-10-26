@@ -1,0 +1,36 @@
+{
+  "artifact_source": "8a681390db5b36c2b6fb4fcb056c0abc0e085a35",
+  "package_archive_sha256": "50a23e3b768ff0d5a949b88b0f97f25787f64b2155d42da675338773e7309e76",
+  "exe_sha256": "846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f",
+  "deployed_at": "2026-10-26T11:52:47-0700",
+  "profile": "camera-only",
+  "input_modes": [
+    "keyboard/mouse",
+    "native controller"
+  ],
+  "controller": "8BitDo Ultimate detected by Linux; initial in-game recognition failure, unchanged relaunch accepted",
+  "candidate_provider_hashes": {
+    "MCMHelper.dll": "d58f433bef7690614d42aaac69cc35f60d179a85429a385e21858a1f276aef38",
+    "SkyCRPG_Camera.dll": "aedc9d53e7c7d85719fb600fe8b71129cc9aab1f67f92cffe10ea499f106d024",
+    "SkyCRPG_Camera.ini": "a1b566ac5d4d439114eb6f168c5bf6984556c527e5d211deb6a6eb8047560afc",
+    "SmoothCam.dll": "b20bf8a276bf76fbe35277dd9b25c64c57d17bfdcc20daa74a5f941c90f563da",
+    "TrueDirectionalMovement.dll": "5ba3abd82fe070e2a6e9af7f07eca82b9ddb1a53dcd47bc34af571efab01899f"
+  },
+  "external_source_record_sha256": {
+    "active-at-deploy.json": "67eba9e8c88154cb3bff0345c9fce2989f85da7698fdfaaf4d41357afa789f8f",
+    "job.json": "09608966765655441c59ed52cda5f0cd127a6071e2cd2003cb4c80273776db1a",
+    "owner-observation.json": "1d0bc7d5b71855bc5f45e43e5e5960da19ad76924f8a6935484a12dba0ecca66",
+    "preservation.json": "33ca18a3df43a1d7c59312cfd796b7efe61dd282e6efc9aef8f6f8238da0fcd3"
+  },
+  "external_run_record_sha256": "571771998e7eab8de5ee3356799aaf1c9dc1c60110660df4a7d6a88f9150a81d",
+  "log_copy_scope": "Four concise provider/module logs copied byte-for-byte; full SKSE/loader/game/telemetry records retained externally. Original log hashes also in job.json.",
+  "screenshot_sha256": "1818e257c8add8fed58d0699d321575ba4be260ffb3603ec5fc8c6a008c3d92f",
+  "screenshot_limit": "Static image corroborates elevated framing/location; control behavior comes from owner report.",
+  "screenshot_png_dimensions": [
+    1913,
+    1083
+  ],
+  "host": "Accepted baseline Ubuntu26.04.1 / Proton Experimental11 experimental-11.0-20261014-x86_64 / RTX3080",
+  "runtime": "Steam Skyrim1.7.104 / SKSE2.3.1 / Address Library13",
+  "configured_display": "Recorded1080p baseline; owner-provided PNG1913x1083 is not a framebuffer-resolution certification"
+}

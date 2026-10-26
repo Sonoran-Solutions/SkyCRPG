@@ -1,0 +1,23 @@
+{
+  "purpose": "Senior-review regression: mixed module/sharedbuild changes must select bothtargets",
+  "owner": "orchestrator",
+  "command": [
+    "python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tools/tests",
+    "-p",
+    "test_ci_scope.py",
+    "-v"
+  ],
+  "pid": 201002,
+  "log": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ci-scope-regression.log",
+  "timeout_s": 600,
+  "deadline_utc": "2026-10-26T19:55:31.250355+00:00",
+  "completion": "6 focused tests exit0; mixedCamera/UI+13 sharedinputs allselectboth",
+  "cleanup": "subprocess timeout only; no gameimpact",
+  "exit_code": 0,
+  "result": "PASS"
+}

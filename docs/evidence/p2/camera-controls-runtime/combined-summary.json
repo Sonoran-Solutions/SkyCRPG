@@ -1,0 +1,63 @@
+{
+  "result": "PASS",
+  "scope": "Bounded combined Camera+UI smoke,115%HUD; no full phase/quality gate inferred",
+  "run": "20261026T123755",
+  "owner_observation": "combined-owner-observation.json",
+  "capture": "combined-20261026-115hud.png",
+  "camera_source": "8a681390db5b36c2b6fb4fcb056c0abc0e085a35",
+  "camera_dll_sha256": "aedc9d53e7c7d85719fb600fe8b71129cc9aab1f67f92cffe10ea499f106d024",
+  "ui_native_source": "e49fc30aebb008377e9a010e96757444c0f684c6",
+  "ui_dll_sha256": "29381c08436486fda835206dceebaac73b1902f7f13af9a3f8d25b070d6fe136",
+  "ui_swf_sha256": "b4552e17f0806848bcbb0a31f09e934e3feffc5a405305ba5707beb6b3215c05",
+  "ui_115percent_scale_override_sha256": "4d25b8efb447df95eae207e6a80de12845a13e493740582806cd44e56f6c05b2",
+  "run_summary": {
+    "profile": "combined",
+    "run_id": "52b5f11b872b43c29747541646e08017",
+    "pid": 197329,
+    "mode": "interactive",
+    "started": "2026-10-26T12:37:55-0700",
+    "timeout_s": 600,
+    "result": "QUIT",
+    "success": true,
+    "exit_code": 0,
+    "load_problems": [],
+    "ended": "2026-10-26T12:41:27-0700",
+    "leftover_pids": [],
+    "skyrim_running_after": []
+  },
+  "cleanup_snapshot": {
+    "result": "PASS",
+    "mismatch": [],
+    "active_profile": null,
+    "game_pids": [],
+    "ended_utc": "2026-10-26T19:42:50.170168+00:00"
+  },
+  "source_record_hashes": {
+    "owner-observation.json": "47aab8608efbd7951313047d0da79650c12fb92f00293a330e6edb07abdefdf7",
+    "job.json": "26f38e759a59728b8957f85f18817ddf666c093019c67f8036731535b24dce90",
+    "restoration.json": "27087107779c16c6bed4aa9cf1a0fa7b3fdea252b4f344db2e3fea71c4dd5227",
+    "external_run.json": "b0986ce84737561b5a4d30b69045271a24d5da9805235bddd146ff52bb98c561",
+    "owner-combined.png": "1d1f43ff5c14003943cf6c1fb61d7998e755bc86f4530a19b22e553b81429eaa"
+  },
+  "provider_log_hashes": {
+    "TrueDirectionalMovement.log": "f5371575e6205e750cc18745b2dc21836e3e41545c6e2e8e877c3ae7b08e6ded",
+    "LocalMapUpgrade.log": "00bc4472fb990f08ba9887c9cca409c44349fd974b57e8155169d70b0c61cab9",
+    "skse64_loader.log": "2287a17f528b56c5592ffc0412b1e06de64b41fea4d89cfb9df94586de4d1d48",
+    "InfinityUI.log": "aa15041f62c289f9151f5777eb162c2cbf36e883d7b263ef076f9043feb8fafa",
+    "DragonsEyeMinimap.log": "0405cb3291c12769b4976e8f9f699f9570520a4be385462071050e16d12f3454",
+    "SmoothCam.log": "40e5a621a7c9700c2dadda6bfd91a523920cb8ca68e54218dcdb85842de4fb9c",
+    "SkyCRPG_UI.log": "15fb867503ae700bdc06ec11e0ea0ab3d5daa1e0e51de14dc6d0eb2fe5c75b25",
+    "SkyCRPG_Camera.log": "938210d14e06ea2ae895d30716870af24cd74217ab5872d246352feb6ce5b9b5",
+    "skse64.log": "398d976c34f10598627573da682ca98651f0f27d57d94aa6a14e1b5f72dff7ac",
+    "MCMHelper.log": "cae952a576a8412ae167524f83d0ecba8a9fdabdeeb1bfcab2d84637ca149d7f"
+  },
+  "final_host_verification": "Pending orchestrator final host-wide verification/central evidence; combined cleanup PASS is a historical snapshot",
+  "not_claimed": [
+    "full obstruction DYL157",
+    "overhead ranged aim repair DYL158",
+    "full lifecycle/load pitch repair DYL159",
+    "full controller and malformed-config runtime matrices",
+    "performance or Phase2 gate",
+    "minimap compass replacement/follower implementation"
+  ]
+}

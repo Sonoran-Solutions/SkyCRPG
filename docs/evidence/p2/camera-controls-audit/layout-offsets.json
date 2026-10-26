@@ -1,0 +1,99 @@
+{
+  "exe_sha256": "846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f",
+  "commonlib_commit": "7a60f4de794095d7b0f8928d1b930a52e9a7da83",
+  "members": [
+    {
+      "member": "ThirdPersonState.targetZoomOffset",
+      "commonlib_offset": "0x74",
+      "native_offset": "0x74",
+      "result": "PASS",
+      "native_read_or_write_rva": [
+        "0x8FD659",
+        "0x8FD662"
+      ]
+    },
+    {
+      "member": "ThirdPersonState.freeRotation.x/y",
+      "commonlib_offset": "0xD4/0xD8",
+      "native_offset": "0xD4/0xD8",
+      "result": "PASS",
+      "native_read_or_write_rva": [
+        "0x8FEB79",
+        "0x8FEB89",
+        "0x8FE7B1",
+        "0x8FE7B9"
+      ]
+    },
+    {
+      "member": "ThirdPersonState.freeRotationEnabled",
+      "commonlib_offset": "0xDC",
+      "native_offset": "0xDC",
+      "result": "PASS",
+      "native_read_or_write_rva": [
+        "0x8FEB3E",
+        "0x8FDC59"
+      ]
+    },
+    {
+      "member": "ThirdPersonState.stateNotActive",
+      "commonlib_offset": "0xDD",
+      "native_offset": "0xDD",
+      "result": "PASS",
+      "native_read_or_write_rva": [
+        "0x8FD3FC",
+        "0x8FEAB0"
+      ]
+    },
+    {
+      "member": "PlayerControls.data",
+      "commonlib_offset": "0x24",
+      "native_offset": "0x24",
+      "result": "PASS",
+      "native_read_or_write_rva": [
+        "0x7ADC2A",
+        "0x8FD628"
+      ]
+    },
+    {
+      "member": "PlayerControls.data.fovSlideMode",
+      "commonlib_offset": "0x24+0x27=0x4B",
+      "native_offset": "0x4B",
+      "result": "PASS",
+      "native_read_or_write_rva": [
+        "0x8FD5F5",
+        "0x8FD639"
+      ]
+    },
+    {
+      "member": "PlayerControls.data.povScriptMode/povBeastMode",
+      "commonlib_offset": "0x24+0x28/0x29=0x4C/0x4D",
+      "native_offset": "0x4C/0x4D",
+      "result": "PASS",
+      "scope": "Verified as two native POV-inhibit bytes, requiring both clear; naming does not imply broader transformation/script lifecycle coverage",
+      "native_read_or_write_rva": [
+        "0x7AE062",
+        "0x7AFCE8"
+      ]
+    },
+    {
+      "member": "PlayerControls.blockPlayerInput",
+      "commonlib_offset": "0x1D9",
+      "native_offset": "NOT_VERIFIED",
+      "result": "BLOCKED",
+      "disposition": "Unsafe assumption removed from module. Native PlayerControls ctor initializes0x1D8 and0x1DC; inspected native dispatch/menu paths use0x1D8, not0x1D9. Not claiming every library member wrong or proving byte is always padding."
+    },
+    {
+      "member": "ControlMap.GetRuntimeData().enabledControls",
+      "commonlib_offset": "AE runtime0xF0 + member0x30 =0x120",
+      "native_offset": "0x120",
+      "result": "PASS",
+      "native_read_or_write_rva": [
+        "0xA25237",
+        "0xCEFAA4",
+        "0xCEFAB5"
+      ],
+      "mask": "kLooking bit1; kPOVSwitch bit5; exact native getter/helper semantics match selected accessor"
+    }
+  ],
+  "player_controls_accessor": "No versioned runtime-data accessor in selected7.2.0 PlayerControls; use only independently audited direct fields. ControlMap has versioned GetRuntimeData and exact1.7.104 path validated."
+}

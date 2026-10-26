@@ -1,0 +1,28 @@
+{
+  "result": "PASS",
+  "checked_utc": "2026-10-26T19:47:30.817660+00:00",
+  "original_save_files_checked": 187,
+  "original_save_mismatches": [],
+  "configuration_files_checked": 4,
+  "configuration_mismatches": [],
+  "game_inventory_original_files": 46,
+  "game_inventory_added": [],
+  "game_inventory_removed": [],
+  "active_profile": null,
+  "skyrim_pids": [],
+  "task_processes": {
+    "combined-route-1": [],
+    "ui-route-2": [],
+    "ui-route-3": [],
+    "ui-route-1": [],
+    "camera-route-1-relaunch": [],
+    "camera-route-1": []
+  },
+  "preserved_character_original_snapshot_files": 20,
+  "preserved_character_combined_additional_files": 6,
+  "preserved_character_hashes_match": true,
+  "intentional_fixture_additions": "Two save/co-save pairs each added to camera-only and combined fixture sources at owner request; originals remain unchanged.",
+  "ui_scale_reset": "Temporary115%test override removed; shippeddefault100%INI unchanged. Runtime100%UI-only and115%combined passed; resetparsertests passed.",
+  "exe_sha256": "846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f",
+  "proton_version": "1791989105 experimental-11.0-20261014-x86_64"
+}

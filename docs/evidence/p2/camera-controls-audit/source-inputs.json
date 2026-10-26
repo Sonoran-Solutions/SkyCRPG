@@ -1,0 +1,110 @@
+[
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/include/SmoothCamAPI.h",
+    "sha256": "9f235a668d12315f788ab6197375f44c37e8c5b6a33ccaf30481c49ebb5b4e0f"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/include/config.h",
+    "sha256": "98c057d4bb27adda74e215f2766f200568b63929ff7ddcbcb0ff8eb4de273f1a"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/source/thirdperson.cpp",
+    "sha256": "2e9b5a3adad2b865b6c58a1829782f8bd098bf53d98f778061d94d91b77dbb03"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/source/hooks.cpp",
+    "sha256": "57830a7fef128d3acdfba1cd8c04188258da3970f77cdd7082b0fa6be0666074"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/source/modapi.cpp",
+    "sha256": "9cdcc44b4e026bca1a92a6f3428271e72f5df9e9f79ea104c73818d22b04bdf2"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/source/papyrus.cpp",
+    "sha256": "6753cef7302ff45edae96895ecfd8a4f8a02f909d01e27877a0413031f6f4799"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/TrueDirectionalMovement/src/TrueDirectionalMovementAPI.h",
+    "sha256": "9bb0b29613e437bb1364d362d1cd8d1bf10afe82bac92dcdde299ac4bbba2f55"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/TrueDirectionalMovement/src/Hooks.cpp",
+    "sha256": "1aa9958158459efe75bf16a483d6c8e93be39802240703323b89b0d473e50007"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/TrueDirectionalMovement/src/ModAPI.cpp",
+    "sha256": "fdb649cfb44e828019f5c6294da61123c69899b2b01fd1175e6ea5e7ab7838b2"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/TrueDirectionalMovement/src/Settings.cpp",
+    "sha256": "4580ebf71d88d126b7928daee4b2ee073b8807477b0d908fbc41a0c1db56be0a"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/T/ThirdPersonState.h",
+    "sha256": "b55dd7529adc5247c8655ec7bfaf513055456cf755724d1bd87cb7e3efab76e9"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/P/PlayerInputHandler.h",
+    "sha256": "d5eb4aceb4fa051008fc768caeac20c765ad4d00160e07e783bc77020609b1d9"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/REL/IDDB.cpp",
+    "sha256": "be0ed4bed0c60075520f7e13d62aec387bd7a64003759a076243202840acd3f6"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/camera-native-audit.py",
+    "sha256": "ac0e16cc5cdc89bf79b223a6fab93c6df595889f085b48ac5f0b78944e28c66d"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/source/main.cpp",
+    "sha256": "fd2b6e51fcb4c1f5d75e078333610d8aa780bdd98e719d0ea1b7b22e5567cd8a"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/TrueDirectionalMovement/src/DirectionalMovementHandler.cpp",
+    "sha256": "e39c28df79d748a874eeabf39468dfe35dc69b19d045c9a9554d5d13b62eac80"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/SKSE/Interfaces.h",
+    "sha256": "f5022c17e7ac7e4a566902f8477ec0e848617b87294331a1d9d611de36f6ee59"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/SKSE/Interfaces.cpp",
+    "sha256": "9d18b5a05519a1e164ff155fef07c3f5e8ef13d278cfe391ec4462541b89871c"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/SKSE/API.cpp",
+    "sha256": "e3dd7d3147cf45e744ca39428d933842846e5744c4073fc0aa9603e2ad6f983f"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/RE/P/PlayerCamera.cpp",
+    "sha256": "29b25e2ed41d8be204f3fb687c7e37e3297f537a4c84805dc44dbdcadf776e55"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/P/PlayerControls.h",
+    "sha256": "6e551fc95b179698e98e388d06bb3d8e8c4bdbbb912da0aa47aa8a2d9fceaae8"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/P/PlayerControlsData.h",
+    "sha256": "1fa08b120bd59a31ad73360dcc611bef526a7a4636e30022edeef7cc884e2155"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/C/ControlMap.h",
+    "sha256": "332a4f3aaa7e26668f1586f638911ae5340c70323fd5b7155003f934eb07fda8"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/RE/U/UserEvents.h",
+    "sha256": "10d4f29ba8789bdb6a2467513a7ae679511fd666461300d9e970eb1735c3aea8"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/RE/C/ControlMap.cpp",
+    "sha256": "676b21b318006403eb3d0e0d4c873f9b03980edccceec7e8befaaa20e407563c"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/camera-layout-audit.py",
+    "sha256": "11441462a137054226d4b4fe40baffa8bfd298f6226720d25411771fd0b36926"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/REL/RuntimeDataAccessors.h",
+    "sha256": "be9a4b8942b7f519fe3faa55a6fb69d67d7e60fedacb30909e715f7a0010463e"
+  }
+]

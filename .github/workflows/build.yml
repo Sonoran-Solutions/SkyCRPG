@@ -1,80 +1,113 @@
 name: build
 
-# Windows x64 build and packaging for the SkyCRPG SKSE plugins.
-# Docs-only changes do not trigger it. Artifacts contain only SkyCRPG's own files.
 on:
   push:
     branches: [main]
-    paths:
-      - "modules/**"
-      - "shared/**"
-      - "tools/package.py"
-      - "CMakeLists.txt"
-      - "CMakePresets.json"
-      - ".github/workflows/build.yml"
+    paths: ["modules/**", "shared/**", "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
   pull_request:
-    paths:
-      - "modules/**"
-      - "shared/**"
-      - "tools/package.py"
-      - "CMakeLists.txt"
-      - "CMakePresets.json"
-      - ".github/workflows/build.yml"
+    paths: ["modules/**", "shared/**", "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
   workflow_dispatch:
+    inputs:
+      module:
+        description: Independent target
+        type: choice
+        options: [ui, camera, both]
+        default: ui
 
 permissions:
   contents: read
 
 jobs:
+  scope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      modules: ${{ steps.scope.outputs.modules }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          REQUESTED: ${{ inputs.module }}
+        run: |
+          python -m unittest discover -s tools/tests -p test_ci_scope.py -v
+          python tools/ci_scope.py
+
   windows-x64:
+    needs: scope
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.scope.outputs.modules) }}
     runs-on: windows-2022
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
-      # Build the branch head, not the pull_request merge commit, so logs and archive names match the PR head.
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ env.SOURCE_SHA }}
-
-      - name: Toolchain versions
+      - name: Pinned dependency toolchain
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: ee12231b20c95013c6638d845d04c91559a1d1ff
+          path: external/vcpkg
+      - name: Bootstrap pinned vcpkg
+        shell: pwsh
+        run: external/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+      - uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: windows-static-vcpkg-${{ hashFiles('vcpkg.json') }}
+      - name: Cache pinned source dependency build
+        id: dependency-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/windows-x64-release/_deps
+            build/windows-x64-release/vcpkg_installed
+          key: commonlib-static-ae-${{ runner.os }}-${{ env.ImageVersion }}-${{ hashFiles('cmake/CommonLib.cmake', 'vcpkg.json') }}
+      - name: Configure and build selected target
         shell: pwsh
         run: |
+          $ui = '${{ matrix.module }}' -eq 'ui'
+          $target = if ($ui) { 'SkyCRPG_UI' } else { 'SkyCRPG_Camera' }
+          $options = @()
+          $options += "-DSKYCRPG_BUILD_UI=$(if ($ui) {'ON'} else {'OFF'})"
+          $options += "-DSKYCRPG_BUILD_CAMERA=$(if ($ui) {'OFF'} else {'ON'})"
+          $options += "-DCMAKE_TOOLCHAIN_FILE=$pwd/external/vcpkg/scripts/buildsystems/vcpkg.cmake"
+          $options += "-DVCPKG_TARGET_TRIPLET=x64-windows-static"
           cmake --version
-          python --version
-          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -format text | Select-String '^(displayName|catalog_productDisplayVersion|installationVersion):'
-
-      - name: Configure and build
-        shell: pwsh
-        run: |
-          cmake --preset windows-x64-release -DSKYCRPG_SOURCE_COMMIT=${{ env.SOURCE_SHA }}
-          cmake --build --preset windows-x64-release
-
-      - name: Reproducibility check (second clean build directory)
-        shell: pwsh
-        run: |
-          cmake -S . -B build/repro -G "Visual Studio 17 2022" -A x64 -DSKYCRPG_SOURCE_COMMIT=${{ env.SOURCE_SHA }}
-          cmake --build build/repro --config Release
-          $failed = $false
-          foreach ($m in @('camera/Release/SkyCRPG_Camera.dll', 'ui/Release/SkyCRPG_UI.dll')) {
-            $a = (Get-FileHash "build/windows-x64-release/modules/$m").Hash
-            $b = (Get-FileHash "build/repro/modules/$m").Hash
-            "$m  $a  $b"
-            if ($a -ne $b) { $failed = $true }
-          }
-          if ($failed) { throw "DLLs differ between clean build directories" }
-
-      - name: Package
-        shell: pwsh
-        run: python tools/package.py --build-dir build/windows-x64-release --commit ${{ env.SOURCE_SHA }}
-
+          cmake --preset windows-x64-release "-DSKYCRPG_SOURCE_COMMIT=$env:SOURCE_SHA" @options
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build --preset windows-x64-release --target $target --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/package.py --build-dir build/windows-x64-release --commit $env:SOURCE_SHA --module '${{ matrix.module }}'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # A plugin compile error must not discard a successful source dependency build.
+      - name: Preserve dependency cache on a failed adapter build
+        if: failure() && steps.dependency-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/windows-x64-release/_deps
+            build/windows-x64-release/vcpkg_installed
+          key: commonlib-static-ae-${{ runner.os }}-${{ env.ImageVersion }}-${{ hashFiles('cmake/CommonLib.cmake', 'vcpkg.json') }}
       - uses: actions/upload-artifact@v5
         with:
-          name: skycrpg-packages-${{ env.SOURCE_SHA }}
+          name: skycrpg-${{ matrix.module }}-${{ env.SOURCE_SHA }}
           path: dist/
           if-no-files-found: error
-
       - uses: actions/upload-artifact@v5
+        if: always()
         with:
-          name: skycrpg-pdb-${{ env.SOURCE_SHA }}
-          path: build/windows-x64-release/modules/*/Release/*.pdb
+          name: build-diagnostics-${{ matrix.module }}-${{ env.SOURCE_SHA }}
+          path: |
+            build/windows-x64-release/CMakeFiles/CMakeConfigureLog.yaml
+            build/windows-x64-release/vcpkg-manifest-install.log
+            build/windows-x64-release/CMakeCache.txt
+            build/windows-x64-release/modules/${{ matrix.module }}/Release/*.pdb

@@ -1,0 +1,9 @@
+{
+  "result": "PASS",
+  "workflow_source": "37008f2efc9850c057149f42c1e16bdce1da7d1e",
+  "workflow": "https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40385191497",
+  "historical_workflow_failure_preserved": true,
+  "owner_tested_artifact_unchanged": true,
+  "local_links_checked": 33,
+  "reused_evidence": "Product source/policy tests/native runtime evidence unchanged; no rebuild or game rerun"
+}

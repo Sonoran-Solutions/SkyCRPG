@@ -1,0 +1,34 @@
+{
+  "review": "https://github.com/Sonoran-Solutions/SkyCRPG/pull/7#issuecomment-6425623699",
+  "reviewed_head": "c79e6a946f32a1062a92cc6883cd3d1dea6f66c8",
+  "review_verdict": "HOLD: CI scope correction required; no subsequent senior approval claimed",
+  "finding": "Mixed module+shared build inputs could select Camera only and skip exact-head UI validation",
+  "correction_commits": [
+    "12461da8ef103a927fa941641dbbf1af845da408",
+    "3cd5475ca5def529dc423a898c9d6d3cc1f266a9"
+  ],
+  "correction": "Tested tools/ci_scope.py widens shared build/package changes to both targets, even alongside module changes; Controls introduction and CMake contract clarified",
+  "regression_result": "PASS",
+  "regression_test_count": 6,
+  "mixed_shared_input_count": 13,
+  "mixed_module_shared_combinations": 26,
+  "regression_job": "review-ci-scope-job.json",
+  "regression_log": "review-ci-scope.log",
+  "source_file_sha256": {
+    "tools/ci_scope.py": "2b3e33c8e6ed36a60daae52b7d82c15d21c8ef56e2ad97abf3bc0ba0cc3d90c7",
+    "tools/tests/test_ci_scope.py": "e90288de122b83d50b42a38c9c170ef2a760bbd436981eed9e2a94161188f68e"
+  },
+  "final_both_target_native_ci": {
+    "status": "NOT_RUN / pending orchestrator exact-final-head build",
+    "targets": [
+      "camera",
+      "ui"
+    ],
+    "head": null,
+    "reason": "Final review head will include this documentation commit; root owns dispatch and result reconciliation"
+  },
+  "runtime_artifacts_unchanged": {
+    "camera_source": "8a681390db5b36c2b6fb4fcb056c0abc0e085a35",
+    "camera_dll_sha256": "aedc9d53e7c7d85719fb600fe8b71129cc9aab1f67f92cffe10ea499f106d024"
+  }
+}

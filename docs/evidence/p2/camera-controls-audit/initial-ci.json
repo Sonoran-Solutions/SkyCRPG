@@ -1,0 +1,13 @@
+{
+  "result": "FAIL",
+  "run": "https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40375266551",
+  "owner": "orchestrator",
+  "target": "SkyCRPG_Camera only",
+  "command": "cmake --build --preset windows-x64-release --target SkyCRPG_Camera --parallel 2",
+  "log": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/camera-initial-failure.log",
+  "log_sha256": "eada0c4551761dd34262f9e7bbfee48dc8a72fedd686dad7727f58271e75ecc6",
+  "diagnosis": "CommonLib7.2.0 does not define SKSE::RUNTIME_SSE_1_7_104; C2039/C2065, cascading C2127 constinit error",
+  "remediation": "Explicit constexpr REL::Version{1,7,104,0}; LoadInterface RuntimeVersion returns REL::Version, SKSEVersion packed uint32 compared using .pack(). Native structs/hooks still guarded to exact exe/provider hashes.",
+  "fixed_source_commit": "695d49f418bb35580f5dbd21a31887610e3c6ed7",
+  "rerun": "NOT_RUN by worker; orchestrator owns next Camera-only CI"
+}

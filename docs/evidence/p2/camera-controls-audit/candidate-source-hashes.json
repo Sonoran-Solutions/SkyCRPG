@@ -1,0 +1,12 @@
+{
+  "source_commit": "cea821d8ef1ebcb8a9202a47ffb5a3d1bb1e7925",
+  "files": {
+    "modules/camera/CMakeLists.txt": "51daf02f160814522090a3bb04e1e0ea2ffeb2bba2e553c0bd590458d3dcee76",
+    "modules/camera/src/plugin.cpp": "09213be11a0bcad54467169443180295556fc65112aae60356f23ba5dd4d9102",
+    "modules/camera/include/policy.h": "dad4164311a367271174412ab7a129871d2ac34df5cfda47dae47910a530f6b8",
+    "modules/camera/tests/policy_test.cpp": "de305ea7ca044d368cfb25137603d25cea7afd831cb8df984e7d3fdbb218d53a",
+    "modules/camera/config/SkyCRPG_Camera.ini": "36cabee1eaf0d9bcb673620cb550f0600befcca529cb4d4793dc8c315010533e"
+  },
+  "compiled_source_commit": "8a681390db5b36c2b6fb4fcb056c0abc0e085a35",
+  "native_ci": "native-ci.json"
+}

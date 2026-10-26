@@ -1,0 +1,7 @@
+{
+  "at_utc": "2026-10-26T18:56:19.595631+00:00",
+  "report": "It wasn't recognizing my controller inputs",
+  "result": "FAIL",
+  "scope": "controller input recognition; other acceptance unreported",
+  "requested_action": "relaunch same candidate; one diagnostic retry"
+}

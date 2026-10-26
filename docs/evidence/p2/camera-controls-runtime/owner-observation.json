@@ -1,0 +1,27 @@
+{
+  "result": "PASS",
+  "evidence_type": "owner-observed bounded Camera-only route",
+  "quote": "It looks good, everything you asked me to check passes and functions how I would want it to.",
+  "checks": [
+    "exterior walking/running: stable elevated pitch and camera-relative movement",
+    "mouse yaw and zoom limits",
+    "F7 recenter",
+    "F6 native first-person fallback and deliberate return",
+    "inventory/menu focus without duplicate actions",
+    "controller movement and camera yaw after relaunch"
+  ],
+  "initial_controller_issue": "First route input recognition failed; same candidate relaunched at owner request. Linux detected 8BitDo Ultimate, bGamepadEnable=1. Subsequent owner report passes requested checks. No code change or causal diagnosis claimed.",
+  "run": "20261026T115627",
+  "artifact_source": "8a681390db5b36c2b6fb4fcb056c0abc0e085a35",
+  "dll_sha256": "aedc9d53e7c7d85719fb600fe8b71129cc9aab1f67f92cffe10ea499f106d024",
+  "screenshot_sha256": "1818e257c8add8fed58d0699d321575ba4be260ffb3603ec5fc8c6a008c3d92f",
+  "screenshot_limit": "Static image corroborates elevated framing/location; control behavior comes from owner report.",
+  "still_open": [
+    "full collision DYL-157",
+    "overhead ranged aiming FAIL/DYL-158",
+    "load-transition pitch persistence deferred DYL-159",
+    "native Windows and broader runtime matrix NOT_RUN"
+  ],
+  "save_preservation": "Owner requested retained character; local backup manifest at preserved-saves/phase2-character-20261026/manifest.json; no save bytes committed",
+  "recorded_utc": "2026-10-26T19:06:39.707341+00:00"
+}

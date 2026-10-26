@@ -1,2 +1,4 @@
 add_library(SkyCRPG_Camera SHARED src/plugin.cpp)
 skycrpg_configure_plugin(SkyCRPG_Camera)
+target_include_directories(SkyCRPG_Camera PRIVATE include)
+target_link_libraries(SkyCRPG_Camera PRIVATE CommonLibSSE::CommonLibSSE bcrypt)
