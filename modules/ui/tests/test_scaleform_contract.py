@@ -51,10 +51,11 @@ class PatchContract(unittest.TestCase):
         paint = source.split("public function skycrpgPaintCell", 1)[1].split("private function onItemRollOver", 1)[0]
         self.assertNotIn("skycrpgCategoryFocus", paint)
 
-    def test_hud_uses_native_meters_and_native_interaction_authority(self):
+    def test_hud_uses_resource_snapshot_and_native_interaction_authority(self):
         source = (builder.ROOT / "scaleform/hud-init.as.inc").read_text()
-        for native_value in ("lastHealthMeterPercent", "lastMagickaMeterPercent", "lastStaminaMeterPercent"):
-            self.assertIn("hud." + native_value, source)
+        self.assertIn("bridge.getPlayerResources()", source)
+        self.assertIn("now + 100", source)
+        self.assertNotIn("hud.lastHealthMeterPercent", source)
         self.assertIn("native crosshair/rollover remains visible", source)
         self.assertNotIn("SetCrosshairTarget", source)
         self.assertNotIn("Activate", source)
@@ -62,7 +63,6 @@ class PatchContract(unittest.TestCase):
         self.assertIn("hud.Magica._visible = modeVisible ? false", source)
         self.assertIn("hud.Stamina._visible = modeVisible ? false", source)
         self.assertIn("skse.plugins.SkyCRPGUI", source)
-        self.assertIn("_skycrpgHealthSeen", source)
         self.assertIn("CheckAgainstHudMode", source)
         self.assertIn("this.HudElements.push(skycrpg)", source)
         self.assertIn("skycrpg.onEnterFrame = function()", source)
@@ -71,25 +71,15 @@ class PatchContract(unittest.TestCase):
         self.assertNotIn("RolloverText", source)
 
     @unittest.skipUnless(os.environ.get("SKYCRPG_SKYUI_SOURCE"), "external pinned SkyUI checkout required")
-    def test_hud_builder_marks_only_native_meter_callbacks_and_modes(self):
+    def test_hud_builder_preserves_native_meter_callbacks_and_modes(self):
         root = Path(os.environ["SKYCRPG_SKYUI_SOURCE"])
         source = root / "source/actionscript/Vanilla/HUDMenu.as"
         self.assertEqual(builder.sha(source), builder.SOURCES["Vanilla/HUDMenu.as"])
         original = source.read_text()
         candidate = builder.transform("Vanilla/HUDMenu.as", original)
-        for flag, setter in (("_skycrpgHealthSeen", "SetHealthMeterPercent"),
-                             ("_skycrpgMagickaSeen", "SetMagickaMeterPercent"),
-                             ("_skycrpgStaminaSeen", "SetStaminaMeterPercent")):
-            method = candidate.index("function " + setter + "(")
-            hook = candidate.index("this." + flag + " = true;", method)
-            self.assertGreater(hook, method)
-        fade = candidate.index("function FadeOutStamina(aPercent)")
-        fadeSeen = candidate.index("this._skycrpgStaminaSeen = true;", fade)
-        fadeValue = candidate.index("this.lastStaminaMeterPercent = aPercent;", fade)
-        nativeFade = candidate.index("this.FadeOutMeter(this.Stamina);", fade)
-        self.assertLess(fadeSeen, nativeFade)
-        self.assertLess(fadeValue, nativeFade)
-        self.assertIn("this.StaminaMeter.CurrentPercent = aPercent;", candidate[fade:])
+        for setter in ("SetHealthMeterPercent", "SetMagickaMeterPercent", "SetStaminaMeterPercent", "FadeOutStamina"):
+            pattern = rf"function {setter}\([^)]*\)\s*\{{.*?\n   \}}"
+            self.assertEqual(re.search(pattern, original, re.S).group(), re.search(pattern, candidate, re.S).group())
         self.assertIn("this.SkyCRPGStatus._visible = skycrpgVisible;", candidate)
         self.assertIn("this._skycrpgMetersSuppressed = skycrpgVisible;", candidate)
         self.assertEqual(builder.sha(source), builder.SOURCES["Vanilla/HUDMenu.as"])
@@ -160,6 +150,29 @@ class PatchContract(unittest.TestCase):
         self.assertIn("versionlib-1-7-104-0.bin", pin)
         self.assertIn("8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842", pin)
         self.assertIn("bcrypt", cmake)
+
+    def test_resource_reads_use_game_tasks_with_bounded_cache_and_load_invalidation(self):
+        plugin = (builder.ROOT / "src/plugin.cpp").read_text()
+        task = plugin.split("void SamplePlayerResources", 1)[1].split("class PlayerResources", 1)[0]
+        handler = plugin.split("class PlayerResources", 1)[1].split("bool RegisterSkyCRPGUI", 1)[0]
+        self.assertIn("GetActorValue(values[i])", task)
+        self.assertIn("GetActorValueMax(values[i])", task)
+        self.assertIn("Is3DLoaded()", task)
+        self.assertNotIn("RE::PlayerCharacter", handler)
+        self.assertIn("AddTask([generation]()", handler)
+        self.assertIn("!g_resources.pending", handler)
+        self.assertIn("std::chrono::milliseconds(500)", handler)
+        self.assertIn("generation != g_resources.generation", task)
+        lifecycle = plugin.split("void ResourceLifecycle", 1)[1].split("void SamplePlayerResources", 1)[0]
+        for message in ("kPreLoadGame", "kPostLoadGame", "kNewGame"):
+            self.assertIn(message, lifecycle)
+        self.assertIn("g_resources.available = false", lifecycle)
+        self.assertIn("++g_resources.generation", lifecycle)
+        self.assertIn("std::scoped_lock lock(g_resources.mutex)", lifecycle)
+        self.assertIn("std::scoped_lock lock(g_resources.mutex)", task)
+        self.assertIn("params.retVal->SetUndefined()", handler)
+        self.assertIn("if (!_loggedValid.exchange(true))", handler)
+        self.assertIn("if (!_loggedUnavailable.exchange(true))", handler)
 
     def test_scaleform_builder_can_compile_only_the_changed_hud(self):
         source = TOOL.read_text()

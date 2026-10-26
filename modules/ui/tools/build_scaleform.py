@@ -70,19 +70,6 @@ def transform(name, text):
         anchor = "public function setEntry(a_entryObject: Object, a_state: ListState)\n    {"
         text = replace_once(text, anchor, anchor + "\n        if (a_state.list.skycrpgGrid) {\n            a_state.list.skycrpgPaintCell(this, a_entryObject);\n            return;\n        }")
     elif name.endswith("HUDMenu.as"):
-        text = replace_once(text, "var lastHealthMeterPercent = 0;",
-                            "var lastHealthMeterPercent = 0;\n   var _skycrpgHealthSeen = false;\n   var _skycrpgMagickaSeen = false;\n   var _skycrpgStaminaSeen = false;")
-        seen_setters = {
-            "SetHealthMeterPercent": "_skycrpgHealthSeen",
-            "SetMagickaMeterPercent": "_skycrpgMagickaSeen",
-            "SetStaminaMeterPercent": "_skycrpgStaminaSeen",
-        }
-        for setter, flag in seen_setters.items():
-            signature = "function " + setter + "(aPercent, abForce)\n   {"
-            text = replace_once(text, signature, signature + "\n      this." + flag + " = true;")
-        fade_signature = "function FadeOutStamina(aPercent)\n   {"
-        text = replace_once(text, fade_signature, fade_signature +
-                            "\n      this._skycrpgStaminaSeen = true;\n      this.lastStaminaMeterPercent = aPercent;")
         mode_anchor = "         _loc2_ = _loc2_ + 1;\n      }\n   }\n   function SetLocationName(aLocation)"
         mode_sync = """         _loc2_ = _loc2_ + 1;
       }

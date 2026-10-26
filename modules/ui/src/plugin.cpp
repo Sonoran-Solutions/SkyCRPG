@@ -1,7 +1,9 @@
-// SkyCRPG UI — validated, read-only HUD settings bridge.
+// SkyCRPG UI — validated, read-only HUD settings and resource bridge.
 #include <SKSE/SKSE.h>
 #include <RE/G/GFxMovieView.h>
 #include <RE/G/GFxValue.h>
+#include <RE/G/GFxFunctionHandler.h>
+#include <RE/P/PlayerCharacter.h>
 
 // CommonLib's REX/W32 headers must precede the Windows API headers pulled by
 // the shared skeleton. Keep the skeleton below every CommonLib include.
@@ -9,8 +11,12 @@
 #include "hud_settings.h"
 #include "address_library_pin.h"
 #include "skse_version_pin.h"
+#include "resource_snapshot.h"
 
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -140,11 +146,119 @@ void LogHudSettings(const std::wstring& iniPath, const skycrpg::ui::ParseResult&
 	std::fclose(log);
 }
 
-bool RegisterSkyCRPGUI(RE::GFxMovieView*, RE::GFxValue* root)
+using ResourceClock = std::chrono::steady_clock;
+struct ResourceCache {
+	std::mutex mutex;
+	std::array<skycrpg::ui::ResourceValue, 3> values{};
+	ResourceClock::time_point sampled{};
+	std::uint64_t generation{};
+	bool available{};
+	bool pending{};
+	bool loaded{};
+} g_resources;
+
+void ResourceLifecycle(SKSE::MessagingInterface::Message* message)
 {
-	if (!root) {
+	if (!message) return;
+	if (message->type != SKSE::MessagingInterface::kPreLoadGame &&
+		message->type != SKSE::MessagingInterface::kPostLoadGame &&
+		message->type != SKSE::MessagingInterface::kNewGame) return;
+	std::scoped_lock lock(g_resources.mutex);
+	++g_resources.generation;
+	g_resources.available = false;
+	g_resources.loaded = message->type == SKSE::MessagingInterface::kNewGame ||
+		(message->type == SKSE::MessagingInterface::kPostLoadGame && message->data != nullptr);
+}
+
+// Runs on the SKSE game task queue. No actor or GFx pointers cross threads.
+void SamplePlayerResources(std::uint64_t generation)
+{
+	std::scoped_lock lock(g_resources.mutex);
+	g_resources.pending = false;
+	if (!g_resources.loaded || generation != g_resources.generation) return;
+	g_resources.available = false;
+	auto* player = RE::PlayerCharacter::GetSingleton();
+	if (!player || !player->Is3DLoaded()) return;
+	constexpr std::array values{ RE::ActorValue::kHealth, RE::ActorValue::kMagicka, RE::ActorValue::kStamina };
+	std::array<skycrpg::ui::ResourceValue, 3> resources{};
+	for (std::size_t i = 0; i < values.size(); ++i) {
+		resources[i] = { player->AsActorValueOwner()->GetActorValue(values[i]), player->GetActorValueMax(values[i]) };
+		if (!skycrpg::ui::IsValidResource(resources[i])) return;
+	}
+	g_resources.values = resources;
+	g_resources.sampled = ResourceClock::now();
+	g_resources.available = true;
+}
+
+// One process-owned handler, matching pinned SKSE ScaleformCallbacks.h caching.
+// It stores no movie/actor pointers; only copied numbers reach Scaleform.
+class PlayerResources final : public RE::GFxFunctionHandler
+{
+public:
+	void Call(Params& params) override
+	{
+		if (!params.retVal) return;
+		params.retVal->SetUndefined();
+		if (!params.movie) return;
+		std::array<skycrpg::ui::ResourceValue, 3> resources{};
+		bool available = false;
+		bool request = false;
+		std::uint64_t generation = 0;
+		{
+			std::scoped_lock lock(g_resources.mutex);
+			available = g_resources.loaded && g_resources.available &&
+				ResourceClock::now() - g_resources.sampled <= std::chrono::milliseconds(500);
+			if (available) resources = g_resources.values;
+			if (g_resources.loaded && !g_resources.pending) {
+				g_resources.pending = true;
+				generation = g_resources.generation;
+				request = true;
+			}
+		}
+		if (request) SKSE::GetTaskInterface()->AddTask([generation]() { SamplePlayerResources(generation); });
+		if (!available) {
+			LogUnavailable();
+			return;
+		}
+		RE::GFxValue snapshot;
+		params.movie->CreateObject(&snapshot);
+		constexpr std::array currentNames{ "health", "magicka", "stamina" };
+		constexpr std::array maxNames{ "healthMax", "magickaMax", "staminaMax" };
+		for (std::size_t i = 0; i < resources.size(); ++i) {
+			RE::GFxValue value;
+			value.SetNumber(resources[i].current);
+			if (!snapshot.SetMember(currentNames[i], value)) return;
+			value.SetNumber(resources[i].maximum);
+			if (!snapshot.SetMember(maxNames[i], value)) return;
+		}
+		*params.retVal = snapshot;
+		if (!_loggedValid.exchange(true)) {
+			std::array<char, 256> message{};
+			std::snprintf(message.data(), message.size(), "HUD resource snapshot: first valid current/max H=%.3f/%.3f M=%.3f/%.3f S=%.3f/%.3f\n",
+				resources[0].current, resources[0].maximum, resources[1].current, resources[1].maximum, resources[2].current, resources[2].maximum);
+			AppendModuleLog(message.data());
+		}
+	}
+private:
+	void LogUnavailable()
+	{
+		if (!_loggedUnavailable.exchange(true)) {
+			AppendModuleLog("HUD resource snapshot: first unavailable/invalid sample; native fallback retained\n");
+		}
+	}
+	std::atomic_bool _loggedValid{};
+	std::atomic_bool _loggedUnavailable{};
+};
+
+bool RegisterSkyCRPGUI(RE::GFxMovieView* movie, RE::GFxValue* root)
+{
+	if (!movie || !root) {
 		return false;
 	}
+	RE::GFxValue function;
+	static auto* handler = new PlayerResources();
+	movie->CreateFunction(&function, handler);
+	if (!root->SetMember("getPlayerResources", function)) return false;
 	RE::GFxValue value;
 	value.SetNumber(g_hudSettings.scalePercent);
 	if (!root->SetMember("hudScale", value)) return false;
@@ -218,15 +332,21 @@ __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* skseInterface)
 	g_hudSettings = parsed.settings;
 	LogHudSettings(iniPath, parsed);
 
-	// CommonLib is used only for the pinned SKSE Scaleform API/GFx wrappers.
-	// The shared load ABI stays untouched; no game memory or camera state is read.
+	// Pinned CommonLib supplies GFx and read-only player actor values.
+	// No actor state is written and the shared load ABI stays untouched.
 	SKSE::Init(reinterpret_cast<const SKSE::LoadInterface*>(skseInterface), false);
+	const auto* tasks = SKSE::GetTaskInterface();
+	const auto* messaging = SKSE::GetMessagingInterface();
+	if (!tasks || !messaging || !messaging->RegisterListener("SKSE", ResourceLifecycle)) {
+		AppendModuleLog("HUD resource task/lifecycle registration: FAIL; native HUD fallback retained\n");
+		return true;
+	}
 	const auto* scaleform = SKSE::GetScaleformInterface();
 	if (!scaleform || !scaleform->Register(&RegisterSkyCRPGUI, "SkyCRPGUI")) {
 		AppendModuleLog("Scaleform settings registration: FAIL; native HUD fallback retained\n");
 		return true;
 	}
-	AppendModuleLog("scope extension: read-only validated HUD settings exposed to Scaleform; no gameplay state reads or writes\n");
+	AppendModuleLog("scope extension: read-only HUD settings and player current/effective maximum snapshots; no gameplay writes\n");
 	AppendModuleLog("Scaleform settings registration: PASS read-only\n");
 	return true;
 }

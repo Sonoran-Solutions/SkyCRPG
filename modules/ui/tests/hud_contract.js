@@ -1,5 +1,5 @@
 // Executes the actual DYL-160 HUD initialization against native-style HUDMenu stubs.
-// It verifies live callback gating, visibility ownership, menu modes and bounded anchors.
+// It verifies authoritative snapshot gating, visibility ownership, menu modes and bounded anchors.
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -21,38 +21,6 @@ function extractFunction(name) {
     else if (hudSource[end] === '}') depth--;
   }
   return eval(`(${hudSource.slice(start, end)})`);
-}
-
-function extractObservedMeterSetter(name, observedFlag) {
-  const start = hudSource.indexOf(`function ${name}(`);
-  assert.ok(start >= 0, `missing native meter callback ${name}`);
-  const open = hudSource.indexOf('{', start);
-  let depth = 1;
-  let end = open + 1;
-  for (; depth; end++) {
-    if (hudSource[end] === '{') depth++;
-    else if (hudSource[end] === '}') depth--;
-  }
-  const method = hudSource.slice(start, end);
-  const instrumented = method.replace('{', `{\nthis.${observedFlag} = true;`);
-  assert.notEqual(instrumented, method, `callback receipt hook inserted for ${name}`);
-  return eval(`(${instrumented})`);
-}
-
-function extractObservedFadeOutStamina() {
-  const start = hudSource.indexOf('function FadeOutStamina(');
-  assert.ok(start >= 0, 'missing native FadeOutStamina callback');
-  const open = hudSource.indexOf('{', start);
-  let depth = 1;
-  let end = open + 1;
-  for (; depth; end++) {
-    if (hudSource[end] === '{') depth++;
-    else if (hudSource[end] === '}') depth--;
-  }
-  const method = hudSource.slice(start, end);
-  const instrumented = method.replace('{', '{\nthis._skycrpgStaminaSeen = true;\nthis.lastStaminaMeterPercent = aPercent;');
-  assert.notEqual(instrumented, method, 'stamina fade callback synchronizes overlay cache');
-  return eval(`(${instrumented})`);
 }
 
 class TextField {
@@ -103,23 +71,11 @@ function makeMenu(width, height, settings) {
   menu.lastMagickaPenaltyPercent = 0;
   menu.lastStaminaPenaltyPercent = 0;
   menu.HealthPenaltyPercent = menu.MagickaPenaltyPercent = menu.StaminaPenaltyPercent = 0;
-  menu._skycrpgHealthSeen = false;
-  menu._skycrpgMagickaSeen = false;
-  menu._skycrpgStaminaSeen = false;
-  menu.HealthMeterLeft = {SetPercent() {}, SetTargetPercent() {}};
-  menu.MagickaMeter = {SetPercent() {}, SetTargetPercent() {}};
-  menu.StaminaMeter = {CurrentPercent: 0, TargetPercent: 0, SetPercent(value) { this.CurrentPercent = value; }, SetTargetPercent(value) { this.TargetPercent = value; }};
-  menu.HealthMeterAnim = menu.MagickaMeterAnim = menu.StaminaMeterAnim = {};
-  menu.RunMeterAnim = function () {};
-  menu.SetHealthMeterPercent = extractObservedMeterSetter('SetHealthMeterPercent', '_skycrpgHealthSeen');
-  menu.SetMagickaMeterPercent = extractObservedMeterSetter('SetMagickaMeterPercent', '_skycrpgMagickaSeen');
-  menu.SetStaminaMeterPercent = extractObservedMeterSetter('SetStaminaMeterPercent', '_skycrpgStaminaSeen');
-  menu.FadeOutStamina = extractObservedFadeOutStamina();
-  menu.FadeOutMeter = function (meter) { meter.faded = true; };
   menu.CheckAgainstHudMode = extractFunction('CheckAgainstHudMode');
   menu.ShowElements = extractFunction('ShowElements');
   const context = vm.createContext(Object.assign(menu, {
     Stage: {width, height},
+    getTimer: () => menu.now || 0,
     TextFormat: function (...args) { this.args = args; },
     skse: settings === null ? undefined : {plugins: {SkyCRPGUI: settings}},
   }));
@@ -127,9 +83,10 @@ function makeMenu(width, height, settings) {
   return menu;
 }
 
-function frame(menu) { menu.SkyCRPGStatus.onEnterFrame.call(menu.SkyCRPGStatus); }
+function frame(menu, elapsed = 100) { menu.now = (menu.now || 0) + elapsed; menu.SkyCRPGStatus.onEnterFrame.call(menu.SkyCRPGStatus); }
 function settings(scale, offsetX, offsetY, enabled = true) {
-  return {hudEnabled: enabled, hudScale: scale, hudOffsetX: offsetX, hudOffsetY: offsetY};
+  return {hudEnabled: enabled, hudScale: scale, hudOffsetX: offsetX, hudOffsetY: offsetY,
+    sample: undefined, calls: 0, getPlayerResources() { this.calls++; return this.sample; }};
 }
 
 for (const [width, height] of [[1280, 720], [1920, 1080]]) {
@@ -153,9 +110,7 @@ assert.equal(menu.Health._visible, true, 'native meter remains visible before li
 assert.equal(menu.Magica._visible, true);
 assert.equal(menu.Stamina._visible, true);
 
-menu.SetHealthMeterPercent(73, false);
-menu.SetMagickaMeterPercent(41, false);
-menu.SetStaminaMeterPercent(96, false);
+menu.skse.plugins.SkyCRPGUI.sample = {health: 146, healthMax: 200, magicka: 41, magickaMax: 100, stamina: 96, staminaMax: 100};
 frame(menu);
 assert.equal(originalStatus._visible, true);
 assert.equal(originalStatus.meters.meter0.value.text, '73%');
@@ -170,24 +125,30 @@ assert.equal(menu.Magica._visible, false);
 assert.equal(menu.Stamina._visible, false);
 assert.equal(originalStatus._skycrpgDataReady, true);
 
-menu.SetStaminaMeterPercent(50, false);
+const bridge = menu.skse.plugins.SkyCRPGUI;
+const calls = bridge.calls;
+frame(menu, 1);
+assert.equal(bridge.calls, calls, 'frame throttle prevents >10Hz sampling');
+bridge.sample.stamina = 50;
 frame(menu);
-assert.equal(originalStatus.meters.meter2.value.text, '50%');
-menu.FadeOutStamina(100);
-assert.equal(menu.Stamina.faded, true, 'native fade animation still runs');
-assert.equal(menu.StaminaMeter.CurrentPercent, 100, 'native current percent remains the supplied fade value');
-assert.equal(menu.StaminaMeter.TargetPercent, 100, 'native target percent remains the supplied fade value');
+assert.equal(originalStatus.meters.meter2.value.text, '50%', 'live stamina expenditure updates');
+bridge.sample.stamina = 100;
+bridge.sample.magicka = 30;
 frame(menu);
-assert.equal(originalStatus.meters.meter2.value.text, '100%', 'overlay synchronizes with FadeOutStamina after prior live data');
-
+assert.equal(originalStatus.meters.meter2.value.text, '100%', 'stamina regeneration updates without callbacks');
+assert.equal(originalStatus.meters.meter1.value.text, '30%', 'magicka expenditure updates');
+bridge.sample.magickaMax = 150;
+frame(menu);
+assert.equal(originalStatus.meters.meter1.value.text, '20%', 'temporary maximum modifier changes denominator');
 menu.HealthPenaltyPercent = 20;
-menu.MagickaPenaltyPercent = 25;
-menu.StaminaPenaltyPercent = 50;
 frame(menu);
-assert.equal(originalStatus.meters.meter0.value.text, '58%', 'display tracks native effective health meter');
-assert.equal(originalStatus.meters.meter1.value.text, '31%');
-assert.equal(originalStatus.meters.meter2.value.text, '50%', 'penalty math applies to synchronized fade-out stamina');
-menu.HealthPenaltyPercent = menu.MagickaPenaltyPercent = menu.StaminaPenaltyPercent = 0;
+assert.equal(originalStatus.meters.meter0.value.text, '73%', 'effective maximum ratio does not double apply native penalty');
+bridge.sample.health = -5;
+frame(menu);
+assert.equal(originalStatus.meters.meter0.value.text, '0%', 'negative current at death clamps display only');
+bridge.sample.health = 210;
+frame(menu);
+assert.equal(originalStatus.meters.meter0.value.text, '100%', 'current above changed maximum clamps display');
 
 menu.ShowElements('Favor', true);
 frame(menu);
@@ -198,15 +159,16 @@ frame(menu);
 assert.equal(originalStatus._visible, true, 'overlay returns with the native All mode');
 assert.equal(menu.Health._visible, false);
 
-menu.lastStaminaMeterPercent = 101;
-frame(menu);
-assert.equal(originalStatus._visible, false, 'invalid data hides the custom replacement');
-assert.equal(originalStatus._skycrpgDataReady, false);
-assert.equal(menu.Health._visible, true, 'invalid data restores native mode visibility');
-assert.equal(menu.Magica._visible, true);
-assert.equal(menu.Stamina._visible, true);
-
-menu.lastStaminaMeterPercent = 95;
+for (const invalid of [undefined, {}, {health: NaN}, {...bridge.sample, staminaMax: 0}, {...bridge.sample, stamina: Infinity}, {...bridge.sample, health: '10'}]) {
+  bridge.sample = invalid;
+  frame(menu);
+  assert.equal(originalStatus._visible, false, 'missing or invalid snapshot fails closed');
+  assert.equal(originalStatus._skycrpgDataReady, false);
+  assert.equal(menu.Health._visible, true, 'invalid snapshot restores native mode visibility');
+  assert.equal(menu.Magica._visible, true);
+  assert.equal(menu.Stamina._visible, true);
+}
+bridge.sample = {health: 50, healthMax: 100, magicka: 100, magickaMax: 100, stamina: 95, staminaMax: 100};
 frame(menu);
 assert.equal(menu.Health._visible, false);
 const staleStatus = menu.SkyCRPGStatus;
@@ -225,4 +187,4 @@ assert.equal(disabled.SkyCRPGStatus, undefined, 'disabled HUD keeps native layou
 const missing = makeMenu(1280, 720, null);
 assert.equal(missing.SkyCRPGStatus, undefined, 'missing plugin bridge keeps native layout');
 
-console.log('PASS: live native meter data, fallback, mode visibility, teardown and 720p/1080p bounds');
+console.log('PASS: authoritative current/effective maximum snapshots, fallback, mode visibility, teardown and 720p/1080p bounds');

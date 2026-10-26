@@ -24,7 +24,8 @@
       // If it is absent/disabled, leave every native meter and prompt untouched.
       var skycrpgSettings = skse != undefined && skse.plugins != undefined ? skse.plugins.SkyCRPGUI : undefined;
       if (skycrpgSettings != undefined && skycrpgSettings.hudEnabled == true) {
-         // Native HUDMenu callbacks remain the sole source of these percentages.
+         // Fresh current/effective maximum snapshots avoid the native callback cache,
+         // whose initialized zeroes are not authoritative player data.
          // This child owns no global listeners and is destroyed with this HUDMenu.
          var skycrpg = this.createEmptyMovieClip("SkyCRPGStatus", 18000);
          skycrpg.createEmptyMovieClip("meters", 1);
@@ -37,6 +38,7 @@
             Stage.height - 64 + skycrpgSettings.hudOffsetY));
          skycrpg._visible = false;
          skycrpg._skycrpgDataReady = false;
+         skycrpg._skycrpgNextSample = 0;
          skycrpg.createTextField("title", 10, 0, 0, 420, 20);
          skycrpg.title.selectable = false;
          skycrpg.title.text = "ADVENTURER STATUS";
@@ -101,24 +103,31 @@
          skycrpgParty.availability.selectable = false;
          skycrpgParty.availability.text = "Follower data unavailable";
          skycrpgParty.availability.setTextFormat(new TextFormat("$EverywhereFont", 11, 0x9E9A90));
-         skycrpg._visible = this.CheckAgainstHudMode(skycrpg);
+         skycrpg._visible = false;
          skycrpgParty._visible = this.CheckAgainstHudMode(skycrpgParty);
          this.HudElements.push(skycrpg);
          this.HudElements.push(skycrpgParty);
          skycrpg.onEnterFrame = function() {
             var hud = this._parent;
-            var health = Number(hud.lastHealthMeterPercent);
-            var magicka = Number(hud.lastMagickaMeterPercent);
-            var stamina = Number(hud.lastStaminaMeterPercent);
-            var healthPenalty = Number(hud.HealthPenaltyPercent);
-            var magickaPenalty = Number(hud.MagickaPenaltyPercent);
-            var staminaPenalty = Number(hud.StaminaPenaltyPercent);
-            var ready = hud._skycrpgHealthSeen && hud._skycrpgMagickaSeen && hud._skycrpgStaminaSeen &&
-               !isNaN(health) && !isNaN(magicka) && !isNaN(stamina) &&
-               !isNaN(healthPenalty) && !isNaN(magickaPenalty) && !isNaN(staminaPenalty) &&
-               health >= 0 && health <= 100 && magicka >= 0 && magicka <= 100 && stamina >= 0 && stamina <= 100 &&
-               healthPenalty >= 0 && healthPenalty <= 100 && magickaPenalty >= 0 && magickaPenalty <= 100 &&
-               staminaPenalty >= 0 && staminaPenalty <= 100;
+            var now = getTimer();
+            if (now < this._skycrpgNextSample) return;
+            this._skycrpgNextSample = now + 100; // At most 10 samples/sec; no catch-up loop.
+            var bridge = skse != undefined && skse.plugins != undefined ? skse.plugins.SkyCRPGUI : undefined;
+            var sample = bridge != undefined && bridge.hudEnabled == true &&
+               typeof(bridge.getPlayerResources) == "function" ? bridge.getPlayerResources() : undefined;
+            var ready = sample != undefined;
+            var names = ["health", "magicka", "stamina"];
+            var values = [];
+            var i = 0;
+            while (ready && i < 3) {
+               var current = sample[names[i]];
+               var maximum = sample[names[i] + "Max"];
+               ready = typeof(current) == "number" && typeof(maximum) == "number" &&
+                  !isNaN(current) && !isNaN(maximum) && isFinite(current) && isFinite(maximum) && maximum > 0;
+               values[i] = 100 * current / maximum;
+               ready = ready && isFinite(values[i]);
+               i++;
+            }
             var modeVisible = hud.CheckAgainstHudMode(this);
             if (!ready) {
                this._visible = false;
@@ -131,11 +140,11 @@
             }
             this._skycrpgDataReady = true;
             this._visible = modeVisible;
-            this.meters.meter0.drawPercent(health * (100 - healthPenalty) / 100);
-            this.meters.meter1.drawPercent(magicka * (100 - magickaPenalty) / 100);
-            this.meters.meter2.drawPercent(stamina * (100 - staminaPenalty) / 100);
+            this.meters.meter0.drawPercent(values[0]);
+            this.meters.meter1.drawPercent(values[1]);
+            this.meters.meter2.drawPercent(values[2]);
             // Suppress duplicates only while the replacement is allowed by the
-            // native mode and all three real engine callbacks have arrived.
+            // native mode and the fresh complete snapshot is valid.
             hud._skycrpgMetersSuppressed = modeVisible;
             hud.Health._visible = modeVisible ? false : hud.CheckAgainstHudMode(hud.Health);
             hud.Magica._visible = modeVisible ? false : hud.CheckAgainstHudMode(hud.Magica);
