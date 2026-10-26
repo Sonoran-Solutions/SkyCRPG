@@ -1,0 +1,34 @@
+{
+  "run": "https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40381045722",
+  "source_commit": "8a681390db5b36c2b6fb4fcb056c0abc0e085a35",
+  "owner": "orchestrator",
+  "native_build": "PASS",
+  "package_creation": "PASS",
+  "candidate_artifact_upload": "PASS",
+  "whole_workflow": "FAIL",
+  "workflow_failure_scope": "Only diagnostics upload glob followed cached CommonLib OpenVR macOS framework Headers symlink and failed stat with EPERM after native build/package/artifact upload completed.",
+  "artifact_url": "https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40381045722/artifacts/12678127493",
+  "github_artifact_bundle_sha256": "bdb3b59373f7633f4e47683cd72d0ad39df161e4c165f3116473cc74156bf4c4",
+  "package_archive": "SkyCRPG_Camera-0.0.1-8a68139.zip",
+  "package_archive_sha256": "50a23e3b768ff0d5a949b88b0f97f25787f64b2155d42da675338773e7309e76",
+  "manifest_sha256": "80806848a03ae833c113a5e8394e9e774fb950e9bd8f1f7370a5a481e27fa07e",
+  "package_members": {
+    "Docs/SkyCRPG_Camera/CommonLibSSE-NG-COPYING": "72d2f09334f8b87dded94a833ba7da05e5280e77a037ca23b251f96eae4cf719",
+    "Docs/SkyCRPG_Camera/CommonLibSSE-NG-EXCEPTIONS.md": "d3a3ec90e21ae118d3653d0834a2f6d1e6d32b773cc185023824992ad4bdcfce",
+    "Docs/SkyCRPG_Camera/build-inputs.md": "aa56f526b6760d59018fec59d60a40ccfe7bd7f69d8ab18fcf90684510eab2f8",
+    "SKSE/Plugins/SkyCRPG_Camera.dll": "aedc9d53e7c7d85719fb600fe8b71129cc9aab1f67f92cffe10ea499f106d024",
+    "SKSE/Plugins/SkyCRPG_Camera.ini": "a1b566ac5d4d439114eb6f168c5bf6984556c527e5d211deb6a6eb8047560afc"
+  },
+  "logs": {
+    "/srv/storage/Projects/SkyCRPG/session-p2-20261026/camera-final-build.log": "daef06e144fb87656201a28c3564ed851c693b7f874a1b0d5fae34c11aa3ecce",
+    "/srv/storage/Projects/SkyCRPG/session-p2-20261026/camera-final-failure.log": "3061dcf4f356589cc4ef4f76f079c2dc2b909b3a338a1af132019bb634d600ad"
+  },
+  "independent_download_verification": "PASS: artifact-check.log checks archive and all5 payload member hashes without extraction",
+  "workflow_fix": {
+    "commit": "7ad3396bb72517ce42446f53f116410b45c4d426",
+    "scope": ".github/workflows/build.yml diagnostics paths only; no native code/configuration changes",
+    "verification": "NOT_RUN / pending orchestrator verification"
+  },
+  "initial_native_failure": "Retained separately in initial-ci.json for run40375266551; no history relabeling",
+  "runtime": "NOT_RUN: native compile/package does not prove in-game behavior"
+}

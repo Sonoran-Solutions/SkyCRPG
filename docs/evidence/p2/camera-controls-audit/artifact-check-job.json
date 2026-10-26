@@ -1,0 +1,17 @@
+{
+  "purpose": "Read-only verify downloaded final Camera package and every manifest member hash; no native rebuild/runtime test",
+  "owner": "camera worker",
+  "command": "timeout --signal=TERM 600s python3 /srv/storage/Projects/SkyCRPG/session-p2-20261026/verify-camera-final-artifact.py",
+  "log": "docs/evidence/p2/camera-controls-audit/artifact-check.log",
+  "planned_at": "2026-10-26T18:53:35.155533+00:00",
+  "deadline": "2026-10-26T19:03:35.155533+00:00",
+  "timeout_seconds": 600,
+  "completion_signal": "exit0 and PASS source/archive/member hash report",
+  "cleanup": "Read-only ZIP/JSON/hash work only; no extraction, source edits, deployment or native process",
+  "status": "PASS",
+  "exit_code": 0,
+  "handle": "functions.exec/3291fa",
+  "pid": 168446,
+  "completion_recorded_at": "2026-10-26T18:54:25.156357+00:00",
+  "cleanup_result": "Tool exited0 synchronously; no active session, native build or game process created"
+}
