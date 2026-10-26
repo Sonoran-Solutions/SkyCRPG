@@ -3,6 +3,7 @@
 #include <SKSE/SKSE.h>
 #include <skycrpg/skeleton.h>
 #include "policy.h"
+#include "precision_policy.h"
 #pragma warning(push)
 #pragma warning(disable: 4191) // permitted external API FARPROC conversion
 #define SMOOTHCAM_API_COMMONLIB
@@ -214,6 +215,7 @@ public:
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
         if (!events) return RE::BSEventNotifyControl::kContinue;
         const auto c = context();
+        ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson);
         // Deliberate F6 can return from its OWN first-person request; native POV never auto-restores.
         const bool safe = c.prerequisites && c.world && !c.special && !c.menu;
         if (!safe) suspend();
