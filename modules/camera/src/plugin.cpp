@@ -207,6 +207,7 @@ public:
         for (auto event = *events; event; event = event->next) {
             auto button = event->AsButtonEvent();
             if (!button) continue;
+            if (button->IsDown() && button->QUserEvent() == "Toggle POV") ownFirstPerson = false;
             const auto device = event->GetDevice();
             const bool pad = device == RE::INPUT_DEVICE::kGamepad;
             if (!pad && device != RE::INPUT_DEVICE::kKeyboard) continue;
