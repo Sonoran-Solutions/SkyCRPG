@@ -1,0 +1,56 @@
+{
+  "inventorymenu.swf": [
+    {
+      "tag": 71,
+      "url": "skyui/InventoryLists.swf",
+      "symbols": [
+        {
+          "id": 5,
+          "name": "InventoryLists"
+        }
+      ]
+    },
+    {
+      "tag": 56,
+      "url": null,
+      "symbols": [
+        {
+          "id": 11,
+          "name": "__Packages.InventoryLists"
+        }
+      ]
+    }
+  ],
+  "skyui/inventorylists.swf": [
+    {
+      "tag": 56,
+      "url": null,
+      "symbols": [
+        {
+          "id": 94,
+          "name": "InventoryListsTweener"
+        }
+      ]
+    },
+    {
+      "tag": 56,
+      "url": null,
+      "symbols": [
+        {
+          "id": 100,
+          "name": "InventoryLists"
+        }
+      ]
+    },
+    {
+      "tag": 56,
+      "url": null,
+      "symbols": [
+        {
+          "id": 113,
+          "name": "__Packages.InventoryLists"
+        }
+      ]
+    }
+  ]
+}

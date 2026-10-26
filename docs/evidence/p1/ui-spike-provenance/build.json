@@ -1,0 +1,109 @@
+{
+  "skyui_commit": "3d537a366f1a45c14a7012ea0aa00be18108f073",
+  "status": "COMPILED_NOT_RUN",
+  "source_sha256": {
+    "ItemMenus/InventoryMenu.as": "71142a8bfa6851b7c250f9ef255a386f800dccd59d7c080be8e798b9c0cabd1d",
+    "ItemMenus/InventoryLists.as": "03fc18ae04c1fdb5b435b83e20d7414773e287ceb5fb4dd2aa0d3b07e54f68f3",
+    "Common/skyui/components/list/ScrollingList.as": "af6ddbd9d66385024c614afce7deffffa1346ade09cae25838058ec544b2ba4c",
+    "Common/skyui/components/list/TabularList.as": "ae576a7ac6ae29827edda04c6f70f09b896a3de6426c7083c9118c50b5f81efa",
+    "Common/skyui/components/list/TabularListEntry.as": "52093027024bc0b089a7c752be6edcd3fa3767cda9f1d65a7e9f14e4432dd8e5",
+    "Vanilla/HUDMenu.as": "de9d6d2a3e5bca549b2a699fa334d32396f9671ab68a81e9a185ce9ec45a5eb5"
+  },
+  "base": "Nexus6.11 acquired BSA",
+  "patch_sha256": {
+    "grid-methods.as.inc": "c1c1a2ddecc5e2a1b76591604cd385b10dd49f9b2d9ecdf5e57100abc41afbfb",
+    "hud-init.as.inc": "9927df1c8421da849040e069d66fa06fba041e30bf16552fb4fae495b1562fe7",
+    "grid-routing.as.inc": "8922656eaed4555d63b1da1ae68a4bef2a79ad5dd4841bbc5dae0331ad1cd5ff"
+  },
+  "ffdec_cli_sha256": "5eb6b2bae13a2cc8905b2f8338996701e04eb651ab224043948fabbec942735e",
+  "inputs": {
+    "inventorymenu.swf": "9225ed93e1589e69f6d5305299e8e6847aaaea1323a3c39ba88360803c3d49a6",
+    "skyui/inventorylists.swf": "6a762b62dbc58d8ea871620e181b1e950abd32b0cfd726ed44d1aba350469061",
+    "hudmenu.swf": "e8277c1fedcda3ac8c159441f4e7c55b62fbe564ec3cc1bd602b70427f0a47cf"
+  },
+  "outputs": {
+    "inventorymenu.swf": "5b474c27fd84f1e82022bde4b79184d14b1334bf4f5f8ec8739d8e4b47215f80",
+    "skyui/inventorylists.swf": "7f0ce7fa3eec3845fc9cfce3776beba7f89cf2e6b9fe21d2851886deca852cd8",
+    "hudmenu.swf": "c42e7a26bb276bc8ee0a2f877c2248e8bb8bcd73bee9798119ae3ebdddde3e38"
+  },
+  "jobs": [
+    {
+      "purpose": "Compile original grid/HUD patch into external SkyUI SWF",
+      "command": [
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java",
+        "-Xmx512m",
+        "-Djava.awt.headless=true",
+        "-jar",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/tools/FFDec/ffdec-cli.jar",
+        "-config",
+        "autoDeobfuscate=false,decompile=false",
+        "-onerror",
+        "abort",
+        "-importScript",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface/inventorymenu.swf",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/Data/Interface/inventorymenu.swf",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/staging/inventorymenu.swf"
+      ],
+      "timeout_seconds": 600,
+      "owner": "DYL-153",
+      "log": "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/inventorymenu.swf.log",
+      "completion": "zero exit and nonempty SWF",
+      "cleanup": "kill compiler process on timeout; retain logs",
+      "pid": 30514,
+      "elapsed_seconds": 0.515,
+      "exit_code": 0
+    },
+    {
+      "purpose": "Compile original grid/HUD patch into external SkyUI SWF",
+      "command": [
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java",
+        "-Xmx512m",
+        "-Djava.awt.headless=true",
+        "-jar",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/tools/FFDec/ffdec-cli.jar",
+        "-config",
+        "autoDeobfuscate=false,decompile=false",
+        "-onerror",
+        "abort",
+        "-importScript",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface/skyui/inventorylists.swf",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/Data/Interface/skyui/inventorylists.swf",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/staging/skyui/inventorylists.swf"
+      ],
+      "timeout_seconds": 600,
+      "owner": "DYL-153",
+      "log": "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/skyui-inventorylists.swf.log",
+      "completion": "zero exit and nonempty SWF",
+      "cleanup": "kill compiler process on timeout; retain logs",
+      "pid": 30570,
+      "elapsed_seconds": 0.565,
+      "exit_code": 0
+    },
+    {
+      "purpose": "Compile original grid/HUD patch into external SkyUI SWF",
+      "command": [
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java",
+        "-Xmx512m",
+        "-Djava.awt.headless=true",
+        "-jar",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11/tools/FFDec/ffdec-cli.jar",
+        "-config",
+        "autoDeobfuscate=false,decompile=false",
+        "-onerror",
+        "abort",
+        "-importScript",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface/hudmenu.swf",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/Data/Interface/hudmenu.swf",
+        "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/staging/hudmenu.swf"
+      ],
+      "timeout_seconds": 600,
+      "owner": "DYL-153",
+      "log": "/srv/storage/Projects/SkyCRPG/session-20261026/ui-candidate-imported-routing/hudmenu.swf.log",
+      "completion": "zero exit and nonempty SWF",
+      "cleanup": "kill compiler process on timeout; retain logs",
+      "pid": 30627,
+      "elapsed_seconds": 0.815,
+      "exit_code": 0
+    }
+  ]
+}

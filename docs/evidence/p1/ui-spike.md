@@ -492,3 +492,14 @@ fixtures and the full modal/controller/layout matrix. Previous owner run071034
 records map inside/outside and usable compass with map hidden. Combined smoke
 is parent-owned and was running as075556 when this report was updated; no result
 is inferred here. No Phase1 contract is frozen and no Phase2 work is included.
+
+Reviewable focused provenance is committed in
+[ui-spike-provenance](ui-spike-provenance/build.json): exact bounded compiler
+commands/PIDs/input-output hashes and exit results,
+[source test output](ui-spike-provenance/source-tests.log),
+[navigation/callback test output](ui-spike-provenance/navigation.log),
+[both-class bytecode checks](ui-spike-provenance/bytecode-check.json),
+[actual binary class linkage](ui-spike-provenance/actual-class-linkage.json) and
+[source provenance](ui-spike-provenance/source-provenance.json). These small
+records contain no SWFs, assets, third-party source dumps or exported movie trees.
+Parent's shared indexed runtime logs supply the separate native startup/run proof.

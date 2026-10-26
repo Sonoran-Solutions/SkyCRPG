@@ -1,0 +1,2 @@
+PASS: actual pinned CategoryList itemPress -> InventoryLists.showItemsList callback sequence
+PASS: grid before categories, native indices, category access, modal guards, one activation
