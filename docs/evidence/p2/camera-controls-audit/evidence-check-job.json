@@ -1,0 +1,16 @@
+{
+  "purpose": "Validate camera evidence links/JSON/source hashes and module ownership invariants after source stabilized",
+  "owner": "camera worker",
+  "command": "timeout --signal=TERM 600s python3 /srv/storage/Projects/SkyCRPG/session-20261026/validate-camera-evidence.py",
+  "log": "docs/evidence/p2/camera-controls-audit/evidence-check.log",
+  "timeout_seconds": 600,
+  "planned_at": "2026-10-26T18:17:45.878375+00:00",
+  "deadline": "2026-10-26T18:27:45.878375+00:00",
+  "completion_signal": "exit0 with PASS/count report",
+  "cleanup": "Bounded owned Python command only; no game processes or deployment; retain logs",
+  "status": "PASS",
+  "exit_code": 0,
+  "handle": "functions.exec/1cfb90",
+  "completion_recorded_at": "2026-10-26T18:18:02.883823+00:00",
+  "cleanup_result": "Completed synchronously; no exec session or game process created"
+}

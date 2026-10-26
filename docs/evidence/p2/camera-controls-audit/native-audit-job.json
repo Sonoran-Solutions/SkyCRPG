@@ -1,0 +1,18 @@
+{
+  "purpose": "Read-only exact-runtime native input semantics audit; no game launch or memory writes",
+  "owner": "camera worker",
+  "command": "timeout --signal=TERM 600s python3 /srv/storage/Projects/SkyCRPG/session-20261026/camera-native-audit.py",
+  "log": "/srv/storage/Projects/SkyCRPG/session-20261026/camera-native-audit.log",
+  "timeout_seconds": 600,
+  "started_at": "2026-10-26T17:58:55.858488+00:00",
+  "deadline": "2026-10-26T18:08:55.858488+00:00",
+  "completion_signal": "process exit and static audit JSON/disassembly logs present",
+  "cleanup": "No game processes created; ensure only owned audit command exited; external logs retained",
+  "status": "PASS",
+  "exit_code": 0,
+  "handle": "functions.exec/ e1e0a7",
+  "cleanup_result": "Completed synchronously; tool returned exit 0; no ongoing session/game process created",
+  "pid": 121777,
+  "completion_recorded_at": "2026-10-26T18:11:52.590268+00:00",
+  "elapsed_seconds": 0.085229
+}

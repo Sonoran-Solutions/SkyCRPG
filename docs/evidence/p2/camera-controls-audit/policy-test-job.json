@@ -1,0 +1,18 @@
+{
+  "purpose": "Focused policy validation, state precedence, edge/focus semantics, explicit native-view requests and held-pitch correction math; changed native zoom request clamp/default path",
+  "owner": "camera worker",
+  "command": "timeout --signal=TERM 600s bash -c 'g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/camera/include modules/camera/tests/policy_test.cpp -o /srv/storage/Projects/SkyCRPG/session-20261026/camera-policy-test && /srv/storage/Projects/SkyCRPG/session-20261026/camera-policy-test'",
+  "log": "docs/evidence/p2/camera-controls-audit/policy-test.log",
+  "timeout_seconds": 600,
+  "started_at": "2026-10-26T18:15:53.211675+00:00",
+  "deadline": "2026-10-26T18:25:53.211675+00:00",
+  "completion_signal": "exit 0 after binary assertions",
+  "cleanup": "timeout owns test subprocess; confirm exit; external executable retained, no game processes created",
+  "status": "PASS",
+  "previous_success_handle": "functions.exec/838d73",
+  "exit_code": 0,
+  "completion_recorded_at": "2026-10-26T18:17:15.638090+00:00",
+  "handle": "functions.exec/0fc59b",
+  "elapsed_seconds": 0.111649,
+  "cleanup_result": "Tool returned exit0 synchronously; no ongoing exec session/game process created"
+}
