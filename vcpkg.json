@@ -1,0 +1,6 @@
+{
+  "name": "skycrpg-native",
+  "version-string": "0.0.1",
+  "builtin-baseline": "ee12231b20c95013c6638d845d04c91559a1d1ff",
+  "dependencies": ["spdlog", "directxtk", "rapidcsv"]
+}
