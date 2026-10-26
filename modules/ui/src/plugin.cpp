@@ -2,7 +2,7 @@
 #include <skycrpg/skeleton.h>
 #include "hud_settings.h"
 
-#include <SKSE/API.h>
+#include <SKSE/SKSE.h>
 #include <RE/G/GFxMovieView.h>
 #include <RE/G/GFxValue.h>
 #include "address_library_pin.h"

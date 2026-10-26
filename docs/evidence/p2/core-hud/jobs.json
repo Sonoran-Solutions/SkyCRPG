@@ -1,6 +1,6 @@
 {
   "owner": "DYL-160 UI worker",
-  "source_commit": "pending guard follow-up commit",
+  "source_commit": "fa5f340; public-header correction pending commit",
   "bounded_jobs": [
     {
       "purpose": "Focused settings, exact pinned source transform, and HUD lifecycle/data/layout validation",
@@ -71,6 +71,21 @@
         "address-library-guard-tests.log"
       ],
       "limit": "Does not execute BCrypt on Windows or test SKSE/CommonLib runtime; native build pending."
+    },
+    {
+      "purpose": "Verify the CommonLib public consumer umbrella include and ordering before RE headers",
+      "recorded_before_run": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-public-header-job.json",
+      "commands": [
+        "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+        "g++ -std=c++20 -Wall -Wextra -Werror modules/ui/tests/hud_settings_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test && /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/hud_settings_test"
+      ],
+      "timeout_seconds_each": 600,
+      "results": {
+        "public_header_order_contract": "PASS; 10 tests, 0 skipped",
+        "portable_parser_and_pin_assertions": "PASS; compile and execution exit 0"
+      },
+      "log": "source-tests.log",
+      "native_build": "Not started by UI worker; parent CI dependency build already in progress."
     }
   ]
 }

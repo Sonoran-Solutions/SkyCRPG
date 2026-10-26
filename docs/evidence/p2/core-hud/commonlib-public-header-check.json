@@ -1,0 +1,8 @@
+{
+  "status": "PASS_SOURCE_CONTRACT_NATIVE_BUILD_PENDING",
+  "pinned_source": "CommonLibSSE-NG 7.2.0",
+  "verified_consumer_pattern": "<SKSE/SKSE.h> imports SKSE/Impl/PCH.h before the UI source includes RE/G/GFxMovieView.h and RE/G/GFxValue.h.",
+  "windows_macro_order": "shared skeleton header appears first and defines WIN32_LEAN_AND_MEAN/NOMINMAX before Windows headers; umbrella inclusion follows.",
+  "evidence": "test_scaleform_contract.py asserts umbrella-before-RE ordering and rejects direct <SKSE/API.h>.",
+  "native_build": "Not started by UI worker; parent CI owns current dependency build and follow-up native validation."
+}

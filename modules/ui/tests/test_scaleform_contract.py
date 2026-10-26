@@ -104,6 +104,8 @@ class PatchContract(unittest.TestCase):
         plugin = (builder.ROOT / "src/plugin.cpp").read_text()
         pin = (builder.ROOT / "src/address_library_pin.h").read_text()
         cmake = (builder.ROOT / "CMakeLists.txt").read_text()
+        self.assertLess(plugin.index("#include <SKSE/SKSE.h>"), plugin.index("#include <RE/G/GFxMovieView.h>"))
+        self.assertNotIn("#include <SKSE/API.h>", plugin)
         load = plugin.index("bool SKSEPlugin_Load")
         verify = plugin.index("VerifyPinnedAddressLibrary()", load)
         init = plugin.index("SKSE::Init(", load)

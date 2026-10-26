@@ -3,4 +3,4 @@ Result: PASS
 Ran 10 tests in 0.002s
 OK
 Exit code: 0
-Includes the exact Address Library filename/digest pin and guard-before-SKSE::Init source contract.
+Includes exact Address Library filename/digest pin, guard-before-SKSE::Init ordering, and SKSE/SKSE.h-before-RE public-header ordering with direct API include rejected.
