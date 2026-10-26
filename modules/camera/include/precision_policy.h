@@ -7,7 +7,7 @@ namespace skycrpg::camera {
 // state. A late, unrelated first-person transition cannot claim a session.
 constexpr bool claimPrecisionOwnership(Context before, Context after) {
     return before.prerequisites && before.world && !before.special && !before.menu &&
-        !before.firstPerson && after.prerequisites && after.world && !after.special &&
+        !before.firstPerson && after.prerequisites && after.world && !after.special && !after.menu &&
         after.firstPerson;
 }
 // Retain only while the provider, world and owned first-person state remain

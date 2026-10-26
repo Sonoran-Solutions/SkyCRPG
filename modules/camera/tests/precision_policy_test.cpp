@@ -18,6 +18,8 @@ int main() {
     assert(!claimPrecisionOwnership(before, unsafe));
     unsafe = c; unsafe.prerequisites = false;
     assert(!claimPrecisionOwnership(before, unsafe));
+    unsafe = c; unsafe.menu = true;
+    assert(!claimPrecisionOwnership(before, unsafe));
     auto unsafeBefore = before; unsafeBefore.menu = true;
     assert(!claimPrecisionOwnership(unsafeBefore, c));
     c.menu = true;
