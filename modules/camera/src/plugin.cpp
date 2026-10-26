@@ -22,7 +22,7 @@ Settings settings;
 bool ready = false, loading = true, ownFirstPerson = false, recenter = false;
 SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
-bool movementLease = false, applyZoom = true, compatibleSettings = true;
+bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
 std::array<FreshPress,4> keys;
 using Look = void(*)(RE::ThirdPersonState*, const RE::NiPoint2&);
 Look previousLook = nullptr;
@@ -33,11 +33,8 @@ void log(const char* text) {
     if (_wfopen_s(&file,path.c_str(),L"a") == 0 && file) { std::fprintf(file,"%s\n",text); std::fclose(file); }
 }
 // Hash loaded files before any hook/address use. Unknown provider builds fail closed.
-bool hashMatches(const wchar_t* module, const std::string& expected) {
-    wchar_t path[32768]{};
-    const auto handle = module ? GetModuleHandleW(module) : GetModuleHandleW(nullptr);
-    if (!handle || !GetModuleFileNameW(handle,path,32768)) return false;
-    std::ifstream file(std::filesystem::path(path),std::ios::binary);
+bool hashFile(const std::filesystem::path& path, const std::string& expected) {
+    std::ifstream file(path,std::ios::binary);
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     if (!file || BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,0) < 0) return false;
@@ -57,6 +54,11 @@ bool hashMatches(const wchar_t* module, const std::string& expected) {
     for (auto byte : digest) { result += digits[byte >> 4]; result += digits[byte & 15]; }
     return ok && result == expected;
 }
+bool hashMatches(const wchar_t* module, const std::string& expected) {
+    wchar_t path[32768]{};
+    const auto handle = module ? GetModuleHandleW(module) : GetModuleHandleW(nullptr);
+    return handle && GetModuleFileNameW(handle,path,32768) && hashFile(std::filesystem::path(path),expected);
+}
 std::string read(const char* section, const char* key, const char* fallback) {
     char value[128]{};
     GetPrivateProfileStringA(section,key,fallback,value,128,iniPath.string().c_str());
@@ -67,6 +69,25 @@ template<class T> T number(const char* section,const char* key,T fallback) {
     T result{};
     const auto parsed = std::from_chars(value.data(),value.data()+value.size(),result);
     return parsed.ec == std::errc{} && parsed.ptr == value.data()+value.size() ? result : fallback;
+}
+bool checkMovementConfig() {
+    // Match TDM Settings::ReadSettings precedence: provider config, then user MCM.
+    wchar_t executable[32768]{};
+    if (!GetModuleFileNameW(nullptr,executable,32768)) return false;
+    const auto root = std::filesystem::path(executable).parent_path()/L"Data"/L"MCM";
+    int yaw = -1;
+    for (const auto& path : {root/L"Config"/L"TrueDirectionalMovement"/L"settings.ini",root/L"Settings"/L"TrueDirectionalMovement.ini"}) {
+        char value[32]{};
+        GetPrivateProfileStringA("DirectionalMovement","uAdjustCameraYawDuringMovement","",value,32,path.string().c_str());
+        if (value[0]) {
+            const std::string_view text(value);
+            int parsed = -1;
+            const auto result = std::from_chars(text.data(),text.data()+text.size(),parsed);
+            if (result.ec != std::errc{} || result.ptr != text.data()+text.size()) return false;
+            yaw = parsed;
+        }
+    }
+    return yaw == 0;
 }
 void loadSettings() {
     iniPath = std::filesystem::path(skycrpg::ThisModuleDirectory())/L"SkyCRPG_Camera.ini";
@@ -107,7 +128,7 @@ bool focused() {
 Context context() {
     Context c;
     c.enabled = settings.enabled;
-    c.prerequisites = compatibleSettings && ready && movement && movementLease && !movement->GetTargetLockState() && provider && provider->IsCameraEnabled() && provider->GetCameraOwner() == SKSE::kInvalidPluginHandle;
+    c.prerequisites = compatibleSettings && movementConfigSafe && ready && movement && movementLease && !movement->GetTargetLockState() && provider && provider->IsCameraEnabled() && provider->GetCameraOwner() == SKSE::kInvalidPluginHandle;
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto camera = RE::PlayerCamera::GetSingleton();
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
@@ -155,6 +176,7 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
 class Events final : public RE::BSTEventSink<RE::InputEvent*>, public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
 public:
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent*,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
+        movementConfigSafe = checkMovementConfig();
         suspend(); return RE::BSEventNotifyControl::kContinue;
     }
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
@@ -212,6 +234,8 @@ void messages(SKSE::MessagingInterface::Message* message) {
             hashMatches(L"TrueDirectionalMovement.dll","5ba3abd82fe070e2a6e9af7f07eca82b9ddb1a53dcd47bc34af571efab01899f") &&
             hashMatches(L"MCMHelper.dll","d58f433bef7690614d42aaac69cc35f60d179a85429a385e21858a1f276aef38");
         if (!ready) { log("Exact executable/provider prerequisite hash mismatch; controller disabled."); break; }
+        movementConfigSafe = checkMovementConfig();
+        if (!movementConfigSafe) log("TDM camera-yaw config absent/unsafe; custom policy suspended until corrected and a menu closes.");
         movement = static_cast<TDM_API::IVTDM5*>(TDM_API::RequestPluginAPI());
         if (!movement) { ready = false; log("TDM V5 API absent; controller suspended."); break; }
         const auto lease = movement->RequestDisableTargetLock(SKSE::GetPluginHandle());
@@ -244,10 +268,16 @@ extern "C" __declspec(dllexport) constinit SKSE::PluginVersionData SKSEPlugin_Ve
 }();
 extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const SKSE::LoadInterface* skse) {
     if (!skse || skse->IsEditor() || skse->RuntimeVersion() != SKSE::RUNTIME_SSE_1_7_104 || skse->SKSEVersion() != REL::Version{2,3,1,0}) return false;
-    SKSE::Init(skse,false);
     std::ofstream(std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera.log",std::ios::trunc).close();
     log("SkyCRPG Camera " SKYCRPG_VERSION " source " SKYCRPG_SOURCE_COMMIT "; native input policy, no camera transform writes.");
-    log("runtime check: PASS pinned 1.7.104; SKSE 2.3.1+; Address Library format 5");
+    log("runtime check: PASS pinned 1.7.104; exact SKSE 2.3.1; Address Library format 5");
+    if (!hashMatches(nullptr,"846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f") ||
+        !hashFile(std::filesystem::path(skycrpg::ThisModuleDirectory())/L"versionlib-1-7-104-0.bin","8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842")) {
+        log("Executable/Address Library absent or incompatible; staying inert before CommonLib address initialization.");
+        return true;
+    }
+    SKSE::Init(skse,false);
     loadSettings();
-    return SKSE::GetMessagingInterface()->RegisterListener(messages);
+    const auto messaging = SKSE::GetMessagingInterface();
+    return messaging && messaging->RegisterListener(messages);
 }
