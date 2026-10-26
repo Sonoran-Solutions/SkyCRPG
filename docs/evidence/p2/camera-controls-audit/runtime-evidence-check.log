@@ -1,0 +1,11 @@
+{
+  "result": "PASS",
+  "pid": 177308,
+  "source": "8a681390db5b36c2b6fb4fcb056c0abc0e085a35",
+  "runtime_run": "20261026T115627",
+  "copied_logs": 4,
+  "preserved_file_count": 20,
+  "fixture_pair_count": 2,
+  "screenshot_sha256": "1818e257c8add8fed58d0699d321575ba4be260ffb3603ec5fc8c6a008c3d92f",
+  "privacy": "No save bytes or filenames copied"
+}

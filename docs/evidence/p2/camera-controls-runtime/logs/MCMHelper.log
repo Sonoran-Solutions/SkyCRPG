@@ -1,0 +1,11 @@
+main.cpp(85): [info] MCMHelper v1.6.3.0
+SettingStore.cpp(7): [info] ModSettingStore initializing.
+SettingStore.cpp(337): [info] Number of mod setting files: 0
+SettingStore.cpp(34): [info] Registered 151 mod settings in 1 ms.
+ReaderHandler.cpp(19): [warning] Failed to open file: Data/MCM/Settings\keybinds.json
+KeybindManager.cpp(43): [warning] Failed to parse keybind registrations
+KeybindManager.cpp(49): [info] Loaded keybind registrations in 0 ms.
+RegisterFuncs.cpp(10): [info] Registered Papyrus functions
+ConfigStore.cpp(13): [info] ModConfigStore initializing.
+Interfaces.cpp(225): [error] Failed to dispatch message to MergeMapper
+ConfigStore.cpp(85): [info] Registered 2 mod configs in 0 ms.

@@ -1,0 +1,20 @@
+{
+  "profile": "camera-only",
+  "run_id": "ad599062e2af4187a7212b645f41f010",
+  "pid": 170605,
+  "mode": "interactive",
+  "started": "2026-10-26T11:56:27-0700",
+  "timeout_s": 1200,
+  "result": "QUIT",
+  "success": true,
+  "exit_code": 0,
+  "load_problems": [],
+  "ended": "2026-10-26T12:04:03-0700",
+  "logs": {
+    "skse64.log": "ce55ef8755a8e2881140c3ecc8e12f8d3edc2f846ee704f0ebe457a1530bc21c",
+    "skse64_loader.log": "4835271c706babd6e5833e6eae27895ef99a7c00b23d84738e0b53d923d0aa1b",
+    "SkyCRPG_Camera.log": "938210d14e06ea2ae895d30716870af24cd74217ab5872d246352feb6ce5b9b5"
+  },
+  "leftover_pids": [],
+  "skyrim_running_after": []
+}

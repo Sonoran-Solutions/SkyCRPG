@@ -30,5 +30,10 @@
     "verification": "NOT_RUN / pending orchestrator verification"
   },
   "initial_native_failure": "Retained separately in initial-ci.json for run40375266551; no history relabeling",
-  "runtime": "NOT_RUN: native compile/package does not prove in-game behavior"
+  "runtime_at_compile_record": "NOT_RUN: native compile/package does not prove in-game behavior",
+  "subsequent_runtime": {
+    "result": "PASS bounded owner route20261026T115627",
+    "evidence": "../camera-controls-runtime/owner-observation.json",
+    "scope": "Exterior stable pitch/movement, mouse yaw/zoom, F7,F6/menu and native controller movement/yaw; broader runtime remains NOT_RUN"
+  }
 }

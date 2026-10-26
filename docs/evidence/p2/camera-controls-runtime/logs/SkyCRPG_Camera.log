@@ -1,0 +1,3 @@
+SkyCRPG Camera 0.0.1 source 8a681390db5b36c2b6fb4fcb056c0abc0e085a35; native input policy, no camera transform writes.
+runtime check: PASS pinned 1.7.104; exact SKSE 2.3.1; Address Library format 5
+Camera input policy installed: one chained native look call; SmoothCam sole transform writer.

@@ -1,0 +1,18 @@
+{
+  "purpose": "Copy and hash bounded Camera runtime evidence, preserving initial controller failure and excluding saves/personal filenames",
+  "owner": "camera worker",
+  "command": "timeout --signal=TERM 600s python3 /srv/storage/Projects/SkyCRPG/session-p2-20261026/capture-camera-runtime-evidence.py",
+  "log": "docs/evidence/p2/camera-controls-audit/runtime-evidence-check.log",
+  "planned_at": "2026-10-26T19:09:50.009809+00:00",
+  "deadline": "2026-10-26T19:19:50.009809+00:00",
+  "timeout_seconds": 600,
+  "completion_signal": "exit0 with expected log/screenshot hashes and concise privacy-preserving runtime/preservation summaries",
+  "cleanup": "Read-only external evidence/manifest inputs; copy docs evidence only, no save bytes, game files, processes, builds or deployment",
+  "status": "PASS",
+  "exit_code": 0,
+  "handle": "functions.exec/d640a8",
+  "pid": 177308,
+  "elapsed_seconds": 0.098009,
+  "completion_recorded_at": "2026-10-26T19:12:04.293648+00:00",
+  "cleanup_result": "Evidence copy/hash script exited0; no build, game, save or deployment operations"
+}

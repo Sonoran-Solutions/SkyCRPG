@@ -1,0 +1,37 @@
+{
+  "purpose": "Phase2 camera-only bounded owner gameplay route",
+  "owner": "orchestrator",
+  "timeout_s": 1200,
+  "deadline_utc": "2026-10-26T19:16:27.642385+00:00",
+  "cleanup": "stop only matching SKYCRPG_RUN_ID processes, then runtime_profile.py restore camera-route-1-relaunch",
+  "log": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/camera-route-1-relaunch/game.log",
+  "telemetry": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/camera-route-1-relaunch/memory.jsonl",
+  "guard": "stop at MemAvailable<4GiB or full memory pressure avg10>10%",
+  "command": [
+    "/usr/bin/python3",
+    "-u",
+    "-I",
+    "tools/profile.py",
+    "launch",
+    "--interactive",
+    "--timeout",
+    "1200"
+  ],
+  "profile_manifest": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/camera-route-1-relaunch/active-at-deploy.json",
+  "supervisor_pid": 170538,
+  "profile_pid": 170604,
+  "run_file": "/srv/storage/Projects/SkyCRPG/profiles/camera-only/runs/20261026T115627/run.json",
+  "run_id": "ad599062e2af4187a7212b645f41f010",
+  "leftover_pids": [],
+  "stop_reason": null,
+  "exit_code": 0,
+  "ended": 1793041446.7052438,
+  "provider_logs": {
+    "TrueDirectionalMovement.log": "54c78f67bc16576d89da19150ddc7be0c27d8fe50b9e48f9f4b41a8c007043dc",
+    "skse64_loader.log": "4835271c706babd6e5833e6eae27895ef99a7c00b23d84738e0b53d923d0aa1b",
+    "SmoothCam.log": "247c94db263bd1d856cc2f4658dd88c774ef488a0235752fac8b9deceec7b525",
+    "SkyCRPG_Camera.log": "938210d14e06ea2ae895d30716870af24cd74217ab5872d246352feb6ce5b9b5",
+    "skse64.log": "ce55ef8755a8e2881140c3ecc8e12f8d3edc2f846ee704f0ebe457a1530bc21c",
+    "MCMHelper.log": "cae952a576a8412ae167524f83d0ecba8a9fdabdeeb1bfcab2d84637ca149d7f"
+  }
+}

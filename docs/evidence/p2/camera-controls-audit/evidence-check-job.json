@@ -1,22 +1,22 @@
 {
-  "purpose": "Docs-only verification of native CI PASS versus workflow failure classification, artifact hash metadata and unchanged Camera source hashes",
+  "purpose": "Docs/runtime evidence links, exact copied log/screenshot hashes, owner PASS versus prior controller FAIL, preserved cleanup and privacy exclusions; product source unchanged",
   "owner": "camera worker",
   "command": "timeout --signal=TERM 600s python3 /srv/storage/Projects/SkyCRPG/session-20261026/validate-camera-evidence.py",
   "log": "docs/evidence/p2/camera-controls-audit/evidence-check.log",
   "timeout_seconds": 600,
-  "planned_at": "2026-10-26T18:54:25.158127+00:00",
-  "deadline": "2026-10-26T19:04:25.158127+00:00",
+  "planned_at": "2026-10-26T19:12:50.404355+00:00",
+  "deadline": "2026-10-26T19:22:50.404355+00:00",
   "completion_signal": "exit0 with PASS/count report",
   "cleanup": "Bounded owned Python command only; no game processes or deployment; retain logs",
   "status": "PASS",
   "previous_run": {
-    "handle": "functions.exec/b9dc64",
+    "handle": "functions.exec/2a4934",
     "status": "PASS",
     "exit_code": 0,
-    "completion_recorded_at": "2026-10-26T18:31:54.080390+00:00"
+    "completion_recorded_at": "2026-10-26T18:54:55.040530+00:00"
   },
   "exit_code": 0,
-  "handle": "functions.exec/2a4934",
-  "completion_recorded_at": "2026-10-26T18:54:55.040530+00:00",
-  "cleanup_result": "Synchronous exit0; docs/source-hash check only, no native build/game/deployment"
+  "handle": "functions.exec/d2d0c4",
+  "completion_recorded_at": "2026-10-26T19:13:45.478728+00:00",
+  "cleanup_result": "Synchronous exit0;91 documentation/runtime evidence/source hash checks including privacy and original failure preservation; no product source/build/game operations"
 }
