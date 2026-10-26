@@ -10,7 +10,7 @@ Updated 2026-10-26. **Recommendation lock plus acquired package hashes; gameplay
 | Upstream documentation/source | **PASS (desk inspection only)** for the linked versions/interfaces below; runtime claims remain the authors' claims. |
 | Historical pre-install snapshot | DYL-150 snapshot `cd49b3c`: Steam **1.7.104.0**, Ubuntu 26.04.1, Proton Experimental `experimental-11.0-20261014`; **SKSE/Address Library/providers absent**. |
 | Current load evidence | Rewritten profile baseline, UI-only providers and camera-only providers passed bounded startup on2026-10-26. See session evidence/logs; startup does not prove gameplay. |
-| SkyCRPG feature behavior | UI grid, native equip/unequip, minimap and compass fallback **PASS (owner-observed)** on2026-10-26; controller grid navigation **FAIL** pending fix. Camera gameplay **NOT_RUN** after host desktop OOM. See session evidence. |
+| SkyCRPG feature behavior | UI grid, native equip/unequip, minimap and compass fallback **PASS (owner-observed)** on2026-10-26; controller grid navigation **FAIL** pending fix. Camera owner route recovered after desktop OOM: melee/fallback usable, top-down ranged aiming **FAIL**. See session evidence. |
 
 Executable SHA-256 from [DYL-150](https://github.com/Sonoran-Solutions/SkyCRPG/blob/cd49b3cfc73278350342db4ae7a27c3b5e6a9644/docs/evidence/p1/environment.md):
 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f` (Steam build 24914197).
@@ -53,7 +53,7 @@ See session evidence for the limited Proton owner playtest results; no author st
 
 ## Verified SmoothCam archive hashes
 
-Originally inspected outside the repository. The selected AE DLL subsequently passed camera-only startup on2026-10-26; gameplay remains unverified. Source release metadata and downloaded bytes agree.
+Originally inspected outside the repository. The selected AE DLL subsequently passed camera-only startup on2026-10-26; owner route confirms melee/fallback but top-down ranged aiming fails. Source release metadata and downloaded bytes agree.
 
 | Material | SHA-256 |
 | --- | --- |

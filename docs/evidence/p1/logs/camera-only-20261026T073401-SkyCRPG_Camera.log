@@ -1,0 +1,7 @@
+SkyCRPG Camera 0.0.1 loaded at 2026-10-26T14:34:03Z
+source commit: cc8a4dcde7b817d392bc66c9d2dc93cfb1beac62
+skse: 2.3.1.0 (0x02030010)
+runtime: 1.7.104.0 (0x01070680)
+settings: Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins\SkyCRPG_Camera.ini (found, iLogLevel=1)
+runtime check: PASS pinned 1.7.104
+scope: load-only skeleton; no hooks, game memory access or inter-module calls
