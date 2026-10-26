@@ -26,6 +26,8 @@ bool movementLease = false, applyZoom = true, compatibleSettings = true, movemen
 std::array<FreshPress,4> keys;
 using Look = void(*)(RE::ThirdPersonState*, const RE::NiPoint2&);
 Look previousLook = nullptr;
+using Update = void(*)(RE::ThirdPersonState*,RE::BSTSmartPointer<RE::TESCameraState>&);
+Update previousUpdate = nullptr;
 std::filesystem::path iniPath;
 void log(const char* text) {
     FILE* file = nullptr;
@@ -125,10 +127,20 @@ bool focused() {
     }
     return ui->IsMenuOpen("Dialogue Menu") || ui->IsMenuOpen("Console") || ui->IsMenuOpen("Loading Menu");
 }
-Context context() {
+bool providerChainReady() {
+    REL::Relocation<std::uintptr_t> table{RE::VTABLE_ThirdPersonState[0]};
+    const auto slots = reinterpret_cast<const std::uintptr_t*>(table.address());
+    const auto module = GetModuleHandleW(L"SmoothCam.dll");
+    for (const auto slot : {3,15}) {
+        MEMORY_BASIC_INFORMATION memory{};
+        if (!VirtualQuery(reinterpret_cast<const void*>(slots[slot]),&memory,sizeof(memory)) || memory.AllocationBase != module) return false;
+    }
+    return module != nullptr;
+}
+Context context(bool allowZoomSlide = false) {
     Context c;
     c.enabled = settings.enabled;
-    c.prerequisites = compatibleSettings && movementConfigSafe && ready && movement && movementLease && !movement->GetTargetLockState() && provider && provider->IsCameraEnabled() && provider->GetCameraOwner() == SKSE::kInvalidPluginHandle;
+    c.prerequisites = compatibleSettings && movementConfigSafe && ready && movement && movementLease && !movement->GetTargetLockState() && provider && provider->IsCameraEnabled() && provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto camera = RE::PlayerCamera::GetSingleton();
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
@@ -137,7 +149,9 @@ Context context() {
     c.special = (!c.firstPerson && camera->currentState->id != RE::CameraState::kThirdPerson) ||
         player->IsOnMount() || player->IsInKillMove() || player->AsActorState()->IsSwimming();
     const auto controls = RE::PlayerControls::GetSingleton();
-    if (!controls || controls->blockPlayerInput || controls->data.povScriptMode || controls->data.povBeastMode || controls->data.fovSlideMode) c.special = true;
+    if (!controls || controls->blockPlayerInput || controls->data.povScriptMode || controls->data.povBeastMode || (controls->data.fovSlideMode && !allowZoomSlide)) c.special = true;
+    if (!c.firstPerson && camera->currentState->id == RE::CameraState::kThirdPerson &&
+        static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) c.special = true;
     c.menu = focused();
     // Precision/targeting/obstruction intervention is intentionally left to DYL157/158.
     return c;
@@ -164,14 +178,19 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
         filtered.x = correction(error,radians(settings.recenterSpeed),gain,dt);
         if (std::abs(error) < radians(.2f)) recenter = false;
     }
-    // This is the native zoom REQUEST consumed by SmoothCam GetCameraZoomScalar.
-    // Never assign currentZoomOffset, rotations, positions or collision results.
-    if (std::isfinite(state->targetZoomOffset)) {
-        state->targetZoomOffset = applyZoom ? settings.zoom : std::clamp(state->targetZoomOffset,settings.minZoom,settings.maxZoom);
-        applyZoom = false;
-        settings.zoom = state->targetZoomOffset;
-    }
     previousLook(state,filtered); // exactly once, retaining provider input lock + native update
+}
+void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>& next) {
+    previousUpdate(state,next); // native first; outer SmoothCam wrapper performs transforms AFTER us
+    const auto c = context(true);
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    if (select(c) != State::normal || !camera || camera->currentState.get() != state) return;
+    // Native controller POV-slide zoom bypasses HandleLookInput, so bound the
+    // requested scalar after native update and BEFORE the outer provider update.
+    // stateNotActive/POV transitions are excluded; current distance is never written.
+    state->targetZoomOffset = zoomRequest(state->targetZoomOffset,settings,applyZoom);
+    applyZoom = false;
+    settings.zoom = state->targetZoomOffset;
 }
 class Events final : public RE::BSTEventSink<RE::InputEvent*>, public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
 public:
@@ -242,7 +261,17 @@ void messages(SKSE::MessagingInterface::Message* message) {
         movementLease = lease == TDM_API::APIResult::OK || lease == TDM_API::APIResult::AlreadyGiven;
         if (!movementLease) { ready = false; log("TDM target-lock-disable lease refused; controller suspended."); break; }
         REL::Relocation<std::uintptr_t> table{RE::VTABLE_ThirdPersonState[0]};
+        const auto slots = reinterpret_cast<const std::uintptr_t*>(table.address());
+        const REL::Relocation<std::uintptr_t> nativeUpdate{REL::ID(50896)};
+        const REL::Relocation<std::uintptr_t> nativeLook{REL::ID(50914)};
+        if (slots[3] != nativeUpdate.address() || slots[15] != nativeLook.address()) {
+            static_cast<void>(movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle()));
+            movementLease = false; ready = false;
+            log("Unexpected camera hook order/owner before SmoothCam deferred attach; policy left inert.");
+            return;
+        }
         previousLook = reinterpret_cast<Look>(table.write_vfunc(0xF,look));
+        previousUpdate = reinterpret_cast<Update>(table.write_vfunc(3,update));
         RE::BSInputDeviceManager::GetSingleton()->AddEventSink(static_cast<RE::BSTEventSink<RE::InputEvent*>*>(&events));
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(&events);
         log("Camera input policy installed: one chained native look call; SmoothCam sole transform writer.");

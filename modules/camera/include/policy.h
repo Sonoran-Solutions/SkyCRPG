@@ -42,6 +42,9 @@ inline Settings validate(Settings s) {
     if (!pad(s.recenterGamepad) || s.recenterGamepad == s.toggleGamepad) s.recenterGamepad = -1;
     return s;
 }
+inline float zoomRequest(float nativeRequest, const Settings& s, bool applyPreference) {
+    return applyPreference ? s.zoom : bounded(nativeRequest,s.zoom,s.minZoom,s.maxZoom);
+}
 enum class State { disabled, invalidWorld, special, menu, firstPerson, precision, targeting, obstruction, normal };
 struct Context {
     bool enabled = false, prerequisites = false, world = false, special = false, menu = false;

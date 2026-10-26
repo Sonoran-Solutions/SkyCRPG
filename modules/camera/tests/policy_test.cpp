@@ -10,6 +10,12 @@ int main() {
     assert(s.pitch == 55 && s.minZoom == .8f && s.maxZoom == .8f && s.zoom == .8f);
     assert(s.toggleKey == -1 && s.recenterKey == -1 && s.toggleGamepad == -1);
     s.schema = 99; assert(!validate(s).enabled);
+    const Settings zoom;
+    assert(zoomRequest(-1,zoom,false)==zoom.minZoom);
+    assert(zoomRequest(2,zoom,false)==zoom.maxZoom);
+    assert(zoomRequest(.4f,zoom,false)==.4f);
+    assert(zoomRequest(.4f,zoom,true)==zoom.zoom);
+    assert(zoomRequest(std::numeric_limits<float>::quiet_NaN(),zoom,false)==zoom.zoom);
     Context c{true,true,true,false,false,false,false,false,false};
     assert(select(c) == State::normal); c.obstruction = true; assert(select(c) == State::obstruction);
     c.targeting = true; assert(select(c) == State::targeting); c.precision = true; assert(select(c) == State::precision);
