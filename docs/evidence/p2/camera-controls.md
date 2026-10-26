@@ -1,7 +1,7 @@
 # DYL-156 / P2-01 — Camera controls candidate
 
 2026-10-26. Original module source/configuration/docs copyright devils_17, MIT.
-Implementation base `887f1855cefbd51baa07862398826c16d4eaceba` (accepted PR6), shared build integration `e7f141f6b92b1305695d4f744c48ab438e8e0803`; initial native implementation `0a92db1`, guarded controller source `72c0f5538ef63e9e2e1a88bf4d28864e9df0f092`. [Exact controller-source hashes](camera-controls-audit/candidate-source-hashes.json) identify this candidate. Final package and CI evidence must be supplied by the integrator before acceptance. **Runtime acceptance: NOT_RUN.** No game launch, deployment, save/Proton changes or process manipulation was performed by this worker.
+Implementation base `887f1855cefbd51baa07862398826c16d4eaceba` (accepted PR6), shared build integration `e7f141f6b92b1305695d4f744c48ab438e8e0803`; initial native implementation `0a92db1`, guarded controller source `3190ea388be0f8d50221c65a3d73f536d03b9670`. [Exact controller-source hashes](camera-controls-audit/candidate-source-hashes.json) identify this candidate. Final package and CI evidence must be supplied by the integrator before acceptance. **Runtime acceptance: NOT_RUN.** No game launch, deployment, save/Proton changes or process manipulation was performed by this worker.
 
 [Linear DYL-156](https://linear.app/devils17/issue/DYL-156) was read with full description, blocking relations and comments (none); state at assignment Backlog, dependency DYL-155 satisfied by the accepted gate. The Linear shared-notes tool was attempted and returned “Tool get_agent_context not found”; repository contracts and actual source were used. No downstream ticket was started.
 
@@ -47,7 +47,7 @@ TDM camera yaw must be0 in its effective config. The module checks provider `Dat
 | Controller custom toggle/recenter | `iToggleGamepad` / `iRecenterGamepad` single native bit masks, default-1/unbound. Native-mapped buttons are rejected. No unverified chord or stolen native gameplay button is selected; owner-approved mapping/controller acceptance remains NOT_RUN. |
 | Precision / movement / combat / activation | Existing native POV, keyboard movement, left stick, attacks, spells and activation remain engine/TDM-owned; no replay or synthetic action. |
 
-Input is observed without consuming native events or injecting buttons. Custom bindings operate only on unmapped keys and fresh native down edges. Keys already held across focus suspend until release; an idle key's first clean press after load works without a sacrificial press. Menu/load invalidation cancels recenter and F6-owned restoration permission across loads. No automatic return over native first person occurs.
+Input is observed without consuming native events or injecting buttons. Custom bindings operate only on unmapped keys and fresh native down edges. Keys already held across focus suspend until release; an idle key's first clean press after load works without a sacrificial press. Menu/load invalidation cancels recenter; loads and observed deliberate native Toggle POV input cancel F6-owned restoration permission. No automatic return over native first person occurs.
 
 ## Validation and remaining gate
 

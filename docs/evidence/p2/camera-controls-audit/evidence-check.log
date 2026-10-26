@@ -7,12 +7,15 @@
     "JSON native-mapping.json",
     "JSON policy-test-job.json",
     "JSON candidate-source-hashes.json",
+    "link camera-controls-audit/candidate-source-hashes.json",
     "link camera-controls-audit/native-mapping.json",
     "link camera-controls-audit/source-inputs.json",
     "link ../../../modules/camera/include/third_party/NOTICE.md",
     "link camera-controls-audit/native-audit-job.json",
     "link camera-controls-audit/policy-test-job.json",
     "link camera-controls-audit/policy-test.log",
+    "link camera-controls-audit/evidence-check-job.json",
+    "link camera-controls-audit/evidence-check.log",
     "source /srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/include/SmoothCamAPI.h",
     "source /srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/include/config.h",
     "source /srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/source/thirdperson.cpp",
@@ -29,6 +32,10 @@
     "source /srv/storage/Projects/SkyCRPG/session-20261026/camera-native-audit.py",
     "source /srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/SmoothCam/SmoothCam/source/main.cpp",
     "source /srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/TrueDirectionalMovement/src/DirectionalMovementHandler.cpp",
+    "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/SKSE/Interfaces.h",
+    "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/SKSE/Interfaces.cpp",
+    "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/SKSE/API.cpp",
+    "source /srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/RE/P/PlayerCamera.cpp",
     "candidate modules/camera/CMakeLists.txt",
     "candidate modules/camera/src/plugin.cpp",
     "candidate modules/camera/include/policy.h",
@@ -36,5 +43,5 @@
     "candidate modules/camera/config/SkyCRPG_Camera.ini",
     "single guarded native hook installation; no raw transform assignments; logger/preflight marker"
   ],
-  "count": 34
+  "count": 41
 }

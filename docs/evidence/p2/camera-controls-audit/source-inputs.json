@@ -62,5 +62,21 @@
   {
     "path": "/srv/storage/Projects/SkyCRPG/session-20261026/targeting-audit/TrueDirectionalMovement/src/DirectionalMovementHandler.cpp",
     "sha256": "e39c28df79d748a874eeabf39468dfe35dc69b19d045c9a9554d5d13b62eac80"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/include/SKSE/Interfaces.h",
+    "sha256": "f5022c17e7ac7e4a566902f8477ec0e848617b87294331a1d9d611de36f6ee59"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/SKSE/Interfaces.cpp",
+    "sha256": "9d18b5a05519a1e164ff155fef07c3f5e8ef13d278cfe391ec4462541b89871c"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/SKSE/API.cpp",
+    "sha256": "e3dd7d3147cf45e744ca39428d933842846e5744c4073fc0aa9603e2ad6f983f"
+  },
+  {
+    "path": "/srv/storage/Projects/SkyCRPG/session-20261026/commonlib-camera-audit/src/RE/P/PlayerCamera.cpp",
+    "sha256": "29b25e2ed41d8be204f3fb687c7e37e3297f537a4c84805dc44dbdcadf776e55"
   }
 ]
