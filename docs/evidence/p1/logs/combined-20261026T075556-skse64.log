@@ -1,0 +1,353 @@
+SKSE64 runtime: initialize (version = 2.3.1 01070680 01DD655A1C3F81EF, os = 6.2 (9200))
+imagebase = 0000000140000000
+reloc mgr imagebase = 0000000140000000
+plugin directory = Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins\
+scanning plugin directory Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins\
+checking plugin DragonsEyeMinimap.dll
+checking plugin InfinityUI.dll
+checking plugin LocalMapUpgrade.dll
+checking plugin MCMHelper.dll
+checking plugin SkyCRPG_Camera.dll
+checking plugin SkyCRPG_UI.dll
+checking plugin SmoothCam.dll
+checking plugin TrueDirectionalMovement.dll
+preinit complete
+config path = Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\skse.ini
+loading plugin "DragonsEyeMinimap"
+registering plugin listener for SKSE at 1 of 10
+loading plugin "InfinityUI"
+plugin 2 allocated 84 bytes from branch pool
+registering plugin listener for SKSE at 2 of 10
+loading plugin "LocalMapUpgrade"
+registering plugin listener for SKSE at 3 of 10
+plugin 3 allocated 42 bytes from branch pool
+loading plugin "MCMHelper"
+registering plugin listener for SKSE at 4 of 10
+loading plugin "SkyCRPG Camera"
+loading plugin "SkyCRPG UI"
+loading plugin "SmoothCam"
+registering plugin listener for SKSE at 7 of 10
+plugin 7 allocated 512 bytes from branch pool
+loading plugin "TrueDirectionalMovement"
+plugin 8 allocated 512 bytes from branch pool
+registering plugin listener for SKSE at 8 of 10
+plugin DragonsEyeMinimap.dll (00000001 DragonsEyeMinimap 01070050) loaded correctly (handle 1)
+plugin InfinityUI.dll (00000001 InfinityUI 02010030) loaded correctly (handle 2)
+plugin LocalMapUpgrade.dll (00000001 LocalMapUpgrade 01030040) loaded correctly (handle 3)
+plugin MCMHelper.dll (00000001 MCMHelper 01060030) loaded correctly (handle 4)
+plugin SkyCRPG_Camera.dll (00000001 SkyCRPG Camera 00000010) loaded correctly (handle 5)
+plugin SkyCRPG_UI.dll (00000001 SkyCRPG UI 00000010) loaded correctly (handle 6)
+plugin SmoothCam.dll (00000001 SmoothCam 00000013) loaded correctly (handle 7)
+plugin TrueDirectionalMovement.dll (00000001 TrueDirectionalMovement 02030010) loaded correctly (handle 8)
+dispatch message (0) to plugin listeners
+sending message type 0 to plugin 1
+dispatch message (-1707140088) to plugin listeners
+registering plugin listener for InfinityUI at 1 of 10
+registering plugin listener for LocalMapUpgrade at 1 of 10
+sending message type 0 to plugin 2
+dispatch message (-1707140088) to plugin listeners
+sending message type 0 to plugin 3
+dispatch message (-1707140088) to plugin listeners
+registering plugin listener for InfinityUI at 3 of 10
+sending message type 0 to plugin 4
+sending message type 0 to plugin 7
+registering plugin listener for (null) at 7 of 10
+sending message type 0 to plugin 8
+registering plugin listener for SmoothCam at 8 of 10
+dispatch message (0) to plugin listeners
+dispatch message (0) to plugin listeners
+dispatched message.
+dispatch message (1) to plugin listeners
+sending message type 1 to plugin 1
+sending message type 1 to plugin 2
+sending message type 1 to plugin 3
+dispatch message (-1707140088) to plugin listeners
+sending message type 1 to plugin 4
+sending message type 1 to plugin 7
+sending message type 1 to plugin 8
+dispatched message.
+init complete
+hooked dinput
+dispatch message (6) to plugin listeners
+sending message type 6 to plugin 1
+sending message type 6 to plugin 2
+sending message type 6 to plugin 3
+sending message type 6 to plugin 4
+sending message type 6 to plugin 7
+sending message type 6 to plugin 8
+dispatched message.
+Reading translations from Interface\Translations\SkyUI_SE_ENGLISH.txt...
+Reading translations from Interface\Translations\MCMHelper_ENGLISH.txt...
+Reading translations from Interface\Translations\TrueDirectionalMovement_ENGLISH.txt...
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (8) to plugin listeners
+sending message type 8 to plugin 1
+dispatch message (-1707140088) to plugin listeners
+sending message type 8 to plugin 2
+dispatch message (-1707140088) to plugin listeners
+sending message type 8 to plugin 3
+dispatch message (0) to plugin listeners
+sending message type 0 to plugin 1
+sending message type 0 to plugin 7
+dispatch message (0) to plugin listeners
+dispatched message.
+dispatched message.
+dispatch message (1) to plugin listeners
+sending message type 1 to plugin 1
+sending message type 1 to plugin 7
+dispatched message.
+dispatch message (-1707140088) to plugin listeners
+sending message type 8 to plugin 4
+sending message type 8 to plugin 7
+sending message type 8 to plugin 8
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+save name is Save2_B259CD4B_0_507269736F6E6572_HelgenKeep01_000022_20261023112101_1_1
+full save path: C:\users\steamuser\Documents\My Games\Skyrim Special Edition\SkyCRPG\combined\Saves\\Save2_B259CD4B_0_507269736F6E6572_HelgenKeep01_000022_20261023112101_1_1.skse
+dispatch message (2) to plugin listeners
+sending message type 2 to plugin 1
+sending message type 2 to plugin 2
+sending message type 2 to plugin 3
+sending message type 2 to plugin 4
+sending message type 2 to plugin 7
+sending message type 2 to plugin 8
+dispatched message.
+dispatch message (0) to plugin listeners
+sending message type 0 to plugin 1
+sending message type 0 to plugin 3
+sending message type 0 to plugin 7
+dispatch message (0) to plugin listeners
+dispatched message.
+dispatched message.
+dispatch message (2) to plugin listeners
+sending message type 2 to plugin 1
+sending message type 2 to plugin 3
+sending message type 2 to plugin 7
+dispatched message.
+dispatch message (4) to plugin listeners
+sending message type 4 to plugin 1
+sending message type 4 to plugin 3
+sending message type 4 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+loading co-save
+dispatch message (3) to plugin listeners
+sending message type 3 to plugin 1
+sending message type 3 to plugin 2
+sending message type 3 to plugin 3
+sending message type 3 to plugin 4
+dispatch message (-422868135) to plugin listeners
+sending message type 3 to plugin 7
+sending message type 3 to plugin 8
+dispatched message.
+cleared save path
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+WidgetLoader.as: setRootPath(a_path = exported/)
+WidgetLoader.as: loadWidget(a_widgetID = 0, a_widgetSource = skyui/activeeffects.swf)
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+save name is Autosave1_B259CD4B_1_507269736F6E6572_Tamriel_000023_20261026145658_1_1
+full save path: C:\users\steamuser\Documents\My Games\Skyrim Special Edition\SkyCRPG\combined\Saves\\Autosave1_B259CD4B_1_507269736F6E6572_Tamriel_000023_20261026145658_1_1.skse
+dispatch message (4) to plugin listeners
+sending message type 4 to plugin 1
+sending message type 4 to plugin 2
+sending message type 4 to plugin 3
+sending message type 4 to plugin 4
+sending message type 4 to plugin 7
+sending message type 4 to plugin 8
+dispatched message.
+creating co-save
+Saving plugin list:
+	[0]	Skyrim.esm
+	[1]	Update.esm
+	[2]	Dawnguard.esm
+	[3]	HearthFires.esm
+	[4]	Dragonborn.esm
+	[5]	ccBGSSSE001-Fish.esm
+	[FE:0]	ccQDRSSE001-SurvivalMode.esl
+	[FE:1]	ccBGSSSE037-Curios.esl
+	[6]	ccBGSSSE025-AdvDSGS.esm
+	[FE:2]	_ResourcePack.esl
+	[FE:3]	SmoothCam.esl
+	[FE:4]	SkyUI_SE.esp
+	[FE:5]	MCMHelper.esp
+	[FE:6]	TrueDirectionalMovement.esp
+Saving menu open/close event registrations...
+Saving key input event registrations...
+Saving control input event registrations...
+Saving mod callback event registrations...
+Saving crosshair ref event registrations...
+Saving camera event registrations...
+Saving actor action event registrations...
+Saving NiNode update event registrations...
+Saving SKSEPersistentObjectStorage data...
+Saving SKSEDelayFunctorManager data...
+cleared save path
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+save name is Autosave2_B259CD4B_1_507269736F6E6572_HelgenKeep01_000023_20261026145707_1_1
+full save path: C:\users\steamuser\Documents\My Games\Skyrim Special Edition\SkyCRPG\combined\Saves\\Autosave2_B259CD4B_1_507269736F6E6572_HelgenKeep01_000023_20261026145707_1_1.skse
+dispatch message (4) to plugin listeners
+sending message type 4 to plugin 1
+sending message type 4 to plugin 2
+sending message type 4 to plugin 3
+sending message type 4 to plugin 4
+sending message type 4 to plugin 7
+sending message type 4 to plugin 8
+dispatched message.
+creating co-save
+Saving plugin list:
+	[0]	Skyrim.esm
+	[1]	Update.esm
+	[2]	Dawnguard.esm
+	[3]	HearthFires.esm
+	[4]	Dragonborn.esm
+	[5]	ccBGSSSE001-Fish.esm
+	[FE:0]	ccQDRSSE001-SurvivalMode.esl
+	[FE:1]	ccBGSSSE037-Curios.esl
+	[6]	ccBGSSSE025-AdvDSGS.esm
+	[FE:2]	_ResourcePack.esl
+	[FE:3]	SmoothCam.esl
+	[FE:4]	SkyUI_SE.esp
+	[FE:5]	MCMHelper.esp
+	[FE:6]	TrueDirectionalMovement.esp
+Saving menu open/close event registrations...
+Saving key input event registrations...
+Saving control input event registrations...
+Saving mod callback event registrations...
+Saving crosshair ref event registrations...
+Saving camera event registrations...
+Saving actor action event registrations...
+Saving NiNode update event registrations...
+Saving SKSEPersistentObjectStorage data...
+Saving SKSEDelayFunctorManager data...
+cleared save path
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+save name is Autosave3_B259CD4B_1_507269736F6E6572_Tamriel_000023_20261026145714_1_1
+full save path: C:\users\steamuser\Documents\My Games\Skyrim Special Edition\SkyCRPG\combined\Saves\\Autosave3_B259CD4B_1_507269736F6E6572_Tamriel_000023_20261026145714_1_1.skse
+dispatch message (4) to plugin listeners
+sending message type 4 to plugin 1
+sending message type 4 to plugin 2
+sending message type 4 to plugin 3
+sending message type 4 to plugin 4
+sending message type 4 to plugin 7
+sending message type 4 to plugin 8
+dispatched message.
+creating co-save
+Saving plugin list:
+	[0]	Skyrim.esm
+	[1]	Update.esm
+	[2]	Dawnguard.esm
+	[3]	HearthFires.esm
+	[4]	Dragonborn.esm
+	[5]	ccBGSSSE001-Fish.esm
+	[FE:0]	ccQDRSSE001-SurvivalMode.esl
+	[FE:1]	ccBGSSSE037-Curios.esl
+	[6]	ccBGSSSE025-AdvDSGS.esm
+	[FE:2]	_ResourcePack.esl
+	[FE:3]	SmoothCam.esl
+	[FE:4]	SkyUI_SE.esp
+	[FE:5]	MCMHelper.esp
+	[FE:6]	TrueDirectionalMovement.esp
+Saving menu open/close event registrations...
+Saving key input event registrations...
+Saving control input event registrations...
+Saving mod callback event registrations...
+Saving crosshair ref event registrations...
+Saving camera event registrations...
+Saving actor action event registrations...
+Saving NiNode update event registrations...
+Saving SKSEPersistentObjectStorage data...
+Saving SKSEDelayFunctorManager data...
+cleared save path
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.
+dispatch message (5) to plugin listeners
+sending message type 5 to plugin 1
+sending message type 5 to plugin 3
+sending message type 5 to plugin 7
+dispatched message.

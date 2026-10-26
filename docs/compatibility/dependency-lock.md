@@ -10,7 +10,7 @@ Updated 2026-10-26. **Recommendation lock plus acquired package hashes; gameplay
 | Upstream documentation/source | **PASS (desk inspection only)** for the linked versions/interfaces below; runtime claims remain the authors' claims. |
 | Historical pre-install snapshot | DYL-150 snapshot `cd49b3c`: Steam **1.7.104.0**, Ubuntu 26.04.1, Proton Experimental `experimental-11.0-20261014`; **SKSE/Address Library/providers absent**. |
 | Current load evidence | Rewritten profile baseline, UI-only providers and camera-only providers passed bounded startup on2026-10-26. See session evidence/logs; startup does not prove gameplay. |
-| SkyCRPG feature behavior | UI grid, native equip/unequip, minimap and compass fallback **PASS (owner-observed)** on2026-10-26; controller grid navigation **FAIL** pending fix. Camera owner route recovered after desktop OOM: melee/fallback usable, top-down ranged aiming **FAIL**. See session evidence. |
+| SkyCRPG feature behavior | UI grid, native equip/unequip, minimap and compass fallback **PASS (owner-observed)** on2026-10-26; corrected controller grid navigation **PASS (owner-observed)** after two failed candidates. Camera owner route recovered after desktop OOM: melee/fallback usable, top-down ranged aiming and load-transition pitch persistence **FAIL**. Combined startup/owner checkpoint **PASS**. See session evidence. |
 
 Executable SHA-256 from [DYL-150](https://github.com/Sonoran-Solutions/SkyCRPG/blob/cd49b3cfc73278350342db4ae7a27c3b5e6a9644/docs/evidence/p1/environment.md):
 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f` (Steam build 24914197).
@@ -107,3 +107,7 @@ Selected payloads: Address Library `SKSE/Plugins/versionlib-1-7-104-0.bin`; Smoo
 SkyUI Nexus 6.11 contains an ESP/BSA; its shipped inventory/HUD SWFs differ from the GitHub source-tree binaries. The UI builder verifies both source and actual Nexus-base hashes and generates the local candidate from the acquired BSA. See ui-spike.md on the DYL-153 branch. Dragon's Eye's page advertises 1.7.6 now, but file 825711 downloaded as the requested **1.7.5**; no version substitution was made.
 
 The merged foundation's SKSE2.3.1 load-only evidence is real, and the rewritten profile tool passed baseline run `20261026T065153` on 2026-10-26. This supersedes the initial reconciliation row that had no loader logs. Feature and controller acceptance remain separate.
+
+## Tested scope and exact local artifacts
+
+Camera-only, UI-only and combined provider load checks passed on Steam1.7.104.0, SKSE2.3.1, Address Library13, Ubuntu26.04.1/Proton `experimental-11.0-20261014-x86_64`. Owner gameplay results and failures are in session evidence; this is not a wider runtime/platform certification. SKSE2.3.1 archive SHA-256 `7bad616ed360823a027f8828801d91e3a4aa2eacd952023af7f3e31adb2ae250`. [Canonical installed-file hashes](../evidence/p1/tested-artifacts.json) distinguish each tested artifact; [native build manifests](../evidence/p1/native-package-inputs.json) pin skeleton DLL source/archive hashes. Party Sheet3.7 was inspected only and never installed. No provider stack was silently upgraded.
