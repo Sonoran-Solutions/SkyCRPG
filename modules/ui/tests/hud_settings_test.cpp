@@ -1,0 +1,35 @@
+#include "../src/hud_settings.h"
+
+#include <cassert>
+
+int main()
+{
+	using skycrpg::ui::ParseHudSettings;
+	auto defaults = ParseHudSettings(L"1", L"", L"", L"", L"");
+	assert(defaults.settings.enabled);
+	assert(defaults.settings.scalePercent == 100);
+	assert(defaults.settings.offsetX == 0 && defaults.settings.offsetY == 0);
+	assert(!defaults.enabledWasValid && !defaults.scaleWasValid);
+
+	auto bounded = ParseHudSettings(L"1", L"0", L"200", L"-400", L"80");
+	assert(!bounded.settings.enabled);
+	assert(bounded.settings.scalePercent == 115 && bounded.scaleWasClamped);
+	assert(bounded.settings.offsetX == -120 && bounded.offsetXWasClamped);
+	assert(bounded.settings.offsetY == 60 && bounded.offsetYWasClamped);
+
+	auto malformed = ParseHudSettings(L"1", L"2", L"1.15", L"west", L"9999999999999999999");
+	assert(malformed.settings.enabled && !malformed.enabledWasValid);
+	assert(malformed.settings.scalePercent == 100 && !malformed.scaleWasValid);
+	assert(malformed.settings.offsetX == 0 && !malformed.offsetXWasValid);
+	assert(malformed.settings.offsetY == 0 && !malformed.offsetYWasValid);
+
+	auto wrongVersion = ParseHudSettings(L"2", L"0", L"85", L"120", L"60");
+	assert(!wrongVersion.supportedVersion);
+	assert(wrongVersion.settings.enabled && wrongVersion.settings.scalePercent == 100);
+	assert(wrongVersion.settings.offsetX == 0 && wrongVersion.settings.offsetY == 0);
+
+	auto disableHud = ParseHudSettings(L"1", L"0", L"85", L"120", L"-60");
+	assert(disableHud.settings.enabled == false);
+	assert(disableHud.settings.scalePercent == 85);
+	assert(disableHud.settings.offsetX == 120 && disableHud.settings.offsetY == -60);
+}
