@@ -149,8 +149,9 @@ bool providerChainReady() {
     }
     return module != nullptr;
 }
-Context context(bool allowZoomSlide = false) {
+Context context(bool allowZoomSlide = false, bool* hardSpecial = nullptr) {
     Context c;
+    if (hardSpecial) *hardSpecial = true;
     c.enabled = settings.enabled;
     c.prerequisites = compatibleSettings && movementConfigSafe && ready && movement && movementLease && !movement->GetTargetLockState() && provider && provider->IsCameraEnabled() && provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
     const auto player = RE::PlayerCharacter::GetSingleton();
@@ -162,10 +163,11 @@ Context context(bool allowZoomSlide = false) {
         player->IsOnMount() || player->IsInKillMove() || player->AsActorState()->IsSwimming();
     const auto controls = RE::PlayerControls::GetSingleton();
     const auto controlMap = RE::ControlMap::GetSingleton();
-    if (!controlMap || !controlMap->IsLookingControlsEnabled() || !controlMap->IsPOVSwitchControlsEnabled()) c.special = true;
-    if (!controls || controls->data.povScriptMode || controls->data.povBeastMode || (controls->data.fovSlideMode && !allowZoomSlide)) c.special = true;
+    if (!controlMap || !controls || controls->data.povScriptMode || controls->data.povBeastMode || (controls->data.fovSlideMode && !allowZoomSlide)) c.special = true;
     if (!c.firstPerson && camera->currentState->id == RE::CameraState::kThirdPerson &&
         static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) c.special = true;
+    if (hardSpecial) *hardSpecial = c.special;
+    if (controlMap && (!controlMap->IsLookingControlsEnabled() || !controlMap->IsPOVSwitchControlsEnabled())) c.special = true;
     c.menu = focused();
     // Precision/targeting/obstruction intervention is intentionally left to DYL157/158.
     return c;
@@ -214,8 +216,9 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
         if (!events) return RE::BSEventNotifyControl::kContinue;
-        const auto c = context();
-        ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson);
+        bool hardSpecial = true;
+        const auto c = context(false,&hardSpecial);
+        ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hardSpecial);
         // Deliberate F6 can return from its OWN first-person request; native POV never auto-restores.
         const bool safe = c.prerequisites && c.world && !c.special && !c.menu;
         if (!safe) suspend();
