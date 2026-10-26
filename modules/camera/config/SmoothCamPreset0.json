@@ -1,0 +1,35 @@
+{
+  "name": "SkyCRPG Camera feasibility candidate",
+  "config": {
+    "standing": {
+      "sideOffset": 0.0,
+      "upOffset": 90.0,
+      "zoomOffset": -180.0
+    },
+    "walking": {
+      "sideOffset": 0.0,
+      "upOffset": 90.0,
+      "zoomOffset": -180.0
+    },
+    "running": {
+      "sideOffset": 0.0,
+      "upOffset": 90.0,
+      "zoomOffset": -180.0
+    },
+    "sprinting": {
+      "sideOffset": 0.0,
+      "upOffset": 90.0,
+      "zoomOffset": -180.0
+    },
+    "sneaking": {
+      "sideOffset": 0.0,
+      "upOffset": 65.0,
+      "zoomOffset": -110.0
+    },
+    "bowAim": {
+      "sideOffset": 20.0,
+      "upOffset": 20.0,
+      "zoomOffset": 80.0
+    }
+  }
+}
