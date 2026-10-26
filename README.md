@@ -2,7 +2,7 @@
 
 A modular attempt to make Skyrim feel like a classic CRPG while retaining real-time action combat.
 
-**Status: playable Phase 1 feasibility prototypes merged; architecture contracts under review. No public MVP release exists yet.** The first four phases target two independently installable MVPs:
+**Status: playable Phase 1 feasibility prototypes merged; architecture contracts reviewed and merged. No public MVP release exists yet.** The first four phases target two independently installable MVPs:
 
 | Module | Intended result |
 | --- | --- |
@@ -44,3 +44,7 @@ Phase 1 produces two in-game proofs and selects the stack. Phase 2 produces the 
 Turn-based combat, click-to-move, tactical party control, universal roof removal and a new minimap renderer are outside this MVP. Native camera/menu fallbacks are deliberate parts of the design.
 
 Repository documents define the intended product and acceptance criteria. Linear tracks execution, blockers and evidence. A checked planning document is not evidence that the corresponding game feature works.
+
+## License
+
+Original code/configuration/documentation: [MIT](LICENSE). Original artwork: [CC BY4.0](LICENSES/CC-BY-4.0.txt). Rights holder: **devils_17**. See [licensing scope and third-party exclusions](docs/LICENSING.md).

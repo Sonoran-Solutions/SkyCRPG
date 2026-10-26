@@ -520,3 +520,8 @@ Final UI-only artifact digest`1e25367e992e029be27738c707a5b6424fe5bbd5e81d1d7cca
 ## Post-merge status reconciliation — DYL-154
 
 PR4 is merged after senior code review of the bounded spike. Earlier unmerged/In Review notes above describe their then-current snapshot; actual Linear DYL-153 remains In Progress with gameplay obligations open. Senior review additionally identified the 19+ entry row-alignment concern (`_listIndex % 3` with an unaligned scroll start); DYL-164 owns correction and 19/20+/500-entry validation. Provider-absent clean startup remains NOT_RUN and automatic compass replacement remains unimplemented under DYL-166. See the [current acceptance mapping](../../compatibility/acceptance-matrix.md).
+
+
+## Subsequent gate evidence — 2026-10-26
+
+The [DYL-155 gate](gate.md) supersedes the historical missing critical obstruction and whole-provider-absence checks with two bounded owner-observed PASS routes. Earlier results above remain historical; full MVP coverage and recorded aiming/pitch failures are not promoted. PR5 architecture is now reviewed and merged; the owner subsequently accepted the gate GO disposition on 2026-10-26 and authorized PR6 to merge.

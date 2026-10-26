@@ -1,6 +1,6 @@
 # ADR-001: Camera, UI and independent module architecture
 
-**Technical route: selected from Phase 1 evidence. DYL-154 contract revision pending senior review.** Updated 2026-10-26; supersedes the DYL-151 desk proposal. This accepts an implementation direction, not all gameplay acceptance or an original-work license. Normative ownership/lifecycle rules are in [ARCHITECTURE](../ARCHITECTURE.md); every MVP requirement is mapped in the [acceptance matrix](../compatibility/acceptance-matrix.md).
+**Technical route: selected from Phase 1 evidence. DYL-154 contract accepted after senior review and merged in PR5.** Updated 2026-10-26; supersedes the DYL-151 desk proposal. This accepts an implementation direction, not all gameplay acceptance. The subsequent owner licensing ruling is recorded below. Normative ownership/lifecycle rules are in [ARCHITECTURE](../ARCHITECTURE.md); every MVP requirement is mapped in the [acceptance matrix](../compatibility/acceptance-matrix.md).
 
 ## Evidence and decision
 
@@ -34,11 +34,11 @@ Detailed state entry/exit/input/restoration tables and the package ownership mat
 
 | Classification | Disposition |
 | --- | --- |
-| Tested and working, bounded | Pulled-back exploration/qualified melee; first-person precision; activation; ten F8 pairs; transition usability; live native grid/action/count/weight; corrected controller grid/category navigation; map inside/outside; usable compass while map hidden; separate profiles and combined checkpoint. Each PASS belongs to its recorded run/artifact, not every MVP scenario. |
-| Implemented or selected, unverified | Detailed obstruction recovery; full special-state/menu/controller/layout matrix; same-base item traits; follower provider interface; eight-slot bar; automatic compass replacement/readiness; clean provider-absent startup; final full-feature packaging and performance. Selected future code is not implemented merely because this ADR specifies it. |
+| Tested and working, bounded | Pulled-back exploration/qualified melee; first-person precision; activation; ten F8 pairs; transition usability; live native grid/action/count/weight; corrected controller grid/category navigation; map inside/outside; usable compass while map hidden; separate profiles and combined checkpoint; bounded Nordic obstruction and whole-provider-absence startup/navigation in DYL-155. Each PASS belongs to its recorded run/artifact, not every MVP scenario. |
+| Implemented or selected, unverified | Comprehensive obstruction coverage beyond the bounded gate route; full special-state/menu/controller/layout matrix; same-base item traits; follower provider interface; eight-slot bar; automatic compass replacement/readiness; incompatible-provider runtime recovery; final full-feature packaging and performance. Selected future code is not implemented merely because this ADR specifies it. |
 | Known failing or explicitly deferred | Top-down third-person bow/spell aim **FAIL** → DYL-158 (first-person fallback PASS). Pitch after load **FAIL**, explicit owner defer for spike PRs → DYL-159. 19+ grid scrolling source concern → DYL-164, gameplay NOT_RUN. Current duplicate compass does not satisfy U5. Settings-only TDM/SmoothCam target-lock coexistence **BLOCKED** by competing writers. |
 
-Owner pitch defer does not waive obstruction, absent-provider startup, controller coverage or any other requirement. DYL-155 must evaluate missing critical Phase 1 evidence; full runtime/performance acceptance remains DYL-173/175. See [camera](../evidence/p1/camera-spike.md), [UI](../evidence/p1/ui-spike.md), [session](../evidence/p1/session-2026-10-26.md) and [traceability](../compatibility/acceptance-matrix.md).
+Owner pitch defer does not waive obstruction, absent-provider startup, controller coverage or any other requirement. DYL-155 now supplies bounded obstruction and whole-provider-absence PASS evidence in the [gate](../evidence/p1/gate.md), with GO explicitly accepted by the owner on 2026-10-26; full runtime/performance acceptance remains DYL-173/175. See [camera](../evidence/p1/camera-spike.md), [UI](../evidence/p1/ui-spike.md), [session](../evidence/p1/session-2026-10-26.md) and [traceability](../compatibility/acceptance-matrix.md).
 
 ## Alternatives and reasons
 
@@ -61,6 +61,6 @@ Primary-source audit and comparative pins remain in [REUSE_RESEARCH](../REUSE_RE
 
 Keep exact archive/source pins and material-specific [permission obligations](../compatibility/dependency-lock.md#permissiondistribution-lock). External providers are not bundled. Credit SkyUI Team/Community for dependency-requiring patches; generated local SWFs contain external art/fonts/base material and do not imply general redistribution permission. SmoothCam API-header copying permission is narrowly scoped, not a fork license. TDM/CommonLib GPL exceptions and the map forks' GPL/corresponding-source plus retained MIT/third-party notices must be reviewed for the exact derivative. Party Sheet and optional art/portraits are not copied. Source rights and asset rights are separate.
 
-**D015 remains open with the owner:** original SkyCRPG source/art license, tracked for DYL-174 before DYL-171 distribution. No license is selected by this ADR. A future incompatible dependency obligation, large provider fork, runtime change, inventory-mechanics change or removed requirement needs an owner ruling with concrete alternatives. No such scope change is necessary to freeze these contracts now.
+**D015 is resolved by owner instruction2026-10-26:** free reuse of original code/art with devils_17 attribution, implemented as MIT source/config/docs and CC BY4.0 original art. See [LICENSING](../LICENSING.md). DYL-171/174 still own third-party derivative permissions/notices before distribution. A future incompatible dependency obligation, large provider fork, runtime change, inventory-mechanics change or removed requirement needs an owner ruling with concrete alternatives. No such scope change is necessary to freeze these contracts now.
 
-After senior review of DYL-154, DYL-155 may assess the Phase 1 gate. This PR neither passes that gate nor begins Phase 2.
+DYL-154 is accepted and merged. DYL-155 [Phase 1 gate](../evidence/p1/gate.md) is separately accepted GO by the owner on 2026-10-26. This is bounded feasibility acceptance; Phase 2 has not started.

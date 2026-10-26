@@ -1,6 +1,6 @@
 # Decisions and remaining owner choices
 
-Updated 2026-10-26 for DYL-154. “Selected engineering contract” records the evidence-backed implementation route submitted for senior review; it does not claim unimplemented behavior passes. User direction and explicit owner defers are separate. [ADR-001](decisions/ADR-001-stack.md), [architecture](ARCHITECTURE.md) and [acceptance matrix](compatibility/acceptance-matrix.md) give precise scope and obligations.
+Updated 2026-10-26 for DYL-155. “Selected engineering contract” records the evidence-backed implementation route accepted in PR5; it does not claim unimplemented behavior passes. User direction and explicit owner defers are separate. [ADR-001](decisions/ADR-001-stack.md), [architecture](ARCHITECTURE.md) and [acceptance matrix](compatibility/acceptance-matrix.md) give precise scope and obligations.
 
 | ID | Authority / disposition | Decision | Evidence / follow-up owner |
 | --- | --- | --- | --- |
@@ -12,25 +12,25 @@ Updated 2026-10-26 for DYL-154. “Selected engineering contract” records the 
 | D006 | Selected engineering contract | Elevated perspective with native/closer fallback; first-person precision is the proven fallback. | Camera owner run073401; top-down ranged FAIL still DYL-158. |
 | D007 | Explicit current task boundary | Uniform player-inventory presentation, native item identity/weight/ownership/capacity. | UI native round-trip PASS; DYL-163/164 complete integrity/layout. Tetris capacity is outside scope. |
 | D008 | Selected engineering contract | One exact tested runtime/host/dependency set only. | Steam1.7.104/SKSE2.3.1/Address Library13 on Ubuntu26.04.1/Proton Experimental11/RTX3080; runtime matrix and lock. DYL-173 covers final acceptance. |
-| D009 | Selected engineering contract | Existing DEM1.7.5 + Infinity UI NG2.1.3 + LMU1.3.4 minimap. | Rendered in-game; readiness/compass replacement and absence proof remain DYL-166. |
+| D009 | Selected engineering contract | Existing DEM1.7.5 + Infinity UI NG2.1.3 + LMU1.3.4 minimap. | Rendered in-game; whole-provider absence now PASS in DYL-155. Readiness/compass replacement and comprehensive recovery remain DYL-166. |
 | D010 | Retained MVP requirement | Mouse/keyboard and controller,720p/1080p/scaled text, one vanilla humanoid follower. | Controller grid subset PASS only; DYL-165/168 and DYL-169 gate. No scope reduction. |
 | D011 | Selected engineering contract | Native paused InventoryMenu; combat remains real-time outside menu. | Native backend retained. Unpaused-menu compatibility not selected; DYL-167 validates lifecycle. |
 | D012 | Resolved engineering choice | SmoothCam1.8.1 sole normal third-person writer + TDM2.3.1 directional movement, future small policy/handoff adapter. | Existing preset works within limits; adapter unimplemented. Lock/yaw competition disabled. DYL-156/157/158/159; no large custom controller selected. |
 | D013 | Resolved engineering choice | SkyUI Community6.11/native Scaleform grid with bounded input routing. | Live action/controller proof, both imported class copies patched. No new inventory backend/overlay required. DYL-163/164/167. |
 | D014 | Bounded engineering follow-up | Native favorites/equipment for future eight-slot bar; Party Sheet3.7 optional follower candidate, no assumed API. | DYL-161 validates HUD dispatch route; DYL-165 validates follower capability or narrow original observer. Silhouette/unavailable fallback required, working follower still required. |
-| D015 | **Open owner decision** | Original SkyCRPG source/art license. | DYL-174 before DYL-171 distribution; rights/attribution of derivatives assessed separately. Architecture can be reviewed without selecting a license. |
+| D015 | **Owner decision recorded2026-10-26** | Free reuse of original code/artwork, rights holder **devils_17**: MIT for source/config/docs; CC BY4.0 for original art. | [License scope](LICENSING.md); DYL-171/174 still assess third-party derivatives, notices and distribution rights separately. |
 | D016 | Selected engineering contract | Windows x64 plugin ABI; only recorded Proton host has gameplay evidence. | Native Windows CI does not prove native Windows gameplay. DYL-173. |
 | D017 | **Explicit owner defer** | Pitch resets after loading while zoom persists; nonblocking for spike PRs, fix later. | Combined075556 owner report; **FAIL** remains, assigned DYL-159. Does not waive C2 obstruction, absent-provider proof or any unrelated requirement. |
 | D018 | Selected engineering contract | One input consumer per event; native menu/modal focus precedes gameplay. | Scoped controller correction PASS; Camera checks native focus independently. DYL-159/161/167/168. |
-| D019 | Selected engineering contract | UI alone owns its native compass suppression, only after verified replacement readiness. | Current compass always visible; no public readiness API proven. DYL-166 must establish the capability and absence/partial-install recovery. |
+| D019 | Selected engineering contract | UI alone owns its native compass suppression, only after verified replacement readiness. | Current compass always visible; no public readiness API proven. DYL-166 must establish readiness and comprehensive lifecycle recovery; DYL-155 proves whole-provider absence and missing-SWF preflight refusal only. |
 | D020 | Selected engineering contract | External prerequisites remain external; modules own disjoint payload/config namespaces, source utilities only. | Native manifest audit PASS; generated SWFs/config need final packaging and license review. DYL-170/171/174. |
 | D021 | Explicit engineering debt | 18-cell spike layout is not a completed scrollable inventory; correct row alignment at19+ items. | Senior UI review source finding, gameplay NOT_RUN. DYL-164 with19/20+/500-entry fixtures. |
 
-## Gate decisions still outstanding
+## Gate recommendation and remaining decisions
 
-DYL-152/153 code is merged after bounded senior review, but their gameplay obligations remain open. DYL-155 must assess detailed obstruction proof and clean missing-provider startup, both NOT_RUN, and the proven first-person aiming fallback before passing Phase 1. Assigning later implementation tickets is not an owner-approved waiver. If satisfying the gate requires a product-scope concession rather than an implementation/fallback choice, request an owner ruling with the specific unmet criterion and evidence. No such concession is assumed here.
+The owner accepted DYL-155 **GO — Phase 1 complete** on 2026-10-26 in the [gate report](evidence/p1/gate.md). Fresh owner-observed Nordic obstruction and whole-provider-absent startup/navigation both PASS, with exact unchanged artifacts, clean exits and restored user files. Existing first-person precision is a viable one-owner fallback. Top-down ranged aim remains FAIL/DYL-158; load pitch remains FAIL with only its existing DYL-159 defer. Comprehensive MVP coverage remains open. No additional scope concession or owner ruling is required for this accepted gate, and Phase 2 has not started.
 
-DYL-172 must measure the proposed performance budgets; changes require an explicit tradeoff before release. DYL-174 must obtain D015 and resolve derivative notices/asset permissions before publication. These are owned follow-ups, not reasons to invent a license or broaden support now.
+DYL-172 must measure the proposed performance budgets; changes require an explicit tradeoff before release. D015 is resolved by the owner’s free-reuse/attribution instruction. DYL-174 must still resolve third-party derivative notices/asset permissions before publication; original-work licensing does not grant those rights.
 
 ## Decision history
 
@@ -38,5 +38,10 @@ DYL-172 must measure the proposed performance budgets; changes require an explic
 - 2026-10-25: DYL-151 desk research proposed external providers and native-menu route; exact source/file/license audit retained in dependency lock.
 - 2026-10-26: bounded Camera/UI owner routes and combined checkpoint supplied playable evidence; two controller routing failures preceded final PASS. Top-down aim and load-pitch remained FAIL; only pitch received explicit owner defer.
 - 2026-10-26: PR3/4 senior issue-comment review accepted bounded source/configuration work with gaps. User authorized merges; source merged. DYL-154 records the implementation contracts and traceability for review, without closing DYL-152/153 or starting DYL-155/Phase 2.
+
+- 2026-10-26: owner authorizes free reuse of original code/art with devils_17 attribution. D015 recorded as MIT source/config/docs and CC BY4.0 original artwork, with third-party exclusions.
+- 2026-10-26: PR5 architecture accepted and merged. DYL-155 closes the two missing critical evidence gaps with owner-observed bounded runtime checks and recommends GO for review, retaining all full-MVP limitations. DYL-156/160 handoffs prepared, not dispatched.
+
+- 2026-10-26: owner explicitly states “Record my acceptance of phase 1 GO then approved to merge”. Phase 1 gate accepted against evidence commit `0929e0e1dbd6aa7d24000c5ff666246b4fca007c`; PR6 merge authorized. DYL-155 and the completed DYL-153 feasibility evidence are accepted, retaining aiming FAIL/DYL-158 and the narrow pitch defer/DYL-159. DYL-156/160 ready but not started. No additional senior review is claimed by this owner ruling.
 
 Record future changes with date, authority, evidence, impacted acceptance IDs and tickets. Runtime changes, incompatible licensing obligations, removing grid/minimap/independence, native-weight changes or a large replacement camera need an owner ruling; routine contract-preserving implementation choices do not need repeated permission.

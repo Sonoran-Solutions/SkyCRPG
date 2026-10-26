@@ -34,3 +34,8 @@ Result: **PASS**. All17 acceptance IDs,13 camera state rows,26 roadmap ticket re
 - All C1–C5, U1–U6, M1–M3 and Q1–Q3 map to evidence, implementation and validation tickets. D015 license remains an owner decision; pitch defer remains narrow; other missing evidence remains visible.
 
 These documentary deliverables satisfy the task's acceptance content, pending senior review. DYL-155 can begin after that review/acceptance; it cannot automatically pass while missing critical Phase 1 proof is merely assigned to later tickets. This PR remains unmerged with auto-merge disabled.
+
+
+## Subsequent gate evidence — 2026-10-26
+
+The [DYL-155 gate](gate.md) supersedes the historical missing critical obstruction and whole-provider-absence checks with two bounded owner-observed PASS routes. Earlier results above remain historical; full MVP coverage and recorded aiming/pitch failures are not promoted. PR5 architecture is now reviewed and merged; the owner subsequently accepted the gate GO disposition on 2026-10-26 and authorized PR6 to merge.

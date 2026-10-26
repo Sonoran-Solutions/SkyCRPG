@@ -1,0 +1,13 @@
+{
+  "status": "BLOCKED",
+  "sha256": {
+    "SKSE/Plugins/DragonsEyeMinimap.dll": "918fc9b3f4bf284fb1ae8d028370ebd20908d2750f4706383fe56012bddc5c1a",
+    "SKSE/Plugins/InfinityUI.dll": "53ef0932485ee1bb281cc4b2baad1fe91e368b9d656989071747b2f1316a85ed",
+    "SKSE/Plugins/LocalMapUpgrade.dll": "f0fb1c9c822133f9e4ece866fc4f6190424dcafac35e040cd0b4cd037340b3d5",
+    "Interface/InfinityUI/HUDMenu/HUDMovieBaseInstance/Minimap.swf": null,
+    "Interface/InfinityUI/HUDMenu/HUDMovieBaseInstance/!assets/MinimapArt.swf": "8eebe684e51f914863918cc46ea14dbf572f766ba4c1be3a99747fdc41dd81ef"
+  },
+  "renderer": "NOT_RUN",
+  "native_compass": "retained",
+  "limitations": "Loose-file case-sensitive preflight; resolve BSA/file winners and exact versions separately."
+}
