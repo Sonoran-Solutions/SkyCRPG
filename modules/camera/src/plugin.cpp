@@ -239,7 +239,11 @@ public:
                     auto camera = RE::PlayerCamera::GetSingleton();
                     const auto request = toggleRequest(c,ownFirstPerson);
                     if (request == ToggleRequest::firstPerson) {
-                        settings.enabled = false; ownFirstPerson = true; suspend(); static_cast<void>(camera->ForceFirstPerson()); savePreferences();
+                        settings.enabled = false; ownFirstPerson = false; suspend();
+                        static_cast<void>(camera->ForceFirstPerson());
+                        // Do not claim a late or unrelated first-person transition.
+                        ownFirstPerson = claimPrecisionOwnership(c,context());
+                        savePreferences();
                     } else if (request == ToggleRequest::enableOnly) {
                         settings.enabled = true; ownFirstPerson = false; applyZoom = true; suspend(); savePreferences();
                     } else if (request == ToggleRequest::thirdPerson) {

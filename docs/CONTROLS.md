@@ -37,4 +37,6 @@ Camera preferences use version 1 in `SkyCRPG_Camera.ini`: default pitch 55 degre
 
 For precise bow, spell or small-object interaction, deliberately use F6 to enter native first person; aim and activate with Skyrim's normal controls. F6 does not automatically switch for a drawn weapon. If an observed provider or special-state interruption cancels the owned session, use native Toggle POV to return to third person, then F6 to enable the elevated policy. TDM target lock remains disabled in this configuration. The bounded owner route and its limits are recorded in [combat and activation evidence](evidence/p2/combat-and-activation.md).
 
+Native controller POV can request first person without an F6-owned session; returning uses native POV as well. The default custom F6-equivalent controller binding is unassigned, and this controller route still needs a device-specific gameplay check.
+
 Native menus, dialogue, loading/death, first person and unsupported special states take precedence. Held controls are discarded through focus changes and require fresh input; no gameplay event is replayed. F8 and map K/L are reserved against custom bindings, and keys already mapped to native gameplay are refused. Full obstruction, targeting and lifecycle recovery remain DYL-157/158/159.
