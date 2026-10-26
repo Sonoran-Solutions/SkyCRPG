@@ -1,0 +1,14 @@
+{
+  "combined-20261026-grid.png": {
+    "sha256": "6befa9a7ca7a3f6be9c25a20db8934126fa374aa11ea7891f767981c15ec3963",
+    "owner_filename": "Screenshot From 2026-10-26 07-57-47.png",
+    "source_mtime": "2026-10-26T07:57:47.107456-07:00",
+    "provenance": "owner-supplied combined075556 screenshot; filename timestamp in America/Phoenix, not independently measured capture clock"
+  },
+  "combined-20261026-topdown-minimap.png": {
+    "sha256": "8812f438a6851f78487e1bf623d5261facb238adfd8b71e05c5c1b63812d5a7e",
+    "owner_filename": "Screenshot From 2026-10-26 07-57-33.png",
+    "source_mtime": "2026-10-26T07:57:33.749804-07:00",
+    "provenance": "owner-supplied combined075556 screenshot; filename timestamp in America/Phoenix, not independently measured capture clock"
+  }
+}

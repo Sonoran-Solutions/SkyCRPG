@@ -1,0 +1,11 @@
+[07:52:07.555] [ 380 ] [I] LocalMapUpgrade v1-3-4-0
+[07:52:07.556] [ 380 ] [I] Log level 2 (info). Capturing: info, warning, error, critical.
+[07:52:07.556] [ 380 ] [I] Suppressed at this level: trace, debug. Set uLogLevel=0 in LocalMapUpgrade.ini to capture everything.
+[07:52:07.556] [ 380 ] [I] Succesfully loaded!
+[07:52:07.556] [ 380 ] [W] Failed to dispatch message to devbench
+[07:52:07.556] [ 380 ] [I] Successfully registered for Infinity UI messages!
+[07:52:07.557] [ 380 ] [I] SKSE Menu Framework is not installed; settings will be read from the INI only
+[07:52:07.557] [ 380 ] [W] Failed to dispatch message to devbench
+[07:52:12.199] [ 628 ] [I] strings: 46 text(s) read for "english" from LocalMapUpgrade_english.txt (game language)
+[07:52:12.231] [ 628 ] [W] Failed to dispatch message to devbench
+[07:52:12.231] [ 628 ] [I] DevBench not detected; skipping the "localmapupgrade.status" live-diagnostics tool (logging alone still covers this session - see CLAUDE.md rule 31)

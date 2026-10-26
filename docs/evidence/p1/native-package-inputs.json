@@ -1,0 +1,46 @@
+{
+  "SkyCRPG_Camera": {
+    "package": "SkyCRPG_Camera",
+    "version": "0.0.1",
+    "source_commit": "cc8a4dcde7b817d392bc66c9d2dc93cfb1beac62",
+    "archive": "SkyCRPG_Camera-0.0.1-cc8a4dc.zip",
+    "archive_sha256": "e757e6b31afbd89afe9a2c0ebb2d4a103be2414674879aca19cba953e5679a45",
+    "install_root": "Data/",
+    "files": {
+      "SKSE/Plugins/SkyCRPG_Camera.dll": "0ea0a21342f01eafab038256f7de212146096cf71b9be976ec7ad9b8d5c4d069",
+      "SKSE/Plugins/SkyCRPG_Camera.ini": "47376adb4bab4141791d71a3c163cc64f5c77b8d503f15819b659fed2dd74d01"
+    },
+    "dll_imports": [
+      "KERNEL32.dll",
+      "SHELL32.dll",
+      "ole32.dll"
+    ],
+    "runtime": "SkyrimSE.exe 1.7.104.0 (Steam)",
+    "requires": [
+      "SKSE64 2.3.1"
+    ],
+    "requires_skycrpg_modules": []
+  },
+  "SkyCRPG_UI": {
+    "package": "SkyCRPG_UI",
+    "version": "0.0.1",
+    "source_commit": "d1f6193681df687860681881de7425a5e00ebbd1",
+    "archive": "SkyCRPG_UI-0.0.1-d1f6193.zip",
+    "archive_sha256": "1e266bdefb1730095b33f7d19c784d2fbdbad965cc54ec59990c71a84716fcea",
+    "install_root": "Data/",
+    "files": {
+      "SKSE/Plugins/SkyCRPG_UI.dll": "d0f8fc1f36c99a9c1a03ac4e36dee8f613d9ecfde4ebc8eb7567a3527d596a5e",
+      "SKSE/Plugins/SkyCRPG_UI.ini": "b0720e037046e8f493a0da8600f153862f478eedd02b14c156f9ef3966385902"
+    },
+    "dll_imports": [
+      "KERNEL32.dll",
+      "SHELL32.dll",
+      "ole32.dll"
+    ],
+    "runtime": "SkyrimSE.exe 1.7.104.0 (Steam)",
+    "requires": [
+      "SKSE64 2.3.1"
+    ],
+    "requires_skycrpg_modules": []
+  }
+}
