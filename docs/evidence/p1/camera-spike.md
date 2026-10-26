@@ -1,6 +1,6 @@
 # DYL-152 / P1-03 camera feasibility spike
 
-Updated 2026-10-26. **Recommendation: continue with SmoothCam 1.8.1 as the only third-person camera writer, using an original provider-format framing preset. Do not add a second transform controller at this point.** The recovered owner route demonstrates usable pulled-back movement/melee and first-person precision fallback. **FAIL** for top-down third-person bow/spell aiming: projectiles aim at the player's feet. Provider configuration alone does not satisfy the ranged-combat requirement; an existing targeting alternative is under investigation.
+Updated 2026-10-26. **Recommendation: existing SmoothCam provider plus a small original adapter for later pitch persistence and exclusive aim-mode handoff. The adapter is unimplemented; the proven spike uses original configuration and native first-person precision fallback, with no second transform writer.** The recovered owner route demonstrates usable pulled-back movement/melee and first-person precision fallback. **FAIL** for top-down third-person bow/spell aiming: projectiles aim at the player's feet. Provider configuration alone does not satisfy the ranged-combat requirement; an existing targeting alternative is under investigation.
 
 ## Candidate route
 
@@ -28,7 +28,8 @@ For precise bow/spell aiming, compare SmoothCam's built-in ranged framing and ra
 | Top-down third-person bow and aimed spells | **FAIL** | Owner reports arrows/spells aim at player feet. This reproduces a provider/configuration limitation for current framing. |
 | First-person precision fallback / world activation | **PASS (owner-observed)** | Owner explicitly confirms first person works and object activation remained usable. |
 | Ten F8 toggle/handoff pairs | **PASS (owner-observed)** | Owner confirms all ten requested pairs restored normal third person and returned reliably. |
-| Interior/exterior transition | **PASS (owner-observed)** | Owner confirms cave/outdoor transition remained usable. |
+| Interior/exterior transition usability | **PASS (owner-observed)** | Owner confirms cave/outdoor transition remains usable. |
+| Pitch persistence through loading screens | **FAIL — owner-deferred, nonblocking for these PRs** | Combined run075556: zoom persists but top-down pitch resets to normal third person. DYL-159 tracks later restoration. |
 
 Source/config PASS does not satisfy P1-03's in-game acceptance. The assigned shared-install owner must install the selected external dependencies in an isolated camera-only profile and capture the bounded route before P1-05 can freeze this stack.
 
@@ -54,7 +55,7 @@ Use a copied exterior/interior save pair in the isolated `camera-only` profile. 
 
 See [session evidence](session-2026-10-26.md) for timestamps and logs. The first interactive run ended after systemd-oomd killed GNOME Shell under memory pressure; the root memory contributor is unresolved. A post-reboot launch failed because Steam was not running. Steam was restored before changed-condition run20261026T073401, which reached plugin/data-load markers under a memory watchdog. Owner gameplay report is recorded above. Recovery run exited cleanly07:42:59 with no leftovers; minimum17.13GiB available RAM and zero full pressure avg10. Controller is available; complete input coverage remains broader than these owner checks.
 
-The next bounded alternative is TDM's existing lock-on/projectile aiming, contingent on verifying camera ownership and input conflicts in source. This is investigation, not acceptance or a new large custom controller. First-person aiming remains the proven precision fallback. No camera screenshot/video was supplied for this run; evidence is explicit owner report plus timestamped loader/provider/run logs.
+The next bounded alternative is TDM's existing lock-on/projectile aiming, contingent on verifying camera ownership and input conflicts in source. This is investigation, not acceptance or a new large custom controller. First-person aiming remains the proven precision fallback. No camera-only screenshot/video was supplied for run073401; evidence is explicit owner report plus timestamped loader/provider/run logs. The later combined run075556 supplies a timestamped overhead/minimap screenshot with exact artifact hash.
 
 
 ## Bounded alternative: existing TDM targeting
@@ -64,3 +65,10 @@ The next bounded alternative is TDM's existing lock-on/projectile aiming, contin
 TDM's arrow/missile aim enums are0=FreeAim,1=Predict,2=Homing; assist requires an active lock. Beam targeting exists, but not every concentration spell is proven; target-location spells are excluded. No targeting mode was enabled in the game, so lock-on combat remains **NOT_RUN**. Source audit is the bounded alternative investigation, not another gameplay PASS. The observed aiming-at-feet behavior is real; an elevated camera/native aim-vector mismatch is only a causal hypothesis.
 
 Recommendation: **existing provider plus a small original adapter**, retaining the proven SmoothCam configuration and native POV precision fallback. Any future targeting mode must explicitly suspend/release one camera owner before enabling another, and must recover on unlock, menus, unload and provider absence. Such an adapter still needs implementation and evidence; the present configuration remains the playable spike. No exclusive custom controller or broad provider fork is justified. Phase2 should reuse provider obstruction/framing, TDM directional movement, original config staging, F8 emergency control and the copied fixture route. Stable held pitch/recenter and polished target selection remain open.
+
+
+## Combined result and owner-deferred pitch defect
+
+Combined Camera+UI run20261026T075556 **PASS** for all8 DLL loads and owner checkpoint, clean exit/no leftovers. [Overhead camera/minimap capture](captures/combined-20261026-topdown-minimap.png) and [capture hashes/times](captures/combined-captures.json) directly demonstrate the combined view. [Installed-file manifest](tested-artifacts.json) pins combined artifact`8a31a81a18b196cf51431f570d609f8b0cf0375f967299ac75a22488432ef307`; native skeleton source/archive pins are in native-package-inputs.json, provider archives in dependency-lock.md.
+
+Owner reports top-down camera angle resets after Helgen Keep loading screens in either direction while zoom persists. This qualifies the earlier transition result: controls recover, but pitch preference does not. Owner explicitly says this should not block these PRs; DYL-159 remains Backlog with reproduction and acceptance follow-up. No repair or Phase2 work started. The final environment is undeployed with original INIs/plugin list restored and146 original/copied files unchanged.
