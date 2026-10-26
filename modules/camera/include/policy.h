@@ -22,7 +22,8 @@ struct Settings {
     int recenterGamepad = -1;
 };
 inline float bounded(float value, float fallback, float low, float high) {
-    return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
+    // Defaults must obey dependent bounds too (e.g. minZoom above default max).
+    return std::clamp(std::isfinite(value) ? value : fallback, low, high);
 }
 inline Settings validate(Settings s) {
     if (s.schema != 1) { s = {}; s.enabled = false; return s; }

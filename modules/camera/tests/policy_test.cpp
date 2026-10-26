@@ -10,6 +10,18 @@ int main() {
     assert(s.pitch == 55 && s.minZoom == .8f && s.maxZoom == .8f && s.zoom == .8f);
     assert(s.toggleKey == -1 && s.recenterKey == -1 && s.toggleGamepad == -1);
     s.schema = 99; assert(!validate(s).enabled);
+    // Nonfinite dependent values must never leave minZoom > maxZoom, even
+    // when the valid minimum is above the ordinary default maximum/zoom.
+    for (float invalidMax : {std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity(),-std::numeric_limits<float>::infinity()}) {
+        for (float invalidZoom : {std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity(),-std::numeric_limits<float>::infinity()}) {
+            Settings invalid;
+            invalid.minZoom = .95f; invalid.maxZoom = invalidMax; invalid.zoom = invalidZoom;
+            const auto recovered = validate(invalid);
+            assert(recovered.minZoom == .95f && recovered.maxZoom == .95f && recovered.zoom == .95f);
+            assert(recovered.minZoom <= recovered.maxZoom);
+            assert(recovered.zoom >= recovered.minZoom && recovered.zoom <= recovered.maxZoom);
+        }
+    }
     const Settings zoom;
     assert(zoomRequest(-1,zoom,false)==zoom.minZoom);
     assert(zoomRequest(2,zoom,false)==zoom.maxZoom);
