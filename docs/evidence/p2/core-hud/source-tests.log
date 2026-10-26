@@ -1,6 +1,6 @@
 Command: SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v
 Result: PASS
-Ran 10 tests in 0.002s
+Ran 11 tests in 0.002s
 OK
 Exit code: 0
 Includes exact Address Library filename/digest pin, guard-before-SKSE::Init ordering, and SKSE/SKSE.h-before-RE public-header ordering with direct API include rejected.

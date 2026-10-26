@@ -1,6 +1,6 @@
 {
   "owner": "DYL-160 UI worker",
-  "source_commit": "fa5f340; public-header correction pending commit",
+  "source_commit": "95ce31376119d716e2a64ee965bcb525728dbbe3",
   "bounded_jobs": [
     {
       "purpose": "Focused settings, exact pinned source transform, and HUD lifecycle/data/layout validation",
@@ -86,6 +86,21 @@
       },
       "log": "source-tests.log",
       "native_build": "Not started by UI worker; parent CI dependency build already in progress."
+    },
+    {
+      "purpose": "Regression-check atomic publication of validated HUD settings and enable/readiness gate",
+      "recorded_before_run": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-bridge-atomic-job.json",
+      "commands": [
+        "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+        "git diff --check"
+      ],
+      "timeout_seconds_each": 600,
+      "results": {
+        "source_contracts": "PASS, 11 tests, 0 skipped",
+        "diff_check": "PASS"
+      },
+      "log": "bridge-atomicity-tests.log",
+      "native_build": "Not started; no duplicate native build or game run."
     }
   ]
 }
