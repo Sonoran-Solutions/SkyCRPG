@@ -8,13 +8,13 @@ Updated 2026-10-26. **Recommendation lock plus acquired package hashes; gameplay
 | Level | Meaning / current result |
 | --- | --- |
 | Upstream documentation/source | **PASS (desk inspection only)** for the linked versions/interfaces below; runtime claims remain the authors' claims. |
-| Observed installed environment | DYL-150 snapshot `cd49b3c`: Steam **1.7.104.0**, Ubuntu 26.04.1, Proton Experimental `experimental-11.0-20261014`; **SKSE/Address Library/providers absent**. |
-| DYL-150 compile/load evidence | No logs/artifact hashes supplied at reconciliation. **NOT_RUN here**; consult that worker's BUILD_AND_TEST and runtime-matrix before promoting any result. |
-| SkyCRPG feature behavior | **NOT_RUN for every component**; no camera, inventory, HUD, hotbar or minimap behavior is PASS. |
+| Historical pre-install snapshot | DYL-150 snapshot `cd49b3c`: Steam **1.7.104.0**, Ubuntu 26.04.1, Proton Experimental `experimental-11.0-20261014`; **SKSE/Address Library/providers absent**. |
+| Current load evidence | Rewritten profile baseline, UI-only providers and camera-only providers passed bounded startup on2026-10-26. See session evidence/logs; startup does not prove gameplay. |
+| SkyCRPG feature behavior | UI grid, native equip/unequip, minimap and compass fallback **PASS (owner-observed)** on2026-10-26; controller grid navigation **FAIL** pending fix. Camera gameplay **NOT_RUN** after host desktop OOM. See session evidence. |
 
 Executable SHA-256 from [DYL-150](https://github.com/Sonoran-Solutions/SkyCRPG/blob/cd49b3cfc73278350342db4ae7a27c3b5e6a9644/docs/evidence/p1/environment.md):
 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f` (Steam build 24914197).
-No native Windows playtest or other storefront/runtime is selected. Controller hardware is absent.
+No native Windows playtest or other storefront/runtime is selected. Controller hardware is available through owner playtesting as of the UI route on2026-10-26.
 
 ## Selected candidates and exact upstream files
 
@@ -39,7 +39,7 @@ build line, notices and SHA-256 when acquired; never substitute a newer file sil
 
 Hotbar uses original presentation with the pinned native/SkyUI interfaces; **no separate hotbar provider is required**.
 The display grid is original layout work over the selected SkyUI entries/actions, not an acquired grid dependency.
-All selected game behavior remains NOT_RUN, including on Proton; no author statement establishes Proton compatibility.
+See session evidence for the limited Proton owner playtest results; no author statement establishes compatibility.
 
 ## Alternative/reference pins
 
@@ -53,7 +53,7 @@ All selected game behavior remains NOT_RUN, including on Proton; no author state
 
 ## Verified SmoothCam archive hashes
 
-Only inspected outside the repository; no DLL installed or executed. Source release metadata and downloaded bytes agree.
+Originally inspected outside the repository. The selected AE DLL subsequently passed camera-only startup on2026-10-26; gameplay remains unverified. Source release metadata and downloaded bytes agree.
 
 | Material | SHA-256 |
 | --- | --- |
@@ -74,12 +74,12 @@ Only inspected outside the repository; no DLL installed or executed. Source rele
 | CommonLib 7.2.0 | COPYING and EXCEPTIONS.md: GPL-3.0 with modding/linking exceptions, corresponding source obligations. This does not select SkyCRPG's original-work license. Review linked derivative's distribution terms before shipping it. |
 | Inventory Reforged / Glasswork | Nexus permissions allow credited modifications; no blanket source/asset grant for all embedded third-party material is inferred. Reference only in recommended route. |
 
-## Intended install order and ownership (future spike, not executed)
+## Install order and ownership
 
 1. DYL-150 verifies vanilla baseline and matched SKSE 2.3.1. Keep its plain independent DLL loads free of providers.
 2. Add Address Library 13; verify expected database filename. Add SkyUI 6.11 for provider configuration/UI patch base.
 3. Camera-only: TDM 2.3.1, MCM Helper 1.6.3, SmoothCam 1.8.1 correct AE DLL, original Camera configuration.
-4. UI-only: Infinity UI NG 2.1.3 → LMU fork 1.3.4 → DEM fork 1.7.5, each 1.7 DLL; Party Sheet 3.7; original UI patch/config.
+4. UI-only: Infinity UI NG 2.1.3 → LMU fork 1.3.4 → DEM fork 1.7.5, each 1.7 DLL; Party Sheet 3.7; original UI patch/config. Optional Party Sheet is inspected only and was not deployed.
 5. Loose player inventory patch wins over SkyUI only for its owned screen. No Inventory Reforged/Grid Inventory or second HUD/compass owner in the first profile. Respect actual archive path case under Linux staging.
 6. Verify required SWF files before enabling the minimap DLL: the stock fork can terminate on incomplete installation. Full provider absence is a different fallback case from corrupt partial installation.
 7. Combined profile contains union of dependencies, with disjoint Camera/UI configs and no required cross-module DLL service. Record exact winning files/INI deltas and hashes in spike evidence.

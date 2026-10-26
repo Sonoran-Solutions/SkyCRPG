@@ -1,0 +1,53 @@
+SKSE64 runtime: initialize (version = 2.3.1 01070680 01DD65547C2F9D60, os = 6.2 (9200))
+imagebase = 0000000140000000
+reloc mgr imagebase = 0000000140000000
+plugin directory = Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins\
+scanning plugin directory Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins\
+checking plugin MCMHelper.dll
+checking plugin SkyCRPG_Camera.dll
+checking plugin SmoothCam.dll
+checking plugin TrueDirectionalMovement.dll
+preinit complete
+config path = Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\skse.ini
+loading plugin "MCMHelper"
+registering plugin listener for SKSE at 1 of 6
+loading plugin "SkyCRPG Camera"
+loading plugin "SmoothCam"
+registering plugin listener for SKSE at 3 of 6
+plugin 3 allocated 512 bytes from branch pool
+loading plugin "TrueDirectionalMovement"
+plugin 4 allocated 512 bytes from branch pool
+registering plugin listener for SKSE at 4 of 6
+plugin MCMHelper.dll (00000001 MCMHelper 01060030) loaded correctly (handle 1)
+plugin SkyCRPG_Camera.dll (00000001 SkyCRPG Camera 00000010) loaded correctly (handle 2)
+plugin SmoothCam.dll (00000001 SmoothCam 00000013) loaded correctly (handle 3)
+plugin TrueDirectionalMovement.dll (00000001 TrueDirectionalMovement 02030010) loaded correctly (handle 4)
+dispatch message (0) to plugin listeners
+sending message type 0 to plugin 1
+sending message type 0 to plugin 3
+registering plugin listener for (null) at 3 of 6
+sending message type 0 to plugin 4
+registering plugin listener for SmoothCam at 4 of 6
+dispatch message (0) to plugin listeners
+dispatch message (0) to plugin listeners
+dispatched message.
+dispatch message (1) to plugin listeners
+sending message type 1 to plugin 1
+sending message type 1 to plugin 3
+sending message type 1 to plugin 4
+dispatched message.
+init complete
+hooked dinput
+dispatch message (6) to plugin listeners
+sending message type 6 to plugin 1
+sending message type 6 to plugin 3
+sending message type 6 to plugin 4
+dispatched message.
+Reading translations from Interface\Translations\SkyUI_SE_ENGLISH.txt...
+Reading translations from Interface\Translations\MCMHelper_ENGLISH.txt...
+Reading translations from Interface\Translations\TrueDirectionalMovement_ENGLISH.txt...
+dispatch message (8) to plugin listeners
+sending message type 8 to plugin 1
+sending message type 8 to plugin 3
+sending message type 8 to plugin 4
+dispatched message.
