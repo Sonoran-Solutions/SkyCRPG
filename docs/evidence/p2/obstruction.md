@@ -1,0 +1,32 @@
+# DYL-157 obstruction investigation
+
+**Status: BLOCKED on a trustworthy obstruction signal and runtime validation.** This is an investigation, not an implementation or a review-ready candidate. Base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`. No game, build, deployment or automated test was run for this investigation. No new native or generated artifact exists.
+
+The existing SmoothCam configuration retains provider collision; the Camera input policy supplies the F6 native first-person fallback and leaves the provider's F8 emergency toggle alone. The Phase 1 [gate route](../p1/gate.md) recorded an owner-observed PASS for a bounded corridor, ceiling, doorway, stair and open-room route using the earlier Phase 1 artifact. It did not establish comprehensive DYL-157 behavior on the current held-pitch controller. The [DYL-156 controls route](camera-controls.md) separately recorded F6 and deliberate return on its specified Camera artifact. Neither observation proves new obstruction handling.
+
+## Source findings
+
+The inspected SmoothCam source checkout is commit `e0afd09aff26e5849dac461252e5bffbd5b69d62`, clean at inspection. This is a source audit, not proof that its build exactly matches the pinned binary. The pinned runtime/provider identities are in the [runtime matrix](../../compatibility/runtime-matrix.md) and [dependency lock](../../compatibility/dependency-lock.md).
+
+- `SmoothCam/source/camera_states/thirdperson/thirdperson.cpp` interpolates a pre-collision position, runs provider collision rays, sends the collision-resolved `finalPos` to the camera, then stores the pre-collision position as its current position. The collision hit and result are local; the V3 API exposes no obstruction event, hit normal or resolved distance. Source SHA-256 `6ddaba9797fc661889584729f32f47a19ca0eddcdabae3f884722dc6972cefdf`.
+- `SmoothCam/source/modapi.cpp` returns the provider's stored `GetPosition()` for `GetLastCameraPosition`; `SmoothCam/source/thirdperson.cpp` returns `lastPosition`, assigned from the previous `currentPosition` at the start of the provider update. It is not a collision-resolved camera position. SHA-256 respectively `9cdcc44b4e026bca1a92a6f3428271e72f5df9e9f79ea104c73818d22b04bdf2` and `2e9b5a3adad2b865b6c58a1829782f8bd098bf53d98f778061d94d91b77dbb03`.
+- `SmoothCam/source/camera.cpp` writes the resolved position to the camera root, but `hooks.cpp` invokes the previous native update before the outer provider update. The current adapter's update hook sits within that chain. A comparison of the API value with the root without aligning frame and update order can mistake player movement, camera interpolation, native updates or a POV transition for obstruction. Source SHA-256 respectively `f4418072a11fb7ab2924aa4789735ff2814d24204454f6178da92e8663dd506a` and `57830a7fef128d3acdfba1cd8c04188258da3970f77cdd7082b0fa6be0666074`.
+- `GetGoalPosition` is a provider goal computed from the current target, offsets, pitch and zoom; the gap to an interpolated position can exist in unobstructed motion. It is not a collision flag. Even a correctly timed displacement alone does not classify a low ceiling versus a wall or guarantee that changing pitch will improve visibility.
+
+Consequently no unverified automatic pitch or distance controller has been introduced. The existing state precedence remains disable/invalid world/special/menu/first person/precision/targeting/obstruction/normal; any future intervention must release on higher-priority states and must not take transform ownership from SmoothCam or override F6/F8.
+
+## Bounded next step
+
+Instrument a disposable, exact-pinned candidate to log frame IDs and timestamps for the provider's pre-collision value and camera-root position sampled before the native update, with explicit guards for state transitions and camera ownership. Compare aligned samples in stationary open space, during motion, against a known wall and under a ceiling. Confirm whether the source/API timing actually holds for the shipped binary, and whether POV smoothing or engine updates contaminate the signal. This is diagnostic only: do not use it to drive the camera until the signal is validated. If it is reliable enough, a narrow policy can use entry/exit thresholds and timed recovery while relinquishing on higher-priority states; otherwise a provider-supported collision signal or a separately reviewed bounded alternative is needed. Avoid extra transform writers, collision disabling and per-cell patches.
+
+## Acceptance disposition
+
+| Check | Result | Limit |
+| --- | --- | --- |
+| Existing provider collision and reachable F6/F8 | PASS only for the earlier recorded routes | Existing evidence above, not a new DYL-157 test. |
+| Obstruction-aware adjustment and hysteresis on current controller | BLOCKED | No validated observation signal or implementation. |
+| Outdoor/interior, tight corridor, low ceiling, doorway, stairs and recovery on candidate | NOT_RUN | Requires orchestrator-owned, bounded Camera-only route and exact candidate identities. |
+| Higher-priority aim/first-person interruption and recovery | NOT_RUN | Integration must test the eventual policy with DYL-158. |
+| Focused policy tests, Windows build and candidate hashes | NOT_RUN | No implementation candidate has been built. |
+
+Geometry and recovery limitations remain open; no universal ceiling/roof visibility claim is made.
