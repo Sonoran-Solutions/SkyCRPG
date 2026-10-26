@@ -2,10 +2,12 @@
       // before a repeated initialization. Do not attach another handler on refresh.
       if (this.SkyCRPGStatus != undefined) {
          this.SkyCRPGStatus.onEnterFrame = null;
+         if (this.SkyCRPGHotbar != undefined) this.SkyCRPGHotbar.onEnterFrame = null;
          var skycrpgRemoveIndex = this.HudElements.length - 1;
          while (skycrpgRemoveIndex >= 0) {
             if (this.HudElements[skycrpgRemoveIndex] == this.SkyCRPGStatus ||
-               this.HudElements[skycrpgRemoveIndex] == this.SkyCRPGPartyArea) {
+               this.HudElements[skycrpgRemoveIndex] == this.SkyCRPGPartyArea ||
+               this.HudElements[skycrpgRemoveIndex] == this.SkyCRPGHotbar) {
                this.HudElements.splice(skycrpgRemoveIndex, 1);
             }
             skycrpgRemoveIndex--;
@@ -19,6 +21,7 @@
          this.SkyCRPGStatus.removeMovieClip();
       }
       if (this.SkyCRPGPartyArea != undefined) this.SkyCRPGPartyArea.removeMovieClip();
+      if (this.SkyCRPGHotbar != undefined) this.SkyCRPGHotbar.removeMovieClip();
 
       // Read-only config is published by the UI DLL at SKSE plugin initialization.
       // If it is absent/disabled, leave every native meter and prompt untouched.
@@ -94,6 +97,57 @@
             };
             skycrpgIndex++;
          }
+         // Presentation only. Native hotkeys and the native Favorites menu own
+         // input and dispatch; this clip has no listeners or synthetic actions.
+         var bar = this.createEmptyMovieClip("SkyCRPGHotbar", 18002);
+         bar.All = true;
+         bar.placeAtStage = skycrpg.placeAtStage;
+         bar.placeAtStage(Math.max(16, Math.min(Stage.width - 16 - 536 * skycrpgSettings.hudScale / 100,
+            Stage.width / 2 - 268 * skycrpgSettings.hudScale / 100 + skycrpgSettings.hudOffsetX)),
+            Math.max(16, Math.min(Stage.height - 16 - 116 * skycrpgSettings.hudScale / 100,
+            Stage.height - 122 + skycrpgSettings.hudOffsetY)), skycrpgSettings.hudScale);
+         bar._visible = false;
+         bar.nextSample = 0;
+         var slotIndex = 0;
+         while (slotIndex < 8) {
+            var slot = bar.createEmptyMovieClip("slot" + slotIndex, slotIndex + 1);
+            slot._x = slotIndex * 67;
+            slot.createTextField("key", 1, 4, 2, 58, 15);
+            slot.key.setNewTextFormat(new TextFormat("$EverywhereFont", 11, 0xE9D59C, true));
+            slot.key.text = String(slotIndex + 1);
+            slot.createTextField("kind", 2, 4, 17, 58, 14);
+            slot.kind.setNewTextFormat(new TextFormat("$EverywhereFont", 10, 0xD8C69B, true));
+            slot.createTextField("name", 3, 4, 30, 58, 15);
+            slot.name.setNewTextFormat(new TextFormat("$EverywhereFont", 10, 0xE8E1D1));
+            slot.createTextField("count", 4, 4, 44, 58, 14);
+            slot.count.setNewTextFormat(new TextFormat("$EverywhereFont", 10, 0xE8E1D1));
+            slot.key.selectable = slot.kind.selectable = slot.name.selectable = slot.count.selectable = false;
+            slotIndex++;
+         }
+         bar.onEnterFrame = function() {
+            var now = getTimer();
+            if (now < this.nextSample) return;
+            this.nextSample = now + 500;
+            var bridge = skse != undefined && skse.plugins != undefined ? skse.plugins.SkyCRPGUI : undefined;
+            var slots = bridge != undefined && typeof(bridge.getHotbar) == "function" ? bridge.getHotbar() : undefined;
+            if (slots == undefined || slots.length != 8) { this._visible = false; return; }
+            this._visible = this._parent.CheckAgainstHudMode(this);
+            var i = 0;
+            while (i < 8) {
+               var cell = this["slot" + i];
+               var value = slots[i];
+               cell.clear();
+               cell.lineStyle(1, value.equipped ? 0xE9D59C : 0x806E49, 100);
+               cell.beginFill(0x171715, 85);
+               cell.moveTo(0, 0); cell.lineTo(64, 0); cell.lineTo(64, 59);
+               cell.lineTo(0, 59); cell.lineTo(0, 0); cell.endFill();
+               cell.kind.text = value.kind == "" ? "EMPTY" : value.kind;
+               cell.name.text = value.name;
+               cell.count.text = value.count > 1 ? "x" + value.count : "";
+               i++;
+            }
+         };
+         this.HudElements.push(bar);
          var skycrpgParty = this.createEmptyMovieClip("SkyCRPGPartyArea", 18001);
          skycrpgParty.All = true;
          skycrpgParty.placeAtStage = skycrpg.placeAtStage;

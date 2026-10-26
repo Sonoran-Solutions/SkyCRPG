@@ -218,12 +218,47 @@ bridge.sample = {health: 50, healthMax: 100, magicka: 100, magickaMax: 100, stam
 frame(menu);
 assert.equal(menu.Health._visible, false);
 assert.equal(menu.geometryLogs.length, 2, 'subsequent samples and fallback do not spam diagnostics');
+// Execute the actual hotbar clip against snapshots; it never dispatches input.
+const hotbar = menu.SkyCRPGHotbar;
+let hotbarCalls = 0;
+let hotbarData;
+bridge.getHotbar = () => { hotbarCalls++; return hotbarData; };
+menu.now += 500;
+hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, false, 'missing native binding snapshot hides bar');
+hotbarData = Array.from({length: 8}, () => ({name:'', kind:'', count:0, equipped:false}));
+hotbarData[0] = {name:'Iron Sword', kind:'WEAPON', count:1, equipped:true};
+hotbarData[1] = {name:'Flames', kind:'SPELL', count:0, equipped:false};
+hotbarData[2] = {name:'Potion', kind:'POTION', count:4, equipped:false};
+menu.now += 500;
+hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, true);
+assert.equal(hotbar.slot0.name.text, 'Iron Sword');
+assert.equal(hotbar.slot1.kind.text, 'SPELL');
+assert.equal(hotbar.slot2.count.text, 'x4');
+assert.equal(hotbar.slot3.kind.text, 'EMPTY');
+const beforeHotbarCalls = hotbarCalls;
+menu.now += 1;
+hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbarCalls, beforeHotbarCalls, 'snapshot sampling capped at 2Hz');
+hotbarData[2] = {name:'', kind:'', count:0, equipped:false};
+menu.now += 500;
+hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar.slot2.kind.text, 'EMPTY', 'removed/depleted binding refreshes');
+assert.equal(hotbar.slot2.count.text, '');
+menu.ShowElements('Favor', true);
+menu.now += 500;
+hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, false, 'native HUD mode governs hotbar visibility');
+menu.ShowElements('Favor', false);
 const staleStatus = menu.SkyCRPGStatus;
 const staleParty = menu.SkyCRPGPartyArea;
 vm.runInContext(snippet, vm.createContext(Object.assign(menu, {
   Stage: {width: 1280, height: 720}, TextFormat: function () {}, skse: undefined,
 })), {filename: 'hud-init-reinit.as.inc'});
 assert.equal(staleStatus.onEnterFrame, null, 'teardown clears the owned frame handler');
+assert.equal(hotbar.onEnterFrame, null, 'teardown clears hotbar frame handler');
+assert.equal(menu.SkyCRPGHotbar, undefined, 'teardown removes hotbar');
 assert.equal(menu.SkyCRPGStatus, undefined, 'teardown removes old status clip');
 assert.equal(menu.SkyCRPGPartyArea, undefined, 'missing bridge leaves no stale party clip');
 assert.equal(menu.Health._visible, true, 'teardown restores native meters');

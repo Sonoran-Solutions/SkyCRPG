@@ -4,6 +4,11 @@
 #include <RE/G/GFxValue.h>
 #include <RE/G/GFxFunctionHandler.h>
 #include <RE/P/PlayerCharacter.h>
+#include <RE/E/ExtraHotkey.h>
+#include <RE/I/InventoryEntryData.h>
+#include <RE/M/MagicFavorites.h>
+#include <RE/T/TESBoundObject.h>
+#include <RE/T/TESShout.h>
 
 // CommonLib's REX/W32 headers must precede the Windows API headers pulled by
 // the shared skeleton. Keep the skeleton below every CommonLib include.
@@ -147,6 +152,118 @@ void LogHudSettings(const std::wstring& iniPath, const skycrpg::ui::ParseResult&
 }
 
 using ResourceClock = std::chrono::steady_clock;
+struct HotbarSlot {
+	std::string name;
+	std::string kind;
+	int count{};
+	bool equipped{};
+};
+struct HotbarCache {
+	std::mutex mutex;
+	std::array<HotbarSlot, 8> slots{};
+	ResourceClock::time_point sampled{};
+	std::uint64_t generation{};
+	bool available{}, pending{}, loaded{};
+} g_hotbar;
+
+const char* HotbarKind(RE::TESForm* form)
+{
+	switch (form->GetFormType()) {
+	case RE::FormType::Weapon: return "WEAPON";
+	case RE::FormType::Armor: return "ARMOR";
+	case RE::FormType::AlchemyItem: return "POTION";
+	case RE::FormType::Spell: return "SPELL";
+	case RE::FormType::Shout: return "SHOUT";
+	case RE::FormType::Scroll: return "SCROLL";
+	default: return "ITEM";
+	}
+}
+
+// Mirrors SKSE GetHotkeyBoundObject: magic slots take precedence over item
+// ExtraHotkey. Only copied values leave the game task; no form is retained.
+void SampleHotbar(std::uint64_t generation)
+{
+	{
+		std::scoped_lock lock(g_hotbar.mutex);
+		if (!g_hotbar.loaded || generation != g_hotbar.generation) { g_hotbar.pending = false; return; }
+	}
+	auto* player = RE::PlayerCharacter::GetSingleton();
+	auto* magic = RE::MagicFavorites::GetSingleton();
+	if (!player || !player->Is3DLoaded() || !magic || !player->GetInventoryChanges(true)) {
+		std::scoped_lock lock(g_hotbar.mutex);
+		g_hotbar.pending = false;
+		g_hotbar.available = false;
+		return;
+	}
+	std::array<HotbarSlot, 8> slots{};
+	const auto equippedLeft = player->GetEquippedObject(true);
+	const auto equippedRight = player->GetEquippedObject(false);
+	auto inventory = player->GetInventory([](RE::TESBoundObject&) { return true; }, true);
+	for (auto& [form, item] : inventory) {
+		if (!form || item.first <= 0 || !item.second || !item.second->extraLists) continue;
+		for (auto* extra : *item.second->extraLists) {
+			if (!extra) continue;
+			auto* binding = extra->GetByType<RE::ExtraHotkey>();
+			if (!binding) continue;
+			const auto index = static_cast<unsigned>(binding->hotkey.underlying());
+			if (index >= slots.size()) continue;
+			// Do not call InventoryEntryData::GetDisplayName: it may add extra data.
+			const auto* name = form->GetName();
+			slots[index] = { name ? name : "", HotbarKind(form), item.first,
+				extra->HasType<RE::ExtraWorn>() || extra->HasType<RE::ExtraWornLeft>() };
+		}
+	}
+	for (std::size_t i = 0; i < slots.size() && i < magic->hotkeys.size(); ++i) {
+		auto* form = magic->hotkeys[i];
+		if (!form) continue;
+		const auto* name = form->GetName();
+		slots[i] = { name ? name : "", HotbarKind(form), 0,
+			form == equippedLeft || form == equippedRight || form == player->GetCurrentShout() };
+	}
+	std::scoped_lock lock(g_hotbar.mutex);
+	g_hotbar.pending = false;
+	if (!g_hotbar.loaded || generation != g_hotbar.generation) return;
+	g_hotbar.slots = std::move(slots);
+	g_hotbar.sampled = ResourceClock::now();
+	g_hotbar.available = true;
+}
+
+class HotbarSnapshot final : public RE::GFxFunctionHandler {
+public:
+	void Call(Params& params) override {
+		if (!params.retVal) return;
+		params.retVal->SetUndefined();
+		if (!params.movie) return;
+		std::array<HotbarSlot, 8> slots;
+		bool available = false, request = false;
+		std::uint64_t generation = 0;
+		{
+			std::scoped_lock lock(g_hotbar.mutex);
+			available = g_hotbar.loaded && g_hotbar.available && ResourceClock::now() - g_hotbar.sampled <= std::chrono::seconds(2);
+			if (available) slots = g_hotbar.slots;
+			if (g_hotbar.loaded && !g_hotbar.pending) {
+				g_hotbar.pending = true; generation = g_hotbar.generation; request = true;
+			}
+		}
+		if (request) SKSE::GetTaskInterface()->AddTask([generation]() { SampleHotbar(generation); });
+		if (!available) return;
+		RE::GFxValue array;
+		params.movie->CreateArray(&array);
+		for (const auto& slot : slots) {
+			RE::GFxValue object, value;
+			params.movie->CreateObject(&object);
+			params.movie->CreateString(&value, slot.name.c_str());
+			if (!object.SetMember("name", value)) return;
+			params.movie->CreateString(&value, slot.kind.c_str());
+			if (!object.SetMember("kind", value)) return;
+			value.SetNumber(slot.count);
+			if (!object.SetMember("count", value)) return;
+			value.SetBoolean(slot.equipped);
+			if (!object.SetMember("equipped", value) || !array.PushBack(object)) return;
+		}
+		*params.retVal = array;
+	}
+};
 struct ResourceCache {
 	std::mutex mutex;
 	std::array<skycrpg::ui::ResourceValue, 3> values{};
@@ -163,6 +280,13 @@ void ResourceLifecycle(SKSE::MessagingInterface::Message* message)
 	if (message->type != SKSE::MessagingInterface::kPreLoadGame &&
 		message->type != SKSE::MessagingInterface::kPostLoadGame &&
 		message->type != SKSE::MessagingInterface::kNewGame) return;
+	{
+		std::scoped_lock hotbarLock(g_hotbar.mutex);
+		++g_hotbar.generation;
+		g_hotbar.available = false;
+		g_hotbar.loaded = message->type == SKSE::MessagingInterface::kNewGame ||
+			(message->type == SKSE::MessagingInterface::kPostLoadGame && message->data != nullptr);
+	}
 	std::scoped_lock lock(g_resources.mutex);
 	++g_resources.generation;
 	g_resources.available = false;
@@ -255,6 +379,10 @@ bool RegisterSkyCRPGUI(RE::GFxMovieView* movie, RE::GFxValue* root)
 	if (!movie || !root) {
 		return false;
 	}
+	RE::GFxValue hotbarFunction;
+	static auto* hotbarHandler = new HotbarSnapshot();
+	movie->CreateFunction(&hotbarFunction, hotbarHandler);
+	if (!root->SetMember("getHotbar", hotbarFunction)) return false;
 	RE::GFxValue function;
 	static auto* handler = new PlayerResources();
 	movie->CreateFunction(&function, handler);
