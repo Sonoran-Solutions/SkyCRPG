@@ -110,3 +110,7 @@ The merged foundation's SKSE2.3.1 load-only evidence is real, and the rewritten 
 ## Tested scope and exact local artifacts
 
 Camera-only, UI-only and combined provider load checks passed on Steam1.7.104.0, SKSE2.3.1, Address Library13, Ubuntu26.04.1/Proton `experimental-11.0-20261014-x86_64`. Owner gameplay results and failures are in session evidence; this is not a wider runtime/platform certification. SKSE2.3.1 archive SHA-256 `7bad616ed360823a027f8828801d91e3a4aa2eacd952023af7f3e31adb2ae250`. [Canonical installed-file hashes](../evidence/p1/tested-artifacts.json) distinguish each tested artifact; [native build manifests](../evidence/p1/native-package-inputs.json) pin skeleton DLL source/archive hashes. Party Sheet3.7 was inspected only and never installed. No provider stack was silently upgraded.
+
+## Phase 2 adapter build activation
+
+DYL-156/160 activate the existing conditional CommonLib7.2.0 selection at exact source `7a60f4de794095d7b0f8928d1b930a52e9a7da83`. Toolchain and transitive manifest baseline both use vcpkg `ee12231b20c95013c6638d845d04c91559a1d1ff`, Windows x64 static CRT/static dependencies, AE-only. Each DLL links its own copy; no shared runtime service or cross-module import. [Build contract](../../cmake/README.md) and per-module evidence record the native build results. This does not upgrade any runtime/provider or confer runtime acceptance.
