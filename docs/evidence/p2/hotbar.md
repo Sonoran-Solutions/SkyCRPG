@@ -1,8 +1,17 @@
 # DYL-161 hotbar candidate — incomplete validation
 
-Base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`. This is an **implementation candidate, not senior-review-ready**. Native runtime, Windows DLL build, and controller/combined acceptance remain open. Original category icons and a native voice recovery display are implemented; their in-game behavior is unverified. The controller path is the native Favorites menu and has not been verified for this use. Do not mark the ticket In Review based on this record.
+Base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`. The owner-reported UI-only controller route and Windows build **PASS** on source `5b06523d675b5118fef2148b503026ba04fb2b92`; subsequent commits through `2bebb1b` are documentation-only. The native Favorites menu is the verified bounded controller selection route for the requested weapon, spell and consumable checks. Direct controller cycling or assigning custom slots is not implemented; keyboard-only bindings, live shout recovery and combined Camera/UI gameplay remain open. See the [controller retest](#controller-favorites-retest--2026-10-26) below; earlier failures and candidate histories remain preserved.
 
-## Menu focus correction and binding investigation
+| Current check | Result and limit |
+| --- | --- |
+| Windows target and generated HUD | **PASS** on tested source `5b06523`; exact DLL, native ZIP and SWF hashes are in the controller retest. The native ZIP does not include the SWF. |
+| UI-only controller Favorites route | **PASS, owner-reported** for requested weapon, spell, consumable, favorite removal, empty slot, display, menu visibility and duplicate-action observations. No independent action telemetry or screenshot was collected. |
+| Direct controller slot cycling/assignment | **NOT IMPLEMENTED**; select displayed favorites through the native Favorites menu. |
+| Numbered keyboard bindings and in-game shout recovery | **NOT_RUN** on the controller-only setup. |
+| Combined Camera/UI and scan performance | **NOT_RUN**; this is not evidence of combined behavior or a performance measurement. |
+| Previous UI-only candidate | **FAIL**: empty bar after attempted keyboard assignment in controller mode and overlap with Favorites; preserved in its historical route below. |
+
+## Menu focus correction and binding investigation — historical
 
 The owner reported **FAIL** on the prior UI-only candidate: the custom hotbar remained visible over the open SkyUI Favorites menu, overlapping the menu prompts, and number-key assignment did not produce a visible custom slot. The image and route belong to the orchestrator's runtime record; this follow-up was not deployed or run. The precise reason for the binding failure is **unresolved**. Pinned SkyUI `FavoritesListEntry.as` shows individual native `hotkey` badges, whereas its bottom numbered strip is SkyUI group state operated through `SKIFM_group*` events. The reported screenshot displayed controller controls and no visible native numbered item badge, but this does not prove whether assignment was suppressed by controller mode, another input issue or the snapshot bridge. Establish a native numbered item badge and compare with the corresponding HUD entry before attributing the failure. SkyUI groups and Skyrim hotkey bindings are not assumed to be interchangeable.
 
@@ -10,11 +19,11 @@ A new menu visibility gate listens to native menu-open/close events and hides im
 
 New source SHA-256: plugin `34ce7eb2670a3ac6a3ab5254a54dc28f6b5a2e4de25bfb976e5fc535803e4cce`, focus policy `d4b8a470a68a17c04bce433a7551b1bee17eb0f8d70dec75e010654d0381d24e`, HUD snippet `954d890b3764783bab5851811bfb5458c07923f0e0fe8fe867764b69c988f2a9`. FFDec compiled the updated HUD **PASS / COMPILED_NOT_RUN**, PID 258646, exit 0 in 0.765s, 600s bound; new SWF SHA-256 `66f094b6cb0b4bb6d13d06fed79dac74f4f09f625b2089c2640bcb6ab07dc2cd`, retained at `/srv/storage/Projects/SkyCRPG/session-p2-20261026/hotbar-menu-candidate/Data/Interface/hudmenu.swf`. No test profile, game process, save or configuration was touched by this follow-up. Earlier artifacts remain historical.
 
-## Windows build correction
+## Windows build correction — historical
 
 Initial Windows CI run `40394556388` **FAIL**: MSVC C4267 treated as an error on the `std::size_t` index passed to `BSTArray::operator[]`, whose pinned `size_type` is `uint32_t`. The correction uses that exact size type, bounded by both eight slots and the array size. Native source SHA-256 after this fix is `ff5b2b4c3b9201abc67e543b89fedecd5290b51422db43a077046aeba20424e5`; the SWF remains unchanged from the voice recovery candidate below. Actual-AS harness and 14 existing Scaleform source checks pass after the fix. **Windows rebuild NOT_RUN** for the corrected code; CI must verify the fix and compile the later voice-recovery additions. Source inspection confirms the recovery code includes `<cmath>`, uses the pinned CommonLib actor/AIProcess and TESShout declarations, and guards missing high process before the native getter; this is not a compiler or runtime result.
 
-## Native voice recovery follow-up
+## Native voice recovery follow-up — source audit
 
 Pinned SKSE 2.3.1 `scripts/vanilla/Actor.psc` calls `GetVoiceRecoveryTime` the actor voice recovery timer and specifies the corresponding setter's units as seconds. Pinned CommonLib 7.2.0 `Actor.cpp` maps its getter to AE ID 38808. The exact Address Library 13 file SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842` maps that ID to RVA `0x6d92b0`. Read-only disassembly of the exact Steam executable SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f` shows the getter follows `Actor+0xf8` to AIProcess, then high-process pointer `+0x10`, then reads float `+0x18`, matching the CommonLib `voiceRecoveryTime` member. The adjacent setter writes the same field. The binary check validates the mapped function and underlying field, not live countdown behavior or broader runtime safety.
 
@@ -30,13 +39,13 @@ The icon-only HUD snippet SHA-256 is `83c03ea2b03ea37cea63f6f5a387e97def9bb4d208
 
 The earlier `e8b40...` artifact below remains historical. No native build or gameplay has been performed for either candidate.
 
-## Implementation and safety boundary
+## Implementation and safety boundary — earlier numbered-binding candidate
 
 The HUD asks the UI DLL for an eight-entry snapshot at most twice per second. A single pending SKSE game task samples the player's inventory and `MagicFavorites`; only copied strings, counts and booleans cross into the Scaleform callback. A generation invalidates snapshots on load/new-game transitions; snapshots older than two seconds are unavailable and hide the bar. Empty entries display EMPTY. Physical item bindings use `ExtraHotkey`; equipped state uses the bound instance's worn markers. Magic slots override physical slots as in the pinned SKSE 2.3.1 `GetHotkeyBoundObject` source. Names for physical items use the base form, not instance-specific names. `InventoryEntryData::GetDisplayName` is deliberately avoided because the pinned implementation may add extra data. Count is the total for the bound base form, not a particular instance.
 
 The candidate registers no hotbar input handler and dispatches no synthetic actions. Existing native numbered hotkeys retain their normal ownership and existing native Favorites UI provides a potential controller path. This architecture cannot itself dispatch twice; whether the native actions and controller route satisfy all acceptance scenarios is **NOT_RUN**. Native gameplay/menu focus, combat, Camera module, inventory changes and native attack/cast behavior are not altered by this code. A writable inventory database, fabricated cooldown and separate camera service are not introduced.
 
-## Results
+## Historical results — before controller retest
 
 | Check | Result | Evidence and limits |
 | --- | --- | --- |
@@ -50,11 +59,11 @@ The candidate registers no hotbar input handler and dispatches no synthetic acti
 | Native shout recovery | **PASS source/binary audit and mocked presentation / NOT_RUN in game** | Exact ID, getter and global timer path are recorded above. Live countdown and value semantics require the pinned gameplay route. |
 | UI-only, combined, 720p/1080p rendering, performance | **NOT_RUN** | The 2 Hz inventory scan needs measured safety and layout verification in the actual engine. |
 
-The runtime target is Steam Skyrim 1.7.104.0, SKSE 2.3.1, Address Library 13, Ubuntu 26.04.1, Proton Experimental 11, RTX 3080, SkyUI Community 6.11, with other pins in [the runtime matrix](../../compatibility/runtime-matrix.md). None was launched for this candidate. Deployment, copied-save preservation, logs, capture, original INI/plugin restoration and combined camera/UI testing are orchestrator-owned and remain **NOT_RUN**. Native UI ZIP still lacks generated `hudmenu.swf`; this candidate does not resolve licensing or public distribution.
+The runtime target is Steam Skyrim 1.7.104.0, SKSE 2.3.1, Address Library 13, Ubuntu 26.04.1, Proton Experimental 11, RTX 3080, SkyUI Community 6.11, with other pins in [the runtime matrix](../../compatibility/runtime-matrix.md). The historical table above predates the UI-only owner routes below. Native UI ZIP still lacks generated `hudmenu.swf`; this candidate does not resolve licensing or public distribution.
 
 ## Remaining obligations
 
-Verify the newly used CommonLib relocations against the exact Address Library and build the Windows target; inspect actual bound item/magic precedence and instance/count behavior in game. Verify category icon readability and fidelity in game and compare the displayed voice timer to native shout recovery. Run weapon, spell, consumable, empty/depleted and menu/controller fixtures, confirm displayed state and at-most-once native dispatch, measure scan overhead, and run the combined smoke. Reconcile user controls and packaging documentation with verified behavior. F6/F7/F8 remain Camera-owned; no UI input mappings were added. Until these obligations pass, the candidate does not meet DYL-161 acceptance.
+The owner-reported controller route passed the bounded weapon, spell, consumable, empty/removal, menu and duplicate-action checks described below. Independent action telemetry was not collected. Keyboard-only numbered bindings, native bound item/magic precedence, instance-specific behavior, live shout recovery, inventory-scan overhead and combined Camera/UI smoke remain **NOT_RUN**. Direct custom-slot cycling/assignment is not implemented; the controller path uses the native Favorites menu. F6/F7/F8 remain Camera-owned and no UI gameplay input handler was added. The native UI ZIP lacks the generated SWF and does not establish public distribution readiness.
 
 ## UI-only owner route — 2026-10-26
 
@@ -66,13 +75,13 @@ Pinned host and provider versions are as recorded above. The bounded run `dc8bcc
 
 The owner subsequently clarified that they were using controller mode and that mouse/keyboard input inside Skyrim had not worked even in the original unmodified baseline. This does not establish a regression in the hotbar. It does establish that this candidate's numbered-key assignment path is not usable for that controller-only setup; controller-accessible assignment/selection remains an unmet requirement. The cause of the mouse issue is outside the evidence collected here, and an independent keyboard-only binding test remains **NOT_RUN**.
 
-## Automatic favorite display for controller users — candidate
+## Automatic favorite display for controller users — implementation
 
 The owner expected favoriting an item to populate the bar and reported a controller-only Skyrim session. This candidate fills unoccupied positions with otherwise-unrepresented native favorites, sorted by form ID and limited to the first eight total entries. Native numbered bindings retain their original positions and take precedence, including SKSE's magic-over-item precedence. Automatically displayed entries say **FAV**, not a number: they do not acquire a binding and cannot be activated by the displayed position. Controller users select individual items through Skyrim/SkyUI's existing Favorites menu. Favorites beyond the eight displayed remain accessible in that native menu; removal or depletion can reorder the unbound entries. Direct controller cycling/assignment on the bar is not implemented or claimed.
 
 Source membership follows pinned SKSE 2.3.1 `PapyrusGame.cpp` `IsObjectFavorited`: spell/shout membership comes from `MagicFavorites::spells`; item membership is the presence of `ExtraHotkey`, including the unbound value. The snapshot requires positive native inventory count, copies values on the game task and never retains form pointers or dispatches an action. Duplicate form IDs are represented once among the automatic favorites; separately bound positions retain their native meaning. Names/counts for inventory entries remain base-form aggregates, not instance-specific descriptions. A magic binding that overrides an item binding still wins its number; an otherwise hidden item favorite may appear as FAV. No independent inventory database, synthetic controller action, group action or fabricated binding is added.
 
-The bounded portable test covers bound-slot preservation, deterministic ordering, duplicate suppression, depletion/removal refresh and overflow; the actual-AS mocked HUD verifies numeric versus FAV labels and existing focus behavior. Fourteen existing source checks also pass. FFDec build **PASS / COMPILED_NOT_RUN**, output `hudmenu.swf` SHA-256 `a716d12a9668438f635564352539f1600d5a57c41a9d9c200b45a92c02a1f606`; job, log and generated asset are retained outside Git under `/srv/storage/Projects/SkyCRPG/session-p2-wave2/controller-favorites/`. Native Windows build and actual favorite membership, ordering, controller selection, equip/use effects, menu visibility and at-most-once behavior are **NOT_RUN** for this candidate. Controller selection via the native Favorites menu remains a bounded fallback requiring owner verification, not proof of direct hotbar controls.
+The bounded portable test covers bound-slot preservation, deterministic ordering, duplicate suppression, depletion/removal refresh and overflow; the actual-AS mocked HUD verifies numeric versus FAV labels and existing focus behavior. Fourteen existing source checks also pass. FFDec build **PASS / COMPILED_NOT_RUN**, output `hudmenu.swf` SHA-256 `a716d12a9668438f635564352539f1600d5a57c41a9d9c200b45a92c02a1f606`; job, log and generated asset are retained outside Git under `/srv/storage/Projects/SkyCRPG/session-p2-wave2/controller-favorites/`. Those checks and build were initially **NOT_RUN** at compilation time; the subsequent controller retest below records the owner-reported results. The native Favorites menu is the tested bounded fallback, not direct hotbar cycling or assignment.
 
 ## Controller Favorites retest — 2026-10-26
 
