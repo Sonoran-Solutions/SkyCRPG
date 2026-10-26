@@ -1,0 +1,27 @@
+{
+  "purpose": "Phase2 combined bounded owner gameplay route",
+  "owner": "orchestrator",
+  "timeout_s": 600,
+  "deadline_utc": "2026-10-26T19:47:55.482125+00:00",
+  "command": [
+    "/usr/bin/python3",
+    "-u",
+    "-I",
+    "tools/profile.py",
+    "launch",
+    "--interactive",
+    "--timeout",
+    "600"
+  ],
+  "supervisor_pid": 197265,
+  "profile_pid": 197328,
+  "run_id": "52b5f11b872b43c29747541646e08017",
+  "leftover_pids": [],
+  "stop_reason": null,
+  "exit_code": 0,
+  "ended": 1793043688.5305855,
+  "guard": "stop at MemAvailable<4GiB or full memory pressure avg10>10%",
+  "completion": "normal game Quit, zero exit, empty leftover PID list, restored profile",
+  "cleanup": "Only run-ID-tagged processes eligible for stop; runtime profile restored afterward",
+  "log": "External game log retained by integrator; no private save/co-save file names or bytes included."
+}

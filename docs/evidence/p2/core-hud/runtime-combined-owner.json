@@ -1,0 +1,21 @@
+{
+  "result": "PASS",
+  "scope": "bounded combined Camera+UI smoke at115%HUDscale",
+  "quote": "Confirmed all checks pass and work as intended",
+  "checks": [
+    "elevatedcamera andliveHUDcoexist",
+    "F6 nativefallback andreturn",
+    "nativeinteractionprompts visible andusable",
+    "menuopen/close focus with no duplicateelements/actions",
+    "larger115%HUD readable"
+  ],
+  "capture_sha256": "1d1f43ff5c14003943cf6c1fb61d7998e755bc86f4530a19b22e553b81429eaa",
+  "capture_observation": "Elevatedcamera, correctlyanchoredHUD, nativecontroller Search Bandit prompt andexistingminimap/compass coexist.",
+  "camera_source": "8a681390db5b36c2b6fb4fcb056c0abc0e085a35",
+  "camera_dll_sha256": "aedc9d53e7c7d85719fb600fe8b71129cc9aab1f67f92cffe10ea499f106d024",
+  "ui_native_source": "e49fc30aebb008377e9a010e96757444c0f684c6",
+  "ui_dll_sha256": "29381c08436486fda835206dceebaac73b1902f7f13af9a3f8d25b070d6fe136",
+  "ui_swf_sha256": "b4552e17f0806848bcbb0a31f09e934e3feffc5a405305ba5707beb6b3215c05",
+  "scale_override_sha256": "4d25b8efb447df95eae207e6a80de12845a13e493740582806cd44e56f6c05b2",
+  "recorded_utc": "2026-10-26T19:42:15.983221+00:00"
+}
