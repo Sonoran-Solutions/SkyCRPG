@@ -30,12 +30,23 @@
          var skycrpg = this.createEmptyMovieClip("SkyCRPGStatus", 18000);
          skycrpg.createEmptyMovieClip("meters", 1);
          skycrpg.All = true;
-         skycrpg._xscale = skycrpgSettings.hudScale;
-         skycrpg._yscale = skycrpgSettings.hudScale;
-         skycrpg._x = Math.max(16, Math.min(Stage.width - 16 - 420 * skycrpgSettings.hudScale / 100,
-            Stage.width / 2 - 210 * skycrpgSettings.hudScale / 100 + skycrpgSettings.hudOffsetX));
-         skycrpg._y = Math.max(16, Math.min(Stage.height - 12 - 52 * skycrpgSettings.hudScale / 100,
-            Stage.height - 64 + skycrpgSettings.hudOffsetY));
+         // Stage anchors are global; HUDMenu has a translated authored origin.
+         // Convert both position and a scale basis through its full parent chain.
+         skycrpg.placeAtStage = function(stageX, stageY, scalePercent) {
+            var origin = {x: stageX, y: stageY};
+            var extent = {x: stageX + 100, y: stageY + 100};
+            this._parent.globalToLocal(origin);
+            this._parent.globalToLocal(extent);
+            this._x = origin.x;
+            this._y = origin.y;
+            this._xscale = (extent.x - origin.x) * scalePercent / 100;
+            this._yscale = (extent.y - origin.y) * scalePercent / 100;
+         };
+         skycrpg.placeAtStage(
+            Math.max(16, Math.min(Stage.width - 16 - 420 * skycrpgSettings.hudScale / 100,
+               Stage.width / 2 - 210 * skycrpgSettings.hudScale / 100 + skycrpgSettings.hudOffsetX)),
+            Math.max(16, Math.min(Stage.height - 12 - 52 * skycrpgSettings.hudScale / 100,
+               Stage.height - 64 + skycrpgSettings.hudOffsetY)), skycrpgSettings.hudScale);
          skycrpg._visible = false;
          skycrpg._skycrpgDataReady = false;
          skycrpg._skycrpgNextSample = 0;
@@ -85,12 +96,12 @@
          }
          var skycrpgParty = this.createEmptyMovieClip("SkyCRPGPartyArea", 18001);
          skycrpgParty.All = true;
-         skycrpgParty._x = Math.max(16, Math.min(Stage.width - 16 - 194 * skycrpgSettings.hudScale / 100,
-            20 + skycrpgSettings.hudOffsetX));
-         skycrpgParty._y = Math.max(16, Math.min(Stage.height - 16 - 49 * skycrpgSettings.hudScale / 100,
-            62 + skycrpgSettings.hudOffsetY));
-         skycrpgParty._xscale = skycrpgSettings.hudScale;
-         skycrpgParty._yscale = skycrpgSettings.hudScale;
+         skycrpgParty.placeAtStage = skycrpg.placeAtStage;
+         skycrpgParty.placeAtStage(
+            Math.max(16, Math.min(Stage.width - 16 - 194 * skycrpgSettings.hudScale / 100,
+               20 + skycrpgSettings.hudOffsetX)),
+            Math.max(16, Math.min(Stage.height - 16 - 49 * skycrpgSettings.hudScale / 100,
+               62 + skycrpgSettings.hudOffsetY)), skycrpgSettings.hudScale);
          skycrpgParty.lineStyle(1, 0x806E49, 55);
          skycrpgParty.beginFill(0x171715, 45);
          skycrpgParty.moveTo(0, 0); skycrpgParty.lineTo(194, 0); skycrpgParty.lineTo(194, 49);
@@ -112,12 +123,15 @@
          skycrpg.logGeometry = function(phase, modeVisible) {
             if (skse != undefined && typeof(skse.Log) == "function") {
                var hud = this._parent;
+               var globalPanel = {x: 0, y: 0};
+               this.localToGlobal(globalPanel);
                skse.Log("SkyCRPG HUD geometry " + phase +
                   " Stage=" + Stage.width + "x" + Stage.height +
                   " parent_x=" + hud._x + " parent_y=" + hud._y +
                   " parent_xscale=" + hud._xscale + " parent_yscale=" + hud._yscale +
                   " panel_x=" + this._x + " panel_y=" + this._y +
                   " panel_xscale=" + this._xscale + " panel_yscale=" + this._yscale +
+                  " global_panel_x=" + globalPanel.x + " global_panel_y=" + globalPanel.y +
                   " modeVisible=" + modeVisible);
             }
          };

@@ -37,7 +37,17 @@ class TextField {
 }
 
 class Clip {
-  constructor(parent = null, name = '') { this._parent = parent; this._name = name; this._visible = true; }
+  constructor(parent = null, name = '') { this._parent = parent; this._name = name; this._visible = true; this._x = 0; this._y = 0; this._xscale = 100; this._yscale = 100; }
+  localToGlobal(point) {
+    point.x = this._x + point.x * this._xscale / 100;
+    point.y = this._y + point.y * this._yscale / 100;
+    if (this._parent) this._parent.localToGlobal(point);
+  }
+  globalToLocal(point) {
+    if (this._parent) this._parent.globalToLocal(point);
+    point.x = (point.x - this._x) * 100 / this._xscale;
+    point.y = (point.y - this._y) * 100 / this._yscale;
+  }
   createEmptyMovieClip(name) {
     const clip = new Clip(this, name);
     this[name] = clip;
@@ -57,8 +67,11 @@ class Clip {
   clear() {}
 }
 
-function makeMenu(width, height, settings) {
-  const menu = new Clip();
+function makeMenu(width, height, settings, transform = {}) {
+  const ancestor = new Clip();
+  Object.assign(ancestor, transform.ancestor || {});
+  const menu = new Clip(ancestor);
+  Object.assign(menu, transform.menu || {});
   menu.geometryLogs = [];
   menu.Health = {All: true, _visible: true};
   menu.Magica = {All: true, _visible: true};
@@ -90,18 +103,40 @@ function settings(scale, offsetX, offsetY, enabled = true) {
     sample: undefined, calls: 0, getPlayerResources() { this.calls++; return this.sample; }};
 }
 
+function globalBounds(clip, width, height) {
+  const origin = {x: 0, y: 0};
+  const extent = {x: width, y: height};
+  clip.localToGlobal(origin); clip.localToGlobal(extent);
+  return {x: origin.x, y: origin.y, width: extent.x - origin.x, height: extent.y - origin.y};
+}
+const transforms = [
+  {},
+  {menu: {_x: 616.65, _y: 475.45}}, // Recorded failing UI-only route.
+  {menu: {_x: 616.65, _y: 475.45, _xscale: 80, _yscale: 125}},
+  {menu: {_x: 100, _y: -20, _xscale: 80, _yscale: 125}, ancestor: {_x: 50, _y: 40, _xscale: 150, _yscale: 75}},
+];
 for (const [width, height] of [[1280, 720], [1920, 1080]]) {
   for (const [scale, x, y] of [[85, -120, -60], [100, 0, 0], [115, 120, 60]]) {
-    const menu = makeMenu(width, height, settings(scale, x, y));
-    const status = menu.SkyCRPGStatus;
-    const party = menu.SkyCRPGPartyArea;
-    assert.ok(status && party, 'active settings create status and reserved party area');
-    assert.ok(status._x >= 16 && status._x + 420 * scale / 100 <= width - 16);
-    assert.ok(status._y >= 16 && status._y + 52 * scale / 100 <= height - 12);
-    assert.ok(party._x >= 16 && party._x + 194 * scale / 100 <= width - 16);
-    assert.ok(party._y >= 16 && party._y + 49 * scale / 100 <= height - 16);
+    for (const transform of transforms) {
+      const menu = makeMenu(width, height, settings(scale, x, y), transform);
+      const status = globalBounds(menu.SkyCRPGStatus, 420, 52);
+      const party = globalBounds(menu.SkyCRPGPartyArea, 194, 49);
+      const epsilon = 0.00001;
+      assert.ok(status.x >= 16 - epsilon && status.x + status.width <= width - 16 + epsilon);
+      assert.ok(status.y >= 16 - epsilon && status.y + status.height <= height - 12 + epsilon);
+      assert.ok(party.x >= 16 - epsilon && party.x + party.width <= width - 16 + epsilon);
+      assert.ok(party.y >= 16 - epsilon && party.y + party.height <= height - 16 + epsilon);
+      assert.ok(Math.abs(status.width - 420 * scale / 100) < epsilon, 'global resource scale independent of ancestors');
+      assert.ok(Math.abs(party.height - 49 * scale / 100) < epsilon, 'global party scale independent of ancestors');
+      assert.ok(Math.abs(status.x - Math.max(16, Math.min(width - 16 - status.width, width / 2 - status.width / 2 + x))) < epsilon);
+      assert.ok(Math.abs(party.x - Math.max(16, Math.min(width - 16 - party.width, 20 + x))) < epsilon);
+    }
   }
 }
+const recordedOriginMenu = makeMenu(1280, 720, settings(100, 0, 0), transforms[1]);
+assert.ok(Math.abs(recordedOriginMenu.SkyCRPGStatus._x - (430 - 616.65)) < 0.00001);
+assert.ok(Math.abs(recordedOriginMenu.SkyCRPGStatus._y - (656 - 475.45)) < 0.00001);
+assert.deepEqual(globalBounds(recordedOriginMenu.SkyCRPGPartyArea, 194, 49), {x: 20, y: 62, width: 194, height: 49});
 
 const menu = makeMenu(1280, 720, settings(100, 0, 0));
 const originalStatus = menu.SkyCRPGStatus;
