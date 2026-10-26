@@ -55,7 +55,8 @@
             skycrpgMeter.createTextField("value", 2, 112, 0, 32, 16);
             skycrpgMeter.value.selectable = false;
             skycrpgMeter.value.autoSize = "right";
-            skycrpgMeter.value.setTextFormat(new TextFormat("$EverywhereFont", 12, 0xE8E1D1, true));
+            // drawPercent assigns text later, so use the future-text format.
+            skycrpgMeter.value.setNewTextFormat(new TextFormat("$EverywhereFont", 12, 0xE8E1D1, true));
             skycrpgMeter.bar = skycrpgMeter.createEmptyMovieClip("bar", 3);
             skycrpgMeter.bar._y = 18;
             skycrpgMeter.barColor = skycrpgColors[skycrpgIndex];

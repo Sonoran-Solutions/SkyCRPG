@@ -83,6 +83,13 @@ class PatchContract(unittest.TestCase):
             method = candidate.index("function " + setter + "(")
             hook = candidate.index("this." + flag + " = true;", method)
             self.assertGreater(hook, method)
+        fade = candidate.index("function FadeOutStamina(aPercent)")
+        fadeSeen = candidate.index("this._skycrpgStaminaSeen = true;", fade)
+        fadeValue = candidate.index("this.lastStaminaMeterPercent = aPercent;", fade)
+        nativeFade = candidate.index("this.FadeOutMeter(this.Stamina);", fade)
+        self.assertLess(fadeSeen, nativeFade)
+        self.assertLess(fadeValue, nativeFade)
+        self.assertIn("this.StaminaMeter.CurrentPercent = aPercent;", candidate[fade:])
         self.assertIn("this.SkyCRPGStatus._visible = skycrpgVisible;", candidate)
         self.assertIn("this._skycrpgMetersSuppressed = skycrpgVisible;", candidate)
         self.assertEqual(builder.sha(source), builder.SOURCES["Vanilla/HUDMenu.as"])
@@ -99,6 +106,31 @@ class PatchContract(unittest.TestCase):
         self.assertIn("RegisterSkyCRPGUI", plugin)
         self.assertIn("skycrpgSettings != undefined", (builder.ROOT / "scaleform/hud-init.as.inc").read_text())
         self.assertIn("native HUD fallback retained", plugin)
+
+    def test_hud_formats_dynamic_text_with_new_text_format(self):
+        source = (builder.ROOT / "scaleform/hud-init.as.inc").read_text()
+        field_setup = source.index('skycrpgMeter.value.setNewTextFormat(')
+        dynamic_assignment = source.index('this.value.text = Math.round(bounded) + "%";')
+        self.assertLess(field_setup, dynamic_assignment)
+        self.assertNotIn('skycrpgMeter.value.setTextFormat(', source)
+        # Other HUD text is assigned before its one-time format application.
+        for field in ("skycrpg.title", "skycrpgMeter.label", "skycrpgParty.heading", "skycrpgParty.availability"):
+            assign = source.index(field + ".text =")
+            format_call = source.index(field + ".setTextFormat(", assign)
+            self.assertLess(assign, format_call)
+
+    def test_native_loader_rejects_non_pinned_or_null_skse(self):
+        plugin = (builder.ROOT / "src/plugin.cpp").read_text()
+        pin = (builder.ROOT / "src/skse_version_pin.h").read_text()
+        load = plugin.index("bool SKSEPlugin_Load")
+        version_guard = plugin.index("if (!skseInterface || !skycrpg::ui::IsPinnedSkseVersion(skseInterface->skseVersion))", load)
+        skeleton = plugin.index("skycrpg::LoadSkeleton(kModule, skseInterface)", load)
+        init = plugin.index("SKSE::Init(", load)
+        self.assertLess(version_guard, skeleton)
+        self.assertLess(version_guard, init)
+        self.assertIn("0x02030010U", pin)
+        self.assertIn("== skse::kSKSE_2_3_1", plugin)
+        self.assertIn("IsPinnedSkseVersion(0x02030010U)", (builder.ROOT / "tests/hud_settings_test.cpp").read_text())
 
     def test_scaleform_settings_publish_enable_gate_last(self):
         plugin = (builder.ROOT / "src/plugin.cpp").read_text()

@@ -39,9 +39,33 @@ function extractObservedMeterSetter(name, observedFlag) {
   return eval(`(${instrumented})`);
 }
 
+function extractObservedFadeOutStamina() {
+  const start = hudSource.indexOf('function FadeOutStamina(');
+  assert.ok(start >= 0, 'missing native FadeOutStamina callback');
+  const open = hudSource.indexOf('{', start);
+  let depth = 1;
+  let end = open + 1;
+  for (; depth; end++) {
+    if (hudSource[end] === '{') depth++;
+    else if (hudSource[end] === '}') depth--;
+  }
+  const method = hudSource.slice(start, end);
+  const instrumented = method.replace('{', '{\nthis._skycrpgStaminaSeen = true;\nthis.lastStaminaMeterPercent = aPercent;');
+  assert.notEqual(instrumented, method, 'stamina fade callback synchronizes overlay cache');
+  return eval(`(${instrumented})`);
+}
+
 class TextField {
-  constructor() { this.text = ''; this.selectable = true; }
-  setTextFormat(format) { this.format = format; }
+  constructor() { this._text = ''; this.selectable = true; this.newTextFormat = null; this.appliedFormat = null; }
+  get text() { return this._text; }
+  set text(value) {
+    this._text = String(value);
+    // AS2 setNewTextFormat controls later text assignment; setTextFormat only
+    // changes characters already present in the field.
+    this.appliedFormat = this._text.length ? this.newTextFormat : null;
+  }
+  setTextFormat(format) { this.format = format; if (this._text.length) this.appliedFormat = format; }
+  setNewTextFormat(format) { this.newTextFormat = format; }
 }
 
 class Clip {
@@ -84,12 +108,14 @@ function makeMenu(width, height, settings) {
   menu._skycrpgStaminaSeen = false;
   menu.HealthMeterLeft = {SetPercent() {}, SetTargetPercent() {}};
   menu.MagickaMeter = {SetPercent() {}, SetTargetPercent() {}};
-  menu.StaminaMeter = {SetPercent() {}, SetTargetPercent() {}};
+  menu.StaminaMeter = {CurrentPercent: 0, TargetPercent: 0, SetPercent(value) { this.CurrentPercent = value; }, SetTargetPercent(value) { this.TargetPercent = value; }};
   menu.HealthMeterAnim = menu.MagickaMeterAnim = menu.StaminaMeterAnim = {};
   menu.RunMeterAnim = function () {};
   menu.SetHealthMeterPercent = extractObservedMeterSetter('SetHealthMeterPercent', '_skycrpgHealthSeen');
   menu.SetMagickaMeterPercent = extractObservedMeterSetter('SetMagickaMeterPercent', '_skycrpgMagickaSeen');
   menu.SetStaminaMeterPercent = extractObservedMeterSetter('SetStaminaMeterPercent', '_skycrpgStaminaSeen');
+  menu.FadeOutStamina = extractObservedFadeOutStamina();
+  menu.FadeOutMeter = function (meter) { meter.faded = true; };
   menu.CheckAgainstHudMode = extractFunction('CheckAgainstHudMode');
   menu.ShowElements = extractFunction('ShowElements');
   const context = vm.createContext(Object.assign(menu, {
@@ -135,11 +161,24 @@ assert.equal(originalStatus._visible, true);
 assert.equal(originalStatus.meters.meter0.value.text, '73%');
 assert.equal(originalStatus.meters.meter1.value.text, '41%');
 assert.equal(originalStatus.meters.meter2.value.text, '96%');
+assert.equal(originalStatus.meters.meter0.value.appliedFormat.args[0], '$EverywhereFont', 'future meter text inherits the HUD value font');
+assert.equal(originalStatus.meters.meter0.value.appliedFormat.args[1], 12, 'future meter text inherits the HUD value size');
+assert.equal(originalStatus.meters.meter0.value.appliedFormat.args[2], 0xE8E1D1, 'future meter text inherits the HUD value color');
 assert.equal(originalStatus.meters.meter0.bar._y, 18, 'bar sits below its label');
 assert.equal(menu.Health._visible, false, 'custom bars replace native duplicates only after live data');
 assert.equal(menu.Magica._visible, false);
 assert.equal(menu.Stamina._visible, false);
 assert.equal(originalStatus._skycrpgDataReady, true);
+
+menu.SetStaminaMeterPercent(50, false);
+frame(menu);
+assert.equal(originalStatus.meters.meter2.value.text, '50%');
+menu.FadeOutStamina(100);
+assert.equal(menu.Stamina.faded, true, 'native fade animation still runs');
+assert.equal(menu.StaminaMeter.CurrentPercent, 100, 'native current percent remains the supplied fade value');
+assert.equal(menu.StaminaMeter.TargetPercent, 100, 'native target percent remains the supplied fade value');
+frame(menu);
+assert.equal(originalStatus.meters.meter2.value.text, '100%', 'overlay synchronizes with FadeOutStamina after prior live data');
 
 menu.HealthPenaltyPercent = 20;
 menu.MagickaPenaltyPercent = 25;
@@ -147,7 +186,7 @@ menu.StaminaPenaltyPercent = 50;
 frame(menu);
 assert.equal(originalStatus.meters.meter0.value.text, '58%', 'display tracks native effective health meter');
 assert.equal(originalStatus.meters.meter1.value.text, '31%');
-assert.equal(originalStatus.meters.meter2.value.text, '48%');
+assert.equal(originalStatus.meters.meter2.value.text, '50%', 'penalty math applies to synchronized fade-out stamina');
 menu.HealthPenaltyPercent = menu.MagickaPenaltyPercent = menu.StaminaPenaltyPercent = 0;
 
 menu.ShowElements('Favor', true);

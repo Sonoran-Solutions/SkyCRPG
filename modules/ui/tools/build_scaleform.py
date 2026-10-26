@@ -80,6 +80,9 @@ def transform(name, text):
         for setter, flag in seen_setters.items():
             signature = "function " + setter + "(aPercent, abForce)\n   {"
             text = replace_once(text, signature, signature + "\n      this." + flag + " = true;")
+        fade_signature = "function FadeOutStamina(aPercent)\n   {"
+        text = replace_once(text, fade_signature, fade_signature +
+                            "\n      this._skycrpgStaminaSeen = true;\n      this.lastStaminaMeterPercent = aPercent;")
         mode_anchor = "         _loc2_ = _loc2_ + 1;\n      }\n   }\n   function SetLocationName(aLocation)"
         mode_sync = """         _loc2_ = _loc2_ + 1;
       }

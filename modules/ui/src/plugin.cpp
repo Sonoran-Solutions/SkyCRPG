@@ -8,6 +8,7 @@
 #include <skycrpg/skeleton.h>
 #include "hud_settings.h"
 #include "address_library_pin.h"
+#include "skse_version_pin.h"
 
 #include <array>
 #include <string>
@@ -17,6 +18,7 @@
 
 namespace {
 constexpr skycrpg::ModuleInfo kModule{ "SkyCRPG UI", L"SkyCRPG_UI", SKYCRPG_VERSION, SKYCRPG_SOURCE_COMMIT };
+static_assert(skycrpg::ui::kPinnedSkseVersion == skse::kSKSE_2_3_1);
 skycrpg::ui::HudSettings g_hudSettings{};
 
 enum class AddressLibraryStatus
@@ -174,6 +176,9 @@ __declspec(dllexport) constinit skse::PluginVersionData SKSEPlugin_Version{
 
 __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* skseInterface)
 {
+	if (!skseInterface || !skycrpg::ui::IsPinnedSkseVersion(skseInterface->skseVersion)) {
+		return false;
+	}
 	if (!skycrpg::LoadSkeleton(kModule, skseInterface)) {
 		return false;
 	}
