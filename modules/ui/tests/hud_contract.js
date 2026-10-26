@@ -100,7 +100,8 @@ function makeMenu(width, height, settings, transform = {}) {
 function frame(menu, elapsed = 100) { menu.now = (menu.now || 0) + elapsed; menu.SkyCRPGStatus.onEnterFrame.call(menu.SkyCRPGStatus); }
 function settings(scale, offsetX, offsetY, enabled = true) {
   return {hudEnabled: enabled, hudScale: scale, hudOffsetX: offsetX, hudOffsetY: offsetY,
-    sample: undefined, calls: 0, getPlayerResources() { this.calls++; return this.sample; }};
+    sample: undefined, calls: 0, getPlayerResources() { this.calls++; return this.sample; },
+    menuBlocked: false, isMenuFocusBlocked() { return this.menuBlocked; }};
 }
 
 function globalBounds(clip, width, height) {
@@ -233,6 +234,22 @@ hotbarData[2] = {name:'Potion', kind:'ALCHEMY', count:4, equipped:false};
 hotbarData[4] = {name:'Unrelenting Force', kind:'SHOUT', count:0, equipped:true, voiceRecovery:3.2};
 menu.now += 500;
 hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, true);
+bridge.menuBlocked = true;
+menu.now += 1; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, false, 'Favorites hides immediately before the next snapshot');
+menu.ShowElements('All', true);
+assert.equal(hotbar._visible, false, 'HUD mode changes cannot reveal hotbar over Favorites');
+menu.ShowElements('All', false);
+bridge.menuBlocked = false;
+menu.now += 1; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, true, 'closing Favorites restores a ready hotbar');
+const menuGate = bridge.isMenuFocusBlocked;
+bridge.isMenuFocusBlocked = undefined;
+menu.now += 1; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, false, 'missing menu gate fails closed');
+bridge.isMenuFocusBlocked = menuGate;
+menu.now += 1; hotbar.onEnterFrame.call(hotbar);
 assert.equal(hotbar._visible, true);
 assert.equal(hotbar.slot0.name.text, 'Iron Sword');
 assert.equal(hotbar.slot1.kind.text, 'SPELL');

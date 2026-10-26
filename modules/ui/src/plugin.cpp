@@ -7,6 +7,8 @@
 #include <RE/E/ExtraHotkey.h>
 #include <RE/I/InventoryEntryData.h>
 #include <RE/M/MagicFavorites.h>
+#include <RE/M/MenuOpenCloseEvent.h>
+#include <RE/U/UI.h>
 #include <RE/T/TESBoundObject.h>
 #include <RE/T/TESShout.h>
 
@@ -17,6 +19,7 @@
 #include "address_library_pin.h"
 #include "skse_version_pin.h"
 #include "resource_snapshot.h"
+#include "menu_focus.h"
 
 #include <array>
 #include <atomic>
@@ -151,6 +154,56 @@ void LogHudSettings(const std::wstring& iniPath, const skycrpg::ui::ParseResult&
 		parsed.offsetXWasClamped, parsed.offsetYWasClamped);
 	std::fclose(log);
 }
+
+// Menu events gate visibility immediately. The GFx thread reads only the atomic;
+// the game task queue resamples the actual UI after the transition completes.
+std::atomic_bool g_menuBlocked{ true };
+void RefreshMenuFocus()
+{
+	auto* ui = RE::UI::GetSingleton();
+	bool blocked = true;
+	if (ui) {
+		const bool uiFocus = ui->GameIsPaused() || ui->IsApplicationMenuOpen() || ui->IsModalMenuOpen();
+		const bool namedFocus = ui->IsMenuOpen("FavoritesMenu") || ui->IsMenuOpen("Dialogue Menu") ||
+			ui->IsMenuOpen("Console") || ui->IsMenuOpen("Loading Menu");
+		bool stackFocus = false;
+		for (const auto& menu : ui->menuStack) {
+			if (!menu || menu->menuFlags.any(RE::UI_MENU_FLAGS::kPausesGame, RE::UI_MENU_FLAGS::kApplicationMenu,
+				RE::UI_MENU_FLAGS::kUsesCursor, RE::UI_MENU_FLAGS::kUsesMenuContext, RE::UI_MENU_FLAGS::kModal)) {
+				stackFocus = true; break;
+			}
+		}
+		blocked = skycrpg::ui::MenuFocusBlocked(true, uiFocus, namedFocus, stackFocus);
+	}
+	g_menuBlocked.store(blocked, std::memory_order_release);
+}
+class MenuFocusEvents final : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
+public:
+	RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,
+		RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
+		if (!event) { g_menuBlocked.store(true, std::memory_order_release); return RE::BSEventNotifyControl::kContinue; }
+		auto* ui = RE::UI::GetSingleton();
+		if (!ui) { g_menuBlocked.store(true, std::memory_order_release); return RE::BSEventNotifyControl::kContinue; }
+		const std::string_view name = event->menuName.c_str();
+		const auto menu = ui->GetMenu(name);
+		const bool focusFlags = menu && menu->menuFlags.any(RE::UI_MENU_FLAGS::kPausesGame, RE::UI_MENU_FLAGS::kApplicationMenu,
+			RE::UI_MENU_FLAGS::kUsesCursor, RE::UI_MENU_FLAGS::kUsesMenuContext, RE::UI_MENU_FLAGS::kModal);
+		if (skycrpg::ui::MenuBlocks(name, static_cast<bool>(menu), focusFlags)) {
+			g_menuBlocked.store(true, std::memory_order_release);
+			// No menu or actor pointer survives the callback. Re-read the current
+			// stack after the event rather than trusting pre-transition flags.
+			if (auto* tasks = SKSE::GetTaskInterface()) tasks->AddTask([] { RefreshMenuFocus(); });
+		}
+		return RE::BSEventNotifyControl::kContinue;
+	}
+} g_menuFocusEvents;
+
+class MenuFocusBlocked final : public RE::GFxFunctionHandler {
+public:
+	void Call(Params& params) override {
+		if (params.retVal) params.retVal->SetBoolean(g_menuBlocked.load(std::memory_order_acquire));
+	}
+};
 
 using ResourceClock = std::chrono::steady_clock;
 struct HotbarSlot {
@@ -289,6 +342,16 @@ struct ResourceCache {
 void ResourceLifecycle(SKSE::MessagingInterface::Message* message)
 {
 	if (!message) return;
+	if (message->type == SKSE::MessagingInterface::kDataLoaded) {
+		static bool registered = false;
+		if (auto* ui = RE::UI::GetSingleton()) {
+			if (!registered) { ui->AddEventSink<RE::MenuOpenCloseEvent>(&g_menuFocusEvents); registered = true; }
+			RefreshMenuFocus();
+		} else {
+			AppendModuleLog("Menu visibility event source unavailable; hotbar hidden\n");
+		}
+		return;
+	}
 	if (message->type != SKSE::MessagingInterface::kPreLoadGame &&
 		message->type != SKSE::MessagingInterface::kPostLoadGame &&
 		message->type != SKSE::MessagingInterface::kNewGame) return;
@@ -391,6 +454,10 @@ bool RegisterSkyCRPGUI(RE::GFxMovieView* movie, RE::GFxValue* root)
 	if (!movie || !root) {
 		return false;
 	}
+	RE::GFxValue menuFunction;
+	static auto* menuHandler = new MenuFocusBlocked();
+	movie->CreateFunction(&menuFunction, menuHandler);
+	if (!root->SetMember("isMenuFocusBlocked", menuFunction)) return false;
 	RE::GFxValue hotbarFunction;
 	static auto* hotbarHandler = new HotbarSnapshot();
 	movie->CreateFunction(&hotbarFunction, hotbarHandler);

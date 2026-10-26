@@ -107,7 +107,15 @@
             Math.max(16, Math.min(Stage.height - 16 - 116 * skycrpgSettings.hudScale / 100,
             Stage.height - 122 + skycrpgSettings.hudOffsetY)), skycrpgSettings.hudScale);
          bar._visible = false;
+         bar.dataReady = false;
          bar.nextSample = 0;
+         bar.syncVisibility = function() {
+            var bridge = skse != undefined && skse.plugins != undefined ? skse.plugins.SkyCRPGUI : undefined;
+            var blocked = bridge == undefined || typeof(bridge.isMenuFocusBlocked) != "function" ||
+               bridge.isMenuFocusBlocked() != false;
+            this._visible = this.dataReady && !blocked && this._parent.CheckAgainstHudMode(this);
+         };
+         bar.onModeChange = function(mode) { this.syncVisibility(); };
          var slotIndex = 0;
          while (slotIndex < 8) {
             var slot = bar.createEmptyMovieClip("slot" + slotIndex, slotIndex + 1);
@@ -164,13 +172,18 @@
             slotIndex++;
          }
          bar.onEnterFrame = function() {
+            // Menu transitions must hide immediately even between 2Hz snapshots.
+            this.syncVisibility();
             var now = getTimer();
             if (now < this.nextSample) return;
             this.nextSample = now + 500;
             var bridge = skse != undefined && skse.plugins != undefined ? skse.plugins.SkyCRPGUI : undefined;
             var slots = bridge != undefined && typeof(bridge.getHotbar) == "function" ? bridge.getHotbar() : undefined;
-            if (slots == undefined || slots.length != 8) { this._visible = false; return; }
-            this._visible = this._parent.CheckAgainstHudMode(this);
+            if (slots == undefined || slots.length != 8) {
+               this.dataReady = false; this.syncVisibility(); return;
+            }
+            this.dataReady = true;
+            this.syncVisibility();
             var i = 0;
             while (i < 8) {
                var cell = this["slot" + i];
