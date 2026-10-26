@@ -1,0 +1,26 @@
+{
+  "purpose": "DYL-155 missing critical obstruction proof: outdoor, Nordic corridor, ceiling, doorway, stairs, room and safe fallback",
+  "owner": "orchestrator",
+  "timeout_s": 1200,
+  "cleanup": "stop only matching SKYCRPG_RUN_ID processes; profile collector records final result",
+  "log": "/srv/storage/Projects/SkyCRPG/session-dyl155-20261026/camera-obstruction.log",
+  "telemetry": "/srv/storage/Projects/SkyCRPG/session-dyl155-20261026/camera-obstruction-memory.jsonl",
+  "guard": "abort at MemAvailable below4GiB or memory full avg10 above10percent",
+  "command": [
+    "/usr/bin/python3",
+    "-u",
+    "-I",
+    "tools/profile.py",
+    "launch",
+    "--interactive",
+    "--timeout",
+    "1200"
+  ],
+  "supervisor_pid": 91635,
+  "profile_pid": 91719,
+  "run_file": "/srv/storage/Projects/SkyCRPG/profiles/camera-only/runs/20261026T100826/run.json",
+  "leftover_pids": [],
+  "stop_reason": null,
+  "exit_code": 0,
+  "ended": 1793034845.7688086
+}

@@ -76,3 +76,8 @@ Owner reports top-down camera angle resets after Helgen Keep loading screens in 
 ## Post-merge status reconciliation — DYL-154
 
 PR3 is merged after senior code review of the bounded spike. Linear DYL-152 remains In Progress with gameplay obligations open. [Current acceptance mapping](../../compatibility/acceptance-matrix.md) retains obstruction NOT_RUN, ranged aim FAIL and the explicit pitch-only owner defer. Source merge is not full runtime acceptance.
+
+
+## Subsequent gate evidence — 2026-10-26
+
+The [DYL-155 gate](gate.md) supersedes the historical missing critical obstruction and whole-provider-absence checks with two bounded owner-observed PASS routes. Earlier results above remain historical; full MVP coverage and recorded aiming/pitch failures are not promoted. PR5 architecture is now reviewed and merged; the gate GO recommendation awaits its own senior review and acceptance.

@@ -1,6 +1,6 @@
 # Runtime, dependency and evidence baseline
 
-DYL-154, 2026-10-26. **One tested feasibility environment**, with scoped working behaviors and explicit failures below. This is not a finished MVP support certification. Other runtimes, operating systems, Proton builds and untested mod combinations are unsupported by Phase 1 evidence. [Acceptance matrix](acceptance-matrix.md) owns requirement status; [dependency lock](dependency-lock.md) owns exact upstream files, source commits and permissions.
+DYL-154 baseline, updated with DYL-155 evidence on 2026-10-26. **One tested feasibility environment**, with scoped working behaviors and explicit failures below. This is not a finished MVP support certification. Other runtimes, operating systems, Proton builds and untested mod combinations are unsupported by Phase 1 evidence. [Acceptance matrix](acceptance-matrix.md) owns requirement status; [dependency lock](dependency-lock.md) owns exact upstream files, source commits and permissions.
 
 ## Host and runtime
 
@@ -18,8 +18,8 @@ DYL-154, 2026-10-26. **One tested feasibility environment**, with scoped working
 | Environment/profile | Status and exact scope |
 | --- | --- |
 | Baseline, host above | **PASS** rewritten profile real-host deploy/load/undeploy and owner cave/exterior baseline route; full baseline controller coverage **NOT_RUN**. Old heavily modded2021 save **FAIL** to load; replaced fixture separately passed. |
-| Camera-only, host above | **PASS** qualified exploration/melee, first-person precision, activation, ten F8 pairs and usable transition; top-down ranged aim/pitch persistence **FAIL**; detailed obstruction **NOT_RUN**. |
-| UI-only with ordinary camera, host above | **PASS** live small grid/native weapon action invariants and final controller correction; map inside/outside/hidden-map compass fallback PASS on recorded earlier UI candidate. Whole-provider absence, full instance/modal/layout matrix **NOT_RUN**. |
+| Camera-only, host above | **PASS** qualified exploration/melee, first-person precision, activation, ten F8 pairs and usable transition; top-down ranged aim/pitch persistence **FAIL**; bounded Nordic obstruction **PASS** in gate run100826; comprehensive obstruction coverage **NOT_RUN**. |
+| UI-only with ordinary camera, host above | **PASS** live small grid/native weapon action invariants and final controller correction; map inside/outside/hidden-map compass fallback PASS on recorded earlier UI candidate. Whole-provider absence **PASS** in gate run101713; full instance/modal/layout matrix **NOT_RUN**. |
 | Combined, host above | **PASS** startup/all8 DLL loads, clean exit and owner checkpoint075556 with captures; pitch reset **FAIL**. This is a short smoke, not complete combined acceptance. |
 | Native Windows, other Linux/Proton builds or GPUs | **NOT_RUN**; no gameplay support claim. Windows CI builds the Windows x64 ABI only. |
 | Other Steam versions, GOG, other mod combinations | **NOT_RUN**; no support claim. Never generalize author compatibility lists or silently replace locked packages. |
@@ -64,7 +64,12 @@ Profile digest = SHA-256 of UTF-8 sorted compact JSON **file-hash dictionary**, 
 ## Three classifications and evidence limits
 
 1. **Tested and working:** only the scoped PASS rows above, on these exact artifacts. Owner observations, timestamped captures and runtime logs in [session](../evidence/p1/session-2026-10-26.md), [camera](../evidence/p1/camera-spike.md) and [UI](../evidence/p1/ui-spike.md) are distinct from static/source checks.
-2. **Implemented or selected but not verified:** provider collision retention, planned pitch/aim adapter, final native instance lifecycle, Party Sheet integration, eight-slot hotbar, automatic compass readiness/replacement, clean absent-provider startup, full controller/modal/layout and release removal/performance. Several are selected only and **not implemented**.
+2. **Implemented or selected but not verified:** comprehensive obstruction coverage, planned pitch/aim adapter, final native instance lifecycle, Party Sheet integration, eight-slot hotbar, automatic compass readiness/replacement, incompatible-provider runtime recovery, full controller/modal/layout and release removal/performance. Several are selected only and **not implemented**.
 3. **Known failing or explicitly deferred:** top-down ranged aim FAIL/DYL-158; load pitch FAIL/owner-deferred DYL-159; 19+ scrolling source concern/DYL-164 (gameplay NOT_RUN); visible duplicate compass/U5 incomplete. First camera attempt lost the desktop under systemd-oomd memory pressure; root contributor unresolved, later bounded retry passed. No provider blame or broad stability PASS follows.
 
 Exact-head native Windows CI [Camera40345704901](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40345704901) and [UI40346076477](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40346076477) passed skeleton build/package checks. They do not run the external preset schema check, Scaleform compile/source tests, or gameplay. Local UI compile/source/navigation/bytecode records are separately committed under [ui-spike-provenance](../evidence/p1/ui-spike-provenance/build.json). Neither is a substitute for unrun runtime fixtures.
+
+
+## DYL-155 targeted gate evidence
+
+The [gate](../evidence/p1/gate.md) reuses the provider-present profiles and adds only two missing proofs on the same host. Camera run20261026T100826 uses the unchanged 166-file Camera artifact above: owner-observed corridor/ceiling/doorway/stair/open-room recovery PASS. UI-only run20261026T101713 omits all 38 map-provider paths, with 134 retained game files plus profile INI; artifact `cdccba7819106c8ce8e065f363d88279ee9b65cbc7ce55f46b2278345fef98ea` ([exact manifest](../evidence/p1/gate-20261026/ui-absence-artifact.json)). Clean startup, native compass/navigation and inventory/Magic/journal usability PASS. Both exit0 with no load errors or leftovers; original configuration and 185 pre-existing save/co-save hashes verified restored/unchanged. Incomplete-provider preflight rejects a missing Minimap.swf before launch; this is not incompatible-binary runtime recovery. No provider/runtime upgrade, native build or generated-asset change occurred. PR5 merge/base is `ea054c78b42ccf051598d34af4f795dd7e18319f`; loaded module/patch source pins remain those above.

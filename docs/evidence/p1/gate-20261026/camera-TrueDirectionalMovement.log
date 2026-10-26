@@ -1,0 +1,34 @@
+[10:08:28.574] [ 372 ] [I] TrueDirectionalMovement v2-3-1-0
+[10:08:28.575] [ 372 ] [I] Registered papyrus functions
+[10:08:28.575] [ 372 ] [W] Failed to obtain Dodge Framework API
+[10:08:28.575] [ 372 ] [I] Obtained SmoothCamAPI
+[10:08:28.575] [ 372 ] [W] Failed to obtain TrueHUD API
+[10:08:28.575] [ 372 ] [W] Failed to obtain IDRC API
+[10:08:28.575] [ 372 ] [W] Failed to obtain OAR Functions API
+[10:08:28.575] [ 372 ] [W] Failed to obtain Dodge Framework API
+[10:08:28.575] [ 372 ] [W] Failed to obtain TrueHUD API
+[10:08:28.575] [ 372 ] [W] Failed to obtain IDRC API
+[10:08:28.575] [ 372 ] [W] Failed to obtain OAR Functions API
+[10:08:31.981] [ 600 ] [I] Registered TrueDirectionalMovement_MCM class
+[10:08:31.981] [ 600 ] [I] Registered TrueDirectionalMovement class
+[10:08:33.759] [ 620 ] [W] Failed to obtain Dodge Framework API
+[10:08:33.759] [ 620 ] [W] Failed to obtain TrueHUD API
+[10:08:33.759] [ 620 ] [W] Failed to obtain IDRC API
+[10:08:33.759] [ 620 ] [W] Failed to obtain OAR Functions API
+[10:08:33.759] [ 620 ] [I] Registered class RE::InputEvent
+[10:08:33.759] [ 620 ] [I] Registered struct SKSE::CrosshairRefEvent
+[10:08:33.759] [ 620 ] [I] Registered struct RE::TESDeathEvent
+[10:08:33.759] [ 620 ] [I] Registered struct RE::TESEnterBleedoutEvent
+[10:08:33.759] [ 620 ] [I] Registered all event handlers
+[10:08:33.759] [ 620 ] [I] Initializing...
+[10:08:33.759] [ 620 ] [I] ...success
+[10:08:33.759] [ 620 ] [I] Reading .toml files...
+[10:08:33.759] [ 620 ] [I]   Reading Data/SKSE/Plugins/TrueDirectionalMovement/TrueDirectionalMovement_base.toml...
+[10:08:33.760] [ 620 ] [I] ...success
+[10:08:33.760] [ 620 ] [I] Reading MCM .ini...
+[10:08:33.760] [ 620 ] [I] ...success
+[10:09:26.461] [ 372 ] [W] Failed to obtain Dodge Framework API
+[10:09:26.461] [ 372 ] [W] Failed to obtain TrueHUD API
+[10:09:26.461] [ 372 ] [W] Failed to obtain IDRC API
+[10:09:26.461] [ 372 ] [W] Failed to obtain OAR Functions API
+[10:09:26.461] [ 372 ] [I] Registered struct RE::BSAnimationGraphEvent

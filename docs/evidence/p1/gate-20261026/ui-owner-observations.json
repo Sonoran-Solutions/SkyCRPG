@@ -1,0 +1,8 @@
+{
+  "report": "The save loaded, native compass is visible, all movement, navigation, inventory, magic and journal functions worked fine with no failures",
+  "source": "owner response to complete absent-provider checklist",
+  "result": "PASS",
+  "scope": "whole DEM/Infinity UI NG/LMU set absent; UI-only; no corrupt binary launched",
+  "run": "20261026T101713",
+  "capture": "No new screenshot supplied; owner report and runtime logs retained."
+}

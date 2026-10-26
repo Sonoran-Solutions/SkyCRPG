@@ -1,0 +1,18 @@
+{
+  "purpose": "Read-only negative preflight for incomplete map provider; no deployment or game launch",
+  "owner": "orchestrator",
+  "command": [
+    "python3",
+    "/srv/storage/Projects/SkyCRPG/repo/modules/ui/tools/minimap_preflight.py",
+    "--data",
+    "/srv/storage/Projects/SkyCRPG/session-dyl155-20261026/partial-provider-negative/Data"
+  ],
+  "timeout_s": 30,
+  "pid": 95192,
+  "expected": "exit1 and BLOCKED naming missing Minimap.swf",
+  "cleanup": "subprocess timeout terminates owned checker; fixture remains outside game",
+  "started": 1793034851.7868536,
+  "exit_code": 1,
+  "check_result": "PASS_EXPECTED_REFUSAL",
+  "ended": 1793034851.8219652
+}

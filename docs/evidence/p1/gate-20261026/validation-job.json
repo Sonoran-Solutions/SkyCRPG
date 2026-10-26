@@ -1,0 +1,15 @@
+{
+  "purpose": "Focused DYL-155 document links, 21 P1 / 17 MVP criteria, camera contracts, ticket references, exact artifacts, package independence and restoration consistency",
+  "command": [
+    "python3",
+    "/srv/storage/Projects/SkyCRPG/session-dyl155-20261026/check_gate.py"
+  ],
+  "timeout_s": 60,
+  "owner": "orchestrator",
+  "cleanup": "terminate only owned checker on timeout",
+  "log": "/srv/storage/Projects/SkyCRPG/session-dyl155-20261026/validation.log",
+  "started": 1793035977.0596282,
+  "pid": 104182,
+  "exit_code": 0,
+  "ended": 1793035977.273837
+}

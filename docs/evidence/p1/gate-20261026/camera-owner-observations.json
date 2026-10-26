@@ -1,0 +1,11 @@
+{
+  "run": "20261026T100826",
+  "status": "PASS",
+  "evidence_kind": "owner-observed bounded obstruction route; screenshot supports location/presentation only",
+  "owner_first_report": "Ok I played through the first room of bleak falls barrow it looks good to me",
+  "followup_prompt": "Which of narrow corridor/low ceiling, doorway, stairs and return to open room were tested; camera outside walls/floors, controllable, no stuck/oscillating behavior; automatic vs F8 recovery; untested parts?",
+  "owner_followup": "Tested all parts, did not need F8 to unstuck it",
+  "interpretation": "Owner confirms the requested route as usable with no manual F8 recovery required. No defect reported. Not a measured universal collision guarantee.",
+  "new_F8_press_confirmed": false,
+  "emergency_recovery_evidence": "Reused ten owner-confirmed F8 pairs from camera run073401; this route did not need F8 for unsticking."
+}

@@ -1,6 +1,6 @@
 # Phase 1 — Foundation and feasibility
 
-P1-05 contract reference: [ARCHITECTURE](../ARCHITECTURE.md), [ADR-001](../decisions/ADR-001-stack.md), [acceptance traceability](../compatibility/acceptance-matrix.md). PR3/4 source is merged; remaining gameplay gaps are not closed by that merge. Phase gate checkboxes below remain acceptance criteria, not current results.
+P1-05 contract reference: [ARCHITECTURE](../ARCHITECTURE.md), [ADR-001](../decisions/ADR-001-stack.md), [acceptance traceability](../compatibility/acceptance-matrix.md). PR3/4 source is merged; remaining gameplay gaps are not closed by that merge. Phase gate checkboxes below remain acceptance criteria, not current results. The [DYL-155 gate report](../evidence/p1/gate.md) maps all 21 criteria and recommends GO pending senior review/acceptance.
 
 [Roadmap](../ROADMAP.md) · [MVP scope](../MVP_SCOPE.md) · [Linear project](https://linear.app/devils17/project/skycrpg-3bba43f5930f)
 

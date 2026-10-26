@@ -1,0 +1,39 @@
+{
+  "result": "PASS",
+  "preserved_save_cosave_files": 185,
+  "changed_preexisting_save_files": [],
+  "original_config_restored": {
+    "Skyrim.INI": {
+      "before_restore_sha256": "61c151bc60d5d737dad3d65a99a48d9bb8b50812b6b9f1f993323f0337813fa8",
+      "restored_sha256": "61c151bc60d5d737dad3d65a99a48d9bb8b50812b6b9f1f993323f0337813fa8"
+    },
+    "SkyrimPrefs.ini": {
+      "before_restore_sha256": "cc51d0e2ec2d54211b17afda3c34aca4a5351f43705ed397fd36db6459a6a35a",
+      "restored_sha256": "88316cf99bff0ae1ac1f8232eb80170fba70d1fc9ae604d2dad6aa26b28b0772"
+    },
+    "Plugins.txt": {
+      "before_restore_sha256": "29bc92ba188e191197fdfc786560663a95c516f239d421191a8723e3e9b387b5",
+      "restored_sha256": "f1a2f9ac6966906068474da0df8cd64c6113470858d0f80b1cf3bcebb8e5da25"
+    }
+  },
+  "active_profile": null,
+  "skyrim_pids": [],
+  "owned_deployed_paths_remaining": [],
+  "profile_tool_sha256": "a01768457f7cd612b15fe03be30c051e72f4d6a716345de84f2a3eda70802499",
+  "profile_tool_unchanged": true,
+  "telemetry": {
+    "camera-obstruction": {
+      "samples": 113,
+      "min_available_kib": 16760348,
+      "max_memory_full_avg10": 0.0,
+      "watchdog_intervention": false
+    },
+    "ui-absence": {
+      "samples": 83,
+      "min_available_kib": 16825544,
+      "max_memory_full_avg10": 0.0,
+      "watchdog_intervention": false
+    }
+  },
+  "note": "Original personal saves and pre-existing copied test saves unchanged. Test saves/artifacts/logs remain isolated outside repository; temporary deployed files removed."
+}
