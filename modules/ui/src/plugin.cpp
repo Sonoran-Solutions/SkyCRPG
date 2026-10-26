@@ -1,10 +1,12 @@
 // SkyCRPG UI — validated, read-only HUD settings bridge.
-#include <skycrpg/skeleton.h>
-#include "hud_settings.h"
-
 #include <SKSE/SKSE.h>
 #include <RE/G/GFxMovieView.h>
 #include <RE/G/GFxValue.h>
+
+// CommonLib's REX/W32 headers must precede the Windows API headers pulled by
+// the shared skeleton. Keep the skeleton below every CommonLib include.
+#include <skycrpg/skeleton.h>
+#include "hud_settings.h"
 #include "address_library_pin.h"
 
 #include <array>
