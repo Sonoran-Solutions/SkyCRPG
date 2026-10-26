@@ -3,4 +3,4 @@ Result: PASS
 Ran 11 tests in 0.002s
 OK
 Exit code: 0
-Includes exact Address Library filename/digest pin, guard-before-SKSE::Init ordering, and SKSE/SKSE.h-before-RE public-header ordering with direct API include rejected.
+Includes exact Address Library filename/digest pin, guard-before-SKSE::Init ordering, and SKSE/SKSE.h/RE-before-shared-skeleton Windows API ordering with direct API include rejected.

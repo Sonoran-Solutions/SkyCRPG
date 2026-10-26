@@ -1,0 +1,13 @@
+{
+  "status": "FAIL",
+  "workflow_run_id": "40375300872",
+  "target": "windows-x64 UI",
+  "log_file": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-initial-failure.log",
+  "diagnostic": "CommonLib REX/W32/BASE.h(4,1): error C1189: #error: Windows API detected. Please move any Windows API includes after CommonLib, or remove them.",
+  "cause": "modules/ui/src/plugin.cpp included shared/include/skycrpg/skeleton.h before SKSE/SKSE.h; skeleton includes windows.h and defines WIN32_LEAN_AND_MEAN/NOMINMAX.",
+  "authoritative_header": "Pinned CommonLibSSE-NG 7.2.0 include/REX/W32/BASE.h rejects _INC_WINAPIFAMILY and states Windows API includes must follow CommonLib.",
+  "fix_commit": "9100a1d952c8f47c541bc2d9fa7c6082958f4db5",
+  "fix": "Order SKSE/SKSE.h and RE/GFx headers before shared skeleton; source contract checks both orderings.",
+  "rerun": "NOT_RUN by UI worker; parent owns native build.",
+  "full_log_retained_outside_repo": true
+}

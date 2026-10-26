@@ -1,0 +1,10 @@
+CommonLib / Windows API include ordering regression
+
+Pre-run record: /srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-include-order-job.json
+Command: SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v
+Result: PASS, 11 tests, 0 skipped, exit 0. New assertions require SKSE/SKSE.h and RE/G/GFxValue.h before skycrpg/skeleton.h, which imports Windows API headers.
+
+Command: git diff --check
+Result: PASS.
+
+Initial Windows build failure (recorded independently): workflow run 40375300872, diagnostic C1189 in CommonLib REX/W32/BASE.h. The include-order correction is source-committed; no rerun was started by the UI worker.

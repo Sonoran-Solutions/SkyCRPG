@@ -1,10 +1,13 @@
 {
-  "source_commit": "95ce31376119d716e2a64ee965bcb525728dbbe3",
+  "source_commit": "9100a1d952c8f47c541bc2d9fa7c6082958f4db5",
   "source_branch": "phase2/dyl-160-hud",
-  "native_build_status": "NOT_RUN; parent owns Windows/CommonLib build",
-  "guard_source_sha256": "0fbf31cdff2e2bfc0387bdf5b698e649e394f5c2c1695b746ab25028eab1584d",
+  "native_build_status": "INITIAL_FAIL_C1189; include order fixed in this source commit; rerun pending",
   "settings_parser_sha256": "0582979421798c58f34295692883adadc2f40c8d895217e7f0685fe47a49a2b1",
   "address_library_pin_sha256": "88d6093098a4f8794ea5518b51e6fd83110d2d5d1c502727e48736deeffea000",
   "module_cmake_sha256": "5617e14011d0211e1555d80e7b399416fa57e79faebf1ca1a87ee057fab8fdb3",
-  "scope_note": "Native source includes exact Address Library prerequisite guard and atomically publishes Scaleform config with hudEnabled last. Scaleform SWF source and hash are unchanged from earlier build manifest."
+  "scope_note": "Native source includes exact Address Library prerequisite guard and atomically publishes Scaleform config with hudEnabled last. Scaleform SWF source and hash are unchanged from earlier build manifest.",
+  "plugin_cpp_sha256": "9102247f227e54eb77a43db79a831aede6b7a2c44cd574125267d1e0749c9d0d",
+  "source_contract_test_sha256": "fb324c96f2124bba9565b99b3a8bfe2dc8d3a5b6ef047387bc10fb62fec41aca",
+  "include_order_fix": "CommonLib SKSE/SKSE.h and RE/GFx headers precede skycrpg/skeleton.h; pinned REX/W32/BASE.h forbids prior Windows API inclusion.",
+  "address_library_pin_header_sha256": "88d6093098a4f8794ea5518b51e6fd83110d2d5d1c502727e48736deeffea000"
 }

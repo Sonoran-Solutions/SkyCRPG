@@ -1,6 +1,6 @@
 # DYL-160 — core CRPG HUD evidence
 
-**Status: Scaleform asset compiled; native build pending; runtime acceptance NOT_RUN.** Recorded 2026-10-26 on branch `phase2/dyl-160-hud`, source commit `8183897570ae6bf179457049227dd400580949dd` (parent's shared dependency/build commit: `e7f141f6b92b1305695d4f744c48ab438e8e0803`). This report distinguishes source/bytecode evidence from gameplay evidence. No Skyrim process was launched or deployed by this worker. Compact, reviewable provenance is in [core-hud provenance](core-hud/README.md).
+**Status: Scaleform asset compiled; initial native build failed, include-order fix committed for rerun; runtime acceptance NOT_RUN.** Recorded 2026-10-26 on branch `phase2/dyl-160-hud`, Scaleform source commit `8183897570ae6bf179457049227dd400580949dd` (parent's shared dependency/build commit: `e7f141f6b92b1305695d4f744c48ab438e8e0803`). This report distinguishes source/bytecode evidence from gameplay evidence. No Skyrim process was launched or deployed by this worker. Compact, reviewable provenance is in [core-hud provenance](core-hud/README.md).
 
 ## Implementation
 
@@ -24,7 +24,7 @@
 | Changed HUD asset build | **PASS — COMPILED_NOT_RUN** | FFDec 26.0.0, Java `17.0.21+9`, 512 MiB heap, one HUD target, timeout 600 s; PID 130895; elapsed 0.765 s; exit 0. Exact manifest: `/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/build.json`; compiler log: `/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/hudmenu.swf.log`. Only `hudmenu.swf` was built; unchanged inventory SWFs were not rebuilt. |
 | Compiled HUD source inspection | **PASS (static bytecode export)** | FFDec export exited 0 in 0.89 s. Exported `/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-candidate-20261026c/export/hud/scripts/__Packages/HUDMenu.as` contains all three callback receipt flags, settings-based HUD initialization after `Stage.scaleMode="showAll"`, and the injected post-`ShowElements` mode synchronization. Export inspection is not an engine/runtime test. |
 | Diff whitespace | **PASS** | `git diff --check` passed before commit. |
-| Native Windows/CommonLib plugin build | **NOT_RUN** | Parent owns the UI-only Windows build workflow; latest native source commit is `95ce31376119d716e2a64ee965bcb525728dbbe3`. Exact native input hashes are recorded in [native-source.json](core-hud/native-source.json). Use CI for this source revision before promoting native binary build status. |
+| Native Windows/CommonLib plugin build | **FAIL — initial attempt** | UI workflow run `40375300872` failed with CommonLib C1189: `Windows API detected. Please move any Windows API includes after CommonLib, or remove them.` The shared skeleton included `windows.h` before the CommonLib umbrella. Fixed by ordering CommonLib `SKSE`/`RE` headers before `skycrpg/skeleton.h`; focused include contract passes. Follow-up native build is pending. See [initial CI failure](core-hud/native-ci-initial.json) and latest source hashes in [native-source.json](core-hud/native-source.json). |
 | 1080p in-game layout and live UI-only/combined gameplay | **NOT_RUN** | The harness verifies bounds only. No game profile was deployed or launched here; owner observation and runtime captures remain required. |
 
 ### Scaleform candidate identity

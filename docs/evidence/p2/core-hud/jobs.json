@@ -1,6 +1,6 @@
 {
   "owner": "DYL-160 UI worker",
-  "source_commit": "95ce31376119d716e2a64ee965bcb525728dbbe3",
+  "source_commit": "9100a1d952c8f47c541bc2d9fa7c6082958f4db5",
   "bounded_jobs": [
     {
       "purpose": "Focused settings, exact pinned source transform, and HUD lifecycle/data/layout validation",
@@ -101,6 +101,26 @@
       },
       "log": "bridge-atomicity-tests.log",
       "native_build": "Not started; no duplicate native build or game run."
+    },
+    {
+      "purpose": "Correct CommonLib include ordering after initial UI Windows build C1189 and recheck source contracts",
+      "initial_native_failure": {
+        "workflow_run_id": "40375300872",
+        "status": "FAIL",
+        "diagnostic": "C1189: Windows API detected before CommonLib; full log /srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-initial-failure.log"
+      },
+      "fix_commit": "9100a1d952c8f47c541bc2d9fa7c6082958f4db5",
+      "recorded_before_run": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/validation/ui-hud-include-order-job.json",
+      "commands": [
+        "SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 python3 -m unittest discover -s modules/ui/tests -p test_scaleform_contract.py -v",
+        "git diff --check"
+      ],
+      "timeout_seconds_each": 600,
+      "results": {
+        "source_contracts": "PASS, 11 tests, 0 skipped",
+        "diff_check": "PASS"
+      },
+      "native_rerun": "NOT_RUN by UI worker; parent owns native build."
     }
   ]
 }
