@@ -3,9 +3,9 @@ name: build
 on:
   push:
     branches: [main]
-    paths: ["modules/**", "shared/**", "tools/package.py", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
+    paths: ["modules/**", "shared/**", "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
   pull_request:
-    paths: ["modules/**", "shared/**", "tools/package.py", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
+    paths: ["modules/**", "shared/**", "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
   workflow_dispatch:
     inputs:
       module:
@@ -33,20 +33,9 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           REQUESTED: ${{ inputs.module }}
         run: |
-          python - <<'PY'
-          import json, os, subprocess
-          requested = os.environ.get('REQUESTED')
-          if requested:
-              modules = ['camera', 'ui'] if requested == 'both' else [requested]
-          else:
-              base = os.environ.get('BASE_SHA', '')
-              paths = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines() if base and set(base) != {'0'} else []
-              modules = [m for m in ['camera', 'ui'] if any(p.startswith(f'modules/{m}/') for p in paths)]
-              if not modules or any(p.startswith('shared/') for p in paths):
-                  modules = ['camera', 'ui']
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write('modules=' + json.dumps(modules) + '\n')
-          PY
+          python -m unittest discover -s tools/tests -p test_ci_scope.py -v
+          python tools/ci_scope.py
+
   windows-x64:
     needs: scope
     strategy:

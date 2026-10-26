@@ -1,8 +1,8 @@
 # Controls contract
 
-The normative ownership/precedence contract is in [ARCHITECTURE](ARCHITECTURE.md#input-and-menu-contract). Proven spike controls: SmoothCam F8/scan66 toggle; native POV precision fallback; controller grid adjacent/row movement and explicit category focus as recorded in [UI evidence](evidence/p1/ui-spike.md). Future reset/recenter/hotbar/full input mappings below remain obligations, not implemented controls.
+The normative ownership/precedence contract is in [ARCHITECTURE](ARCHITECTURE.md#input-and-menu-contract). Proven spike controls: SmoothCam F8/scan66 toggle; native POV precision fallback; controller grid adjacent/row movement and explicit category focus as recorded in [UI evidence](evidence/p1/ui-spike.md). DYL-156 now implements and owner-tests F6 native-view fallback/return and F7 recenter, documented in the candidate controls table below. Full reset/lifecycle, hotbar and broader input mappings remain later-ticket obligations.
 
-Bindings are proposed actions until P1/P2 test real conflicts. P2-01 and P2-06 must replace pending bindings with the actual defaults.
+The high-level action table includes future work. The DYL-156 candidate table below is authoritative for the implemented Camera defaults; hotbar defaults remain P2-06 work.
 
 | Action | Intended behavior | Binding status |
 | --- | --- | --- |
