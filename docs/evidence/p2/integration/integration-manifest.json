@@ -1,0 +1,14 @@
+{
+  "purpose": "Disposable combined source view only; no PR or authoritative branch merged",
+  "base": "887f1855cefbd51baa07862398826c16d4eaceba",
+  "camera_head": "c79e6a946f32a1062a92cc6883cd3d1dea6f66c8",
+  "ui_head": "2d8896c4e8e91189489e983d94beb3444b4a32ea",
+  "merged_tree": "a7eb1d13c039570efad5cf1ad839bac4c328c495",
+  "worktree": "/srv/storage/Projects/SkyCRPG/p2-integration",
+  "camera_tested_source": "8a681390db5b36c2b6fb4fcb056c0abc0e085a35",
+  "ui_native_tested_source": "e49fc30aebb008377e9a010e96757444c0f684c6",
+  "ui_swf_sha256": "b4552e17f0806848bcbb0a31f09e934e3feffc5a405305ba5707beb6b3215c05",
+  "native_source_tree_identity": "PASS",
+  "cleanup": "PASS removed only disposable source union after verifying unchanged staged tree and no untracked files; no branch merged",
+  "cleaned_utc": "2026-10-26T19:47:38.465690+00:00"
+}

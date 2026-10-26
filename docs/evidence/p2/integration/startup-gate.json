@@ -1,0 +1,43 @@
+{
+  "checked_utc": "2026-10-26T18:04:39.040852+00:00",
+  "pr6": {
+    "url": "https://github.com/Sonoran-Solutions/SkyCRPG/pull/6",
+    "merged": true,
+    "merge_sha": "887f1855cefbd51baa07862398826c16d4eaceba",
+    "head_sha": "49d0cac559e8d266c64e3c1fa15dffd9d274cba3"
+  },
+  "owner_go": {
+    "quote": "Record my acceptance of phase 1 GO then approved to merge",
+    "linear_comment_id": "9b98da13-031e-4348-b973-f497bf1ab844",
+    "accepted_evidence_sha": "0929e0e1dbd6aa7d24000c5ff666246b4fca007c"
+  },
+  "starting_main": "887f1855cefbd51baa07862398826c16d4eaceba",
+  "DYL-155": "Done; no discrepancy",
+  "dependencies": "DYL-156 and DYL-160 blockedBy only DYL-155; satisfied",
+  "worker_branches": {
+    "camera": "phase2/dyl-156-camera",
+    "ui": "phase2/dyl-160-hud"
+  },
+  "shared_build_commit": "e7f141f6b92b1305695d4f744c48ab438e8e0803",
+  "contract_git_blobs": {
+    "AGENTS.md": "bdef54e39a27d3e083a4527e1fd09624cd060abd",
+    "README.md": "7977f9b577bc35117623b1934f1a5b35e0ff52f5",
+    "docs/STATUS.md": "a95cc40ac2f38e5be47d6236ef7ae0693818e96d",
+    "docs/MVP_SCOPE.md": "3419cd6c9bc0d4ab5a005ba84caf643bdc4120b9",
+    "docs/ROADMAP.md": "56f8f91109f7b33274571a4d1c20a0ebde66209a",
+    "docs/phases/PHASE_2.md": "cf0a794085106b349058c0259920ce3b9baa740c",
+    "docs/ARCHITECTURE.md": "200670a423b9db3f2ec1b20c7b1205f5fb09f73d",
+    "docs/VALIDATION.md": "8f679c9e893fa9d166f7c6bbde58df2517880e81",
+    "docs/DECISIONS.md": "5c9226dcf12d9043976bfe40b288ce3284ff6660",
+    "docs/UX_SPEC.md": "05be29698f46859b7c054d3aa4d43085d57fac27",
+    "docs/decisions/ADR-001-stack.md": "3facbbad3ca3e996fc86799a2f1a28d2d4c658b0",
+    "docs/compatibility/runtime-matrix.md": "1f7481c74de197d8c02451c592d1c79b551c4109",
+    "docs/compatibility/dependency-lock.md": "ab55e0c1adeea1cd6f93ebb03e07b6f75b49b5a5",
+    "docs/compatibility/acceptance-matrix.md": "4952ea7f86e1b08859ac65712e187614ebbad67e",
+    "docs/evidence/p1/camera-spike.md": "b5f23ccba0218e3fcea6ff12ae1708f777b51fef",
+    "docs/evidence/p1/ui-spike.md": "a92e924b18e92b65ebcd8ff50ebc81656a71680f",
+    "docs/evidence/p1/gate.md": "da8c6d8f3e837825bda3619976f4b346cc7973b2",
+    "docs/evidence/p1/phase2-handoff.md": "7c8d786621220c433c98b49cf0924ad019633b2e"
+  },
+  "routing": "Owner authorized kickoff routing directly after unavailable skill search; Camera Sol6.1 medium, UI Luna6 high. Root existing Codex orchestrator, Opus unavailable. No Astra."
+}
