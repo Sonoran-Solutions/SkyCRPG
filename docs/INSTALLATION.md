@@ -1,5 +1,7 @@
 # Installation and recovery
 
+The concrete file ownership, independent recipes and update/removal boundaries are in [ARCHITECTURE](ARCHITECTURE.md#independent-packages-and-file-ownership). Internal prototypes were tested, but the native ZIPs contain skeleton DLL/INI files only; generated UI patches and provider configs are separate artifacts. [Runtime baseline](compatibility/runtime-matrix.md) pins the tested prerequisites.
+
 **Planning document: no installable SkyCRPG release is available yet.** P4-02/P4-05 must replace this with instructions verified against the actual archives.
 
 ## Required published instructions

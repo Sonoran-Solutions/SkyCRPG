@@ -1,5 +1,7 @@
 # Controls contract
 
+The normative ownership/precedence contract is in [ARCHITECTURE](ARCHITECTURE.md#input-and-menu-contract). Proven spike controls: SmoothCam F8/scan66 toggle; native POV precision fallback; controller grid adjacent/row movement and explicit category focus as recorded in [UI evidence](evidence/p1/ui-spike.md). Future reset/recenter/hotbar/full input mappings below remain obligations, not implemented controls.
+
 Bindings are proposed actions until P1/P2 test real conflicts. P2-01 and P2-06 must replace pending bindings with the actual defaults.
 
 | Action | Intended behavior | Binding status |

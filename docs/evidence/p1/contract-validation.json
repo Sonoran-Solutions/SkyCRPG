@@ -1,0 +1,130 @@
+{
+  "result": "PASS",
+  "checks": {
+    "changed_files": [
+      "README.md",
+      "docs/ARCHITECTURE.md",
+      "docs/CONTROLS.md",
+      "docs/DECISIONS.md",
+      "docs/INSTALLATION.md",
+      "docs/MVP_SCOPE.md",
+      "docs/STATUS.md",
+      "docs/compatibility/acceptance-matrix.md",
+      "docs/compatibility/dependency-lock.md",
+      "docs/compatibility/runtime-matrix.md",
+      "docs/decisions/ADR-001-stack.md",
+      "docs/evidence/p1/camera-spike.md",
+      "docs/evidence/p1/contract-freeze.md",
+      "docs/evidence/p1/contract-validation.json",
+      "docs/evidence/p1/ui-spike.md",
+      "docs/phases/PHASE_1.md"
+    ],
+    "local_links_checked": 112,
+    "acceptance_ids": [
+      "C1",
+      "C2",
+      "C3",
+      "C4",
+      "C5",
+      "M1",
+      "M2",
+      "M3",
+      "Q1",
+      "Q2",
+      "Q3",
+      "U1",
+      "U2",
+      "U3",
+      "U4",
+      "U5",
+      "U6"
+    ],
+    "ticket_references": [
+      "DYL-150",
+      "DYL-151",
+      "DYL-152",
+      "DYL-153",
+      "DYL-154",
+      "DYL-155",
+      "DYL-156",
+      "DYL-157",
+      "DYL-158",
+      "DYL-159",
+      "DYL-160",
+      "DYL-161",
+      "DYL-162",
+      "DYL-163",
+      "DYL-164",
+      "DYL-165",
+      "DYL-166",
+      "DYL-167",
+      "DYL-168",
+      "DYL-169",
+      "DYL-170",
+      "DYL-171",
+      "DYL-172",
+      "DYL-173",
+      "DYL-174",
+      "DYL-175"
+    ],
+    "profile_artifacts": {
+      "camera-config-route": {
+        "files": 166,
+        "sha256": "1f5535e69c40975f7fd85c7a239bacced75af8b9e95d1a83d199be777327798c"
+      },
+      "ui-initial": {
+        "files": 173,
+        "sha256": "9bc3d66e819c5109730acf8dd5b2b7fc0c42f69a2397abc23882693b5c79bd96"
+      },
+      "ui-controller-failed": {
+        "files": 173,
+        "sha256": "397ca3ba072e139a70fe0292f4f398f732be29c991421490c58d2e4fc4569eeb"
+      },
+      "ui-imported-routing": {
+        "files": 173,
+        "sha256": "1e25367e992e029be27738c707a5b6424fe5bbd5e81d1d7ccab944b09fc7af5e"
+      },
+      "combined": {
+        "files": 209,
+        "sha256": "8a31a81a18b196cf51431f570d609f8b0cf0375f967299ac75a22488432ef307"
+      }
+    },
+    "profile_overlap": {
+      "paths": 130,
+      "identical": 129,
+      "different": [
+        "profile-override/SkyrimCustom.ini"
+      ]
+    },
+    "native_payloads_disjoint": true,
+    "baseline_pins_checked": 34,
+    "camera_states_checked": 13,
+    "git_diff_check": "PASS"
+  },
+  "errors": [],
+  "base_commit": "87d91626815dca145c6a876664f1ac7d0ffeafdf",
+  "audit_scope": "Documentation-only task-local read-only checks; not a new CI test or gameplay result.",
+  "job": {
+    "purpose": "DYL-154 document links/tickets/acceptance/hash/package audit",
+    "owner": "orchestrator",
+    "command": [
+      "timeout",
+      "--signal=TERM",
+      "--kill-after=5s",
+      "600s",
+      "python3",
+      "/srv/storage/Projects/SkyCRPG/session-dyl154-20261026/check_contracts.py"
+    ],
+    "timeout_seconds": 600,
+    "expected": "validation.json result PASS and exit0",
+    "log": "/srv/storage/Projects/SkyCRPG/session-dyl154-20261026/validation.log",
+    "cleanup": "timeout owns and terminates only validator; no game/build subprocesses",
+    "started_at": "2026-10-26T16:10:40.918605+00:00",
+    "wrapper_pid": 69515,
+    "pid": 69516,
+    "exit_code": 0,
+    "finished_at": "2026-10-26T16:10:41.102107+00:00"
+  },
+  "validator_sha256": "e4895da98f310620732aafbf98503c1e29471526d9a4bc6822a44429f0aa1b2b",
+  "log_sha256": "86e110e987a12106dc8b21704b2010d2e6b878a3d68a7847940c77f48360140b"
+}

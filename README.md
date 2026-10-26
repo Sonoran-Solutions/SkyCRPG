@@ -2,19 +2,20 @@
 
 A modular attempt to make Skyrim feel like a classic CRPG while retaining real-time action combat.
 
-**Status: planning initialized; no playable SkyCRPG release exists yet.** The first four phases target two independently installable MVPs:
+**Status: playable Phase 1 feasibility prototypes merged; architecture contracts under review. No public MVP release exists yet.** The first four phases target two independently installable MVPs:
 
 | Module | Intended result |
 | --- | --- |
 | **SkyCRPG Camera** | Elevated, pulled-back perspective, configurable framing, reliable aiming and safe recovery in tight interiors and scripted states. |
 | **SkyCRPG UI** | A classic CRPG HUD, player/follower status portraits, an eight-slot hotbar, player grid inventory and a minimap in place of the standard compass. |
 
-Installing either module must not require the other. External dependencies are allowed when explicitly selected and tested. The planned inventory grid preserves Skyrim's item and carry-weight rules; this is a working product assumption, not a recorded owner decision about Tetris-style storage.
+Installing either module must not require the other. External dependencies are allowed when explicitly selected and tested. The player-inventory grid preserves Skyrim's native item, ownership and carry-weight rules; a Tetris-style capacity system is outside the current scope.
 
 ## Start here
 
 - [Vision and scope](docs/VISION.md)
 - [MVP acceptance criteria](docs/MVP_SCOPE.md)
+- [Acceptance evidence and ticket mapping](docs/compatibility/acceptance-matrix.md)
 - [Four-phase roadmap](docs/ROADMAP.md)
 - [Linear project](https://linear.app/devils17/project/skycrpg-3bba43f5930f)
 - [Current status and ready work](docs/STATUS.md)

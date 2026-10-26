@@ -1,5 +1,7 @@
 # MVP scope and acceptance
 
+Current evidence, owners and implementation/validation tickets for every acceptance ID: [acceptance traceability](compatibility/acceptance-matrix.md). Requirement text below is unchanged by the DYL-154 contract freeze.
+
 **Planning baseline: 2026-10-22. Nothing in this file is a claim of implemented functionality.**
 
 MVP is complete when two packaged candidates meet the following criteria on the single Phase 1 support baseline, separately and together, and the owner has completed the playtest. Required fallbacks count as correct behavior; unresolved data loss, control lock or unusable navigation does not.
