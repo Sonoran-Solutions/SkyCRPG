@@ -1,0 +1,9 @@
+{
+  "result": "FAIL",
+  "report": "I still don't see the resource meters",
+  "screenshot_sha256": "b626ab1a079cc9484a646c09cdb6628a386c8acd5ec594bc57bde2cd32d52081",
+  "diagnosis": "Live snapshot PASS H100/100 M100/100 S90.626/100; AS first-valid-render modeVisible true. HUDMenu parent origin616.65,475.45 whilepanel useslocal430,656 under1280x720stage, placingmetersbelowviewport. Party displacedbottomconfirmscoordinateerror.",
+  "source": "e49fc30aebb008377e9a010e96757444c0f684c6",
+  "swf_sha256": "c2ef2f09f67898b600584e8b896854e4a02c043a0fd4dce029790a5cdd270ce1",
+  "observed_utc": "2026-10-26T19:29:44.048285+00:00"
+}

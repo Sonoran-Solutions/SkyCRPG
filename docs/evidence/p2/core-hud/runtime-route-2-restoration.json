@@ -1,0 +1,9 @@
+{
+  "result": "PASS",
+  "changed_candidate_files": {},
+  "mismatch": [],
+  "active_profile": null,
+  "game_pids": [],
+  "ended": "2026-10-26T19:30:17.202553+00:00",
+  "test_save_outputs_preserved": "/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-route-2/after-test-saves"
+}

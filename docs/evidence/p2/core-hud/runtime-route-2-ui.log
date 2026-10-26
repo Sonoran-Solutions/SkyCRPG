@@ -1,0 +1,13 @@
+SkyCRPG UI 0.0.1 loaded at 2026-10-26T19:25:59Z
+source commit: e49fc30aebb008377e9a010e96757444c0f684c6
+skse: 2.3.1.0 (0x02030010)
+runtime: 1.7.104.0 (0x01070680)
+settings: Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins\SkyCRPG_UI.ini (found, iLogLevel=1)
+runtime check: PASS pinned 1.7.104
+scope: load-only skeleton; no hooks, game memory access or inter-module calls
+Address Library guard: PASS versionlib-1-7-104-0.bin (v13 / 1.7.104, SHA-256 8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842)
+HUD settings: Z:\home\dq\.local\share\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins\SkyCRPG_UI.ini; version=1; enabled=1 (valid=1); scale=100% (valid=1 clamped=0); offset=(0,0) (valid=1/1 clamped=0/0)
+scope extension: read-only HUD settings and player current/effective maximum snapshots; no gameplay writes
+Scaleform settings registration: PASS read-only
+HUD resource snapshot: first unavailable/invalid sample; native fallback retained
+HUD resource snapshot: first valid current/max H=100.000/100.000 M=100.000/100.000 S=90.626/100.000
