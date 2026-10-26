@@ -1,6 +1,6 @@
 # P1-04 / DYL-153 — native UI candidate
 
-2026-10-26. **Live grid/HUD presentation observed; controller horizontal navigation FAIL, correction awaiting retest.**
+2026-10-26. **Owner UI route PASS for live grid/actions/map; controller horizontal navigation FAIL, correction awaiting retest.**
 This is an original AS2 grid/HUD patch built against external SkyUI Community
 6.11, not a screenshot or replacement inventory database. No game was launched
 or deployed by this worker. Parent owns the shared game schedule and packages.
@@ -136,9 +136,12 @@ unchanged; no Windows native build is required for these AS2 changes.
 | Source native delegate/focus preservation and fail-closed anchors | PASS |
 | Missing map loose-file prerequisite detection | PASS (expected BLOCKED report) |
 | UI-only live grid/HUD | PASS (owner screenshots show native presentation; see provenance below) |
-| Real weapon equip and unequip exactly once; identity/count/weight | NOT_RUN |
-| Map visible, positioning and exterior/interior transition | NOT_RUN |
-| Provider absent/disabled navigation recovery | NOT_RUN (compass code unchanged) |
+| Real weapon equip and unequip exactly once; counts/carry weight | PASS owner-confirmed run071034 on previous candidate; changed candidate retest NOT_RUN |
+| Distinct same-base instance traits/ownership | NOT_RUN |
+| Map visible inside/outside | PASS owner-confirmed run071034 on previous candidate |
+| Precise map positioning | NOT_RUN |
+| Native compass usable with minimap hidden | PASS owner-confirmed run071034 on previous candidate |
+| Provider-absent startup recovery | NOT_RUN |
 | Combined-load smoke | NOT_RUN |
 | Controller navigation/activation and modal focus | FAIL horizontal navigation; correction retest NOT_RUN |
 
@@ -159,7 +162,7 @@ provider-absent clean launch; retain compass navigation throughout. Finish with
 combined load. Budgets: 20 minutes per route; parent records PID, deadline,
 logs and cleanup before launch. Native CUA desktop control is unavailable on
 the current host, so automatic compilation cannot supply this owner gameplay
-evidence. The later owner screenshots establish live presentation only; full inventory action and minimap gates remain open.
+evidence. The screenshots establish live presentation; owner confirmation separately establishes the scoped action/map checks below. Changed candidate navigation requires retest.
 
 ## Reuse and limits
 
@@ -290,3 +293,16 @@ verified completion signal before reboot and is not counted as evidence.
 No build is duplicated during the parent's monitored game retry; heavy FFDec
 compilation is held until the parent releases the host. Corrected candidate
 compile/hash results and owner retest must be appended before promoting this fix.
+
+The parent subsequently supplied the owner's explicit confirmation for
+**UI run20261026T071034**: live grid, single-press equip/unequip (one action per
+activation), unchanged counts/carry weight, minimap indoors/outdoors, and usable
+native compass with the minimap hidden are **PASS (owner-observed)** on the
+previous candidate. This is separate from what can be inferred from screenshots.
+See [session evidence](session-2026-10-26.md#first-provider-routes-and-recovery)
+and its indexed runtime logs. The manifest composite SHA-256 is
+`c329cb61ea5c810e1b37bca20f1882902efed350ffa7efdfe6bfffce278b8682`.
+The controller correction changes input routing, so its navigation and native
+action regression retest remain **NOT_RUN**; earlier PASS evidence is preserved,
+not reused to certify the changed route. Provider-absent startup and distinct
+same-base instance/ownership scenarios still lack scoped proof.
