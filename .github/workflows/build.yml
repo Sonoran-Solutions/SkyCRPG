@@ -118,7 +118,7 @@ jobs:
         with:
           name: build-diagnostics-${{ matrix.module }}-${{ env.SOURCE_SHA }}
           path: |
-            build/**/CMakeConfigureLog.yaml
-            build/**/vcpkg-manifest-install.log
-            build/**/CMakeCache.txt
-            build/**/Release/*.pdb
+            build/windows-x64-release/CMakeFiles/CMakeConfigureLog.yaml
+            build/windows-x64-release/vcpkg-manifest-install.log
+            build/windows-x64-release/CMakeCache.txt
+            build/windows-x64-release/modules/${{ matrix.module }}/Release/*.pdb
