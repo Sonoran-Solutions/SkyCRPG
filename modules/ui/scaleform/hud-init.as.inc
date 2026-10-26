@@ -183,7 +183,14 @@
                cell.icon.drawKind(value.kind);
                cell.kind.text = value.kind == "" ? "EMPTY" : value.kind;
                cell.name.text = value.name;
-               cell.count.text = value.count > 1 ? "x" + value.count : "";
+               // Native voice recovery is global to the player, not a spell timer.
+               if (value.kind == "SHOUT") {
+                  cell.count.text = typeof(value.voiceRecovery) == "number" &&
+                     isFinite(value.voiceRecovery) && value.voiceRecovery >= 0 ?
+                     (value.voiceRecovery > 0 ? Math.ceil(value.voiceRecovery) + "s" : "READY") : "--";
+               } else {
+                  cell.count.text = value.count > 1 ? "x" + value.count : "";
+               }
                i++;
             }
          };

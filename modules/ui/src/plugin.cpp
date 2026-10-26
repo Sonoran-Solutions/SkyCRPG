@@ -21,6 +21,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -157,6 +158,7 @@ struct HotbarSlot {
 	std::string kind;
 	int count{};
 	bool equipped{};
+	float voiceRecovery{-1.0f}; // unavailable, never inferred from a missing process
 };
 struct HotbarCache {
 	std::mutex mutex;
@@ -198,6 +200,12 @@ void SampleHotbar(std::uint64_t generation)
 	std::array<HotbarSlot, 8> slots{};
 	const auto equippedLeft = player->GetEquippedObject(true);
 	const auto equippedRight = player->GetEquippedObject(false);
+	float voiceRecovery = -1.0f;
+	auto* process = player->GetActorRuntimeData().currentProcess;
+	if (process && process->high) {
+		const float seconds = player->GetVoiceRecoveryTime();
+		if (std::isfinite(seconds) && seconds >= 0.0f) voiceRecovery = seconds;
+	}
 	auto inventory = player->GetInventory([](RE::TESBoundObject&) { return true; }, true);
 	for (auto& [form, item] : inventory) {
 		if (!form || item.first <= 0 || !item.second || !item.second->extraLists) continue;
@@ -219,6 +227,7 @@ void SampleHotbar(std::uint64_t generation)
 		const auto* name = form->GetName();
 		slots[i] = { name ? name : "", HotbarKind(form), 0,
 			form == equippedLeft || form == equippedRight || form == player->GetCurrentShout() };
+		if (form->GetFormType() == RE::FormType::Shout) slots[i].voiceRecovery = voiceRecovery;
 	}
 	std::scoped_lock lock(g_hotbar.mutex);
 	g_hotbar.pending = false;
@@ -259,7 +268,9 @@ public:
 			value.SetNumber(slot.count);
 			if (!object.SetMember("count", value)) return;
 			value.SetBoolean(slot.equipped);
-			if (!object.SetMember("equipped", value) || !array.PushBack(object)) return;
+			if (!object.SetMember("equipped", value)) return;
+			value.SetNumber(slot.voiceRecovery);
+			if (!object.SetMember("voiceRecovery", value) || !array.PushBack(object)) return;
 		}
 		*params.retVal = array;
 	}
