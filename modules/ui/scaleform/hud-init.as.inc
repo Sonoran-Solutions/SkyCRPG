@@ -107,6 +107,22 @@
          skycrpgParty._visible = this.CheckAgainstHudMode(skycrpgParty);
          this.HudElements.push(skycrpg);
          this.HudElements.push(skycrpgParty);
+         // Two geometry messages per clip lifetime distinguish missing samples
+         // from an offscreen panel without changing layout or adding listeners.
+         skycrpg.logGeometry = function(phase, modeVisible) {
+            if (skse != undefined && typeof(skse.Log) == "function") {
+               var hud = this._parent;
+               skse.Log("SkyCRPG HUD geometry " + phase +
+                  " Stage=" + Stage.width + "x" + Stage.height +
+                  " parent_x=" + hud._x + " parent_y=" + hud._y +
+                  " parent_xscale=" + hud._xscale + " parent_yscale=" + hud._yscale +
+                  " panel_x=" + this._x + " panel_y=" + this._y +
+                  " panel_xscale=" + this._xscale + " panel_yscale=" + this._yscale +
+                  " modeVisible=" + modeVisible);
+            }
+         };
+         skycrpg.logGeometry("setup", this.CheckAgainstHudMode(skycrpg));
+         skycrpg._skycrpgRenderedLogged = false;
          skycrpg.onEnterFrame = function() {
             var hud = this._parent;
             var now = getTimer();
@@ -143,6 +159,10 @@
             this.meters.meter0.drawPercent(values[0]);
             this.meters.meter1.drawPercent(values[1]);
             this.meters.meter2.drawPercent(values[2]);
+            if (modeVisible && !this._skycrpgRenderedLogged) {
+               this.logGeometry("first-valid-render", modeVisible);
+               this._skycrpgRenderedLogged = true;
+            }
             // Suppress duplicates only while the replacement is allowed by the
             // native mode and the fresh complete snapshot is valid.
             hud._skycrpgMetersSuppressed = modeVisible;

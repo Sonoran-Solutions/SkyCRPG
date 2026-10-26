@@ -1,5 +1,11 @@
 # DYL-160 — core CRPG HUD evidence
 
+## Geometry diagnostics candidate
+
+AS2-only follow-up to native source `e49fc30`: the existing `skse.Log(string)` API is verified in pinned SKSE `Hooks_Scaleform.cpp269–280` and registered at line1561. Each created panel emits one setup geometry line and one first valid visible render line, including Stage width/height, parent position/scale, panel position/scale and native-mode permission. This distinguishes valid data with offscreen clipping from missing data on the next route. No speculative layout correction or native change is included. The harness checks both messages and verifies later refreshes/fallback emit no more logs: [job](core-hud/geometry-job.json), [PASS](core-hud/geometry-harness.log).
+
+HUD-only compilation **PASS / COMPILED_NOT_RUN**, PID187697, 0.820s, 512MiB heap, 600s bound. Latest SWF SHA-256 **`c2ef2f09f67898b600584e8b896854e4a02c043a0fd4dce029790a5cdd270ce1`**, `/srv/storage/Projects/SkyCRPG/session-p2-20261026/ui-hud-resource-geometry-candidate-20261026/Data/Interface/hudmenu.swf`; [manifest](core-hud/geometry-build.json), [log](core-hud/geometry-build.log). Native code is unchanged from `e49fc30`; changed candidate gameplay remains **NOT_RUN**.
+
 ## Runtime failure and bounded resource snapshot correction — 2026-10-26
 
 **Initial UI-only route: FAIL. Changed snapshot candidate: focused checks and HUD compilation PASS; native build and gameplay NOT_RUN.** The owner reported “I don't actually see my health/stamina/magicka anywhere” with source `48bc91a52bf8e7577726ec061a081e1b92b0d5f5`, DLL SHA-256 `75edeb3148b47e796a4fc4c2e66c1d9497d3a163398771569417b6f0c0457876`, SWF `5497d93e5eaa1cd5bed99305f4f7e2f769e5ae158b8ec0241fc11243badf3e2e`. A subsequent owner report to the integrator confirmed PARTY STATUS visible. That isolates the hidden resource panel from bridge/clip initialization, but no callback telemetry was collected. All-three-callback receipt was an unsafe readiness assumption: native cached percentages initialize to zero and callbacks need not arrive at initialization. Initial [owner report](core-hud/runtime-route-1-owner.json), [UI log](core-hud/runtime-route-1-ui.log) and [clean restoration](core-hud/runtime-route-1-restoration.json) are preserved; no runtime PASS replaces that failure.

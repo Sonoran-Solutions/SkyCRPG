@@ -59,6 +59,7 @@ class Clip {
 
 function makeMenu(width, height, settings) {
   const menu = new Clip();
+  menu.geometryLogs = [];
   menu.Health = {All: true, _visible: true};
   menu.Magica = {All: true, _visible: true};
   menu.Stamina = {All: true, _visible: true};
@@ -77,7 +78,7 @@ function makeMenu(width, height, settings) {
     Stage: {width, height},
     getTimer: () => menu.now || 0,
     TextFormat: function (...args) { this.args = args; },
-    skse: settings === null ? undefined : {plugins: {SkyCRPGUI: settings}},
+    skse: settings === null ? undefined : {plugins: {SkyCRPGUI: settings}, Log: message => menu.geometryLogs.push(message)},
   }));
   vm.runInContext(snippet, context, {filename: 'hud-init.as.inc'});
   return menu;
@@ -104,6 +105,8 @@ for (const [width, height] of [[1280, 720], [1920, 1080]]) {
 
 const menu = makeMenu(1280, 720, settings(100, 0, 0));
 const originalStatus = menu.SkyCRPGStatus;
+assert.equal(menu.geometryLogs.length, 1, 'setup emits one bounded geometry diagnostic');
+assert.match(menu.geometryLogs[0], /geometry setup Stage=1280x720 parent_x=.*panel_x=.*modeVisible=true/);
 frame(menu);
 assert.equal(originalStatus._visible, false, 'never show initialized zero defaults before native callbacks');
 assert.equal(menu.Health._visible, true, 'native meter remains visible before live data');
@@ -125,6 +128,8 @@ assert.equal(menu.Magica._visible, false);
 assert.equal(menu.Stamina._visible, false);
 assert.equal(originalStatus._skycrpgDataReady, true);
 
+assert.equal(menu.geometryLogs.length, 2, 'first valid render emits one geometry diagnostic');
+assert.match(menu.geometryLogs[1], /geometry first-valid-render/);
 const bridge = menu.skse.plugins.SkyCRPGUI;
 const calls = bridge.calls;
 frame(menu, 1);
@@ -171,6 +176,7 @@ for (const invalid of [undefined, {}, {health: NaN}, {...bridge.sample, staminaM
 bridge.sample = {health: 50, healthMax: 100, magicka: 100, magickaMax: 100, stamina: 95, staminaMax: 100};
 frame(menu);
 assert.equal(menu.Health._visible, false);
+assert.equal(menu.geometryLogs.length, 2, 'subsequent samples and fallback do not spam diagnostics');
 const staleStatus = menu.SkyCRPGStatus;
 const staleParty = menu.SkyCRPGPartyArea;
 vm.runInContext(snippet, vm.createContext(Object.assign(menu, {

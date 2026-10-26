@@ -16,3 +16,5 @@ These source logs and manifests are review metadata only. They contain no extern
 The built `hudmenu.swf` and FFDec-exported `HUDMenu.as` remain outside Git in the session candidate directory named in the parent [core HUD report](../core-hud.md).
 
 Resource snapshot correction: `resource-*` files record the changed candidate and bounded API/source/build checks. `runtime-route-1-*` preserve the initial failed owner route and clean restoration; changed-candidate runtime remains open.
+
+`geometry-*` records the bounded AS2 diagnostic-only follow-up and latest HUD SWF hash. Native source remains `e49fc30`.
