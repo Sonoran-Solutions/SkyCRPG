@@ -41,3 +41,11 @@ Pause behavior is explicit: normal inventory pause is allowed; action combat sta
 ## Presentational scope
 
 Exact concept portraits, live character render, textured parchment map, comprehensive event log and multiple arbitrary companion frameworks are polish/extensions. The MVP must still look like a coherent CRPG interface and deliver the functional grid/minimap/hotbar requirements. A mismatch in artwork is not permission to skip a core function.
+
+## Core HUD candidate — DYL-160
+
+The player panel anchors at bottom center with three engine-fed meters labeled HEALTH, MAGICKA and STAMINA. Displayed percentages apply the same native penalty percentages as Skyrim's meters. The replacement waits for all three native callbacks and valid data. It suppresses duplicate native resource groups only while the current native HUD mode permits the custom panel. Missing data, a missing settings bridge, disable or reinitialization restores native meters for the current mode.
+
+The native crosshair, target/activation prompt, compass and map provider retain their existing authority and placement. The upper-left reserved party panel says “Follower data unavailable”; it supplies no fabricated follower status. The existing upper-right map area remains reserved for its provider. No hotbar or Camera dependency is introduced.
+
+Preferences belong to `SkyCRPG_UI.ini`: version 1, startup scale 85–115%, horizontal offset ±120 and vertical offset ±60 movie-coordinate units, with viewport bounds. Reset by restoring the shipped defaults and restarting Skyrim. This bounded control does not implement the later full layout editor/controller coverage. See [core HUD evidence](evidence/p2/core-hud.md) for source/build checks and the separately open gameplay acceptance.
