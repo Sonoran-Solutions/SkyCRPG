@@ -1,6 +1,14 @@
 # DYL-161 hotbar candidate — incomplete validation
 
-Base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`. This is an **implementation candidate, not senior-review-ready**. Native runtime, Windows DLL build, and controller/combined acceptance remain open. It does not yet implement graphical item/spell icons or native shout recovery; the small type labels are placeholders, not icons. The controller path is the native Favorites menu and has not been verified for this use. Do not mark the ticket In Review based on this record.
+Base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`. This is an **implementation candidate, not senior-review-ready**. Native runtime, Windows DLL build, and controller/combined acceptance remain open. Original category icons are now implemented, but native shout recovery is not yet exposed. The controller path is the native Favorites menu and has not been verified for this use. Do not mark the ticket In Review based on this record.
+
+## Icon follow-up — current source
+
+The subsequent change adds original code-drawn symbols for weapon, armor, alchemy, spell, shout, scroll and generic item form classes. These do not infer weapon subtype, spell school or consumable effects; the broad `AlchemyItem` label replaces the inaccurate blanket POTION label. The symbols are original source under the repository MIT license, with no new asset or distribution dependency. Empty/removed bindings clear their symbols.
+
+The current HUD snippet SHA-256 is `83c03ea2b03ea37cea63f6f5a387e97def9bb4d2089c80d8c31d06b1edd0f201`; current native source SHA-256 is `0455b0b08b1d4efc29297f523889f1b679e245c2c57ef8f17c2c6e2375b0bce0`. FFDec compilation **PASS / COMPILED_NOT_RUN**, PID 230114, exit 0 in 0.765s with the same pinned inputs and 600s deadline; the output `hudmenu.swf` SHA-256 is `d6f51315506955e7c2412c56bcf4ebdf1ef40e79769db83273bf57fe946afe76` at `/srv/storage/Projects/SkyCRPG/session-p2-20261026/hotbar-icon-candidate/Data/Interface/hudmenu.swf`. The mocked actual-snippet harness passed kind selection and icon clearing. Neither this nor the compiler renders the game HUD; visual legibility and semantic suitability remain **NOT_RUN**.
+
+The earlier `e8b40...` artifact below remains historical, and is not the current icon candidate. No native build or gameplay has been performed for either candidate.
 
 ## Implementation and safety boundary
 
@@ -18,11 +26,12 @@ The candidate registers no hotbar input handler and dispatches no synthetic acti
 | Native Windows build | **NOT_RUN** | The CommonLib bridge is uncompiled. No native DLL/package hash exists for this candidate. Address Library singleton/relocation compatibility and actual engine layouts must be verified before deploying. |
 | Equip/select/use, binding precedence, selected state, inventory refresh, duplicate input | **NOT_RUN** | Native calls and the displayed snapshot require a bounded UI-only route on the pinned host with before/after engine state. |
 | Controller selection and menu cancellation | **NOT_RUN** | Native Favorites menu is a proposed route; no new selector or controller binding exists. |
-| Icons and native shout recovery | **BLOCKED / unimplemented** | Type labels do not satisfy icon acceptance; no shout recovery source is exposed. |
+| Category icons | **PASS in mocked presentation / NOT_RUN in game** | Original vector category symbols use the native broad form type. Distinguishing weapon subtypes, spell schools or alchemy effects is not claimed. |
+| Native shout recovery | **BLOCKED / unimplemented** | Pinned CommonLib exposes `Actor::GetVoiceRecoveryTime` (AE ID 38808) and `AIProcess::GetVoiceRecoveryTime` reads high-process `voiceRecoveryTime`, but neither the value semantics as remaining player shout cooldown nor this relocation has been runtime verified. No guessed timer is shown. |
 | UI-only, combined, 720p/1080p rendering, performance | **NOT_RUN** | The 2 Hz inventory scan needs measured safety and layout verification in the actual engine. |
 
 The runtime target is Steam Skyrim 1.7.104.0, SKSE 2.3.1, Address Library 13, Ubuntu 26.04.1, Proton Experimental 11, RTX 3080, SkyUI Community 6.11, with other pins in [the runtime matrix](../../compatibility/runtime-matrix.md). None was launched for this candidate. Deployment, copied-save preservation, logs, capture, original INI/plugin restoration and combined camera/UI testing are orchestrator-owned and remain **NOT_RUN**. Native UI ZIP still lacks generated `hudmenu.swf`; this candidate does not resolve licensing or public distribution.
 
 ## Remaining obligations
 
-Verify the newly used CommonLib relocations against the exact Address Library and build the Windows target; inspect actual bound item/magic precedence and instance/count behavior in game. Implement appropriate graphical icons and expose native shout recovery if available. Run weapon, spell, consumable, empty/depleted and menu/controller fixtures, confirm displayed state and at-most-once native dispatch, measure scan overhead, and run the combined smoke. Reconcile user controls and packaging documentation with verified behavior. F6/F7/F8 remain Camera-owned; no UI input mappings were added. Until these obligations pass, the candidate does not meet DYL-161 acceptance.
+Verify the newly used CommonLib relocations against the exact Address Library and build the Windows target; inspect actual bound item/magic precedence and instance/count behavior in game. Verify category icon readability and fidelity in game, and expose native shout recovery only after verifying its semantics and relocation. Run weapon, spell, consumable, empty/depleted and menu/controller fixtures, confirm displayed state and at-most-once native dispatch, measure scan overhead, and run the combined smoke. Reconcile user controls and packaging documentation with verified behavior. F6/F7/F8 remain Camera-owned; no UI input mappings were added. Until these obligations pass, the candidate does not meet DYL-161 acceptance.

@@ -171,7 +171,7 @@ const char* HotbarKind(RE::TESForm* form)
 	switch (form->GetFormType()) {
 	case RE::FormType::Weapon: return "WEAPON";
 	case RE::FormType::Armor: return "ARMOR";
-	case RE::FormType::AlchemyItem: return "POTION";
+	case RE::FormType::AlchemyItem: return "ALCHEMY";
 	case RE::FormType::Spell: return "SPELL";
 	case RE::FormType::Shout: return "SHOUT";
 	case RE::FormType::Scroll: return "SCROLL";

@@ -115,6 +115,45 @@
             slot.createTextField("key", 1, 4, 2, 58, 15);
             slot.key.setNewTextFormat(new TextFormat("$EverywhereFont", 11, 0xE9D59C, true));
             slot.key.text = String(slotIndex + 1);
+            slot.icon = slot.createEmptyMovieClip("icon", 5);
+            slot.icon._x = 43;
+            slot.icon._y = 2;
+            // Original vector symbols identify only broad native form classes;
+            // no spell school, weapon subtype or alchemy effect is inferred.
+            slot.icon.drawKind = function(kind) {
+               this.clear();
+               this.lineStyle(1.5, 0xE9D59C, 100);
+               if (kind == "WEAPON") {
+                  this.moveTo(1, 1); this.lineTo(13, 13);
+                  this.moveTo(13, 1); this.lineTo(1, 13);
+                  this.moveTo(1, 8); this.lineTo(6, 13);
+                  this.moveTo(8, 13); this.lineTo(13, 8);
+               } else if (kind == "ARMOR") {
+                  this.moveTo(2, 1); this.lineTo(12, 1); this.lineTo(12, 8);
+                  this.lineTo(7, 14); this.lineTo(2, 8); this.lineTo(2, 1);
+               } else if (kind == "ALCHEMY") {
+                  this.moveTo(5, 1); this.lineTo(9, 1); this.lineTo(9, 5);
+                  this.lineTo(12, 8); this.lineTo(12, 13); this.lineTo(2, 13);
+                  this.lineTo(2, 8); this.lineTo(5, 5); this.lineTo(5, 1);
+               } else if (kind == "SPELL") {
+                  this.moveTo(7, 0); this.lineTo(9, 5); this.lineTo(14, 7);
+                  this.lineTo(9, 9); this.lineTo(7, 14); this.lineTo(5, 9);
+                  this.lineTo(0, 7); this.lineTo(5, 5); this.lineTo(7, 0);
+               } else if (kind == "SHOUT") {
+                  this.moveTo(1, 2); this.lineTo(12, 2); this.lineTo(12, 9);
+                  this.lineTo(7, 9); this.lineTo(4, 13); this.lineTo(4, 9);
+                  this.lineTo(1, 9); this.lineTo(1, 2);
+               } else if (kind == "SCROLL") {
+                  this.moveTo(3, 1); this.lineTo(11, 1); this.lineTo(11, 13);
+                  this.lineTo(3, 13); this.lineTo(3, 1);
+                  this.moveTo(5, 4); this.lineTo(9, 4);
+                  this.moveTo(5, 7); this.lineTo(9, 7);
+               } else if (kind != "") {
+                  this.moveTo(2, 2); this.lineTo(12, 2); this.lineTo(12, 12);
+                  this.lineTo(2, 12); this.lineTo(2, 2);
+               }
+               this.lastKind = kind;
+            };
             slot.createTextField("kind", 2, 4, 17, 58, 14);
             slot.kind.setNewTextFormat(new TextFormat("$EverywhereFont", 10, 0xD8C69B, true));
             slot.createTextField("name", 3, 4, 30, 58, 15);
@@ -141,6 +180,7 @@
                cell.beginFill(0x171715, 85);
                cell.moveTo(0, 0); cell.lineTo(64, 0); cell.lineTo(64, 59);
                cell.lineTo(0, 59); cell.lineTo(0, 0); cell.endFill();
+               cell.icon.drawKind(value.kind);
                cell.kind.text = value.kind == "" ? "EMPTY" : value.kind;
                cell.name.text = value.name;
                cell.count.text = value.count > 1 ? "x" + value.count : "";
