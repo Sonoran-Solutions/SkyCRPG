@@ -26,6 +26,9 @@ class PatchContract(unittest.TestCase):
                 self.assertEqual(builder.sha(source), expected)
                 original = source.read_text()
                 candidate = builder.transform(name, original)
+                if name.endswith("InventoryLists.as"):
+                    self.assertLess(candidate.index("var skycrpgList = this.itemList"),
+                                    candidate.index("if(this.categoryList.handleInput"))
                 # Any added/deleted engine dispatch, focus or callback registration
                 # would make this a different risk class than a presentation spike.
                 for pattern in (r"gfx\.io\.GameDelegate\.[^;]+;", r"gfx\.managers\.FocusHandler[^;]+;"):

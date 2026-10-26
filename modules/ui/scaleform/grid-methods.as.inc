@@ -1,6 +1,7 @@
     // Original SkyCRPG presentation only. The native backing entries and callbacks
     // remain authoritative; no item action is dispatched from these methods.
     public var skycrpgGrid: Boolean = false;
+    public var skycrpgCategoryFocus: Boolean = false;
 
     public function skycrpgMove(details: Object)
     {
@@ -31,6 +32,7 @@
             if (child instanceof MovieClip || child instanceof TextField) child._visible = false;
         }
         var selected = entry == this.selectedEntry;
+        if (selected) this.skycrpgCategoryFocus = false;
         clip.clear();
         clip.lineStyle(1, selected ? 0xDFC174 : 0x777777, 100);
         clip.beginFill(selected ? 0x48402A : 0x16191D, 95);

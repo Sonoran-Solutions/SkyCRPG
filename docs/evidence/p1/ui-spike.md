@@ -1,6 +1,6 @@
 # P1-04 / DYL-153 — native UI candidate
 
-2026-10-26. **Implementation candidate compiled; gameplay acceptance NOT_RUN.**
+2026-10-26. **Live grid/HUD presentation observed; controller horizontal navigation FAIL, correction awaiting retest.**
 This is an original AS2 grid/HUD patch built against external SkyUI Community
 6.11, not a screenshot or replacement inventory database. No game was launched
 or deployed by this worker. Parent owns the shared game schedule and packages.
@@ -32,7 +32,7 @@ Scaleform overlay, independent of that DLL and of Camera/SmoothCam/TDM.
   ±1 horizontally), then invokes the existing selection method. Enter/confirm,
   quantity dialogs, search, sorting, focus and native pause remain SkyUI-owned.
   Controller feasibility is implemented through its real navigation codes;
-  hardware behavior is **NOT_RUN**. Edge navigation clamps; full controller UX is
+  hardware initially exposed a horizontal focus bug (see correction below). Edge navigation clamps; full controller UX is
   outside this proof.
 - Original HUD text displays the native HUD's health/magicka/stamina meter values.
   A child clip owns its own frame callback and is destroyed with the HUD. It also
@@ -135,12 +135,12 @@ unchanged; no Windows native build is required for these AS2 changes.
 | Three AS2 candidates compile; inserted methods decompile | PASS (compile only) |
 | Source native delegate/focus preservation and fail-closed anchors | PASS |
 | Missing map loose-file prerequisite detection | PASS (expected BLOCKED report) |
-| UI-only live grid/HUD with ordinary third person | NOT_RUN |
+| UI-only live grid/HUD | PASS (owner screenshots show native presentation; see provenance below) |
 | Real weapon equip and unequip exactly once; identity/count/weight | NOT_RUN |
 | Map visible, positioning and exterior/interior transition | NOT_RUN |
 | Provider absent/disabled navigation recovery | NOT_RUN (compass code unchanged) |
 | Combined-load smoke | NOT_RUN |
-| Controller navigation/activation and modal focus | NOT_RUN (no controller) |
+| Controller navigation/activation and modal focus | FAIL horizontal navigation; correction retest NOT_RUN |
 
 On an isolated copied save, install the selected external dependencies and stage
 the three candidate SWFs as winners. Record source/package hashes and all winners.
@@ -159,7 +159,7 @@ provider-absent clean launch; retain compass navigation throughout. Finish with
 combined load. Budgets: 20 minutes per route; parent records PID, deadline,
 logs and cleanup before launch. Native CUA desktop control is unavailable on
 the current host, so automatic compilation cannot supply this owner gameplay
-evidence. No runtime acceptance checkbox is satisfied by this document.
+evidence. The later owner screenshots establish live presentation only; full inventory action and minimap gates remain open.
 
 ## Reuse and limits
 
@@ -231,3 +231,62 @@ relative path beneath the UI profile's Data overlay, winning over SkyUI's BSA.
 Retain the external SkyUI ESP/BSA and all dependencies. Parent records deployed
 file winners, actual runtime evidence and cleanup. This worker has not deployed
 these generated derivative files or incorporated provider assets into Git.
+
+## Owner controller reproduction and bounded correction
+
+The owner supplied two screenshots from the UI candidate on controller. Viewed
+in this conversation before a host reboot, they showed the live ALL/WEAPONS
+3-column grid, native carry weight **293/300**, gold106, actual names/counts and
+existing equipped marks, plus live H/M/S100 HUD. The owner reported that pressing
+Right on the stick or D-pad switched Weapons to Armor instead of selecting Iron
+Battleaxe beside Iron Arrow. **Result: FAIL — horizontal controller navigation.**
+A controller is present; earlier hardware-unavailable wording is superseded.
+These static frames do not prove an equip/unequip round trip, preserved instance
+state, minimap rendering or safe provider recovery.
+
+Capture provenance: `/tmp/codex-clipboard-84b4478c-62ad-440b-b9e8-d2f11977ca01.png`
+and `/tmp/codex-clipboard-66d5e5a0-f08c-428f-95ab-a7c65b1a40b3.png`, supplied by
+the owner and visually inspected by this worker. They were **not copied before
+the reboot**, which cleared `/tmp`; no image file or hash is fabricated here.
+The conversation retains the visual observations. Parent records the gameplay
+run/source/deployed winners and the host reboot separately.
+
+Source investigation identified the exact consumer ordering: native
+`InventoryLists.handleInput` invokes `CategoryList.handleInput` before the
+item-list focus target. CategoryList consumes LEFT/RIGHT unconditionally when
+enabled, so the grid's list-local movement never receives horizontal input.
+The correction injects original routing into InventoryLists **before** that
+category consumer, under the existing SHOW_PANEL, sort/search, disable-input
+and disable-selection guards. It adds no activation or item transaction call.
+
+Controls for retest: grid Left/Right selects adjacent live entries; Up/Down moves
+three entries. **Up from the first grid row enters category navigation** and
+clears the item highlight; Left/Right then uses native category switching.
+**Down or Confirm returns to the first item** without equipping it. Mouse item
+selection returns to grid navigation. Native column/sort/search/menu controls
+remain accessible. One subsequent Confirm on a selected item follows the native
+activation path once. Missing selection selects the first available item.
+
+The focused Node regression executes the actual AS2 movement/routing bodies
+with native-menu stubs (only the AS2 method/argument annotations are removed).
+It checks filtered native indices rather than displayed row indices, horizontal
+category isolation, vertical movement, explicit category access/return, key-up
+behavior, disabled input/selection, unchanged non-grid category behavior, and
+one activation consumer. Removing the routing reproduces a failure under the
+legacy category-first order. This is **PASS (logic only)**, not GFx/controller
+acceptance. Source safety checks also verify injected routing precedes the real
+category call and preserve all native delegate/focus calls.
+
+```bash
+<node> modules/ui/tests/navigation_contract.js modules/ui
+# Expected assertion failure demonstrates the old consumer order:
+<node> modules/ui/tests/navigation_contract.js modules/ui --legacy-category-first
+```
+
+All recovery inputs, job records and new results use persistent
+`/srv/storage/Projects/SkyCRPG/session-20261026/ui-controller-fix/`; old `/tmp`
+artifact paths above are historical. The interrupted build/test call had no
+verified completion signal before reboot and is not counted as evidence.
+No build is duplicated during the parent's monitored game retry; heavy FFDec
+compilation is held until the parent releases the host. Corrected candidate
+compile/hash results and owner retest must be appended before promoting this fix.

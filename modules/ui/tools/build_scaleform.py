@@ -25,6 +25,7 @@ NEXUS_BASE_SWFS = {
 }
 SOURCES = {
     "ItemMenus/InventoryMenu.as": "71142a8bfa6851b7c250f9ef255a386f800dccd59d7c080be8e798b9c0cabd1d",
+    "ItemMenus/InventoryLists.as": "03fc18ae04c1fdb5b435b83e20d7414773e287ceb5fb4dd2aa0d3b07e54f68f3",
     "Common/skyui/components/list/ScrollingList.as": "af6ddbd9d66385024c614afce7deffffa1346ade09cae25838058ec544b2ba4c",
     "Common/skyui/components/list/TabularList.as": "ae576a7ac6ae29827edda04c6f70f09b896a3de6426c7083c9118c50b5f81efa",
     "Common/skyui/components/list/TabularListEntry.as": "52093027024bc0b089a7c752be6edcd3fa3767cda9f1d65a7e9f14e4432dd8e5",
@@ -45,6 +46,9 @@ def replace_once(text, anchor, replacement):
 def transform(name, text):
     if name.endswith("InventoryMenu.as"):
         text = replace_once(text, "_loc3_.layout = _loc5_;", "_loc3_.skycrpgGrid = true;\n      _loc3_.scrollDelta = 3;\n      _loc3_.layout = _loc5_;")
+    elif name.endswith("InventoryLists.as"):
+        anchor = "if(this.categoryList.handleInput(details,pathToFocus))"
+        text = replace_once(text, anchor, (ROOT / "scaleform/grid-routing.as.inc").read_text() + "\n      " + anchor)
     elif name.endswith("ScrollingList.as"):
         text = replace_once(text, "// That makes no sense, does it?", "if (this.skycrpgMove(details)) return true;\n\n        // That makes no sense, does it?")
         text = replace_once(text, "this.setClipCount(this._maxListIndex);", "if (this.skycrpgGrid) this._maxListIndex = 18;\n        this.setClipCount(this._maxListIndex);")
@@ -93,7 +97,7 @@ def main():
         if sha(base / name) != expected:
             parser.error(f"Provider SWF drift: {name}")
     targets = {
-        "inventorymenu.swf": ["ItemMenus/InventoryMenu.as"],
+        "inventorymenu.swf": ["ItemMenus/InventoryMenu.as", "ItemMenus/InventoryLists.as"],
         "skyui/inventorylists.swf": [n for n in SOURCES if n.startswith("Common/")],
         "hudmenu.swf": ["Vanilla/HUDMenu.as"],
     }
