@@ -1,69 +1,156 @@
-# Architecture proposal
+# Architecture and module contracts
 
-## Module ownership
+DYL-154 / P1-05, 2026-10-26. This is the implementation contract submitted for senior review, not a claim that every contract is implemented. [ADR-001](decisions/ADR-001-stack.md) selects the route; the [runtime matrix](compatibility/runtime-matrix.md) defines its only tested environment; the [acceptance matrix](compatibility/acceptance-matrix.md) separates working proofs from obligations. Ticket links and phase gates are indexed in [ROADMAP](ROADMAP.md).
 
-This is a proposed design until ADR-001 is completed by Phase 1.
+## Authority and boundaries
 
-| Component | Owns | Must not own |
+| Responsibility | Single owner | Boundary |
 | --- | --- | --- |
-| Camera module | Camera mode, framing, obstruction recovery, camera input and lifecycle handoff. | Inventory, follower AI, global HUD replacement or UI-only configuration. |
-| UI module | HUD presentation, player-inventory presentation/actions, menu focus, provider adapters, minimap/compass presentation. | Player movement physics, camera transform, follower commands or independent item ownership. |
-| External providers | Their existing movement, mapping, HUD or menu functionality. | An assumed API that has not been inspected and exercised. |
-| Shared source | Small immutable types/utilities, versioning or build helpers. | A mandatory runtime service coupling Camera and UI. |
+| Game state, inventory, equipment, counts, ownership, weight, pause and native actions | Skyrim engine and its native menus | Neither module maintains a competing database, capacity system or combat simulation. |
+| Normal third-person camera transforms | SmoothCam 1.8.1 | TDM camera yaw adjustment and lock-on are disabled. No UI transform writes. Native engine camera owns first person and special states. |
+| Framing policy, camera input, requested mode, recovery, provider configuration | Camera module | Small original adapter is planned, **not implemented**. Never writes transforms while a provider owns them. |
+| Directional movement | TDM 2.3.1 | Movement does not grant camera ownership; disable optional headtracking/leaning in the tested subset. |
+| Player grid, HUD, UI input/focus, minimap/compass presentation policy | UI module | Native InventoryMenu/Scaleform with SkyUI Community 6.11; no actor movement or camera-transform ownership. |
+| Map rendering and map resources | Dragon's Eye + Infinity UI NG + Local Map Upgrade | UI integrates verified capabilities; a clip name is not a public readiness API. |
+| External file installation and resolved file winners | Installer/profile integrator | One manifest for shared prerequisites, not two module installers competing over them. |
+| Shared utilities | Source/build layer | Compiled into each module as needed; no mandatory shared DLL, service, message bus or module-to-module dependency. |
 
-Use separate DLLs only where new native code is actually necessary. A Camera package built from a tested preset plus a small adapter is valid if it meets the camera criteria. A UI package may combine original assets, configuration and adapters to independently installed providers. A source fork needs an explicit maintenance and permission decision.
+Both native DLLs are currently load-only skeletons. Playable Camera behavior comes from provider configuration; UI behavior comes from generated Scaleform patches. Future adapters obey this document without assuming functionality exists in the skeletons.
 
-## Candidate implementation paths
+## Camera state and transition contract
 
-Camera: first test a supported preset/API or cooperative handoff to an existing camera system. Use a small SKSE/CommonLib controller when that route cannot provide held pitch, recovery and lifecycle behavior. Do not enable two transform writers.
+**Precedence, highest first:** explicit disable/invalid prerequisites → invalid world/loading/death → engine-owned scripted/special camera → dialogue or focused menu → first person → precision aim/activation fallback → authorized target lock → obstruction recovery → ordinary exploration/melee. Evaluate current engine state on every entry/return; never restore an obsolete lower-priority state. A menu suspends custom camera input without forcibly cancelling an engine cinematic. Emergency disable suppresses future custom ownership; it must not force a transform during a scripted/invalid world state.
 
-UI: prefer existing HUD and Scaleform/Infinity UI surfaces when they satisfy the design; consider an SKSE/native overlay for a bounded player-inventory surface if the spike proves native actions, focus, pause, controller operation and graphics compatibility. The renderer is a Phase 1 decision, not predetermined by the screenshots.
+The table is a required state machine, not an existing adapter API. “Resume” always means: discard old scene handles; reacquire a valid player/cell/camera; verify provider/version and sole ownership; apply only the still-current desired preference; await released input before accepting a new press. If any check fails, stay with native view. Desired mode/pitch/zoom are preferences; effective mode is transient and must never be serialized as a pointer or lock target. DYL-159 implements this restoration barrier.
 
-The build targets the game's Windows x64 plugin ABI. A Linux development host does not imply a native Linux Skyrim plugin. Choose a verified build host/runner and record Proton separately if used for game tests. SKSE/CommonLib versions and runtime address support must be pinned; an upstream library's broad support statement is not a SkyCRPG compatibility result.
+| State | Active transform / policy owner | Entry | Exit | Input owner | Restoration and safe fallback | Implementation / test |
+| --- | --- | --- | --- | --- | --- | --- |
+| Normal exploration | SmoothCam / Camera | Valid third person, enabled, no higher state | Any higher state or disable | Camera framing; engine movement through TDM | Apply bounded framing/zoom; intended held pitch/recenter require adapter. Fall back to normal third person if policy cannot be applied safely. | DYL-156; DYL-162, DYL-173 |
+| Melee combat | SmoothCam / Camera | Eligible third person, native melee drawn/attacking | Sheathe, aim, menu or other higher state | Engine attack/block; Camera framing | Use provider combat framing, never replay attack on return. Recompute exploration framing on exit; closer/native view if unreadable. | DYL-156, DYL-158; DYL-162 |
+| Precision bow/spell aiming | Native engine in first person / Camera fallback policy | User requests native POV for precision; automatic handoff is future work | User exits POV/aim, or higher state | Engine aim/fire/POV; Camera must not consume the same fire event | First-person fallback **PASS**; top-down third-person aim **FAIL**. Do not return overhead while precision input remains held. Resume eligible prior preference only after validation; remain first person if handoff uncertain. | DYL-158; DYL-162, DYL-173 |
+| Target lock | None in current profile; future explicitly granted exclusive owner | Future validated target + supported handoff + sole-owner grant | Unlock, invalid/dead/unloaded target, menu, aim fallback, load or disable | Future Camera targeting adapter; engine attacks | **BLOCKED** as settings-only TDM coexistence. Keep disabled until both relinquish/grant and return are proven. Failed grant means no lock and native precision fallback, never two writers. | DYL-158, DYL-159; DYL-162 |
+| Object activation | SmoothCam if native ray usable; engine view otherwise / Camera | Native activation prompt/intent; no modal owner | Activation completes/cancels or menu takes focus | Engine activation; Camera owns only requested fallback | Keep native world activation ray authoritative, independent of combat reticle. No synthetic/repeated activation. Use native POV if ray/prompt unreliable; resume after resulting menu closes. | DYL-158, DYL-167; DYL-162 |
+| First person | Native engine | Native POV request or safe precision fallback | Explicit POV return and eligible third person | Engine POV/aim/movement | SmoothCam/custom adapter relinquish third-person policy. Preserve requested preferences, not old transforms; validated return or stay native. | DYL-158, DYL-159; DYL-162 |
+| Loading screens / fast travel | Native engine | Loading/world teardown begins | Loading ends **and** valid world/player/camera is available | Native loading/menu; custom gameplay consumers suspended | Cancel pending ownership and input; reacquire on exit, then restore desired preference once. Pitch currently resets (**FAIL**); no implemented persistence adapter. Native view if not ready. | DYL-159; DYL-162, DYL-173 |
+| Interior/exterior transitions | Native engine during loading; SmoothCam only after resume | Cell/world transition, including Helgen Keep boundary | Valid destination and transition settled | Engine during transition, then eligible Camera input | Zoom retention/usability **PASS**; pitch retention **FAIL**, owner-deferred. Reassess obstruction at destination; never force old world transform through a wall. | DYL-157, DYL-159; DYL-162 |
+| Tight interior / obstruction | SmoothCam / Camera recovery policy | Provider collision constrains requested view | Clearance restored with tested hysteresis | Camera framing, engine movement | Retain provider collision; bounded closer view, then validated preferred framing. Detailed walls/floors/doorways/stairs recovery **NOT_RUN**. Native close view if recovery fails. | DYL-157; DYL-162, DYL-173 |
+| Dialogue and menus | Engine dialogue camera, or provider at its existing non-input pose / native menu | Dialogue, inventory, modal, map or other focus-taking menu | All blocking menus close; world still valid | Focused native/UI menu only | Suspend Camera input and targeting. Do not force third person over dialogue. Clear held input; resume once through barrier. Preserve native menu pause. | DYL-159, DYL-167; DYL-162, DYL-169 |
+| Death / reload / new game | Native engine | Player death, load request, new game | New live player/world ready | Native death/load menus | Invalidate all scene/target handles and in-flight requests; retain only validated settings. Fresh defaults/native view if incompatible. No restore from old actors or save addresses. | DYL-159; DYL-162, DYL-173 |
+| Unsupported scripted/special states | Native engine | Killcam, furniture, mount, swim, transformation, scripted camera or unknown state | Known supported state positively detected | Engine for that state | Suspend overhead/lock; never fight cinematic writes. Reacquire through barrier, otherwise stay native. Individual state coverage **NOT_RUN**. | DYL-159; DYL-162, DYL-173 |
+| Emergency F8 disable/reset | Underlying native camera when safe / Camera disable policy | Explicit emergency intent or invalid required provider/runtime | Deliberate re-enable after prerequisites and world are valid | Camera reserves emergency intent where safe; native state still controls modal/scripted interaction | Current F8 is SmoothCam `modDisabled` toggle (scan66), ten pairs **PASS** in tested route. It is **not** a proven global reset in every state or a DLL unload. Future reset clears owned transient state, releases ownership, restores only owned settings; never auto re-enable after failure. Native POV/MCM disable and restart are recovery paths. | DYL-156, DYL-159, DYL-170; DYL-162, DYL-175 |
 
-## Camera state precedence
+### Adapter boundary and settings restoration
 
-Highest priority first:
+Reuse SmoothCam collision/framing and its permitted camera-ownership API only after validating the exact calls and acknowledgement behavior. Current TDM lock-on writes yaw/pitch and requests only SmoothCam crosshair ownership; clearing interpolation speeds does not remove those writes. A future exclusive handoff must disable/release the outgoing writer, verify it has stopped, enable the incoming writer, and reverse that sequence on exit. If an API cannot demonstrate this, keep target lock disabled and first-person fallback. No speculative callback names or working bridge are promised (DYL-158).
 
-1. Disabled, unsupported runtime, missing prerequisite or explicit emergency reset: release ownership and expose the safe underlying camera.
-2. Loading, invalid player, death transition or scripted/special camera state: suspend; never retain stale scene pointers.
-3. Menu/dialogue/first-person/special locomotion state: hand off according to the selected backend.
-4. Precision aiming or interaction: use the tested closer/normal camera when needed.
-5. Obstructed exploration: shorten or lower the view smoothly with hysteresis.
-6. Normal exploration/combat: use the selected elevated preset.
+Pitch persistence needs a supported provider mechanism or an explicitly exclusive interval; an adapter cannot set raw rotations alongside SmoothCam just because it calls them preferences. A provider modification or large controller would require a new reviewed decision and permission analysis. No such change is selected here.
 
-Capture only the settings/state that SkyCRPG changes. Restoration must account for intervening user/provider changes, not blindly overwrite the whole camera configuration. Returning from a handoff must revalidate player, cell and camera state.
+Camera owns only its declared SmoothCam JSON/preset keys and the TDM settings fragment. Merge into existing settings, snapshot previous values, and restore only values still equal to the installed override. Preserve later user/provider edits and report conflicts. `uTargetLockMode=0` means **locked**, not off; use the committed fragment's cleared activation binding, disabled POV lock behaviors and yaw adjustment. Persistent Camera preferences belong in `Data/SKSE/Plugins/SkyCRPG_Camera.ini`, in versioned non-debug sections with validated ranges and defaults; current DLL INI is debug-only. UI preferences similarly belong in `SkyCRPG_UI.ini`; adding another persistent store requires a contract amendment. Save no raw scene pointers, actor addresses or target locks. Schema migration/co-save use is unimplemented and must be reviewed in DYL-159 before it is introduced.
 
-## UI data and mutation contract
+## Input and menu contract
 
-The engine is the source of truth. Render immutable snapshots tagged with a generation. A selected row references a resolvable item/instance identity, never merely a displayed name, row index or base FormID when extra state distinguishes copies.
+The UI module owns the focus/routing policy; each module independently observes native menu/game state. There is no required runtime broker between modules. Camera must suppress its input whenever a blocking native menu has focus even when UI is absent. UI never asks Camera to rotate or release a key on its behalf.
 
-Before an equip/use/drop request, resolve the current item again on the appropriate game thread, validate quantity and quest/equipment restrictions, perform one supported action, then refresh the snapshot. Menu closure, load/new game, removed items and changed inventory generations invalidate stale commands. Do not hold an engine lock while waiting for render work or another thread.
+| Priority/context | Sole consumer | Required behavior |
+| --- | --- | --- |
+| Invalid world, load/death transition | Native engine | Clear module held keys, queued selection/actions and captures. No gameplay replay on resume. |
+| Quantity/confirmation/search modal | Native modal | Mouse, keyboard and controller go to modal; underlying grid/hotbar/Camera do not also process them. |
+| Focused inventory or other native menu | That menu / UI routing within player InventoryMenu | Consume navigation once; leave activation to one existing native path. Other menus retain their own handlers. |
+| Explicit future hotbar selector with no blocking menu | UI selector | Own selector navigation/cancel only; Camera input suppressed while selector captures it. Must expose native menu focus/capture or use disjoint bindings; no private UI flag that Camera-only cannot observe. |
+| Gameplay, no capture | Engine combat/movement, Camera camera actions, UI assigned hotkeys | Disjoint action bindings. Hotbar uses one native equip/use path, never native hotkey plus a duplicate synthetic action. Provider map K/L and emergency F8 conflicts must be checked before enabling bindings. |
 
-Favorites and hotbar reference native state. Spell selection does not imply casting, and the UI must not invent cooldowns or command the actor through duplicate inputs.
+Use native pressed/released/repeat semantics; exactly one edge activates one action. Navigation may repeat deliberately, activation may not duplicate on down/up, two SWF definitions, or two devices. On focus change/cancel/load, release capture and discard pending repeat/held state; require a fresh press. Mouse rollover changes grid focus only through input, not repaint. Controller current contract: ±1 adjacent entry, ±3 row; Up from first row enters categories, Left/Right changes category there, Down/Confirm returns to grid **without equipping**. Empty lists remain escapable. Both `InventoryLists` definitions (main movie and imported library) must have the same guarded routing. DYL-167/168 validate modals, other contexts, mixed devices and resolutions; current scoped controller PASS is not that matrix.
 
-Follower widgets use resolvable handles, bounded observation and provider capabilities. Unknown/unloaded state is displayed safely. A static silhouette is an acceptable portrait fallback.
+Inventory uses **native paused InventoryMenu semantics**. Grid does not change engine pause flags, movement time, save availability or dialogue state. Containers, barter, crafting and follower trade remain native/SkyUI; do not apply player-grid routing to those contexts. On unsupported context, invalid patch prerequisites or disabled UI, retain/recover the native menu and discard custom state. Restore a known base movie winner with the game closed if safe live fallback is impossible; never claim a crashed/malformed movie can repair itself. DYL-167/171 test fallback/restart access. Unpaused-menu compatibility is not selected.
 
-## Menu and input ownership
+## Inventory identity and action lifecycle
 
-Exactly one layer consumes an action: gameplay, inventory, modal quantity/confirmation dialog, or another native menu. Captured mouse/controller input must not leak to the camera or consume a potion behind a dialog. On close, load and reset, release held/captured state.
+Skyrim remains authoritative for item ownership, quantities, equipment/favorites, quest restrictions, weight and encumbrance. The proven patch reads the native filtered enumeration and backing `itemIndex` for the current menu; it does not reorder/copy an inventory database or dispatch new transactions. The following contract governs any later observer/adapter (DYL-163):
 
-Pause behavior follows the chosen inventory/menu route. Opening a native fallback menu suspends the custom surface as necessary. Disabling the UI returns all owned HUD/compass changes and leaves native menu access intact.
+| Step | Required contract |
+| --- | --- |
+| 1. Read | Obtain current native menu/inventory snapshot on its supported thread. Tag world generation, menu session/context and inventory generation; expose immutable display values to rendering. Never hold an engine lock waiting for rendering. |
+| 2. Display/select | Resolve a live native entry/instance within that generation. A row index, display name or base FormID alone is not identity. Selection may use a temporary opaque native entry/extra-data handle only while valid; no raw pointer crosses world/menu lifetime. |
+| 3. Validate | Before dispatch, revalidate world, player, menu focus, generation, item/stack identity, quantity and native restrictions. A stale or ambiguous instance is refused and refreshed; never choose another copy sharing its FormID. Native validation remains authoritative. |
+| 4. Dispatch once | One native menu/equipment action on its required thread. Preserve the existing keyboard/controller ItemSelect or mouse AttemptEquip path, not both. At most one in-flight intent for the selected action. A quantity dialog is continuation of that intent owned by the native menu, not a second action. |
+| 5. Observe | Wait for supported native completion/state invalidation and read actual engine state. Do not optimistically alter quantities/equipment. Uncertain completion means refresh/reconcile, **never automatic retry** (which could equip twice or drop again). |
+| 6. Refresh | Publish the new generation and native item card/count/equipped/weight state. No fabricated equip flags or compensating inventory mutation. |
+| 7. Invalidate | Clear obsolete selection/intent on generation or context change. Re-select only by newly resolved native identity; otherwise clear selection and require deliberate input. |
 
-## Minimap contract
+**Same-base instances:** enchanted, tempered, stolen/owned and quest-restricted copies retain their native extra-data distinctions. An engine stack may represent multiple equivalent copies; use its native quantity/action semantics, not one synthetic identity per grid cell. If native enumeration groups distinguishable copies, delegate to its supported disambiguation/instance selection; if the intended copy cannot be resolved, refuse rather than equip/drop by base FormID. Native restrictions control whether an action is legal. This route requires fixture tests for each trait and mixed copies (DYL-163); the plain weapon round trip does not prove them. Do not invent a universal stable item UUID or assume native `itemIndex` survives sorting/load.
 
-Use the selected provider's actual local map and controls. Read capability/version information where offered; otherwise validate the installed files/configuration and use conservative fallback. The integration owns placement/style/configuration, not the game-world camera or map rendering.
+Durable settings store presentation preferences only. Future hotbar/follower references must use supported engine resolution (including mod identity/load-order resolution where applicable), revalidated on load; no raw runtime actor/item pointer, inventory index, extra-data address or cached actor object is a save identifier. Native favorites remain authoritative. Any co-save schema needs explicit version/migration/removal behavior before implementation.
 
-Hide the standard compass only when replacement navigation is enabled and functioning under the selected provider contract. A missing provider or deliberate minimap disable must restore native navigation. The provider's optional compass ring is not proof that it hides Skyrim's original horizontal compass.
+| Invalidation / cancellation trigger | Selection and action behavior | Recovery / test owner |
+| --- | --- | --- |
+| Menu close or cancel | Discard unsubmitted intent/capture. An already dispatched native action may finish; do not undo or replay it. | Fresh snapshot on reopen; DYL-163/167. |
+| Sort, filter, category/search change | Increment view generation, discard positional selection; re-resolve same native instance only if unambiguous and present. | Empty result remains navigable; no implicit activation. DYL-164/168. |
+| Item removed or quantity changed | Invalidate backing entry and pending amount; refuse stale action. | Refresh actual engine count/weight. DYL-163. |
+| Equipment/favorite state changed externally | Refresh and revalidate the intended action; never toggle using cached state. | Show actual state; require fresh intent when stale. DYL-163/161. |
+| Quantity/confirmation dialog | Modal owns input and native continuation; close/cancel performs no mutation. Revalidate on confirm. | No grid/hotbar event behind modal; DYL-163/167. |
+| Save/load/new game | Save does not serialize pending actions; load invalidates all generations/handles. | Fresh native snapshot after world/menu readiness. DYL-163/167. |
+| Player death | Cancel unsubmitted work and capture; invalidate actor/menu state. | Native death/load flow; no post-death action replay. DYL-167. |
+| Switch native menu context | Destroy player-grid session; no callbacks retained into barter/container/crafting/follower trade. | Native context owns its own entries/actions/pause; DYL-167. |
 
-## Persistence and packaging
+Scrollable grid geometry must use a row-aligned visible range and a separate absolute/native item mapping. The spike's 18 visible cells and `_listIndex % 3` positioning have a senior-review concern at 19+ entries when native scrolling starts at index1. Do **not** reuse that layout as completed Phase 3 behavior. DYL-164 must test 19/20+, partial last rows, scrolling, sort/filter and the 500-entry fixture without changing item identity or imposing a lower capacity.
 
-Prefer versioned configuration files for presentation preferences. Do not persist raw pointers or item replicas. If co-save data becomes unavoidable, define versioning, invalidation and removal consequences before shipping.
+## HUD, minimap, follower and hotbar lifecycle
 
-Suggested implementation tree after Phase 1: modules/camera, modules/ui, shared, assets, presets, packaging, tests and tools. These directories are not created as pretend implementation now. Separate logs, filenames and config ownership matter more than the exact directory names.
+UI owns original HUD child clips and their callbacks; engine owns actor values. Initialize once per actual HUD/movie generation after it exists; teardown removes only UI-owned listeners/clips/capture, never provider resources. Load, death, movie replacement and disable invalidate observations and trigger fresh initialization only after readiness. Do not retain a clip/actor across loads. UI-only follows this lifecycle with the ordinary Skyrim camera and no Camera DLL/provider requirement (DYL-160/167).
 
-Two install archives can share build-time code but cannot overwrite each other's settings or require the other module. External dependencies stay external unless permission and intentional packaging justify inclusion.
+### Minimap and compass
 
-## Failure policy
+Required selected map stack: Dragon's Eye settings fork1.7.5, Infinity UI NG2.1.3, LMU settings fork1.3.4, each **Common assets + Line-17 DLL**; SKSE2.3.1 and Address Library13. UI integration owns the declared **configuration deltas**, not these external binaries: DEM upper-right `uAnchor=1`, `fScale=0.5`, `bShowOnGameStart=1`, `[Compass] bCompassRing=0`; LMU `bLocalMapBorder=0`, optional border/settings framework/item-marker additions excluded. Provider K/L controls must be routed consistently with menu focus; no unverified API is assumed.
 
-Unsupported executable: reject/suspend the affected feature before unsafe address access and give a useful log. Missing optional portraits/minimap: degrade safely. Invalid config: defaults. Invalid item command: refresh and refuse. Another camera owner: deterministic configured coexistence or documented incompatibility. No silent repeated retries, unconditional full scans or game-loop network work.
+| Lifecycle/capability | Required behavior and ownership | Current evidence / future owner |
+| --- | --- | --- |
+| Install/preflight | Integrator checks exact versions/hashes/build lines and resolved winners, including `Interface/InfinityUI/HUDMenu/HUDMovieBaseInstance/Minimap.swf` and its `!assets/MinimapArt.swf`, plus all three DLLs. Partial/incompatible installations are rejected before launch; leave native navigation. | Current loose-file preflight checks presence/hashes only, not BSA resolution/ABI/health. Provider may abort if required SWF is absent; no live crash recovery claimed. DYL-166/171. |
+| Runtime capability | UI distinguishes configured, loaded, attached, visible and **functionally ready**. Only a verified provider contract may establish the last state. | Existing HUD clip/MapClip observation is diagnostic. No verified public readiness API; internal `IsReady` is not one. DYL-166 must validate a supported signal or a reviewed bounded bridge; until then compass stays visible. |
+| Ready and enabled | UI is the sole owner of native compass suppression, after replacement readiness and user preference permit it. Provider owns its map; DEM compass ring remains off. | Future contract; automatic native-compass replacement **NOT_RUN / unimplemented**. DYL-166. |
+| Hidden, disabled, missing, incompatible or not ready | UI releases **its own** compass suppression immediately; restore prior native compass state and clear any stale suppression lease. If another HUD mod owns visibility, declare a conflict rather than overwrite its preference. | Hidden-map + usable native compass **PASS**; clean provider-absent startup **NOT_RUN**. DYL-166/170. |
+| Interior/exterior or load | Invalidate readiness; release suppression during uncertainty, let provider reacquire/render destination, revalidate before hiding native compass again. | Provider rendered inside/outside **PASS**; automatic readiness/handoff not implemented. DYL-166/167. |
+| HUD teardown, disable/removal | Remove UI observations, release suppression before destroying UI state; provider shutdown remains provider-owned. Restore config deltas by compare-and-restore, with game closed for file removal. | No complete live reset/removal proof. DYL-166/170/171. |
+
+The current spike leaves the native compass visible even with the minimap. That is a safe feasibility fallback and a **known unmet U5 replacement requirement**, not final duplicate-compass acceptance. Missing whole provider and corrupt/partial provider are separate tests. Do not hide the compass based solely on a DLL/clip being present. Configuration restoration must not overwrite unrelated user compass choices.
+
+### Followers and hotbar
+
+Party Sheet3.7 is optional, acquired/inspected only; no public actor-data API or in-game follower integration is verified. DYL-165 may use permitted external configuration if it meets U1, otherwise a narrow original observer with supported engine handles. One vanilla humanoid follower, explicit recruit/dismiss/unload/death invalidation, neutral silhouette and unavailable-data label; no invented health, copied portrait pack, alias guessing or follower commands. Unavailable fallback is safe but does not complete U1's working follower requirement.
+
+DYL-161's future eight-slot bar is a presentation/input adapter to native favorites and equipment/use actions. A FavoritesMenu delegate is menu-specific, not a global HUD action API. Validate the actual route before dispatch from HUD; reuse native hotkeys where possible. Spell equip/selection does not imply automatic casting; no cooldowns, new combat rules or duplicate equip events. Pending slot intent follows inventory identity/focus/load cancellation above. Missing data displays unavailable and does not fire an inferred action. Current spike preserves native hotkeys; eight-slot UI is **NOT_RUN / unimplemented**.
+
+## Independent packages and file ownership
+
+Paths below are relative to the game root unless stated. “Owner” is the one SkyCRPG policy/file writer; external providers remain their own implementation/config writers. The integrator applies declared deltas at installation with backups, never concurrently with a provider writing its settings.
+
+| File group / responsibility | Exactly one owner | Current artifact / update boundary |
+| --- | --- | --- |
+| `Data/SKSE/Plugins/SkyCRPG_Camera.dll`, `.ini` | Camera | Native package; INI currently `[Debug] iLogLevel` only. Future persistent Camera preferences belong in this INI, never UI config. |
+| `Data/SKSE/Plugins/SkyCRPG_UI.dll`, `.ini` | UI | Native package; debug-only INI currently. Future persistent UI preferences and migrations belong in this INI independently. |
+| `Data/SKSE/Plugins/SmoothCam.json`, `SmoothCamPreset0.json` declared keys/slot | Camera configuration integration | Config stage archive owns overrides, not full pre-existing user settings. Backup/merge/conflict check before taking slot0; restore only unchanged installed values. |
+| `Data/MCM/Config/TrueDirectionalMovement/settings.ini` declared fragment keys | Camera configuration integration | Fragment must merge into user's file; never replace it wholesale. Fragment is **not** in current staged preset ZIP. Provider retains all other keys. |
+| `Data/Interface/inventorymenu.swf`, `skyui/inventorylists.swf`, `hudmenu.swf` | UI presentation patch | Generated local winners over required SkyUI; both InventoryLists class copies patched. Not included in current native skeleton ZIP. Other menu instances retain native behavior. |
+| `Data/SKSE/Plugins/DragonsEyeMinimap.ini`, `LocalMapUpgrade.ini` declared integration keys | UI map configuration integration | External provider defaults/other keys retained; apply deltas only. Infinity UI/provider assets remain external. |
+| Minimap readiness and native compass suppression/restoration | UI | Future runtime policy; no Camera input or transform dependency. |
+| `shared/` and build/package helpers | Build/source layer | Copied/compiled as source into each target; no runtime service, no cross-module DLL import. |
+| SKSE root loader/runtime/scripts, Address Library database, SkyUI ESP/BSA and common files | External prerequisite installation | One integrator-managed external dependency set. Neither module bundles, owns, updates or removes it. |
+| SmoothCam/TDM/MCM Helper DLLs, scripts/assets/notices | External Camera prerequisite installation | External packages, pinned versions; never removed as if owned by SkyCRPG Camera. |
+| DEM/Infinity UI NG/LMU DLLs, SWFs/art/notices and INIs except declared UI deltas | External UI prerequisite installation | External Common + Line-17 packages; never mix upstream replacement DLLs or package lines. Party Sheet is not required. |
+| Original asset source and generated UI/config outputs | Producing module (UI assets/SWF patch; Camera preset) | Output manifests record source/input/output hashes. No third-party assets/binaries in Git; derivative distribution requires rights review. |
+| `%Documents%/My Games/Skyrim Special Edition/SKSE/SkyCRPG_Camera.log` / `SkyCRPG_UI.log` | Corresponding module, one per filename | Separate logs; provider logs stay provider-owned. Integrator copies per-run logs to external profile run directories. |
+| Profile journal, backups, `SkyrimCustom.ini` save-path override, copied test saves | Test/profile integrator | Never part of either mod archive or user-save ownership. Preserve original saves/configuration; keep fixtures external. |
+| Saved preferences / future co-save records | Corresponding module namespace | Versioned preferences only by default; no co-save implemented. Schema, resolution and removal contract required before adding one. |
+
+The [native package manifests](evidence/p1/native-package-inputs.json) contain exactly two disjoint files per module and no cross-module imports. [Tested artifacts](evidence/p1/tested-artifacts.json) instead describe **whole resolved profiles**, including external prerequisites: Camera/UI overlap130 paths, of which129 hashes match; the differing `profile-override/SkyrimCustom.ini` is test save isolation. The combined profile uses final UI winners. This is not permission to bundle shared prerequisites in both archives.
+
+| Installation | Required recipe | Independence / failure boundary |
+| --- | --- | --- |
+| Camera only | Common external SKSE/Address Library/SkyUI; SmoothCam/TDM/MCM Helper; Camera DLL/config + declared provider overrides | Ordinary SkyUI, no SkyCRPG UI/SWF patch/map trio. Missing required dependency means reject/suspend Camera and use native view; do not auto-install a different runtime. |
+| UI only | Common external prerequisites; UI DLL/config + generated SkyUI patches; selected map trio for minimap capability | Ordinary Skyrim camera; no Camera/SmoothCam/TDM/MCM Helper requirement. Missing map means native compass and safe UI fallback; absent-provider startup must still be tested. Missing SkyUI/base hash means refuse patch, preserve native menu. |
+| Combined | Union once, resolving identical shared external files once; both disjoint module payloads | No conditional behavior requiring the other module. A conflicting file/hash or competing transform/HUD writer blocks that profile until explicitly reconciled. |
+
+**Version checks:** integrator verifies executable/storefront hash, SKSE and Address Library filename, external archive hashes/build lines, generated-base/source hashes and file winners before launch. Runtime modules check supported executable/interfaces before unsafe access and disable their own feature on incompatibility. Provider documentation alone is insufficient; unknown versions do not auto-upgrade the lock. Current preflight/skeleton checks are narrower than this final-package obligation (DYL-171/173).
+
+**Update/removal:** quit the game before replacing/removing DLLs or movies; no live DLL unload. Stage/verify new module payload, preserve prior manifest/config and only replace owned unchanged files. For pre-existing winners restore the backup or reveal the previous mod-manager layer; for newly installed unchanged files remove them. Keep user-edited files and report reconciliation instead of overwriting/deleting. Current `profile.py` has hash-guarded restoration and `needs_reconciliation`; `--release-kept` is only after manual reconciliation, not a cleanup shortcut. Retain copied saves and logs; do not remove shared prerequisites when one module is removed. Provider mid-save removal is not certified. DYL-170/171 validate disable/reset and removal/restart on copied saves.
+
+**Licensing:** [dependency lock](compatibility/dependency-lock.md#permissiondistribution-lock) is authoritative for material-specific permissions. Credit SkyUI Team/Community for dependency-requiring patches. SmoothCam's API-header permission is not a broad fork grant. TDM/CommonLib exceptions and map GPL/corresponding-source/upstream MIT notices require derivative review; asset/font rights are separate. Party Sheet has no assumed source-reuse grant. Current generated SWFs contain external base material and are local candidates, not a redistribution grant. DYL-174 resolves attribution/rights with DYL-171 before release; **D015 original SkyCRPG source/art license remains an owner decision**.

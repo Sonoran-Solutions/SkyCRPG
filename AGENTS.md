@@ -1,6 +1,6 @@
 # Working on SkyCRPG
 
-Read README.md, docs/STATUS.md, docs/MVP_SCOPE.md, the assigned Linear ticket and its phase document before implementation. Respect later owner instructions over planning assumptions. The repository currently contains planning only.
+Read README.md, docs/STATUS.md, docs/MVP_SCOPE.md, the assigned Linear ticket and its phase document before implementation. Respect later owner instructions over planning assumptions. SkyCRPG has merged Phase 1 feasibility prototypes for Camera and UI. These establish a tested technical direction but do not constitute completed MVPs or a public release. Consult docs/STATUS.md for current implementation and acceptance status.
 
 ## Product boundaries
 

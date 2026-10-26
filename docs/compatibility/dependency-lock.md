@@ -1,7 +1,7 @@
-# Dependency selection record — DYL-151
+# Dependency lock — Phase 1 tested inputs
 
-Updated 2026-10-26. **Recommendation lock plus acquired package hashes; gameplay stack not yet accepted.**
-[ADR-001](../decisions/ADR-001-stack.md) is proposed; P1-03/P1-04 provide feature evidence and P1-05 freezes it.
+Updated 2026-10-26 for DYL-154. **Exact acquired inputs for the selected technical route; only bounded gameplay evidence is accepted.**
+[ADR-001](../decisions/ADR-001-stack.md) records the implementation direction; the [runtime matrix](runtime-matrix.md) and [acceptance matrix](acceptance-matrix.md) distinguish proven behavior, unverified contracts and known failures. The contract revision is pending senior review; no broader support or distribution grant is implied.
 
 ## Evidence levels
 
@@ -16,7 +16,7 @@ Executable SHA-256 from [DYL-150](https://github.com/Sonoran-Solutions/SkyCRPG/b
 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f` (Steam build 24914197).
 No native Windows playtest or other storefront/runtime is selected. Controller hardware is available through owner playtesting as of the UI route on2026-10-26.
 
-## Selected candidates and exact upstream files
+## Selected components and exact upstream files
 
 Nexus file IDs below come from the selected file's manual-download/version-history links, not inferred from
 page version headings. The initial audit acquired only SmoothCam. The orchestrator acquired the selected Nexus files on 2026-10-26; the archive hashes and selected runtime paths below supersede that acquisition gap. Runtime compatibility still needs separate evidence.
@@ -29,7 +29,7 @@ build line, notices and SHA-256 when acquired; never substitute a newer file sil
 | Address Library — external feature prerequisite | **13**, All in One (1.7.104.0), Nexus 32444 file **795954**, 6.3 MB; [file](https://www.nexusmods.com/skyrimspecialedition/mods/32444?tab=files&file_id=795954) | Lists all runtimes through 1.7.104.0. | Required 1.7 database is `versionlib-1-7-104-0.bin`; format 5 reader needed. Version 12 only reaches 1.7.99. |
 | SmoothCam — Camera external | **1.8.1**, Nexus 41252 file **813109**; GitHub **Beta1.8.1 / SmoothCam.zip**, 46,528,681 bytes; [release](https://github.com/mwilsnd/SkyrimSE-SmoothCam/releases/tag/Beta1.8.1) | FOMOD AE **1.7.99+**, SKSE + Address Library; SkyUI for MCM. | Pick `00 Data/AE/SmoothCam.dll`, not AE-Pre1799. Source `e0afd09aff26e5849dac461252e5bffbd5b69d62`. Sole writer, original preset; no second camera mod. Hash verified below. |
 | TDM — Camera external | **2.3.1**, Nexus 51614 file **798770**, 5.0 MB; [files](https://www.nexusmods.com/skyrimspecialedition/mods/51614?tab=files&version_history=798770) | 2.3.0 adds 1.7.99+; 2.3.1 fixes gamepad address. SKSE/Address Library; SkyUI + MCM Helper for MCM. | Source inspected at `57b913ae17fed857c9e281799174898cd66a3e82`. Disable movement camera yaw adjustment/target lock/reticle in initial preset. No TrueHUD/Nemesis needed for selected minimal feature subset; disable optional headtracking/leaning requiring behavior work. |
-| SkyUI Community — external to both packages; UI patch base | **6.11**, Nexus 12604 file **749043**, 2.6 MB; [file](https://www.nexusmods.com/skyrimspecialedition/mods/12604?tab=files&version_history=749043), [source release](https://github.com/doodlum/SkyUI-Community/releases/tag/v6.11) | SKSE. File description names 1.5.97, 1.6.1170, GOG 1.6.1179; does not explicitly certify 1.7.104. Inventory Reforged author reports 6.11 with SKSE 2.3.1; infer candidate only. | Tag **v6.11 = `3d537a366f1a45c14a7012ea0aa00be18108f073`**. Page header says 6.9 while release/changelog say 6.11. Confirm installed manifest before patching. Player InventoryMenu winner must be our one patch, no Inventory Reforged/Grid Inventory overlap. |
+| SkyUI Community — external to both packages; UI patch base | **6.11**, Nexus 12604 file **749043**, 2.6 MB; [file](https://www.nexusmods.com/skyrimspecialedition/mods/12604?tab=files&version_history=749043), [source release](https://github.com/doodlum/SkyUI-Community/releases/tag/v6.11) | SKSE. File description names 1.5.97, 1.6.1170, GOG 1.6.1179; does not explicitly certify 1.7.104. Our bounded UI route on1.7.104 is separately evidenced; neither source is broad compatibility certification. | Tag **v6.11 = `3d537a366f1a45c14a7012ea0aa00be18108f073`**. Page header says 6.9 while release/changelog say 6.11. Confirm installed manifest before patching. Player InventoryMenu winner must be our one patch, no Inventory Reforged/Grid Inventory overlap. |
 | MCM Helper — Camera configuration prerequisite | **1.6.3**, Nexus 53000 file **795510**, 7.8 MB; [files](https://www.nexusmods.com/skyrimspecialedition/mods/53000?tab=files&version_history=795510) | Current FOMOD names Steam 1.7.99+ / VR and requires SkyUI 6+. | External; pick Steam line. Needed for TDM MCM, not the two empty DLLs or UI-only package. Source/license archive not acquired; no source reuse proposed. |
 | Party Sheet — UI external | **3.7**, Nexus 167538 file **818098**, 19.7 MB; [file](https://www.nexusmods.com/skyrimspecialedition/mods/167538?tab=files&version_history=818098) | Author names 1.5.97/1.6.640/1.6.1170/**1.7.104**; SKSE + Address Library. | External INI/preset only, one vanilla follower. July source archive is older/reference-only; no verified data API or source license. Portrait pack excluded. |
 | Dragon's Eye settings fork — UI external | **1.7.5**, Nexus 189534 file **825711**, 14.8 MB; [file](https://www.nexusmods.com/skyrimspecialedition/mods/189534?tab=files&version_history=825711), [tag](https://github.com/ApocryphaRealm/DragonsEyeMinimap/tree/v1.7.5) | 1.7.99+ build; SKSE, Address Library, matching Infinity UI/LMU. Source tag **`7c3ce18f54bd6c8dff3239db9522cb75d822a31f`**. | Upper-right anchor/scale/shape; stock art first. `[Compass] bCompassRing=0` for UI-managed native compass recovery. Optional settings framework omitted. Source changelog marks 1.7.5 untested despite broad page test claims. |
@@ -79,13 +79,12 @@ Originally inspected outside the repository. The selected AE DLL subsequently pa
 1. DYL-150 verifies vanilla baseline and matched SKSE 2.3.1. Keep its plain independent DLL loads free of providers.
 2. Add Address Library 13; verify expected database filename. Add SkyUI 6.11 for provider configuration/UI patch base.
 3. Camera-only: TDM 2.3.1, MCM Helper 1.6.3, SmoothCam 1.8.1 correct AE DLL, original Camera configuration.
-4. UI-only: Infinity UI NG 2.1.3 → LMU fork 1.3.4 → DEM fork 1.7.5, each 1.7 DLL; Party Sheet 3.7; original UI patch/config. Optional Party Sheet is inspected only and was not deployed.
+4. UI-only: Infinity UI NG 2.1.3 → LMU fork 1.3.4 → DEM fork 1.7.5, each Common + Line-17; original UI patch/config. Party Sheet3.7 is optional, inspected only and was not deployed or required.
 5. Loose player inventory patch wins over SkyUI only for its owned screen. No Inventory Reforged/Grid Inventory or second HUD/compass owner in the first profile. Respect actual archive path case under Linux staging.
 6. Verify required SWF files before enabling the minimap DLL: the stock fork can terminate on incomplete installation. Full provider absence is a different fallback case from corrupt partial installation.
 7. Combined profile contains union of dependencies, with disjoint Camera/UI configs and no required cross-module DLL service. Record exact winning files/INI deltas and hashes in spike evidence.
 
-Do not promote this table to tested until actual archives and independent feature proofs are attached. A minimal
-DLL load does not establish any of these provider combinations. Remaining checks are listed in REUSE_RESEARCH.
+Exact archives and bounded independent feature proofs are now attached. A minimal DLL load still does not establish gameplay acceptance. Remaining obligations are assigned in the [acceptance matrix](acceptance-matrix.md); final packaging/config restoration follows [ARCHITECTURE](../ARCHITECTURE.md#independent-packages-and-file-ownership).
 
 ## P1-03/P1-04 acquired packages (2026-10-26)
 
@@ -104,7 +103,7 @@ Archives remain outside Git. Each exact file was downloaded through the authenti
 
 Selected payloads: Address Library `SKSE/Plugins/versionlib-1-7-104-0.bin`; SmoothCam `00 Data/AE/SmoothCam.dll`; MCM Helper `SkyrimSE` DLL + ESL-flagged ESP + BSA; each map provider `Common` assets + `Line-17` DLL. Never combine their SE/AE16 and Line-17 DLLs. The map trio's GPL/NOTICE files remain with external staging. Optional Party Sheet was acquired for interface inspection, not installed in the first UI test. No provider assets are committed or redistributed.
 
-SkyUI Nexus 6.11 contains an ESP/BSA; its shipped inventory/HUD SWFs differ from the GitHub source-tree binaries. The UI builder verifies both source and actual Nexus-base hashes and generates the local candidate from the acquired BSA. See ui-spike.md on the DYL-153 branch. Dragon's Eye's page advertises 1.7.6 now, but file 825711 downloaded as the requested **1.7.5**; no version substitution was made.
+SkyUI Nexus 6.11 contains an ESP/BSA; its shipped inventory/HUD SWFs differ from the GitHub source-tree binaries. The UI builder verifies both source and actual Nexus-base hashes and generates the local candidate from the acquired BSA. See [merged UI evidence](../evidence/p1/ui-spike.md). Dragon's Eye's page advertises 1.7.6 now, but file 825711 downloaded as the requested **1.7.5**; no version substitution was made.
 
 The merged foundation's SKSE2.3.1 load-only evidence is real, and the rewritten profile tool passed baseline run `20261026T065153` on 2026-10-26. This supersedes the initial reconciliation row that had no loader logs. Feature and controller acceptance remain separate.
 
