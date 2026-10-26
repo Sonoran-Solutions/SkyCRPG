@@ -188,6 +188,9 @@
             while (i < 8) {
                var cell = this["slot" + i];
                var value = slots[i];
+               // Only real native hotkey bindings receive a number. FAV is a
+               // native favorite selected through the game's Favorites menu.
+               cell.key.text = value.kind == "" ? String(i + 1) : (value.bound == true ? String(i + 1) : "FAV");
                cell.clear();
                cell.lineStyle(1, value.equipped ? 0xE9D59C : 0x806E49, 100);
                cell.beginFill(0x171715, 85);

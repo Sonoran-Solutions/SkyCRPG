@@ -20,6 +20,7 @@
 #include "skse_version_pin.h"
 #include "resource_snapshot.h"
 #include "menu_focus.h"
+#include "favorite_slots.h"
 
 #include <array>
 #include <atomic>
@@ -212,6 +213,8 @@ struct HotbarSlot {
 	int count{};
 	bool equipped{};
 	float voiceRecovery{-1.0f}; // unavailable, never inferred from a missing process
+	std::uint32_t formID{}; // temporary snapshot identity; never exposed to Scaleform
+	bool bound{};
 };
 struct HotbarCache {
 	std::mutex mutex;
@@ -251,6 +254,7 @@ void SampleHotbar(std::uint64_t generation)
 		return;
 	}
 	std::array<HotbarSlot, 8> slots{};
+	std::vector<HotbarSlot> favorites;
 	const auto equippedLeft = player->GetEquippedObject(true);
 	const auto equippedRight = player->GetEquippedObject(false);
 	float voiceRecovery = -1.0f;
@@ -262,16 +266,26 @@ void SampleHotbar(std::uint64_t generation)
 	auto inventory = player->GetInventory([](RE::TESBoundObject&) { return true; }, true);
 	for (auto& [form, item] : inventory) {
 		if (!form || item.first <= 0 || !item.second || !item.second->extraLists) continue;
+		bool favorited = false;
+		bool equipped = false;
 		for (auto* extra : *item.second->extraLists) {
 			if (!extra) continue;
+			const bool worn = extra->HasType<RE::ExtraWorn>() || extra->HasType<RE::ExtraWornLeft>();
+			equipped = equipped || worn;
 			auto* binding = extra->GetByType<RE::ExtraHotkey>();
 			if (!binding) continue;
+			favorited = true;
 			const auto index = static_cast<unsigned>(binding->hotkey.underlying());
 			if (index >= slots.size()) continue;
 			// Do not call InventoryEntryData::GetDisplayName: it may add extra data.
 			const auto* name = form->GetName();
 			slots[index] = { name ? name : "", HotbarKind(form), item.first,
-				extra->HasType<RE::ExtraWorn>() || extra->HasType<RE::ExtraWornLeft>() };
+				worn, -1.0f, form->GetFormID(), true };
+		}
+		if (favorited) {
+			const auto* name = form->GetName();
+			favorites.push_back({ name ? name : "", HotbarKind(form), item.first,
+				equipped, -1.0f, form->GetFormID(), false });
 		}
 	}
 	// BSTArray::size_type is uint32_t; the fixed eight-slot bound avoids narrowing.
@@ -280,9 +294,23 @@ void SampleHotbar(std::uint64_t generation)
 		if (!form) continue;
 		const auto* name = form->GetName();
 		slots[i] = { name ? name : "", HotbarKind(form), 0,
-			form == equippedLeft || form == equippedRight || form == player->GetCurrentShout() };
+			form == equippedLeft || form == equippedRight || form == player->GetCurrentShout(),
+			-1.0f, form->GetFormID(), true };
 		if (form->GetFormType() == RE::FormType::Shout) slots[i].voiceRecovery = voiceRecovery;
 	}
+	// SKSE IsObjectFavorited uses MagicFavorites::spells for magic forms and
+	// ExtraHotkey (including kUnbound) for inventory instances. The order in
+	// the Favorites menu is not assumed; users select these through that menu.
+	for (auto* form : magic->spells) {
+		if (!form) continue;
+		const auto* name = form->GetName();
+		HotbarSlot entry{ name ? name : "", HotbarKind(form), 0,
+			form == equippedLeft || form == equippedRight || form == player->GetCurrentShout(),
+			-1.0f, form->GetFormID(), false };
+		if (form->GetFormType() == RE::FormType::Shout) entry.voiceRecovery = voiceRecovery;
+		favorites.push_back(std::move(entry));
+	}
+	skycrpg::ui::FillFavoriteSlots(slots, std::move(favorites));
 	std::scoped_lock lock(g_hotbar.mutex);
 	g_hotbar.pending = false;
 	if (!g_hotbar.loaded || generation != g_hotbar.generation) return;
@@ -324,7 +352,9 @@ public:
 			value.SetBoolean(slot.equipped);
 			if (!object.SetMember("equipped", value)) return;
 			value.SetNumber(slot.voiceRecovery);
-			if (!object.SetMember("voiceRecovery", value) || !array.PushBack(object)) return;
+			if (!object.SetMember("voiceRecovery", value)) return;
+			value.SetBoolean(slot.bound);
+			if (!object.SetMember("bound", value) || !array.PushBack(object)) return;
 		}
 		*params.retVal = array;
 	}
