@@ -241,6 +241,12 @@ class ProfileToolTest(unittest.TestCase):
         code, run = self.launch_with(self.WRITE_GOOD + "exec -a SkyrimSE.exe sleep 30", "--timeout", "10", "--settle", "0")
         self.assertEqual((code, run["result"], run["success"]), (0, "LOADED", True))
 
+    def test_crash_during_settle_fails(self):
+        script = self.WRITE_GOOD + "exec -a SkyrimSE.exe bash -c 'sleep 1; exit 1'"
+        code, run = self.launch_with(script, "--timeout", "10", "--settle", "2")
+        self.assertEqual(run["load_problems"], [], "positive logs must not mask a later crash")
+        self.assertEqual((code, run["result"], run["success"], run["exit_code"]), (1, "EXITED", False, 1))
+
     def test_early_exit_fails(self):
         code, run = self.launch_with("exit 1", "--timeout", "10")
         self.assertEqual((code, run["result"], run["exit_code"]), (1, "EXITED", 1))
@@ -268,6 +274,12 @@ class ProfileToolTest(unittest.TestCase):
     def test_interactive_quit_after_load_succeeds(self):
         code, run = self.launch_with(self.WRITE_GOOD + "exec -a SkyrimSE.exe sleep 1", "--interactive", "--timeout", "10")
         self.assertEqual((code, run["result"]), (0, "QUIT"))
+
+    def test_interactive_crash_after_load_fails(self):
+        script = self.WRITE_GOOD + "exec -a SkyrimSE.exe bash -c 'sleep 1; exit 1'"
+        code, run = self.launch_with(script, "--interactive", "--timeout", "10")
+        self.assertEqual(run["load_problems"], [], "positive logs must not mask a later crash")
+        self.assertEqual((code, run["result"], run["success"], run["exit_code"]), (1, "EXITED", False, 1))
 
     def test_interactive_exit_without_load_fails(self):
         code, run = self.launch_with("exit 0", "--interactive", "--timeout", "10")

@@ -406,7 +406,7 @@ def cmd_launch(args) -> int:
     print(f"launched {profile}: pid {proc.pid}, run {run_dir}, timeout {args.timeout}s", flush=True)
 
     # until-loaded: LOADED once every positive marker is present while the game runs.
-    # interactive: QUIT when the player exits after a verified load; anything else is a failure.
+    # interactive: QUIT only on a clean exit after a verified load; anything else is a failure.
     result = "TIMEOUT"
     loaded = False
     deadline = started + args.timeout
@@ -415,10 +415,14 @@ def cmd_launch(args) -> int:
             loaded = True
             if not args.interactive:
                 time.sleep(args.settle)  # let SKSE finish writing and the game settle before stopping it
-                result = "LOADED" if not load_problems(profile, started) else "LOAD_FAILED"
+                if proc.poll() is not None or not skyrim_pids():
+                    result = "EXITED"
+                else:
+                    result = "LOADED" if not load_problems(profile, started) else "LOAD_FAILED"
                 break
-        if proc.poll() is not None:
-            result = "QUIT" if args.interactive and loaded else "EXITED"
+        exit_code = proc.poll()
+        if exit_code is not None:
+            result = "QUIT" if args.interactive and loaded and exit_code == 0 else "EXITED"
             break
         time.sleep(POLL_SECONDS)
     if result == "TIMEOUT" and fresh_text("skse64.log", started) is not None and load_problems(profile, started):

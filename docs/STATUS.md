@@ -11,6 +11,7 @@ Planning initialized. No SkyCRPG implementation, in-game proof, supported runtim
 - Environment recorded in [evidence/p1/environment.md](evidence/p1/environment.md): Steam `SkyrimSE.exe` 1.7.104.0 on Ubuntu 26.04 under Proton Experimental 11, RTX 3080, no controller, no mod manager.
 - Independent `SkyCRPG_Camera` and `SkyCRPG_UI` load-only SKSE skeletons. They build reproducibly on the Windows x64 CI runner and package into separate archives with disjoint paths, settings and logs.
 - Isolated baseline/camera-only/ui-only/combined profiles via `tools/profile.py`.
+- Launch-result re-review correction (2026-10-26): crashes during settle and nonzero interactive exits after loading fail; both regressions and all 22 Python fixtures PASS. The rewritten tool's first live use remains NOT_RUN; see [BUILD_AND_TEST.md](BUILD_AND_TEST.md).
 - In-game load checks PASS (load only) for all four profiles on SKSE 2.3.1. See [BUILD_AND_TEST.md](BUILD_AND_TEST.md) and [runtime-matrix.md](compatibility/runtime-matrix.md).
 - Still open: the baseline outdoor/interior route (NOT_RUN, owner to play), and agreement with DYL-151 on the provider stack for runtime 1.7.104. No camera or UI behavior exists yet.
 

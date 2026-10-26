@@ -105,7 +105,7 @@ python3 -I tools/profile.py undeploy
 - `plugin <package>.dll (...) loaded correctly` for each package in the profile;
 - each module log's `runtime check: PASS`.
 
-The markers are re-checked after `--settle` seconds, and then the run is stopped. Otherwise the result is `EXITED` (the process ended first), `TIMEOUT`, or `LOAD_FAILED` (logs exist but a marker is missing or rejected); `run.json` lists the missing markers. `launch --interactive --timeout 1200` waits for the player to quit, which is the 20-minute route budget; it succeeds (`QUIT`) only if the load markers were verified before the player quit. Each run is collected under `<profile>/runs/<timestamp>/`, with `run.json` (command, PID, result, log hashes, leftover processes), SKSE/module logs and the Proton log. Proton logs contain local paths; keep them out of the repo.
+After `--settle` seconds, the wrapper and `SkyrimSE.exe` must still be running and the markers are re-checked before the run is stopped. Otherwise the result is `EXITED` (the wrapper or game ended before settling completed, or the interactive exit was unsuccessful), `TIMEOUT`, or `LOAD_FAILED` (logs exist but a marker is missing or rejected); `run.json` lists the missing markers. `launch --interactive --timeout 1200` waits for the player to quit, which is the 20-minute route budget; it succeeds (`QUIT`) only if the load markers were verified before the player quit and the wrapper exits with status 0. Nonzero exits fail even after a verified load; `run.json` preserves the process exit code. Each run is collected under `<profile>/runs/<timestamp>/`, with `run.json` (command, PID, result, log hashes, leftover processes), SKSE/module logs and the Proton log. Proton logs contain local paths; keep them out of the repo.
 
 Exit status: 0 success; 1 error, refused deploy or unsuccessful launch; 2 processes from the run still alive after cleanup; 3 undeploy kept changed paths. Automation must treat any nonzero status as a failed check.
 
@@ -116,13 +116,15 @@ Exit status: 0 success; 1 error, refused deploy or unsuccessful launch; 2 proces
 - a preexisting identical file is left in place;
 - an edited `SkyrimCustom.ini` or a changed deployed file is preserved;
 - an interruption at each write stage is recoverable;
-- launch outcomes: verified load, early exit, timeout, rejected plugin, stale logs, and interactive quit with and without a verified load.
+- launch outcomes: verified load, early exit, crash during settle, timeout, rejected plugin, stale logs, interactive quit with and without a verified load, and nonzero interactive exit after load.
 
 The `profile-tool` workflow runs these checks on `ubuntu-24.04` when the tool, profiles or tests change (10-minute budget). To run them locally:
 
 ```bash
 python3 -I -m unittest discover -s tests -v
 ```
+
+2026-10-26 launch-result re-review correction: **PASS**. The two new fake-process regressions reproduced the false `LOADED`/`QUIT` successes on `e053fa24` before the fix. With the correction, both return `EXITED`, `success=false`, and process exit code 1. Python compilation and all **22/22** fixtures passed locally (12.216 seconds for the full suite, within the 10-minute budget). No build or game run was performed for this tool-only correction. The rewritten tool's first live use and the owner baseline route remain **NOT_RUN** under DYL-150; the original runtime evidence below still belongs to `ec34e4d`.
 
 Side effects outside the tool's manifest: on its first launch the game itself created `Skyrim.INI` and `SkyrimPrefs.ini` in My Games, and `Creations/`, `Mods/` and `Data/ShaderCache/` in the install. That is normal first-run behavior. Collected module logs also remain in `My Games/.../SKSE/` between runs; `launch` only accepts logs newer than its own start.
 
