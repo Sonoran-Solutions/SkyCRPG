@@ -1,8 +1,10 @@
 # DYL-155 / P1-06 — Phase 1 acceptance gate
 
-Gate recommendation submitted for senior review, 2026-10-26. Base main `ea054c78b42ccf051598d34af4f795dd7e18319f` includes merged PRs 1–5. DYL-154 is Done after senior review and owner acceptance. This gate reuses existing proofs and runs only the two missing critical feasibility scenarios. No Phase 2 implementation, provider upgrade or native/SWF rebuild.
+Gate accepted by the owner, 2026-10-26. Base main `ea054c78b42ccf051598d34af4f795dd7e18319f` includes merged PRs 1–5. DYL-154 is Done after senior review and owner acceptance. This gate reuses existing proofs and runs only the two missing critical feasibility scenarios. No Phase 2 implementation, provider upgrade or native/SWF rebuild.
 
-**Gate recommendation: GO.** All 21 Phase 1 feasibility criteria have sufficient bounded evidence, using the demonstrated native first-person precision fallback and the existing pitch-only owner defer. Both missing critical scenarios now have fresh owner-observed PASS results. **Phase 1 is not marked complete until this gate is reviewed and accepted; Phase 2 has not started.** This recommendation is not a full MVP acceptance or a waiver of remaining failures.
+**Gate disposition: GO — Phase 1 accepted by the owner on 2026-10-26.** All 21 Phase 1 feasibility criteria have sufficient bounded evidence, using the demonstrated native first-person precision fallback and the existing pitch-only owner defer. Both missing critical scenarios now have fresh owner-observed PASS results. **Phase 1 is complete within this bounded feasibility scope; Phase 2 has not started.** This acceptance is not a full MVP acceptance or a waiver of remaining failures.
+
+Owner instruction: “Record my acceptance of phase 1 GO then approved to merge”. This explicitly accepts the evidence and disposition submitted at `0929e0e1dbd6aa7d24000c5ff666246b4fca007c` and authorizes merging PR6 with this acceptance record. It records owner acceptance, not an additional senior review or a new gameplay test.
 
 ## Exact baseline and reused evidence
 
@@ -50,7 +52,7 @@ The ordinal IDs below follow the unchanged checkboxes in [PHASE_1](../../phases/
 | P1-05.3 — all MVP IDs map to tests, decisions have owners | PASS | A,17-ID traceability and assigned follow-ups; no future ticket converts failure to PASS. |
 | P1-06.1 — independent prototypes run | PASS | F/C/U/X existing actual game evidence, not merely builds. |
 | P1-06.2 — overhead interior/aiming recovery, native item action and map evidenced | PASS | C/U prove native precision fallback, item action and map; O/N supply the missing obstruction and provider-absence proofs. |
-| P1-06.3 — stack/contracts/limitations explicit, no hidden critical gap | PASS | This ledger and A carry all critical and later-scope gaps separately. O/N now have scoped runtime evidence; review/acceptance of this GO recommendation remains pending. |
+| P1-06.3 — stack/contracts/limitations explicit, no hidden critical gap | PASS | This ledger and A carry all critical and later-scope gaps separately. O/N now have scoped runtime evidence; the owner explicitly accepted this GO disposition on 2026-10-26. |
 
 ## Critical test A — obstruction
 
@@ -87,7 +89,7 @@ Held pitch/recenter/persistence and complete state handling: DYL-156/159. Compre
 
 Before deployment,185 existing original/copied save/co-save files were hashed, original INIs/Plugins.txt were backed up externally, and disposable Camera/UI save folders backed up against autosave changes. The memory watchdog aborts owned processes below 4GiB available RAM or memory full avg10 above 10%; each route has a 1200s timeout, PID/run tag, log and cleanup plan. No heavy builds run alongside Skyrim. Final restoration **PASS**: all 185 pre-existing save/co-save hashes unchanged; original Skyrim.INI, SkyrimPrefs.ini and Plugins.txt restored to their pre-test hashes; no active deployment, owned deployed paths or Skyrim processes remain. [Restoration and telemetry summary](gate-20261026/restoration.json) records the checks. Isolated test saves, logs and external staging remain available for reproduction. Minimum available RAM was 16,760,348 KiB (Camera) and 16,825,544 KiB (UI), memory full avg10 stayed 0, and neither watchdog intervened. This is host-safety telemetry, not a performance acceptance test.
 
-No new owner scope ruling is required: obstruction and provider absence were demonstrated, first-person precision is the proven fallback, and the pitch-only defer is unchanged. The next action is senior review and acceptance of this gate. DYL-155 remains In Review; DYL-152 remains its existing Done state and DYL-153 remains In Progress pending evidence reconciliation by review, with neither status inferred from a merge. After gate acceptance, DYL-156 and DYL-160 can proceed in parallel with separate ownership under the [ready-to-use handoff prompts](phase2-handoff.md). Neither is started or unblocked by this document alone.
+No new owner scope ruling is required: obstruction and provider absence were demonstrated, first-person precision is the proven fallback, and the pitch-only defer is unchanged. The owner has accepted this gate and authorized PR6 to merge. DYL-155 is Done; DYL-153 is reconciled to Done on the strength of its completed P1-04 evidence and this explicit acceptance, not merely PR4 merging. DYL-152 remains Done. DYL-156 and DYL-160 are now ready to be assigned in parallel with separate ownership under the [ready-to-use handoff prompts](phase2-handoff.md). Both remain Backlog; neither implementation is started.
 
 ## Fresh runtime records and reproduction
 

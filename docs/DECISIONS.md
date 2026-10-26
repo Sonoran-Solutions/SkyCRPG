@@ -28,7 +28,7 @@ Updated 2026-10-26 for DYL-155. “Selected engineering contract” records the 
 
 ## Gate recommendation and remaining decisions
 
-DYL-155 recommends **GO pending senior review/acceptance** in the [gate report](evidence/p1/gate.md). Fresh owner-observed Nordic obstruction and whole-provider-absent startup/navigation both PASS, with exact unchanged artifacts, clean exits and restored user files. Existing first-person precision is a viable one-owner fallback. Top-down ranged aim remains FAIL/DYL-158; load pitch remains FAIL with only its existing DYL-159 defer. Comprehensive MVP coverage remains open. No additional scope concession or owner ruling is required for this recommendation, and Phase 2 has not started.
+The owner accepted DYL-155 **GO — Phase 1 complete** on 2026-10-26 in the [gate report](evidence/p1/gate.md). Fresh owner-observed Nordic obstruction and whole-provider-absent startup/navigation both PASS, with exact unchanged artifacts, clean exits and restored user files. Existing first-person precision is a viable one-owner fallback. Top-down ranged aim remains FAIL/DYL-158; load pitch remains FAIL with only its existing DYL-159 defer. Comprehensive MVP coverage remains open. No additional scope concession or owner ruling is required for this accepted gate, and Phase 2 has not started.
 
 DYL-172 must measure the proposed performance budgets; changes require an explicit tradeoff before release. D015 is resolved by the owner’s free-reuse/attribution instruction. DYL-174 must still resolve third-party derivative notices/asset permissions before publication; original-work licensing does not grant those rights.
 
@@ -41,5 +41,7 @@ DYL-172 must measure the proposed performance budgets; changes require an explic
 
 - 2026-10-26: owner authorizes free reuse of original code/art with devils_17 attribution. D015 recorded as MIT source/config/docs and CC BY4.0 original artwork, with third-party exclusions.
 - 2026-10-26: PR5 architecture accepted and merged. DYL-155 closes the two missing critical evidence gaps with owner-observed bounded runtime checks and recommends GO for review, retaining all full-MVP limitations. DYL-156/160 handoffs prepared, not dispatched.
+
+- 2026-10-26: owner explicitly states “Record my acceptance of phase 1 GO then approved to merge”. Phase 1 gate accepted against evidence commit `0929e0e1dbd6aa7d24000c5ff666246b4fca007c`; PR6 merge authorized. DYL-155 and the completed DYL-153 feasibility evidence are accepted, retaining aiming FAIL/DYL-158 and the narrow pitch defer/DYL-159. DYL-156/160 ready but not started. No additional senior review is claimed by this owner ruling.
 
 Record future changes with date, authority, evidence, impacted acceptance IDs and tickets. Runtime changes, incompatible licensing obligations, removing grid/minimap/independence, native-weight changes or a large replacement camera need an owner ruling; routine contract-preserving implementation choices do not need repeated permission.

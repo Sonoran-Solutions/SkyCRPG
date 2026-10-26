@@ -1,7 +1,7 @@
 # Dependency lock — Phase 1 tested inputs
 
 Updated 2026-10-26 for DYL-154. **Exact acquired inputs for the selected technical route; only bounded gameplay evidence is accepted.**
-[ADR-001](../decisions/ADR-001-stack.md) records the implementation direction; the [runtime matrix](runtime-matrix.md) and [acceptance matrix](acceptance-matrix.md) distinguish proven behavior, unverified contracts and known failures. The contract revision was accepted and merged in PR5; DYL-155 gate acceptance is pending review; no broader support or distribution grant is implied.
+[ADR-001](../decisions/ADR-001-stack.md) records the implementation direction; the [runtime matrix](runtime-matrix.md) and [acceptance matrix](acceptance-matrix.md) distinguish proven behavior, unverified contracts and known failures. The contract revision was accepted and merged in PR5; DYL-155 GO was explicitly accepted by the owner on 2026-10-26; no broader support or distribution grant is implied.
 
 ## Evidence levels
 

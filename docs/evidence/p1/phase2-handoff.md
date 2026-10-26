@@ -1,6 +1,6 @@
 # Phase 2 launch prompts — prepared by DYL-155
 
-**Do not dispatch until DYL-155 senior review and gate acceptance.** The [gate](gate.md) recommends GO; it does not itself close the phase. Neither task is started. After acceptance, use latest merged main, separate branches and disjoint ownership. The orchestrator owns shared contracts, dependency changes, package integration and the single Skyrim installation; schedule gameplay serially while implementation may proceed in parallel. Use the existing executor policy: Luna 6 for bounded workhorse work, Sol 6.1 Medium where the native integration complexity warrants it.
+**Ready after owner acceptance of DYL-155 GO on 2026-10-26.** The [gate](gate.md) records the explicit acceptance and PR6 merge authorization. Neither task is started or dispatched by this acceptance update. When assigned, use latest merged main, separate branches and disjoint ownership. The orchestrator owns shared contracts, dependency changes, package integration and the single Skyrim installation; schedule gameplay serially while implementation may proceed in parallel. Use the existing executor policy: Luna 6 for bounded workhorse work, Sol 6.1 Medium where the native integration complexity warrants it.
 
 ## Camera worker prompt — DYL-156 / P2-01
 

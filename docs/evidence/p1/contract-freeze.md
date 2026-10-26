@@ -38,4 +38,4 @@ These documentary deliverables satisfy the task's acceptance content, pending se
 
 ## Subsequent gate evidence — 2026-10-26
 
-The [DYL-155 gate](gate.md) supersedes the historical missing critical obstruction and whole-provider-absence checks with two bounded owner-observed PASS routes. Earlier results above remain historical; full MVP coverage and recorded aiming/pitch failures are not promoted. PR5 architecture is now reviewed and merged; the gate GO recommendation awaits its own senior review and acceptance.
+The [DYL-155 gate](gate.md) supersedes the historical missing critical obstruction and whole-provider-absence checks with two bounded owner-observed PASS routes. Earlier results above remain historical; full MVP coverage and recorded aiming/pitch failures are not promoted. PR5 architecture is now reviewed and merged; the owner subsequently accepted the gate GO disposition on 2026-10-26 and authorized PR6 to merge.
