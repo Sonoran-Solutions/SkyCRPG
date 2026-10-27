@@ -364,3 +364,23 @@ CommonLib 7.2.0 declarations rechecked under `/srv/storage/Projects/SkyCRPG/sess
 **NOT_RUN:** Windows MSVC `/W4 /WX /permissive-` build and runtime retest for this correction. Portable tests do not establish actual GFx/UI-task ordering or gameplay behavior. No candidate DLL/package hashes or owner acceptance are claimed (`<head SHA>`, `<CI run>`, `<DLL sha256>`, `<SWF sha256>` remain for the integrator). Skyrim was never launched. Existing runtime rows, including the favorite pre-dispatch guard **BLOCKED**, remain unchanged.
 
 For the orchestrator's next isolated copied-save route (20-minute budget), act on the plain holder beside tempered and enchanted copies, then act on each modified row; verify stable displayed counts, one native action per deliberate press, native carry weight, and no refresh refusal burst. Exercise a merged stolen-plus-plain row and two stolen extras with different owners; record native semantics and compare the merge with the no-SkyCRPG baseline. Repeat equip/container event changes and confirm the next reconciled selection needs no drift-recovery press. Finally exercise a controlled unevented same-form increase and stale partial plain coverage: expect refusal before dispatch, at most one pending native reconciliation, then a fresh deliberate action after reconciliation. Repeated highlights and selection callbacks during that update must not queue further updates. Result: **NOT_RUN**.
+
+## P1 round 2 runtime — 2026-10-27: PASS with one usability defect
+
+**PASS (owner-reported, log-confirmed) for row integrity; FAIL for first-press usability with mouse highlighting.**
+
+| Field | Value |
+| --- | --- |
+| Source / CI | `e202dfd`, Windows run 40578525017 **PASS**; ZIP `285f5fd0f11c12ec…`, DLL `34f2b56de91d51b5…`; movies unchanged (`211115dc…`, `8766d2b2…`, HUD `2de109b3…`) |
+| Save | Vanilla fixture (Nexus mod 178); the owner rebuilt the copies and saved them as a reusable fixture (newest save in `session-p3/p3-inv-163-round2/after-test-saves`) |
+| Run | `5f95c0b048c74bde959ec6f5df90f85c`, about 8 min, normal quit, watchdog did not intervene (minimum 12.3 GiB available); restoration **PASS** |
+| UI log | `c1bdef18…`: **0** `row-coverage`/`row-drift`/`row-extra-missing`, **0** off-thread, no refusal bursts; 7 `duplicate-input` (20:53:26–20:54:31 UTC, about 10 s apart) |
+
+The owner reports that everything passed:
+- Plain, tempered and self-enchanted Iron Sword rows each acted on their own copy, with steady counts.
+- The stolen-plus-owned helmet row dropped.
+- Double presses did one action.
+
+This resolves the `effea52` FAIL: native split and merged rows are permitted, and the refresh loop is gone.
+
+**Defect:** for every drop, the **first** press did nothing and the cursor jumped to the category list; re-highlighting the item and dropping again worked. The 7 `duplicate-input` refusals match those first presses. Cause: `inventory-actions.as.inc` captures a fresh snapshot token only on a key-down edge. Highlighting with the mouse leaves the previous, already spent token in place, so the next drop validates the spent token → `Refusal::Duplicate`. The refusal path then sets `selectedIndex = -1` and invalidates the list, which moves focus to the categories. Safe, but it costs a press for every mouse-highlighted action. Fix: capture a fresh token when the native highlight changes, keeping repeat-press protection.
