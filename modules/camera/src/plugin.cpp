@@ -177,7 +177,28 @@ Context context(bool allowZoomSlide = false, bool* hardSpecial = nullptr) {
     return c;
 }
 PrecisionTraceState traceState(Context c, bool hard, std::size_t key) {
-    return {c,hard,ownFirstPerson,keys[key].armed,keys[key].down};
+    PrecisionTraceState result{c,hard,ownFirstPerson,keys[key].armed,keys[key].down};
+    if (!precisionTraceEnabled) return result;
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    const auto controls = RE::PlayerControls::GetSingleton();
+    const auto controlMap = RE::ControlMap::GetSingleton();
+    if (camera && camera->currentState) result.cameraState = static_cast<std::uint32_t>(camera->currentState->id);
+    if (player) {
+        result.hazardBits |= std::uint32_t(player->IsOnMount()) << 0;
+        result.hazardBits |= std::uint32_t(player->IsInKillMove()) << 1;
+        result.hazardBits |= std::uint32_t(player->AsActorState()->IsSwimming()) << 2;
+    }
+    result.hazardBits |= std::uint32_t(!controls) << 3;
+    result.hazardBits |= std::uint32_t(!controlMap) << 4;
+    if (controls) {
+        result.hazardBits |= std::uint32_t(controls->data.povScriptMode) << 5;
+        result.hazardBits |= std::uint32_t(controls->data.povBeastMode) << 6;
+        result.hazardBits |= std::uint32_t(controls->data.fovSlideMode) << 7;
+    }
+    if (camera && camera->currentState && camera->currentState->id == RE::CameraState::kThirdPerson)
+        result.hazardBits |= std::uint32_t(static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) << 8;
+    return result;
 }
 void tracePrecision(PrecisionTraceEvent event, PrecisionTraceState before, PrecisionTraceState after,
     unsigned device = 0, bool pressed = false, bool edge = false, unsigned decision = 0) {
