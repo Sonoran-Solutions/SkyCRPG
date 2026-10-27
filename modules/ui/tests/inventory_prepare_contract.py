@@ -36,9 +36,15 @@ def check(out):
             assert re.findall(pattern, original) == re.findall(pattern, transformed)
             assert transformed.count('skycrpgInventoryAllow("activate"') == 2
             assert transformed.count('skycrpgInventoryAllow("drop"') == 2
+            highlight = re.search(r'function onItemHighlightChange\(event\)\s*\{.*?\n   \}', transformed, re.S).group()
+            assert highlight.count('this.skycrpgInventoryCapture();') == 2
+            assert highlight.index('this.skycrpgInventoryCapture();') < highlight.index('super.onItemHighlightChange(event);')
             (out / 'InventoryMenu.as').write_text(transformed)
         if name.endswith('InventoryLists.as'):
             assert transformed.count('_root.Menu_mc.skycrpgInventoryViewChanged();') == 4
+            invalidation = re.search(r'function InvalidateListData\(\)\s*\{.*?\n   \}', transformed, re.S).group()
+            assert invalidation.index('_root.Menu_mc.skycrpgInventoryViewChanged();') < invalidation.index('this.itemList.InvalidateData();')
+            (out / 'InventoryLists.as').write_text(transformed)
 
 
 @unittest.skipUnless(os.environ.get('SKYCRPG_SKYUI_SOURCE'), 'SKYCRPG_SKYUI_SOURCE not set')

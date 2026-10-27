@@ -164,7 +164,79 @@ void RefusedSelectionReconciliation() {
     reconciliation.Complete();
     std::cout << "PASS: refused highlights/Validate/reentrant selection queue at most one list update\n";
 }
+void GestureOrdering() {
+    InventorySnapshots snapshots; snapshots.World(true); snapshots.Menu(true);
+    snapshots.Publish({Plain(0, 8)});
+    // Both engine callbacks and mouse ItemSelect use Begin. Test callback/down
+    // order independently on successive non-modal actions.
+    for (const auto action : {Action::Drop, Action::Activate}) {
+        for (const bool callbackFirst : {false, true}) {
+            ActionIntents intents;
+            for (std::uint64_t token = 1; token <= 3; ++token) {
+                const auto selected = Select(snapshots.Get(), token);
+                if (!callbackFirst) intents.Edge(46, true);
+                assert(intents.Begin(selected, snapshots.Get(), true, action, 1) == Refusal::None);
+                intents.Observe();
+                if (callbackFirst) intents.Edge(46, true);
+                assert(intents.Begin(Select(snapshots.Get(), token + 10), snapshots.Get(), true, action, 1) == Refusal::Duplicate);
+                intents.Edge(46, true); // held auto-repeat, including a new token
+                assert(intents.Begin(Select(snapshots.Get(), token + 20), snapshots.Get(), true, action, 1) == Refusal::Duplicate);
+                intents.Edge(99, false); // an unrelated/unmatched up cannot re-arm
+                assert(intents.Begin(selected, snapshots.Get(), true, action, 1) == Refusal::Duplicate);
+                intents.Edge(46, false);
+                assert(!intents.Pending()); // release never retries/dispatches
+            }
+        }
+    }
+    ActionIntents intents;
+    auto selected = Select(snapshots.Get());
+    assert(intents.Begin(selected, snapshots.Get(), true, Action::Drop, 1) == Refusal::None);
+    intents.Observe(); intents.Edge(65535, true); intents.Edge(65535, false);
+    // An old token remains spent even after release. Refusing it consumes the
+    // new press as well: neither its late down nor a refresh can retry it.
+    assert(intents.Begin(selected, snapshots.Get(), true, Action::Activate, 1) == Refusal::Duplicate);
+    intents.Edge(65535, true); selected.token = 2;
+    assert(intents.Begin(selected, snapshots.Get(), true, Action::Activate, 1) == Refusal::Duplicate);
+    intents.Invalidate();
+    assert(intents.Begin(selected, snapshots.Get(), true, Action::Activate, 1) == Refusal::Duplicate);
+    intents.Edge(65535, false);
+    assert(intents.Begin(selected, snapshots.Get(), false, Action::Drop, 1) == Refusal::Focus);
+    intents.Edge(46, true); selected.token = 3; intents.Observe();
+    assert(intents.Begin(selected, snapshots.Get(), true, Action::Drop, 1) == Refusal::Duplicate);
+    intents.Edge(46, false);
+    assert(intents.Begin(selected, snapshots.Get(), true, Action::Drop, 1, true) == Refusal::None);
+    intents.Edge(46, true); intents.Edge(46, false);
+    intents.Edge(28, true);
+    assert(intents.Confirm(snapshots.Get(), true, 2) == Refusal::None);
+    intents.Observe();
+    assert(intents.Confirm(snapshots.Get(), true, 2) == Refusal::Pending);
+    selected.token = 4;
+    assert(intents.Begin(selected, snapshots.Get(), true, Action::Drop, 1) == Refusal::Duplicate);
+    intents.Edge(28, false);
+    // Invalidation with nothing held must not manufacture a consumed gesture
+    // that would refuse the first engine callback in a new menu context.
+    intents.Invalidate();
+    assert(intents.Begin(selected, snapshots.Get(), true, Action::Activate, 1) == Refusal::None);
+    // Tab closes the menu: its down is seen, its up is not. The next session
+    // must still re-arm on the first completed press.
+    assert(intents.Begin(selected, snapshots.Get(), true, Action::Activate, 1) == Refusal::Duplicate);
+    intents.Edge(15, true);
+    intents.ResetSession();
+    intents.Edge(18, true); intents.Edge(18, false);
+    selected.token = 5;
+    assert(intents.Begin(selected, snapshots.Get(), true, Action::Drop, 1) == Refusal::None);
+    // Without the session reset the lost Tab up would block every action.
+    {
+        ActionIntents stuck;
+        assert(stuck.Begin(selected, snapshots.Get(), true, Action::Activate, 1) == Refusal::None);
+        stuck.Observe(); stuck.Edge(15, true); stuck.Invalidate();
+        stuck.Edge(18, true); stuck.Edge(18, false); selected.token = 6;
+        assert(stuck.Begin(selected, snapshots.Get(), true, Action::Drop, 1) == Refusal::Duplicate);
+    }
+    std::cout << "PASS: engine callback/down ordering, mouse gestures, repeats, no retry and one-shot quantity confirm\n";
+}
 int main() {
+    GestureOrdering();
     RowMatching();
     RefusedSelectionReconciliation();
     const auto plain = Plain(0, 3);
@@ -236,13 +308,14 @@ int main() {
     intents.Edge(2, true); intents.Edge(1, false); intents.Edge(2, true);
     selected.token = 5;
     assert(intents.Begin(selected, snapshots.Get(), true, Action::Activate, 1) == Refusal::Duplicate);
-    intents.Edge(2, false); // release is never an activation
-    assert(intents.Begin(selected, snapshots.Get(), true, Action::Activate, 1) == Refusal::Duplicate);
+    intents.Edge(2, false); // release re-arms but never dispatches an action
     intents.Edge(1, true);
     assert(intents.Begin(selected, snapshots.Get(), true, Action::Activate, 1) == Refusal::None);
     selected.token = 6; intents.Edge(1, false); intents.Edge(1, true);
     assert(intents.Begin(selected, snapshots.Get(), true, Action::Activate, 1) == Refusal::Pending);
     intents.Observe();
+    assert(intents.Begin(selected, snapshots.Get(), true, Action::Drop, 1, true) == Refusal::Duplicate);
+    intents.Edge(1, false); intents.Edge(1, true);
     assert(intents.Begin(selected, snapshots.Get(), true, Action::Drop, 1, true) == Refusal::None);
     intents.Cancel();
     assert(intents.Confirm(snapshots.Get(), true, 1) == Refusal::Pending);

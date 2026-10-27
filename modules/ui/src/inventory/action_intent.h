@@ -44,27 +44,36 @@ inline Refusal Validate(const Selection& selected, const Snapshot& live, bool fo
 }
 class ActionIntents {
 public:
-    // Release all devices before a new gesture can activate. A repeat/down-up
-    // duplicate cannot be made fresh by a new snapshot or action kind.
+    // Engine DropItem/AttemptEquip and mouse ItemSelect may dispatch BEFORE
+    // their down edge. Spend each Begin (including refusals), never re-arm on
+    // down, and re-arm only on a tracked up that releases the last held key.
+    // Thus the previous press's completed down/up permits the next callback in
+    // either order; a late down, repeat, snapshot or action kind cannot retry it.
+    // Keep the last token spent even across release: a fresh selection/refresh
+    // is also required. Confirm spends its own gesture and uses the pending
+    // quantity token exactly once, independent of the initiating key's release.
+    // Invalidation cancels authority without fabricating a physical release.
     void Edge(unsigned deviceKey, bool down) {
         if (down) {
-            if (_held.empty()) _consumed = false;
             _held.insert(deviceKey);
-        } else {
-            _held.erase(deviceKey);
+        } else if (_held.erase(deviceKey) != 0 && _held.empty()) {
+            _consumed = false;
         }
     }
     Refusal Begin(const Selection& selected, const Snapshot& live, bool focused, Action action,
         std::uint32_t amount, bool quantity = false, bool nativePermits = true, bool nativeQuestFeedback = false) {
-        if (_consumed || selected.token == _lastToken) return Refusal::Duplicate;
+        const bool duplicate = _consumed || selected.token == _lastToken;
+        _consumed = true; // even duplicate/pending refusals spend this gesture
+        if (duplicate) return Refusal::Duplicate;
         if (_pending) return Refusal::Pending;
         const auto result = Validate(selected, live, focused, action, amount, nativePermits, nativeQuestFeedback);
         // A refused gesture is also spent; a refresh never retries it.
-        _consumed = true; _lastToken = selected.token;
+        _lastToken = selected.token;
         if (result == Refusal::None) _pending = Intent{ selected, action, quantity, nativeQuestFeedback };
         return result;
     }
     Refusal Confirm(const Snapshot& live, bool focused, std::uint32_t amount) {
+        _consumed = true;
         if (!_pending || !_pending->quantity) return Refusal::Pending;
         const auto result = Validate(_pending->selection, live, focused, _pending->action, amount, true, _pending->nativeQuestFeedback);
         _pending->quantity = false; // confirmation is at most once, even on refusal
@@ -72,8 +81,13 @@ public:
         return result;
     }
     void Observe() { if (_pending && !_pending->quantity) _pending.reset(); }
-    void Cancel() { _pending.reset(); } // keep gesture spent across a modal close
-    void Invalidate() { Cancel(); _held.clear(); _consumed = true; }
+    void Cancel() { _pending.reset(); } // never re-arm on a modal close/refresh
+    void Invalidate() { Cancel(); } // retain physical edges and consumption
+    // A new inventory session (open/close/load). Key-ups that happened while
+    // the menu was closed (e.g. the Tab that closed it) are never delivered, so
+    // a held set carried over would block re-arming forever. No engine
+    // callback fires without a press inside the menu, so re-arming is safe.
+    void ResetSession() { Cancel(); _held.clear(); _consumed = false; }
     const std::optional<Intent>& Pending() const { return _pending; }
 private:
     std::optional<Intent> _pending;

@@ -383,4 +383,58 @@ The owner reports that everything passed:
 
 This resolves the `effea52` FAIL: native split and merged rows are permitted, and the refresh loop is gone.
 
-**Defect:** for every drop, the **first** press did nothing and the cursor jumped to the category list; re-highlighting the item and dropping again worked. The 7 `duplicate-input` refusals match those first presses. Cause: `inventory-actions.as.inc` captures a fresh snapshot token only on a key-down edge. Highlighting with the mouse leaves the previous, already spent token in place, so the next drop validates the spent token → `Refusal::Duplicate`. The refusal path then sets `selectedIndex = -1` and invalidates the list, which moves focus to the categories. Safe, but it costs a press for every mouse-highlighted action. Fix: capture a fresh token when the native highlight changes, keeping repeat-press protection.
+**Defect:** for every drop, the **first** press did nothing and the cursor jumped to the category list; re-highlighting the item and dropping again worked. The 7 `duplicate-input` refusals match those first presses. The original mouse-hover/token diagnosis is superseded by the source and regression evidence below.
+
+## Round 3: first-press refusal on engine-delegated drop
+
+Base: `9cef8d798cce83600af4a07b952b03eaf1ee3308`, branch `phase3/dyl-163-inventory`, including the uncommitted round-3 AS changes. Round 3b replaces the earlier evidence section. The owner-observed first-press failure remains the runtime finding; this work does not claim a runtime retest.
+
+### Cause and evidence
+
+The base already captures after `super.onItemHighlightChange(event)`. Ordinary mouse-highlight tests passed there, so “capture occurs only on key-down” was incorrect. The earlier callback-before-highlight regression exposed a separate `focus` refusal; it did not reproduce the owner's `duplicate-input` failure.
+
+Pinned SkyUI 6.11 `source/actionscript/ItemMenus/InventoryMenu.as` registers both `DropItem` and `AttemptEquip` with `gfx.io.GameDelegate.addCallBack`. `DropItem()` gates on `shouldProcessItemsListInput(false) && selectedEntry != undefined`, then either immediately calls `onQuantityMenuSelect({amount:1})` or opens the native quantity dialog. `AttemptEquip` dispatches `ItemSelect`; mouse `onItemSelect` also dispatches `ItemSelect`. `BasicListEntry.onPress` calls the list's `onItemPress`, which supplies that mouse selection event. None of these dispatch sites guarantees our `handleInput` hook has received the current key-down first.
+
+The old `ActionIntents::Begin` spends `_consumed`; only a down edge with no held keys clears it. Therefore previous action → down/up completed → refreshed selection → engine `DropItem` → late `handleInput(keyDown)` refuses the new press as `duplicate-input`. The refusal clears `selectedIndex` and invalidates the list, explaining the category jump. The late down used to re-arm the refused gesture. `AttemptEquip` has the same policy hazard, although the owner reported no equip failure.
+
+**FAIL reproduced on the pre-round-3b policy:** the expanded AS harness runs the actual transformed menu and list invalidation methods against the actual portable C++ `ActionIntents`, using a small replay adapter rather than a JavaScript copy of the policy. A temporary copy of the old header and round-3 transformed menu successfully completes a preceding action, then refuses the next callback-before-down press with exactly `['duplicate-input']`. Separate runs reproduce this on different items and on the same stack with a native list refresh between actions. Expected regression assertion exits: 1. Artifacts/logs: `session-p3/logs/dyl-163/round3b/baseline/`, `baseline-as.log`, `baseline-same-stack.log`, `as-jobs.json`. The repository header was never reverted for these runs. This verifies the corrected causal path; the actual deployed engine event order remains uninstrumented here.
+
+### Chosen rule
+
+A tracked key-up that releases the **last held key** re-arms `_consumed`. Down only records a held key; it never re-arms a completed or refused action. Unmatched ups cannot re-arm. Thus the previous completed down/up permits the next press whether the engine callback arrives before or after its down. Mouse callbacks use the same portable rule through the existing synthetic mouse key `65535`. No clock, timestamp protocol or AS validator argument change is needed.
+
+Every `Begin` attempt, including duplicate and pending refusals, spends the gesture. Fresh snapshots, another action kind, a late down or list refresh cannot retry it. `_lastToken` remains an independent guard across release: the same spent token is still refused; a newly captured selection is also required. `Confirm` spends its confirmation gesture and validates the saved quantity intent at most once, including when confirmation is refused. Releasing the initiating drop key does not discard the pending quantity intent. Only a later explicit action can dispatch; edges/refresh/Observe never dispatch.
+
+`ActionIntents::Invalidate` cancels pending authority while retaining physical held/consumed state, rather than fabricating either an all-up or a new consumed gesture. Snapshot world/session/view generations still invalidate selections in the existing adapter. AS view invalidation likewise retains its held-key map. This prevents view changes from synthesizing a fresh down, and avoids an artificial first-press block after an already released gesture. Held lifecycle invalidation, empty lifecycle invalidation and unmatched releases are covered by portable tests.
+
+The round-3 native-index capture guard, capture before `super.onItemHighlightChange`, existing capture after `super`, and different-index acquisition in `skycrpgInventoryAllow` are retained: their tested callback-before-highlight and reentrant-highlight cases remain useful. Repeated captures of the same backing entry cannot renew a consumed token. `InventoryLists.InvalidateListData`, `onFilterChange`, `onSortChange` and `showItemsList` already invoke `skycrpgInventoryViewChanged`; it clears the token before list processing. In particular, `InvalidateListData` then dispatches a highlight notification when selection survives. The same-stack regression executes this actual transformed method, proving refresh clears and reacquires the token even when `itemIndex` is unchanged. A refresh without release still cannot bypass `_consumed`.
+
+No matching/coverage, reconciliation, drift handling, off-thread fallback, `inventory_bridge.cpp`, `plugin.cpp`, CMake, dependency, package or other feature changes were made. Genuine refusals retain the existing focus-clearing UX.
+
+### Tests
+
+**PASS — portable inventory policy:** `GestureOrdering` covers repeated engine callback-before-down and down-before-callback actions for drop/activation; held/repeated downs and second dispatch with different tokens; unmatched ups; all-devices release; old-token refusal; a refused gesture followed by late down, refreshed token or observation; lifecycle invalidation; and quantity confirmation once. Existing snapshot, matching, reconciliation and stale/modal tests remain. A pending refusal now explicitly requires release before a later action, rather than retrying after `Observe`.
+
+**PASS — AS contract:** engine `DropItem` before the real transformed `handleInput(keyDown)` twice in succession on different items and twice on the same refreshed stack; `AttemptEquip` and mouse `onMouseDown`/`ItemSelect` in both down/callback orders; callback-before-highlight and reentrant highlight; same-entry token retention; held repeat across native list refresh; spent refusal in both orders; frozen quantity selection and confirm/cancel; quantity `ItemDrop` exactly once in both confirmation orders; native dispatch preservation and absent/old bridge fallback. `inventory_prepare_contract.py` pins the capture ordering, all four invalidation hooks and token invalidation before native list refresh.
+
+Commands from the worktree root (job records include the executable paths, profiles and deadlines):
+
+```sh
+timeout 600 g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/ui/src modules/ui/tests/inventory_policy_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/round3b/inventory_policy_test
+timeout 600 /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/round3b/inventory_policy_test
+timeout 900 python3 -I /srv/storage/Projects/SkyCRPG/session-p3/tools/dyl-163-run-checks.py
+SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 timeout 600 python3 -I -m unittest discover -s modules/ui/tests -p "*.py"
+timeout 600 /home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node modules/ui/tests/minimap_compass_contract.js modules/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11
+```
+
+Results: focused portable build/test **PASS**; candidate AS harness **PASS**; lane runner **PASS, 15/15 steps**; Python discovery **PASS, 18 tests, no skips**; minimap compass contract **PASS**; `git diff --check` **PASS**. The lane runner also builds the AS replay adapter with the same strict g++ flags. MSVC `/W4 /WX /permissive-` verification is **NOT_RUN** on this Linux host.
+
+Records under `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/round3b/` include purposes, exact commands, expected outputs, 600-second focused / 900-second lane limits, owner (DYL-163 / Codex), completion signals, process groups, logs, deadlines, exit codes and cleanup. `as-jobs.json` records both intentional baseline failures and candidate PASS; `full-jobs.json` records the requested checks. Initial harness setup failures are retained separately: a missing copied dependency, a Node synchronous stdin EOF timeout (changed to file replay), and an invalid fixture form ID (corrected). These were changed-input diagnostics, not unchanged retry loops or product runtime results. All owned job groups were reaped and verified absent.
+
+### Runtime retest
+
+**NOT_RUN:** native DLL/MSVC build, SWF compilation, packaged-movie hashes, actual GFx/input/release ordering, runtime menu/modal lifecycle and in-game first-press usability. No Skyrim, Steam, Proton, deployment, commit or push was performed. Existing round-2 row-integrity PASS evidence and favorite pre-dispatch guard **BLOCKED** status remain unchanged.
+
+Next owner/orchestrator copied-save route (**NOT_RUN**): verify candidate DLL/SWF hashes; drop once on A, then once on B, then twice from the same remaining stack with list refresh between; repeat with keyboard/controller selection; equip with successive presses and mouse clicks; hold/repeat and check one native mutation; open quantity, release the initiating key, confirm once or cancel, then perform another action; exercise menu close/reopen and focus transitions. Record input/down/up/callback order, native counts/weight, focus retention and any `duplicate-input` refusal, together with executable/runtime, dependencies, host, source commit and package hashes.
+
+**Orchestrator review addition.** Re-arming only on the release of the last held key means a key-up that is never delivered keeps `_held` non-empty. Closing the inventory with Tab does exactly this: Tab's down reaches the menu, its up does not. The round-3 change also stopped clearing `_held` on invalidation, so every action in the next session would have been refused. `ActionIntents::ResetSession()` now clears held keys and re-arms when the InventoryMenu opens or closes and on load. No engine callback fires without a press inside the menu. `inventory_policy_test.cpp` covers a lost Tab up across a session and shows that the session would stay blocked without the reset.

@@ -290,7 +290,7 @@ public:
         std::scoped_lock lock(g_mutex);
         if (!event) return RE::BSEventNotifyControl::kContinue;
         if (std::string_view(event->menuName.c_str()) == RE::InventoryMenu::MENU_NAME) {
-            g_open = event->opening; g_snapshots.Menu(g_open); g_intents.Invalidate();
+            g_open = event->opening; g_snapshots.Menu(g_open); g_intents.ResetSession();
             g_selection.reset(); g_native.clear(); g_loggedTokens.clear(); g_dirty.store(true);
             if (g_open) Refresh();
         } else if (!Passive(event->menuName.c_str())) {
@@ -461,7 +461,7 @@ void OnSkseMessage(SKSE::MessagingInterface::Message* message)
         message->type == SKSE::MessagingInterface::kPostLoadGame || message->type == SKSE::MessagingInterface::kNewGame) {
         g_loaded = message->type == SKSE::MessagingInterface::kNewGame ||
             (message->type == SKSE::MessagingInterface::kPostLoadGame && message->data != nullptr);
-        g_open = false; g_snapshots.World(g_loaded); g_intents.Invalidate();
+        g_open = false; g_snapshots.World(g_loaded); g_intents.ResetSession();
         g_selection.reset(); g_native.clear(); g_dirty.store(true);
     }
 }

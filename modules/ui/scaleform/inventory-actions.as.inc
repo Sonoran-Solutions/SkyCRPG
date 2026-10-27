@@ -1,6 +1,7 @@
    // Only InventoryMenu receives these methods. Native dispatch stays in its
    // existing methods; other item menus and both list definitions stay native.
    var _skycrpgInventoryToken;
+   var _skycrpgInventoryIndex;
    var _skycrpgInventoryQuantity = false;
    var _skycrpgInventoryHeld;
    function skycrpgInventoryBridge()
@@ -17,10 +18,16 @@
    function skycrpgInventoryCapture()
    {
       if(this._skycrpgInventoryQuantity) return;
+      var entry = this.inventoryLists.itemList.selectedEntry;
+      if(entry == undefined || entry.itemIndex == undefined) return;
+      // A repeated highlight or fresh key edge on the same native entry must
+      // not mint another token for a refused/consumed selection.
+      if(this._skycrpgInventoryToken != undefined && this._skycrpgInventoryIndex == entry.itemIndex) return;
       var bridge = this.skycrpgInventoryBridge();
       if(bridge == undefined) return;
       var snapshot = bridge.getInventorySnapshot();
       this._skycrpgInventoryToken = snapshot == undefined ? undefined : snapshot.token;
+      this._skycrpgInventoryIndex = snapshot == undefined ? undefined : snapshot.selectedIndex;
    }
    function skycrpgInventoryInput(details)
    {
@@ -48,9 +55,11 @@
    {
       var bridge = this.skycrpgInventoryBridge();
       if(bridge == undefined) return true;
-      // Native mouse callbacks can precede handleInput. First acquisition is
-      // allowed; a refused/consumed token is never automatically renewed here.
-      if(this._skycrpgInventoryToken == undefined) this.skycrpgInventoryCapture();
+      // Native callbacks can precede handleInput or highlight notification.
+      // Renew only for a different native entry, never the same spent token.
+      var entry = this.inventoryLists.itemList.selectedEntry;
+      if(this._skycrpgInventoryToken == undefined ||
+         (entry != undefined && entry.itemIndex != this._skycrpgInventoryIndex)) this.skycrpgInventoryCapture();
       var allowed = bridge.validateItemAction(this._skycrpgInventoryToken,action,amount,phase) == true;
       if(allowed && phase == "quantity") this._skycrpgInventoryQuantity = true;
       if(phase == "confirm") this._skycrpgInventoryQuantity = false;
@@ -75,7 +84,7 @@
       if(bridge != undefined) bridge.inventoryViewChanged();
       this._skycrpgInventoryToken = undefined;
       this._skycrpgInventoryQuantity = false;
-      this._skycrpgInventoryHeld = {};
+      // A list refresh is not a physical release of the current gesture.
    }
    function onMouseDown()
    {

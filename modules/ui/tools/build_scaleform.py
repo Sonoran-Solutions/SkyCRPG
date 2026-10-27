@@ -70,6 +70,8 @@ def transform(name, text):
                             '      if(event.opening == false && event.canceled == true) this.skycrpgInventoryCancel();\n      super.onItemCardSubMenuAction(event);')
         text = replace_once(text, "      super.onItemHighlightChange(event);",
                             "      super.onItemHighlightChange(event);\n      this.skycrpgInventoryCapture();")
+        text = replace_once(text, "   function onItemHighlightChange(event)\n   {",
+                            "   function onItemHighlightChange(event)\n   {\n      this.skycrpgInventoryCapture();")
         pos = text.rfind("}")
         text = text[:pos] + (ROOT / "scaleform/inventory-actions.as.inc").read_text() + text[pos:]
     elif name.endswith("InventoryLists.as"):
