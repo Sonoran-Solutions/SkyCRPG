@@ -225,3 +225,37 @@ Still **NOT_RUN**:
 - native container/barter/crafting/Magic/journal/map coexistence plus save/load in this build;
 - 1920×1080 and increased text scale;
 - the combined Camera+UI smoke on this build.
+
+## Owner runtime — combined Camera + UI route, 2026-10-27: PASS (bounded)
+
+**PASS (owner-reported, log-confirmed).** Run `07b392d246d54aedbcb44b6871532af1`.
+
+| Field | Value |
+| --- | --- |
+| Source / CI | UI `c1ae156` (CI 40601052249 **PASS**; ZIP `ffd8e2b0fdbb8dfb…`, DLL `b0d45120bed14f37…`); camera main `28aae27` (`b97997f62df7c914…`) |
+| Movies / stage | Merged Phase 3 combined stage with `inventorymenu.swf` `bcb3be20…` and `skyui/inventorylists.swf` `8643994e…`; HUD `cd1e1fa7…`; profile `combined`, 214 files |
+| Input | **Both keyboard/mouse and controller** (owner), not attributed per step |
+| Save | `SkyCRPG_Test_DYL164` (disposable copy in the combined profile) |
+| Run | About 13 min of a 20 min budget, normal quit, watchdog did not intervene (minimum 13.2 GiB available) |
+| Logs | `SkyCRPG_UI.log` `9edc3727…`: preflight `exact=1`, **no inventory refusals**. Compass lease: 11 `settling` → 11 `suppressed`, with `menu`/`hidden`/`stale-sample` releases. Camera: SmoothCam is the sole transform writer, no failures |
+| Cleanup | Restoration **PASS**; only our own `SkyCRPG_Camera.ini`, re-saved by the camera module (as in earlier combined runs), was preserved and removed |
+
+Owner route, all reported passing:
+1. **Grid navigation:** ±1/±3 cell movement, up to the categories and category change, return without equipping, escaping an empty search and an empty Favorites. Mixed input: this is **not** a dedicated controller-only pass.
+2. **Native poison confirmation:** a Weak Poison was added; one apply was accepted and one cancelled. The grid did not react behind the dialog, and control returned on cancel.
+3. **Long name:** a disposable Iron Sword was self-enchanted with Fire Damage at Farengar's enchanter and given a long name. The grid cell truncated it neatly and the native card showed the full name.
+4. **Native menus:** container, barter, crafting station, Magic, journal and map kept their native/SkyUI look and actions.
+5. **Save/load:** after a reload, the first-press drop worked and the equipment panel was current.
+6. **Coexistence:** the minimap, the follower panel and the camera behaved as usual.
+
+Updated rows:
+- AC2 long name: **PASS (owner-reported)**.
+- Quantity/confirmation readability and focus: **PASS (owner-reported)**.
+- Exit path and native contexts: **PASS (owner-reported)**.
+- Combined Camera+UI: **PASS (owner-reported)**.
+- Controller navigation: **PASS under mixed input** (no controller-only attribution).
+
+Remaining **NOT_RUN**:
+- 1920×1080 and increased text scale;
+- equipment slots for a two-handed weapon, left-hand spell/torch, multi-slot robe, ring and amulet;
+- the CC-item icon fallback in game.
