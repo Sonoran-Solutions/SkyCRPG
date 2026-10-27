@@ -102,6 +102,8 @@ UI owns original HUD child clips and their callbacks; engine owns actor values. 
 
 ### Minimap and compass
 
+The 2026-10-26 [owner ruling](DECISIONS.md) amends the runtime capability contract below for the selected DEM stack: exact loaded DLL and SWF hashes plus an attached, visible, in-bounds clip in normal gameplay may support compass suppression after a 500 ms same-cell settle. The delay is not evidence of a fresh render; the owner accepts stale-frame risk while uncertainty releases the UI-owned lease. This bounded candidate requires runtime validation; the older entries below describe the pre-ruling baseline.
+
 Required selected map stack: Dragon's Eye settings fork1.7.5, Infinity UI NG2.1.3, LMU settings fork1.3.4, each **Common assets + Line-17 DLL**; SKSE2.3.1 and Address Library13. UI integration owns the declared **configuration deltas**, not these external binaries: DEM upper-right `uAnchor=1`, `fScale=0.5`, `bShowOnGameStart=1`, `[Compass] bCompassRing=0`; LMU `bLocalMapBorder=0`, optional border/settings framework/item-marker additions excluded. Provider K/L controls must be routed consistently with menu focus; no unverified API is assumed.
 
 | Lifecycle/capability | Required behavior and ownership | Current evidence / future owner |

@@ -27,6 +27,7 @@
 #include "resource_snapshot.h"
 #include "menu_focus.h"
 #include "favorite_slots.h"
+#include "minimap/adapter.h"
 #include "inventory/inventory_bridge.h"
 
 #include <array>
@@ -68,12 +69,14 @@ skycrpg::ui::ParseResult ReadHudSettings(const std::wstring& iniPath)
 	std::array<wchar_t, 32> scale{};
 	std::array<wchar_t, 32> offsetX{};
 	std::array<wchar_t, 32> offsetY{};
+	std::array<wchar_t, 32> replaceCompass{};
 	GetPrivateProfileStringW(L"Settings", L"iVersion", L"", version.data(), static_cast<DWORD>(version.size()), iniPath.c_str());
 	GetPrivateProfileStringW(L"HUD", L"bEnabled", L"", enabled.data(), static_cast<DWORD>(enabled.size()), iniPath.c_str());
 	GetPrivateProfileStringW(L"HUD", L"iScalePercent", L"", scale.data(), static_cast<DWORD>(scale.size()), iniPath.c_str());
 	GetPrivateProfileStringW(L"HUD", L"iOffsetX", L"", offsetX.data(), static_cast<DWORD>(offsetX.size()), iniPath.c_str());
 	GetPrivateProfileStringW(L"HUD", L"iOffsetY", L"", offsetY.data(), static_cast<DWORD>(offsetY.size()), iniPath.c_str());
-	return skycrpg::ui::ParseHudSettings(version.data(), enabled.data(), scale.data(), offsetX.data(), offsetY.data());
+	GetPrivateProfileStringW(L"Minimap", L"bReplaceCompass", L"", replaceCompass.data(), static_cast<DWORD>(replaceCompass.size()), iniPath.c_str());
+	return skycrpg::ui::ParseHudSettings(version.data(), enabled.data(), scale.data(), offsetX.data(), offsetY.data(), replaceCompass.data());
 }
 
 AddressLibraryResult VerifyPinnedAddressLibrary()
@@ -520,6 +523,7 @@ void ResourceLifecycle(SKSE::MessagingInterface::Message* message)
 {
 	skycrpg::ui::inventory::OnSkseMessage(message);
 	if (!message) return;
+	skycrpg::ui::minimap::OnMessage(message);
 	if (message->type == SKSE::MessagingInterface::kDataLoaded) {
 		static bool registered = false;
         static bool inputRegistered = false;
@@ -651,6 +655,7 @@ bool RegisterSkyCRPGUI(RE::GFxMovieView* movie, RE::GFxValue* root)
 	static auto* handler = new PlayerResources();
 	movie->CreateFunction(&function, handler);
 	if (!root->SetMember("getPlayerResources", function)) return false;
+	if (!skycrpg::ui::minimap::Register(movie, root)) return false;
 	if (!skycrpg::ui::inventory::Register(movie, root)) return false;
 	RE::GFxValue value;
 	value.SetNumber(g_hudSettings.scalePercent);
@@ -723,6 +728,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* skseInterface)
 	const auto iniPath = skycrpg::ThisModuleDirectory() + kModule.fileStem + L".ini";
 	const auto parsed = ReadHudSettings(iniPath);
 	g_hudSettings = parsed.settings;
+	skycrpg::ui::minimap::Initialize(g_hudSettings.replaceCompass, [] { return g_menuBlocked.load(std::memory_order_acquire); });
 	LogHudSettings(iniPath, parsed);
 
 	// The UI bridge and hotbar input use the pinned CommonLib runtime.
