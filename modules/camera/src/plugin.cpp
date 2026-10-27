@@ -5,6 +5,7 @@
 #include "policy.h"
 #include "precision_policy.h"
 #include "precision_trace.h"
+#include "lifecycle_policy.h"
 #pragma warning(push)
 #pragma warning(disable: 4191) // permitted external API FARPROC conversion
 #define SMOOTHCAM_API_COMMONLIB
@@ -37,7 +38,9 @@ bool ready = false, loading = true, ownFirstPerson = false, recenter = false;
 SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
 bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
-bool precisionTraceEnabled = false;
+bool precisionTraceEnabled = false, lifecycleTraceEnabled = false;
+unsigned lifecycleLogCount = 0;
+int lastLifecycleState = -1;
 PrecisionTraceBudget precisionTraceBudget;
 std::array<FreshPress,4> keys;
 using Look = void(*)(RE::ThirdPersonState*, const RE::NiPoint2&);
@@ -123,6 +126,7 @@ void loadSettings() {
     s.toggleGamepad = number("Controls","iToggleGamepad",-1);
     s.recenterGamepad = number("Controls","iRecenterGamepad",-1);
     precisionTraceEnabled = number("Debug","iPrecisionTrace",0) == 1;
+    lifecycleTraceEnabled = number("Debug","iLifecycleTrace",0) == 1;
     compatibleSettings = s.schema == 1;
     settings = validate(s);
 }
@@ -166,10 +170,16 @@ Context context(bool allowZoomSlide = false, bool* hardSpecial = nullptr) {
     c.firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
     c.tween = camera->currentState->id == RE::CameraState::kTween;
     const bool stateSpecial = !c.firstPerson && camera->currentState->id != RE::CameraState::kThirdPerson;
-    bool hazard = player->IsOnMount() || player->IsInKillMove() || player->AsActorState()->IsSwimming();
+    const auto actorState = player->AsActorState();
+    Hazards hazards{player->IsOnMount(), player->IsInKillMove(), actorState->IsSwimming(),
+        actorState->GetSitSleepState() != RE::SIT_SLEEP_STATE::kNormal, actorState->IsBleedingOut(),
+        false, false, false};
     const auto controls = RE::PlayerControls::GetSingleton();
     const auto controlMap = RE::ControlMap::GetSingleton();
-    if (!controlMap || !controls || controls->data.povScriptMode || controls->data.povBeastMode || (controls->data.fovSlideMode && !allowZoomSlide)) hazard = true;
+    hazards.beast = controls && controls->data.povBeastMode;
+    hazards.scripted = !controlMap || !controls || controls->data.povScriptMode;
+    hazards.slide = controls && controls->data.fovSlideMode && !allowZoomSlide;
+    const bool hazard = specialHazard(hazards);
     c.special = stateSpecial || hazard;
     if (!c.firstPerson && camera->currentState->id == RE::CameraState::kThirdPerson &&
         static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) c.special = true;
@@ -212,8 +222,32 @@ void tracePrecision(PrecisionTraceEvent event, PrecisionTraceState before, Preci
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (formatPrecisionTrace(line,sizeof(line),{event,before,after,device,pressed,edge,decision,static_cast<std::uint64_t>(now)})) log(line);
 }
+void lifecycleLog(const char* event, Context c, unsigned stateId) {
+    if (!lifecycleTraceEnabled || lifecycleLogCount >= 128) return;
+    ++lifecycleLogCount;
+    char line[160]{};
+    std::snprintf(line,sizeof(line),"Lifecycle event=%s state=%u decision=%u owned=%u",event,stateId,
+        static_cast<unsigned>(select(c)),static_cast<unsigned>(ownFirstPerson));
+    log(line);
+}
+void resetLifecycle(const char* event) {
+    resetTransient(ownFirstPerson,recenter,applyZoom,keys);
+    lastLifecycleState = -1;
+    lifecycleLog(event,Context{},UINT32_MAX);
+}
+void observeLifecycle(Context c, bool hard) {
+    ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hard);
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    const unsigned id = camera && camera->currentState ? static_cast<unsigned>(camera->currentState->id) : UINT32_MAX;
+    // Only log changes, with a hard process-wide cap.
+    const int signature = static_cast<int>(select(c)) * 256 + (id == UINT32_MAX ? 255 : static_cast<int>(id));
+    if (signature != lastLifecycleState) { lastLifecycleState = signature; lifecycleLog("observe",c,id); }
+    if (select(c) != State::normal) suspend();
+}
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
-    const auto c = context();
+    bool hard = true;
+    const auto c = context(false,&hard);
+    observeLifecycle(c,hard);
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (select(c) != State::normal || !camera || camera->currentState.get() != state || !state->freeRotationEnabled) {
         suspend(); previousLook(state,input); return;
@@ -238,18 +272,30 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
 }
 void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>& next) {
     previousUpdate(state,next); // native first; outer SmoothCam wrapper performs transforms AFTER us
-    const auto c = context(true);
+    bool hard = true;
+    const auto c = context(true,&hard);
+    observeLifecycle(c,hard);
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (select(c) != State::normal || !camera || camera->currentState.get() != state) return;
     // Native controller POV-slide zoom bypasses HandleLookInput, so bound the
     // requested scalar after native update and BEFORE the outer provider update.
     // stateNotActive/POV transitions are excluded; current distance is never written.
-    state->targetZoomOffset = zoomRequest(state->targetZoomOffset,settings,applyZoom);
+    state->targetZoomOffset = zoomRequest(state->targetZoomOffset,settings,applyDeferredPreferences(c,applyZoom,camera->currentState.get() == state));
     applyZoom = false;
     settings.zoom = state->targetZoomOffset;
 }
-class Events final : public RE::BSTEventSink<RE::InputEvent*>, public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
+class Events final : public RE::BSTEventSink<RE::InputEvent*>, public RE::BSTEventSink<RE::MenuOpenCloseEvent>,
+    public RE::BSTEventSink<RE::TESLoadGameEvent>, public RE::BSTEventSink<RE::TESCellAttachDetachEvent> {
 public:
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESLoadGameEvent*, RE::BSTEventSource<RE::TESLoadGameEvent>*) override {
+        resetLifecycle("load-game");
+        return RE::BSEventNotifyControl::kContinue;
+    }
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESCellAttachDetachEvent* event, RE::BSTEventSource<RE::TESCellAttachDetachEvent>*) override {
+        if (event && event->reference.get() == RE::PlayerCharacter::GetSingleton())
+            resetLifecycle(event->attached ? "player-attach" : "player-detach");
+        return RE::BSEventNotifyControl::kContinue;
+    }
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
         bool hard = true;
         const auto c = precisionTraceEnabled ? context(false,&hard) : Context{};
@@ -380,12 +426,16 @@ void messages(SKSE::MessagingInterface::Message* message) {
         previousUpdate = reinterpret_cast<Update>(table.write_vfunc(3,update));
         RE::BSInputDeviceManager::GetSingleton()->AddEventSink(static_cast<RE::BSTEventSink<RE::InputEvent*>*>(&events));
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(&events);
+        if (const auto source = RE::ScriptEventSourceHolder::GetSingleton()) {
+            source->AddEventSink<RE::TESLoadGameEvent>(&events);
+            source->AddEventSink<RE::TESCellAttachDetachEvent>(&events);
+        }
         log("Camera input policy installed: one chained native look call; SmoothCam sole transform writer.");
         break;
     }
-    case SKSE::MessagingInterface::kPreLoadGame: loading = true; ownFirstPerson = false; suspend(); break;
+    case SKSE::MessagingInterface::kPreLoadGame: loading = true; resetLifecycle("pre-load"); break;
     case SKSE::MessagingInterface::kNewGame:
-    case SKSE::MessagingInterface::kPostLoadGame: loading = false; ownFirstPerson = false; applyZoom = true; suspend(); break;
+    case SKSE::MessagingInterface::kPostLoadGame: loading = false; resetLifecycle("post-load-or-new-game"); break;
     case SKSE::MessagingInterface::kSaveGame: savePreferences(); break;
     default: break;
     }
