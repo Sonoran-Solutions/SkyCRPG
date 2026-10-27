@@ -3,6 +3,7 @@
       // before a repeated initialization. Do not attach another handler on refresh.
       if (this.SkyCRPGStatus != undefined) {
          this.SkyCRPGStatus.onEnterFrame = null;
+         if (this.SkyCRPGPartyArea != undefined) this.SkyCRPGPartyArea.onEnterFrame = null;
          if (this.SkyCRPGHotbar != undefined) this.SkyCRPGHotbar.onEnterFrame = null;
          var skycrpgRemoveIndex = this.HudElements.length - 1;
          while (skycrpgRemoveIndex >= 0) {
@@ -218,28 +219,8 @@
             }
          };
          this.HudElements.push(bar);
-         var skycrpgParty = this.createEmptyMovieClip("SkyCRPGPartyArea", 18001);
-         skycrpgParty.All = true;
-         skycrpgParty.placeAtStage = skycrpg.placeAtStage;
-         skycrpgParty.placeAtStage(
-            Math.max(16, Math.min(Stage.width - 16 - 194 * skycrpgSettings.hudScale / 100,
-               20 + skycrpgSettings.hudOffsetX)),
-            Math.max(16, Math.min(Stage.height - 16 - 49 * skycrpgSettings.hudScale / 100,
-               62 + skycrpgSettings.hudOffsetY)), skycrpgSettings.hudScale);
-         skycrpgParty.lineStyle(1, 0x806E49, 55);
-         skycrpgParty.beginFill(0x171715, 45);
-         skycrpgParty.moveTo(0, 0); skycrpgParty.lineTo(194, 0); skycrpgParty.lineTo(194, 49);
-         skycrpgParty.lineTo(0, 49); skycrpgParty.lineTo(0, 0); skycrpgParty.endFill();
-         skycrpgParty.createTextField("heading", 1, 10, 5, 174, 18);
-         skycrpgParty.heading.selectable = false;
-         skycrpgParty.heading.text = "PARTY STATUS";
-         skycrpgParty.heading.setTextFormat(new TextFormat("$EverywhereFont", 13, 0xD8C69B, true));
-         skycrpgParty.createTextField("availability", 2, 10, 25, 174, 18);
-         skycrpgParty.availability.selectable = false;
-         skycrpgParty.availability.text = "Follower data unavailable";
-         skycrpgParty.availability.setTextFormat(new TextFormat("$EverywhereFont", 11, 0x9E9A90));
+         // SKYCRPG_FOLLOWER_PANEL
          skycrpg._visible = false;
-         skycrpgParty._visible = this.CheckAgainstHudMode(skycrpgParty);
          this.HudElements.push(skycrpg);
          this.HudElements.push(skycrpgParty);
          // Two geometry messages per clip lifetime distinguish missing samples
@@ -307,9 +288,6 @@
             hud.Health._visible = modeVisible ? false : hud.CheckAgainstHudMode(hud.Health);
             hud.Magica._visible = modeVisible ? false : hud.CheckAgainstHudMode(hud.Magica);
             hud.Stamina._visible = modeVisible ? false : hud.CheckAgainstHudMode(hud.Stamina);
-         };
-         skycrpgParty.onModeChange = function(mode) {
-            this._visible = this.hasOwnProperty(mode);
          };
          // The native crosshair/rollover remains visible and owns all target text/actions.
       }

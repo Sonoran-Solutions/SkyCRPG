@@ -52,7 +52,7 @@ class PatchContract(unittest.TestCase):
         self.assertNotIn("skycrpgCategoryFocus", paint)
 
     def test_hud_uses_resource_snapshot_and_native_interaction_authority(self):
-        source = (builder.ROOT / "scaleform/hud-init.as.inc").read_text()
+        source = builder.hud_init_source()
         self.assertIn("bridge.getPlayerResources()", source)
         self.assertIn("now + 100", source)
         self.assertNotIn("hud.lastHealthMeterPercent", source)
@@ -94,20 +94,25 @@ class PatchContract(unittest.TestCase):
             self.assertIn(bound, parser)
         self.assertIn("SKSE::GetScaleformInterface()", plugin)
         self.assertIn("RegisterSkyCRPGUI", plugin)
-        self.assertIn("skycrpgSettings != undefined", (builder.ROOT / "scaleform/hud-init.as.inc").read_text())
+        self.assertIn("skycrpgSettings != undefined", builder.hud_init_source())
         self.assertIn("native HUD fallback retained", plugin)
 
     def test_hud_formats_dynamic_text_with_new_text_format(self):
-        source = (builder.ROOT / "scaleform/hud-init.as.inc").read_text()
+        source = builder.hud_init_source()
         field_setup = source.index('skycrpgMeter.value.setNewTextFormat(')
         dynamic_assignment = source.index('this.value.text = Math.round(bounded) + "%";')
         self.assertLess(field_setup, dynamic_assignment)
         self.assertNotIn('skycrpgMeter.value.setTextFormat(', source)
         # Other HUD text is assigned before its one-time format application.
-        for field in ("skycrpg.title", "skycrpgMeter.label", "skycrpgParty.heading", "skycrpgParty.availability"):
+        for field in ("skycrpg.title", "skycrpgMeter.label"):
             assign = source.index(field + ".text =")
             format_call = source.index(field + ".setTextFormat(", assign)
             self.assertLess(assign, format_call)
+        # Follower panel text is rewritten each sample, so it keeps a new-text format.
+        for field in ("heading", "availability"):
+            self.assertIn("skycrpgParty." + field + ".setNewTextFormat(", source)
+            self.assertIn("this." + field + ".text =", source)
+            self.assertNotIn("skycrpgParty." + field + ".setTextFormat(", source)
 
     def test_native_loader_rejects_non_pinned_or_null_skse(self):
         plugin = (builder.ROOT / "src/plugin.cpp").read_text()

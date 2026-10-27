@@ -50,6 +50,12 @@ def replace_once(text, anchor, replacement):
     return text.replace(anchor, replacement, 1)
 
 
+def hud_init_source():
+    """HUD initialization as compiled: shared init with feature panels substituted."""
+    hud = (ROOT / "scaleform/hud-init.as.inc").read_text()
+    return replace_once(hud, "         // SKYCRPG_FOLLOWER_PANEL", (ROOT / "scaleform/follower-panel.as.inc").read_text().rstrip())
+
+
 def transform(name, text):
     if name.endswith("InventoryMenu.as"):
         text = replace_once(text, "_loc3_.layout = _loc5_;", "_loc3_.skycrpgGrid = true;\n      _loc3_.scrollDelta = 3;\n      _loc3_.layout = _loc5_;")
@@ -103,7 +109,11 @@ def transform(name, text):
          var skycrpgDataReady = this.SkyCRPGStatus._skycrpgDataReady == true;
          var skycrpgVisible = skycrpgDataReady && this.CheckAgainstHudMode(this.SkyCRPGStatus);
          this.SkyCRPGStatus._visible = skycrpgVisible;
-         this.SkyCRPGPartyArea._visible = this.CheckAgainstHudMode(this.SkyCRPGPartyArea);
+         if (typeof(this.SkyCRPGPartyArea.syncVisibility) == "function") {
+            this.SkyCRPGPartyArea.syncVisibility();
+         } else {
+            this.SkyCRPGPartyArea._visible = this.CheckAgainstHudMode(this.SkyCRPGPartyArea);
+         }
          this._skycrpgMetersSuppressed = skycrpgVisible;
          this.Health._visible = skycrpgVisible ? false : this.CheckAgainstHudMode(this.Health);
          this.Magica._visible = skycrpgVisible ? false : this.CheckAgainstHudMode(this.Magica);
@@ -118,7 +128,7 @@ def transform(name, text):
         # same call, so it never shows for a frame between lease samples.
         text = replace_once(text, compass_write, compass_write + "\n      if (this._skycrpgCompassOwned == true) {\n         this._skycrpgCompassPrior = abShowCompass;\n         this.CompassRect._parent._visible = false;\n      }")
         anchor = 'Stage.scaleMode = "showAll";'
-        text = replace_once(text, anchor, anchor + "\n" + (ROOT / "scaleform/hud-init.as.inc").read_text())
+        text = replace_once(text, anchor, anchor + "\n" + hud_init_source())
         text = replace_once(text, anchor, anchor + "\n" + (ROOT / "scaleform/compass-policy.as.inc").read_text())
     return text
 
