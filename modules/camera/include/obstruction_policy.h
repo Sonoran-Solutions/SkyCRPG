@@ -102,6 +102,12 @@ constexpr float obstructionPitch(float preferred, float blend, const Obstruction
 constexpr float obstructionZoom(float preferred, float blend, const ObstructionSettings& s) {
     return preferred + ((std::min)(preferred,s.tightZoom)-preferred)*blend;
 }
+constexpr void resetObstructionZoom(bool& adjusted, float& lastAdjusted, bool& applyPreference) {
+    if (!adjusted) return;
+    adjusted = false;
+    lastAdjusted = 0;
+    applyPreference = true;
+}
 // Native zoom changes are deltas relative to the last adjusted input. Persist
 // only the user's preferred zoom, never the obstruction controller's output.
 inline float preferredZoomRequest(float native, float lastAdjusted, bool adjusted,

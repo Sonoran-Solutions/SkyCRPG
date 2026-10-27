@@ -163,6 +163,7 @@ void savePreferences() {
 void resetObstruction() {
     obstructionPolicy.reset(); obstructionFrame = {};
     obstructionSampleTime = {}; obstructionCell = 0;
+    resetObstructionZoom(adjustedZoomWritten,lastAdjustedZoom,applyZoom);
 }
 void suspend() { resetObstruction(); recenter = false; for (auto& key : keys) key.suspend(); }
 bool focused() {

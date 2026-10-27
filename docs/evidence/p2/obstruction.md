@@ -1,6 +1,6 @@
 # DYL-157 obstruction candidate and investigation
 
-**Current status: source candidate; focused Linux policy tests PASS; Windows build and candidate owner route NOT_RUN.** The [read-only compression candidate](#read-only-compression-candidate--2026-10-26) below implements the supplied orchestrator direction on `phase2/dyl-157-obstruction`, draft PR #10. Automatic framing defaults off; runtime signal quality and gameplay acceptance remain open. No game, deployment, profile/save modification, Windows build, push or native artifact creation ran for this candidate.
+**Current status:** Opt-in integration owner route and regression have separately scoped PASS evidence; full C2/P2-02 remains open. The subsequent zoom-tracker fix has focused Linux tests PASS; its Windows build and owner check are NOT_RUN. Automatic framing defaults off. See the integration route and merge-resolution sections below.
 
 The investigation below predates the candidate (initial base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`). Its statements about absent implementation and proposed next steps are historical and superseded by the final candidate section. Its source/timing caveats still apply; physics queries remain rejected.
 
@@ -137,3 +137,9 @@ Integration build `integration/p2-camera-wave5` source `155a3e3671e708de06cd7f3d
 The owner also observed that NPC dialogue is silent. The same `winegstreamer transform` failure appears in baseline (no-mod) runs, so this is a launcher environment issue (`tools/profile.py` does not pass Steam's `STEAM_COMPAT_MEDIA_PATH` / `STEAM_COMPAT_TRANSCODED_MEDIA_PATH`), not a module defect.
 
 Owner feature requests (future phases, not Phase 2 blockers): proximity "smart" targeting with tab-style cycling on controller; mouse-pointer hover targeting on keyboard/mouse; a controller binding for a right-stick reticle/mouse mode; and a fixed camera that fades or makes obstructing geometry (e.g. beams) see-through instead of pulling in.
+
+## Merge resolution and zoom-tracker fix
+
+The merge resolution carried the camera tree verbatim from tested integration `3ec6730`. Separately scoped owner route `155a3e3` **PASS** (run `6456672598ca49c684ce42b5cd5a90d0`); regression `3ec6730` **PASS** (run `fd4aee259c8943c49ec764f8e576f523`, Windows build [40446402141](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40446402141)). These precede the fix.
+
+Resetting obstruction now clears an outstanding adaptive zoom tracker and requests reapplication of the saved preference, preventing a transition's native or tightened target from becoming the preference. Genuine player deltas while obstructed remain relative to the preference. All six portable camera tests, including focused reset/recovery cases, **PASS** on Linux using the lifecycle job's C++20 warning/error flags; job specification and log are `/tmp/skycrpg-pr10-test-job.json` and `/tmp/skycrpg-pr10-test.log`. Windows build and owner check of this fix are **NOT_RUN**. Active-obstruction F8 return and comprehensive clearance/oscillation remain **NOT_RUN**; beam nuisance and overhead-object pop remain limitations.

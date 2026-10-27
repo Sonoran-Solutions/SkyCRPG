@@ -176,8 +176,46 @@ void ratesAndPreferences() {
     assert(clamped.tightZoom == s.minZoom && clamped.enterSeconds == .25f && clamped.recoverRate > 0);
     assert(!ObstructionSettings{}.enabled);
 }
+void resetZoomRecovery() {
+    // All these transitions reach resetObstruction through suspend, lifecycle,
+    // or the cell-change path. Exercise the same write/reset/update sequence.
+    for (int transition=0; transition<4; ++transition) { // menu, F6/POV, F8/provider, cell
+        Settings s;
+        ObstructionPolicy policy;
+        ObstructionFrame frame;
+        for (int i=0; i<8; ++i) frame = policy.step(normal,.5f,dt,config);
+        assert(frame.blend > 0);
+        float last = obstructionZoom(s.zoom,frame.blend,config);
+        assert(last < s.zoom);
+        bool adjusted = true, apply = false;
+        const float preferred = s.zoom;
+        policy.reset();
+        resetObstructionZoom(adjusted,last,apply);
+        assert(!adjusted && last == 0 && apply);
+        // Either the tightened target survived or native changed it in transition.
+        for (float native : {obstructionZoom(preferred,frame.blend,config), .9f}) {
+            s.zoom = preferredZoomRequest(native,last,adjusted,s,apply);
+            assert(s.zoom == preferred);
+            assert(obstructionZoom(s.zoom,0,config) == preferred);
+        }
+        apply = false;
+        s.zoom = preferredZoomRequest(preferred+.05f,last,adjusted,s,apply);
+        assert(std::abs(s.zoom-(preferred+.05f)) < 1e-6f);
+    }
+    Settings s;
+    float last = obstructionZoom(s.zoom,1,config);
+    s.zoom = preferredZoomRequest(last+.1f,last,true,s,false);
+    assert(std::abs(s.zoom-.75f) < 1e-6f); // player delta relative to preference
+    bool adjusted = false, apply = false;
+    last = .42f;
+    resetObstructionZoom(adjusted,last,apply);
+    assert(!adjusted && last == .42f && !apply);
+    apply = true;
+    resetObstructionZoom(adjusted,last,apply);
+    assert(!adjusted && last == .42f && apply);
+}
 }
 int main() {
-    measurements(); hysteresis(); closedLoop(); priorityAndInvalid(); ratesAndPreferences();
+    measurements(); hysteresis(); closedLoop(); priorityAndInvalid(); ratesAndPreferences(); resetZoomRecovery();
     std::cout << "PASS obstruction policy: measurements, timing, noisy closed loop, priorities, invalid inputs, rates/preferences\n";
 }
