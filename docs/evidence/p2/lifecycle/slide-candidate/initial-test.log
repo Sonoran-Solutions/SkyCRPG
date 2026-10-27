@@ -1,0 +1,3 @@
+skycrpg-slide-lifecycle_policy_test: modules/camera/tests/lifecycle_policy_test.cpp:49: int main(): Assertion `frame.obstructed && frame.blend > 0' failed.
+bash: line 1:    31 Aborted                    (core dumped) /tmp/skycrpg-slide-$test
+Exit status: 134

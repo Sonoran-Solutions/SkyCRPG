@@ -21,6 +21,6 @@ Resource snapshot correction: `resource-*` files record the changed candidate an
 
 `coordinates-*` records the Stage-to-HUDMenu coordinate correction; `runtime-route-2-*` preserves the failed second route proving valid data but an offscreen panel. Latest SWF identity is in the coordinate build manifest; native remains `e49fc30`.
 
-`runtime-route-3-*` preserves bounded UI-only live resource/layout/menu PASS, including original paired sprint captures. `spacing-*` records the later AS2-only 136px text-edge correction; that new SWF awaits combined smoke.
+`runtime-route-3-*` preserves bounded UI-only live resource/layout/menu PASS, including original paired sprint captures. `spacing-*` records the later AS2-only 136px text-edge correction; the subsequent combined smoke passed as recorded below.
 
 `runtime-combined-*` preserves final bounded combined PASS for the spacing SWF at 115%, original capture and normal-exit/default restoration summary. `resource-native-build.json` and `resource-native-manifest.json` close native resource DLL build provenance with run 40386173282 PASS. Private save/co-save names and bytes are excluded.

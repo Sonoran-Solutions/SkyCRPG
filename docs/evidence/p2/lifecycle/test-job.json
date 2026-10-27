@@ -1,0 +1,9 @@
+{
+  "owner": "DYL-159 worker",
+  "purpose": "Compile and run all portable focused camera policy and trace tests, including lifecycle reset and observation",
+  "command": "timeout 600s bash -c 'set -e; for test in policy_test precision_policy_test precision_trace_test lifecycle_policy_test; do g++ -std=c++20 -Wall -Wextra -Werror -I modules/camera/include modules/camera/tests/$test.cpp -o /tmp/skycrpg-dyl159-$test; /tmp/skycrpg-dyl159-$test; done'",
+  "expected": "all four tests and job exit 0",
+  "timeout_seconds": 600,
+  "completion_signal": "process exit status and docs/evidence/p2/lifecycle/test.log",
+  "cleanup": "timeout terminates job on deadline; temporary binaries retained in /tmp"
+}
