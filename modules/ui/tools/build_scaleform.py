@@ -83,7 +83,11 @@ def transform(name, text):
          var skycrpgDataReady = this.SkyCRPGStatus._skycrpgDataReady == true;
          var skycrpgVisible = skycrpgDataReady && this.CheckAgainstHudMode(this.SkyCRPGStatus);
          this.SkyCRPGStatus._visible = skycrpgVisible;
-         this.SkyCRPGPartyArea._visible = this.CheckAgainstHudMode(this.SkyCRPGPartyArea);
+         if (typeof(this.SkyCRPGPartyArea.syncVisibility) == "function") {
+            this.SkyCRPGPartyArea.syncVisibility();
+         } else {
+            this.SkyCRPGPartyArea._visible = this.CheckAgainstHudMode(this.SkyCRPGPartyArea);
+         }
          this._skycrpgMetersSuppressed = skycrpgVisible;
          this.Health._visible = skycrpgVisible ? false : this.CheckAgainstHudMode(this.Health);
          this.Magica._visible = skycrpgVisible ? false : this.CheckAgainstHudMode(this.Magica);

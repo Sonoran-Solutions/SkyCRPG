@@ -11,7 +11,13 @@ const skyuiRoot = process.argv[3];
 const followerPanel = fs.readFileSync(path.join(moduleRoot, 'scaleform/follower-panel.as.inc'), 'utf8').trimEnd();
 const snippet = fs.readFileSync(path.join(moduleRoot, 'scaleform/hud-init.as.inc'), 'utf8')
   .replace('         // SKYCRPG_FOLLOWER_PANEL', () => followerPanel);
-const hudSource = fs.readFileSync(path.join(skyuiRoot, 'source/actionscript/Vanilla/HUDMenu.as'), 'utf8');
+const builder = fs.readFileSync(path.join(moduleRoot, 'tools/build_scaleform.py'), 'utf8');
+const modeSync = builder.match(/mode_sync = """([\s\S]*?)"""/);
+assert.ok(modeSync, 'builder exposes HUD mode insertion');
+const modeAnchor = '         _loc2_ = _loc2_ + 1;\n      }\n   }\n   function SetLocationName(aLocation)';
+const originalHudSource = fs.readFileSync(path.join(skyuiRoot, 'source/actionscript/Vanilla/HUDMenu.as'), 'utf8');
+assert.equal(originalHudSource.split(modeAnchor).length, 2, 'HUD mode anchor occurs once');
+const hudSource = originalHudSource.replace(modeAnchor, () => modeSync[1]);
 
 function extractFunction(name) {
   const start = hudSource.indexOf(`function ${name}(`);
@@ -208,6 +214,25 @@ menu.ShowElements('Favor', false);
 frame(menu);
 assert.equal(originalStatus._visible, true, 'overlay returns with the native All mode');
 assert.equal(menu.Health._visible, false);
+
+const party = menu.SkyCRPGPartyArea;
+for (const state of ['none', 'dead', 'live']) {
+  party.state = state;
+  menu.ShowElements('Favor', true);
+  assert.equal(party._visible, false, `${state} party stays hidden in Favor mode`);
+  menu.ShowElements('Favor', false);
+  assert.equal(party._visible, state === 'live', `${state} party visibility after returning to All mode`);
+}
+const syncVisibility = party.syncVisibility;
+const partyModeChange = party.onModeChange;
+party.syncVisibility = undefined;
+party.onModeChange = undefined;
+menu.ShowElements('Favor', true);
+assert.equal(party._visible, false, 'legacy panel follows hidden HUD mode');
+menu.ShowElements('Favor', false);
+assert.equal(party._visible, true, 'legacy panel follows visible HUD mode');
+party.syncVisibility = syncVisibility;
+party.onModeChange = partyModeChange;
 
 for (const invalid of [undefined, {}, {health: NaN}, {...bridge.sample, staminaMax: 0}, {...bridge.sample, stamina: Infinity}, {...bridge.sample, health: '10'}]) {
   bridge.sample = invalid;

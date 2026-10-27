@@ -66,3 +66,16 @@ Still open:
 - No second-follower or unsupported configuration was tested.
 - The recruit used a console-made potential follower, not a vanilla housecarl or hireling.
 - Magicka and stamina are not displayed.
+
+## Senior review corrections
+
+The HUD mode-change insertion now delegates visibility to the follower panel's `syncVisibility()` when available, retaining the existing HUD-mode check as the fallback. The assembled HUD harness inserts the builder’s exact mode-sync text into the pinned HUD source and runs the resulting `ShowElements` path and checks that `none` and `dead` remain hidden, `live` follows HUD mode, and a legacy panel follows the fallback. The old line fails the new `none` assertion on a temporary copy. These are mock checks, not in-game evidence.
+
+The observer scans `ProcessLists::highActorHandles`; a teammate outside the high process list is not detected. “Followers untested” means more than one teammate was seen in that list, not global multi-follower detection.
+
+| Remaining runtime row | Result |
+| --- | --- |
+| Short copied-save recruit, dismiss, injury and reload route with a naturally recruitable vanilla humanoid follower (Lydia, Faendal or a hireling) | **NOT_RUN**. The existing console-made Orgnar run `1617dd2c` remains bounded evidence above. |
+| Two-teammate fixture | **NOT_RUN**. |
+
+Review correction local checks: **PASS** `SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 timeout 600 python3 -I -m unittest discover -s modules/ui/tests -p '*.py'`; **PASS** each `timeout 600 /home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node modules/ui/tests/<test>.js modules/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11`; **PASS** each `timeout 600 g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/ui/src modules/ui/tests/<test>_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-165-review/<test>_test` and `timeout 600` on each resulting binary. Logs and job record: `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-165-review/`. Initial HUD harness attempts failed first because Node subprocess spawning returned EPERM and then because the legacy stub retained a callback requiring the removed method; the corrected harness passed. The old-line temporary-copy check failed as expected at the `none` visibility assertion.
