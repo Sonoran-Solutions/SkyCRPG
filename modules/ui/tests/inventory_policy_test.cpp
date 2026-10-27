@@ -1,6 +1,7 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #include "inventory/action_intent.h"
 #include "inventory/row_match.h"
+#include "inventory/list_reconciliation.h"
 #include <cassert>
 #include <iostream>
 #include <limits>
@@ -20,18 +21,20 @@ void RowMatching() {
     NativeForm original{plain.base, 1, {}};
     auto live = original; live.count = 2;
     assert(MatchRow(row, {}, plain, live, &original) == RowMatch::Drift);
-    row.count = 2; // Even a current-looking row must refuse selected-form drift.
+    row.count = 2; // Even exact coverage cannot authorize unevented drift.
     assert(MatchRow(row, {}, plain, live, &original) == RowMatch::Drift);
     assert(MatchRow(row, {}, plain, live, &live) == RowMatch::Permit);
-    assert(MatchRow(row, {}, plain, live) == RowMatch::Permit); // new menu session
+    assert(MatchRow(row, {}, plain, live) == RowMatch::Permit); // event reset / new session
+    row.count = 1;
+    assert(MatchRow(row, {}, plain, live) == RowMatch::Coverage); // no partial plain holder
     auto decreased = live; decreased.count = 1;
     assert(MatchRow(row, {}, plain, decreased, &live) == RowMatch::Drift);
-    assert(MatchRow(row, {}, plain, decreased) == RowMatch::Coverage);
+    assert(MatchRow(row, {}, plain, decreased) == RowMatch::Permit); // event reset
 
     // Whole-inventory drift in another form is not selected-form drift.
     auto unrelated = original; unrelated.base = {0x123, 0x123, "Skyrim.esm"};
     auto unrelatedChanged = unrelated; ++unrelatedChanged.count;
-    const std::vector<NativeForm> before{live, unrelated}, after{live, unrelatedChanged};
+    const std::vector<NativeForm> before{original, unrelated}, after{original, unrelatedChanged};
     assert(before != after);
     assert(MatchRow(row, {}, plain, after.front(), &before.front()) == RowMatch::Permit);
 
@@ -49,35 +52,39 @@ void RowMatching() {
     auto favorite = plain; favorite.favorite = true; variants.push_back(favorite);
     auto quest = plain; quest.quest = true; variants.push_back(quest);
     for (const auto& variant : variants) {
-        row = Plain();
-        live = {plain.base, 2, {{variant, 1}}};
+        live = {plain.base, 4, {{variant, 1}}};
+        row = Plain(0, 3);
+        // Native plain row stays usable beside a separate differing extra row.
+        assert(MatchRow(row, {}, plain, live, &live) == RowMatch::Permit);
+        row.count = 2;
+        assert(MatchRow(row, {}, plain, live) == RowMatch::Coverage);
+        live.count = 2; // stale plain row of 2 versus plain 1 plus tempered/etc 1
+        assert(MatchRow(row, {}, plain, live) == RowMatch::Coverage);
+        row.count = 1;
         assert(MatchRow(row, {}, plain, live, &original) == RowMatch::Drift);
-        // Empty extraLists cannot hide a differing instance even if enough
-        // plain count remains, with or without a prior session observation.
-        assert(MatchRow(row, {}, plain, live) == RowMatch::Coverage);
-        assert(MatchRow(row, {}, plain, live, &live) == RowMatch::Coverage);
-        row.count = 2; // Total base count is enough; matching count is not.
-        assert(MatchRow(row, {}, plain, live) == RowMatch::Coverage);
-        // A partial list and sufficient matching count still leave the native
-        // dispatch ambiguous about its unrepresented remainder.
-        live = {plain.base, 3, {{plain, 1}, {variant, 1}}};
-        std::vector<RowExtra> represented{{0, plain, 1}};
-        assert(MatchRow(row, represented, plain, live) == RowMatch::Coverage);
-        row.count = 1; // Fully represented, other same-base row is separate.
-        assert(MatchRow(row, represented, plain, live, &live) == RowMatch::Permit);
+        assert(MatchRow(row, {}, plain, live) == RowMatch::Permit);
         row.identity.traits = variant;
-        represented = {{1, variant, 1}};
-        assert(MatchRow(row, represented, plain, live) == RowMatch::Permit);
-        // Reconciled distinct row permits and reaches action validation.
+        std::vector<RowExtra> represented{{0, variant, 1}};
+        assert(MatchRow(row, represented, plain, live) == RowMatch::Permit); // enchanted/etc row
+        row.count = 2;
+        assert(MatchRow(row, represented, plain, live) == RowMatch::Permit); // native merged holder
+        live.count = 3; row.count = 3;
+        assert(MatchRow(row, represented, plain, live) == RowMatch::Permit); // stolen 1 + owned 2
+        row.count = 2;
+        assert(MatchRow(row, represented, plain, live) == RowMatch::Coverage); // partial plain remainder
+        row.count = 1;
+
         InventorySnapshots snapshots; snapshots.World(true); snapshots.Menu(true);
         snapshots.Publish({row});
         const auto selected = Select(snapshots.Get());
         assert(Validate(selected, snapshots.Get(), true, Action::Activate, 1) == Refusal::None);
-        live.instances[1].first = plain; // no-event trait change, same total
-        const NativeForm prior{plain.base, 3, {{plain, 1}, {variant, 1}}};
+        const auto prior = live;
+        live.instances[0].first = plain; // no-event trait change, same total
         assert(MatchRow(row, represented, plain, live, &prior) == RowMatch::Drift);
-        // The adapter invalidates on row refusal; a retained token cannot pass
-        // Validate or a quantity confirmation while refresh is pending.
+        assert(MatchRow(row, represented, plain, live) == RowMatch::Coverage); // stale copied traits
+        represented[0].traits = plain; row.identity.traits = plain;
+        assert(MatchRow(row, represented, plain, live) == RowMatch::Permit); // event reconciliation
+        // A retained token cannot pass validation or quantity confirmation while dirty.
         ActionIntents intents;
         assert(intents.Begin(selected, snapshots.Get(), true, Action::Drop, 1, true, true, true) == Refusal::None);
         snapshots.Invalidate();
@@ -92,15 +99,17 @@ void RowMatching() {
     live = {plain.base, 3, {{plain, 1}, {plain, 1}}};
     std::vector<RowExtra> represented{{0, plain, 1}, {1, plain, 1}};
     assert(MatchRow(row, represented, plain, live) == RowMatch::Permit); // extras plus plain
-    row.count = 2; live.count = 2;
-    assert(MatchRow(row, represented, plain, live) == RowMatch::Permit); // equal-trait extras
+    row.count = 2;
+    assert(MatchRow(row, represented, plain, live) == RowMatch::Permit); // extras only, plain elsewhere
+    live.count = 2;
+    assert(MatchRow(row, represented, plain, live) == RowMatch::Permit);
     assert(MatchRow(row, std::span<const RowExtra>(represented).first(1), plain, live) == RowMatch::Coverage);
     represented[1].liveIndex = 0;
-    assert(MatchRow(row, represented, plain, live) == RowMatch::Coverage); // no double counting
+    assert(MatchRow(row, represented, plain, live) == RowMatch::Coverage); // duplicate
     represented = {{0, plain, 2}};
-    assert(MatchRow(row, represented, plain, live) == RowMatch::Coverage); // count mismatch
+    assert(MatchRow(row, represented, plain, live) == RowMatch::Coverage); // represented count mismatch
     represented = {{0, temper, 1}};
-    assert(MatchRow(row, represented, plain, live) == RowMatch::Coverage); // identity mismatch
+    assert(MatchRow(row, represented, plain, live) == RowMatch::Coverage); // copied traits mismatch
     represented = {{2, plain, 1}};
     assert(MatchRow(row, represented, plain, live) == RowMatch::MissingExtra);
     represented[0].traits.temper = std::numeric_limits<float>::quiet_NaN();
@@ -109,28 +118,55 @@ void RowMatching() {
     row = Plain();
     for (const auto count : {0, -1, 2}) {
         live = {plain.base, 1, {{plain, count}}};
-        assert(MatchRow(row, {}, plain, live) == RowMatch::Coverage); // invalid extra accounting
+        assert(MatchRow(row, {}, plain, live) == RowMatch::Coverage);
     }
     live = {plain.base, 1, {{temper, 1}}};
-    assert(MatchRow(row, {}, plain, live) == RowMatch::Coverage); // no matching count
-    live = {plain.base, 1, {{plain, 1}}}; row.count = 0;
-    assert(MatchRow(row, {}, plain, live) == RowMatch::Coverage);
-    row = Plain(); row.ambiguous = true;
+    assert(MatchRow(row, {}, plain, live) == RowMatch::Coverage); // no plain count
+    row.count = 0;
     assert(MatchRow(row, {}, plain, original) == RowMatch::Coverage);
     row = Plain(); row.identity.traits.base = unrelated.base;
     assert(MatchRow(row, {}, plain, original) == RowMatch::Coverage);
-    row = Plain(0, 2); live = {plain.base, 2, {{plain, 1}, {temper, 1}}};
-    represented = {{0, plain, 1}, {1, temper, 1}};
-    assert(MatchRow(row, represented, plain, live) == RowMatch::Coverage); // mixed represented traits
+    row = Plain(0, 2); row.identity.traits = stolen; row.ambiguous = true;
+    auto otherOwner = stolen; otherOwner.owner = owner.owner;
+    live = {plain.base, 2, {{stolen, 1}, {otherOwner, 1}}};
+    represented = {{0, stolen, 1}, {1, otherOwner, 1}};
+    assert(MatchRow(row, represented, plain, live) == RowMatch::Permit); // native mixed extras
+    InventorySnapshots snapshots; snapshots.World(true); snapshots.Menu(true); snapshots.Publish({row});
+    const auto selected = Select(snapshots.Get());
+    for (const auto action : {Action::Activate, Action::Drop, Action::Favorite})
+        assert(Validate(selected, snapshots.Get(), true, action, 1) == Refusal::None);
     row = Plain(); live = {plain.base, 1, {{plain, 1}}};
     live.instances.front().first.charge = std::numeric_limits<float>::infinity();
     assert(MatchRow(row, {}, plain, live) == RowMatch::Coverage);
     assert(std::string(Reason(RowMatch::Drift)) == "row-drift");
     assert(std::string(Reason(RowMatch::Coverage)) == "row-coverage");
-    std::cout << "PASS: selected-form drift, row membership, trait/count coverage and reconciled authorization\n";
+    std::cout << "PASS: native split/merged rows, exact coverage, selected-form freshness and consistency\n";
+}
+void RefusedSelectionReconciliation() {
+    ListReconciliation reconciliation;
+    unsigned updates = 0;
+    auto refuse = [&] { if (reconciliation.Request()) ++updates; };
+    assert(!reconciliation.Pending());
+    refuse(); // first refused selection queues native reconciliation
+    assert(reconciliation.Pending() && updates == 1);
+    for (int sample = 0; sample < 32; ++sample) refuse(); // highlights while queued
+    assert(updates == 1);
+    refuse(); // refused Validate while the same update is pending
+    assert(updates == 1);
+    // Simulate ItemList::Update calling selection/highlight synchronously. The
+    // task must not complete the request until these callbacks have returned.
+    for (int callback = 0; callback < 32; ++callback) refuse();
+    assert(reconciliation.Pending() && updates == 1);
+    reconciliation.Complete();
+    assert(!reconciliation.Pending());
+    refuse(); // a later refusal episode may request one new reconciliation
+    assert(updates == 2);
+    reconciliation.Complete();
+    std::cout << "PASS: refused highlights/Validate/reentrant selection queue at most one list update\n";
 }
 int main() {
     RowMatching();
+    RefusedSelectionReconciliation();
     const auto plain = Plain(0, 3);
     std::vector<Entry> fixtures{plain};
     auto enchanted = Plain(1); enchanted.identity.traits.enchantment = {0xAA, 0xAA, "Skyrim.esm"}; fixtures.push_back(enchanted);
@@ -173,6 +209,8 @@ int main() {
     snapshots.Publish({plain});
     auto selected = Select(snapshots.Get(), 2);
     auto live = snapshots.Get(); live.entries.front().ambiguous = true;
+    assert(Validate(selected, live, true, Action::Activate, 1) == Refusal::None);
+    live.entries.front().identity.traits.temper = std::numeric_limits<float>::quiet_NaN();
     assert(Validate(selected, live, true, Action::Activate, 1) == Refusal::Ambiguous);
     live = snapshots.Get(); live.entries.clear();
     assert(Validate(selected, live, true, Action::Activate, 1) == Refusal::Missing);

@@ -34,7 +34,9 @@ inline Refusal Validate(const Selection& selected, const Snapshot& live, bool fo
     if (selected.stamp != live.stamp) return Refusal::Stale;
     const auto* entry = live.Find(selected.entry.identity.nativeIndex);
     if (!entry || entry->count == 0) return Refusal::Missing;
-    if (entry->ambiguous || !ValidTraits(entry->identity.traits)) return Refusal::Ambiguous;
+    // Native grouping may mix traits. Ambiguity limits our own features, not
+    // the native action on a fresh row whose coverage the adapter has proved.
+    if (!ValidTraits(entry->identity.traits)) return Refusal::Ambiguous;
     if (entry->identity != selected.entry.identity || entry->count != selected.entry.count) return Refusal::Identity;
     if (amount == 0 || amount > entry->count) return Refusal::Quantity;
     if (!nativePermits || !entry->enabled || (action == Action::Drop && entry->identity.traits.quest && !nativeQuestFeedback)) return Refusal::Restricted;

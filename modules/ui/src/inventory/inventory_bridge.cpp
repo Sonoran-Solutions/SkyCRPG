@@ -30,6 +30,7 @@
 #include <REX/W32/KERNEL32.h>
 #include <skycrpg/skeleton.h>
 #include "action_intent.h"
+#include "list_reconciliation.h"
 #include "row_match.h"
 #include <atomic>
 #include <cstdio>
@@ -46,7 +47,8 @@ InventorySnapshots g_snapshots;
 ActionIntents g_intents;
 std::optional<Selection> g_selection;
 std::uint64_t g_nextToken{};
-bool g_loaded{}, g_open{}, g_refreshQueued{};
+bool g_loaded{}, g_open{};
+ListReconciliation g_reconciliation;
 std::set<std::uint64_t> g_loggedTokens;
 std::vector<NativeForm> g_native;
 std::atomic_bool g_dirty{true};
@@ -85,23 +87,23 @@ void LogOffThread(const char* operation)
 }
 void RequestListUpdate()
 {
-    if (g_refreshQueued) return;
     const auto* tasks = SKSE::GetTaskInterface();
-    if (!tasks) return;
-    g_refreshQueued = true;
+    if (!tasks || !g_reconciliation.Request()) return;
     const auto stamp = g_snapshots.Get().stamp;
     tasks->AddUITask([stamp] {
         std::scoped_lock lock(g_mutex);
-        g_refreshQueued = false;
-        if (!g_loaded || !g_open || stamp.world != g_snapshots.Get().stamp.world ||
-            stamp.session != g_snapshots.Get().stamp.session) return;
-        auto* ui = RE::UI::GetSingleton();
-        const auto menu = ui ? ui->GetMenu<RE::InventoryMenu>() : nullptr;
-        auto* player = RE::PlayerCharacter::GetSingleton();
-        if (menu && player && menu->GetRuntimeData().itemList) {
-            menu->GetRuntimeData().itemList->Update(player);
-            g_dirty.store(false);
+        if (g_loaded && g_open && stamp.world == g_snapshots.Get().stamp.world &&
+            stamp.session == g_snapshots.Get().stamp.session) {
+            auto* ui = RE::UI::GetSingleton();
+            const auto menu = ui ? ui->GetMenu<RE::InventoryMenu>() : nullptr;
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (menu && player && menu->GetRuntimeData().itemList) {
+                g_native.clear(); // Native reconciliation resets the drift baseline.
+                menu->GetRuntimeData().itemList->Update(player);
+                g_dirty.store(false);
+            }
         }
+        g_reconciliation.Complete(); // Update may synchronously sample selection.
     });
 }
 // An engine event may have removed entries the menu list still references.
@@ -138,7 +140,8 @@ bool RefuseRow(RowMatch reason)
 {
     LogRefusal(g_selection ? g_selection->token : 0, Reason(reason));
     g_snapshots.Invalidate(); g_selection.reset(); g_intents.Cancel();
-    Refresh(); // Stay unavailable until the queued native reconciliation runs.
+    g_dirty.store(true); // Stay unavailable until native reconciliation runs.
+    if (!g_reconciliation.Pending()) Refresh();
     return false;
 }
 FormIdentity Form(RE::TESForm* form)
@@ -200,7 +203,10 @@ bool Sample(std::uint32_t& selectedIndex)
     auto* player = RE::PlayerCharacter::GetSingleton();
     if (!player || player->IsDead() || !player->Is3DLoaded() || !Focused(ui, menu.get())) return false;
     auto* list = menu->GetRuntimeData().itemList;
-    if (!list || g_dirty.load()) { Refresh(); return false; }
+    if (!list || g_dirty.load()) {
+        if (!g_reconciliation.Pending()) Refresh();
+        return false;
+    }
     auto* selected = list->GetSelectedItem();
     if (!selected) return false;
     auto live = player->GetInventory([](RE::TESBoundObject&) { return true; }, true);
@@ -218,7 +224,7 @@ bool Sample(std::uint32_t& selectedIndex)
     });
     // Unrelated form drift only queues reconciliation. The selected form must
     // also match its previous observation and prove row coverage before Publish.
-    if (!g_native.empty() && g_native != observed) RequestListUpdate();
+    if (!g_native.empty() && g_native != observed && !g_reconciliation.Pending()) RequestListUpdate();
     const auto previous = std::move(g_native);
     g_native = std::move(observed);
     std::vector<Entry> entries;
@@ -272,9 +278,9 @@ bool Sample(std::uint32_t& selectedIndex)
 }
 void Invalidate(bool world = false)
 {
-    if (world) { g_loaded = false; g_snapshots.World(false); g_native.clear(); }
+    if (world) { g_loaded = false; g_snapshots.World(false); }
     else g_snapshots.Invalidate();
-    g_selection.reset(); g_intents.Cancel(); g_dirty.store(true);
+    g_selection.reset(); g_native.clear(); g_intents.Cancel(); g_dirty.store(true);
 }
 class Events final : public RE::BSTEventSink<RE::MenuOpenCloseEvent>,
     public RE::BSTEventSink<RE::TESContainerChangedEvent>, public RE::BSTEventSink<RE::TESEquipEvent>,
@@ -322,7 +328,7 @@ public:
         std::scoped_lock lock(g_mutex);
         if (_operation == Operation::Cancel) { g_intents.Cancel(); return; }
         if (_operation == Operation::View) {
-            g_snapshots.View(); g_selection.reset(); g_intents.Cancel(); return;
+            g_snapshots.View(); g_selection.reset(); g_native.clear(); g_intents.Cancel(); return;
         }
         if (_operation == Operation::Edge) {
             if (params.argCount == 2 && params.args[0].IsNumber() && params.args[1].IsBool()) {
@@ -341,7 +347,7 @@ public:
             return;
         }
         if (_operation == Operation::Snapshot) {
-            if (!Sample(index)) { g_selection.reset(); RequestListUpdate(); return; }
+            if (!Sample(index)) { g_selection.reset(); return; }
             const auto& snapshot = g_snapshots.Get();
             const auto* entry = snapshot.Find(index);
             if (!entry) return;

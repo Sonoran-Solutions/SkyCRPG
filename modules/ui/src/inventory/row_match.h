@@ -39,37 +39,29 @@ inline RowMatch MatchRow(const Entry& row, std::span<const RowExtra> represented
     }
     if (previous && *previous != live) return RowMatch::Drift;
     const auto& identity = row.identity.traits;
-    if (row.ambiguous || !ValidTraits(identity) || !ValidTraits(plain) ||
+    if (!ValidTraits(identity) || !ValidTraits(plain) ||
         identity.base != live.base || plain.base != live.base || live.count <= 0 || row.count == 0)
         return RowMatch::Coverage;
     const auto total = static_cast<std::uint64_t>(live.count);
-    std::uint64_t extraCount = 0, matchingCount = 0, representedCount = 0;
+    std::uint64_t extraCount = 0, representedCount = 0;
     for (const auto& [traits, count] : live.instances) {
         if (!ValidTraits(traits) || traits.base != live.base || count <= 0) return RowMatch::Coverage;
         extraCount += static_cast<std::uint64_t>(count);
         if (extraCount > total) return RowMatch::Coverage;
-        if (traits == identity) matchingCount += static_cast<std::uint64_t>(count);
     }
     std::vector<bool> included(live.instances.size(), false);
     for (const auto& extra : represented) {
         const auto& current = live.instances[extra.liveIndex];
-        if (included[extra.liveIndex] || extra.traits != current.first || extra.count != current.second ||
-            extra.traits != identity) return RowMatch::Coverage;
+        if (included[extra.liveIndex] || extra.traits != current.first || extra.count != current.second)
+            return RowMatch::Coverage;
         included[extra.liveIndex] = true;
         representedCount += static_cast<std::uint64_t>(extra.count);
         if (representedCount > row.count) return RowMatch::Coverage;
     }
     const auto plainCount = total - extraCount;
-    const auto matchingPlain = plain == identity ? plainCount : 0;
-    matchingCount += matchingPlain;
-    if (row.count > matchingCount || row.count > representedCount + matchingPlain) return RowMatch::Coverage;
-    // A fully represented row cannot select another instance. Any remainder
-    // relies on plain count: differing, unrepresented extras make that unsafe.
-    if (row.count > representedCount) {
-        for (std::size_t index = 0; index < live.instances.size(); ++index) {
-            if (!included[index] && live.instances[index].first != identity) return RowMatch::Coverage;
-        }
-    }
-    return RowMatch::Permit;
+    // Native rows contain either just their represented extras, or those
+    // extras plus the entire plain-unit holder. Mixed traits are native grouping.
+    return row.count == representedCount || row.count == representedCount + plainCount ?
+        RowMatch::Permit : RowMatch::Coverage;
 }
 }
