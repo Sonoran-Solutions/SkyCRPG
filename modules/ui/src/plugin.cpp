@@ -346,8 +346,7 @@ ActionKind DispatchKind(RE::TESForm* form)
     case RE::FormType::Scroll: return ActionKind::Scroll;
     case RE::FormType::Shout: return ActionKind::Shout;
     case RE::FormType::Spell: {
-        auto* spell = form->As<RE::SpellItem>();
-        if (!spell) return ActionKind::None;
+        auto* spell = static_cast<RE::SpellItem*>(form);
         const auto type = spell->GetSpellType();
         return type == RE::MagicSystem::SpellType::kPower || type == RE::MagicSystem::SpellType::kLesserPower ? ActionKind::Power : ActionKind::Spell;
     }
@@ -386,18 +385,18 @@ void DispatchHotbar(unsigned index, HotbarSlot pressed, std::uint64_t generation
     int count = 0;
     bool equipped = false;
     RE::ExtraDataList* extra = nullptr;
+    RE::TESBoundObject* boundObject = nullptr; // From GetInventory; avoids RTTI casts.
     if (!available || !player || !player->Is3DLoaded() || !manager) blocked = true;
     if (!blocked && form && (kind == ActionKind::Spell || kind == ActionKind::Power)) {
-        auto* spell = form->As<RE::SpellItem>();
-        count = spell && player->HasSpell(spell) ? 1 : 0;
+        count = player->HasSpell(static_cast<RE::SpellItem*>(form)) ? 1 : 0;
     } else if (!blocked && form && kind == ActionKind::Shout) {
-        auto* shout = form->As<RE::TESShout>();
-        count = shout && player->HasShout(shout) ? 1 : 0;
+        count = player->HasShout(static_cast<RE::TESShout*>(form)) ? 1 : 0;
     } else if (!blocked && form) {
         auto inventory = player->GetInventory([](RE::TESBoundObject&) { return true; }, true);
         for (auto& [object, item] : inventory) {
             if (!object || object->GetFormID() != pressed.formID || !item.second) continue;
             count = item.first;
+            boundObject = object;
             if (item.second->extraLists) for (auto* candidate : *item.second->extraLists) {
                 if (!candidate) continue;
                 const bool worn = candidate->HasType<RE::ExtraWorn>() || candidate->HasType<RE::ExtraWornLeft>();
@@ -408,7 +407,7 @@ void DispatchHotbar(unsigned index, HotbarSlot pressed, std::uint64_t generation
         }
         // The inventory owns these instance pointers until the native call.
         auto action = skycrpg::ui::DecideHotbarAction(index, pressed.bound, kind, equipped, count, blocked);
-        if (auto* object = form->As<RE::TESBoundObject>()) {
+        if (auto* object = boundObject) {
             if (action == HotbarAction::Unequip) manager->UnequipObject(player, object, extra);
             else if (action == HotbarAction::Equip || action == HotbarAction::Use) manager->EquipObject(player, object, extra);
         } else action = HotbarAction::None;
@@ -422,10 +421,11 @@ void DispatchHotbar(unsigned index, HotbarSlot pressed, std::uint64_t generation
     auto action = skycrpg::ui::DecideHotbarAction(index, pressed.bound, kind, equipped, count, blocked);
     if (action == HotbarAction::EquipSpell || action == HotbarAction::EquipPower) {
         // Skyrim.esm equip slots: right hand 0x13F42, voice 0x25BEE.
-        auto* slot = RE::TESForm::LookupByID<RE::BGSEquipSlot>(action == HotbarAction::EquipPower ? 0x25BEE : 0x13F42);
-        if (slot) manager->EquipSpell(player, form->As<RE::SpellItem>(), slot);
+        auto* slotForm = RE::TESForm::LookupByID(action == HotbarAction::EquipPower ? 0x25BEE : 0x13F42);
+        auto* slot = slotForm && slotForm->GetFormType() == RE::FormType::EquipSlot ? static_cast<RE::BGSEquipSlot*>(slotForm) : nullptr;
+        if (slot) manager->EquipSpell(player, static_cast<RE::SpellItem*>(form), slot);
         else action = HotbarAction::None;
-    } else if (action == HotbarAction::EquipShout) manager->EquipShout(player, form->As<RE::TESShout>());
+    } else if (action == HotbarAction::EquipShout) manager->EquipShout(player, static_cast<RE::TESShout*>(form));
     if (g_hotkeyLogCount.fetch_add(1) < 64) {
         std::array<char, 192> line{};
         std::snprintf(line.data(), line.size(), "Hotkey slot=%u bound=%d kind=%s formID=%08X decision=%s\n", index + 1, pressed.bound, pressed.kind.c_str(), pressed.formID, ActionName(action));
