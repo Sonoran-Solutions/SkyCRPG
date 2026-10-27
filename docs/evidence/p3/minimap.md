@@ -1,6 +1,33 @@
 # DYL-166 / P3-04 minimap and compass evidence
 
-Base `15bdad8`; head `<head SHA>`; CI `<CI run>`; UI DLL `<DLL sha256>`; HUD SWF `<SWF sha256>`. Target: Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, Address Library 13, CommonLibSSE-NG 7.2.0, SkyUI Community 6.11, Proton; DEM 1.7.5, Infinity UI NG 2.1.3, LMU 1.3.4, Common + Line-17. This worker did not run the game.
+## Current status
+
+**Bounded acceptance evidence is recorded below; the evidence does not establish full MVP acceptance.** PR #15 merged into `main` as `21ca13e`.
+
+| Criterion | Result |
+| --- | --- |
+| UI-only working minimap without duplicate compass | **PASS (owner-reported, bounded)**, run `7571da8e3f4c42fbb4cfd8eaa1a6f5d7`; owner ruling option (a) |
+| `bReplaceCompass=0` | **PASS (owner-reported, bounded)**, run `6bf91540692f4083bc8c74973a851950` |
+| Provider absent | **PASS (owner-reported, bounded)**, run `a16a95c6690844f39de2844ba9123d99` |
+| Combined Camera + UI | **PASS (owner-reported, bounded)**, run `5298264e872545c0ab28f5b07becc551` |
+| Exterior/interior transitions, menus, K hide/show, save/load | **PASS (owner-reported, bounded)**; compass released during transitions and the map re-acquired then suppressed. The combined route included an interior/exterior transition and save/load. |
+| Owner ruling | Option (a): exact preflight and DEM clip attached, visible and in bounds in normal gameplay; release on load/cell/menu/hide/teardown, accepting stale-frame risk. The provider has no supported fresh-render signal; the 500 ms same-cell settle allows attachment time but does **not** prove a fresh render. Lost navigation is not accepted. |
+| Stale-frame risk | Accepted by the owner under option (a); a fresh-render signal is unavailable. |
+| Survival temperature | Limitation: temperature resides inside the compass and is hidden when the compass is hidden. |
+| Permissions / no bundled third-party binaries | Source-only; no provider files added |
+| Active-effect overlap | Deferred to DYL-168 for measurement at 1080p. Owner reported no quest-text overlap; that does not resolve the active-effect measurement. |
+| Input device correction (2026-10-27) | The owner reports that all 2026-10-27 runs, including `5298264e`, were played mostly with the controller (8BitDo Ultimate, XInput), although each launch was requested as “controller off”. Skyrim on this host ignores keyboard/mouse gameplay input while the controller is on; these are controller results and the observed results are unchanged. |
+
+### Final source, CI, package and SWF identities
+
+- Evidence base: `15bdad8`. Merged head: `de5ca56` (the senior-reviewed head; exact-head Windows run [40557422051](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40557422051) **PASS**). The source commits identified in the runtime evidence are `9cb576f`, `ac577fc`, `2f6bbef`, and `c4a39e1`; the DLL was unchanged through `75e2641`.
+- CI: Windows run [40457081211](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40457081211) **PASS**.
+- UI package: `SkyCRPG_UI-0.0.1-9cb576f.zip`; SHA-256 `3b3152529ba2151ae27f9a19cd32bf18058619b0c88c9e5edec8e0cd3a850379`. UI DLL SHA-256 `603049abfdfcd711f7de01cfa078536775664725af0f4f28c117464fd79d0c03`.
+- HUD movie source `c4a39e1`; `hudmenu.swf` SHA-256 `2de109b3ca9428c03f694268838e3125d0491e7bf1d1429268f384426e6729a4`.
+- Compass-disabled package: `e646d4f5169afb2fb31a7b88520784450af56fc5c863b05be95985933e0bae59` (the `9cb576f` package with only `[Minimap] bReplaceCompass=0` changed; DLL byte-identical).
+- Combined camera package: `SkyCRPG_Camera-0.0.1-28aae27.zip` SHA-256 `b97997f62df7c914…`; Windows run [40450213582](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40450213582). The combined route used UI ZIP `3b3152529ba2151a…` and `hudmenu.swf` `2de109b3…`, as recorded in its run table below.
+
+The target was Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, Address Library 13, CommonLibSSE-NG 7.2.0, SkyUI Community 6.11, Proton; DEM 1.7.5, Infinity UI NG 2.1.3, LMU 1.3.4, Common + Line-17. The original implementation worker did not run the game.
 
 ## Design and owner ruling
 
@@ -16,18 +43,20 @@ Owner: DYL-166 worker, Linux. The job plan and logs are in `/srv/storage/Project
 - **PASS:** `for name in minimap_compass_contract hud_contract navigation_contract; do timeout 600 /home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node modules/ui/tests/${name}.js modules/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11; done`.
 - **PASS:** `SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 timeout 600 python3 -I -m unittest discover -s modules/ui/tests -p '*test.py'` and the same command with `-p 'test_*.py'`.
 
-## Acceptance ledger
+## History
 
-| Criterion | Result | Remaining evidence |
+### Initial pre-implementation ledger and route
+
+The original acceptance ledger was recorded before runtime evidence; its all-**NOT_RUN** entries are historical and superseded by the bounded evidence in Current status and Runtime route below.
+
+| Criterion | Initial result | Remaining evidence at that time |
 | --- | --- | --- |
 | UI-only and combined working map without duplicate compass | **NOT_RUN** | Both profiles and generated artifacts need runtime checks. |
 | Interior/exterior navigation and quest overlap | **NOT_RUN** | Transition, settling and layout route. |
 | Missing/disabled fallback and supported markers | **NOT_RUN** | Provider-absent and disabled routes, marker behavior. |
 | Configuration and permissions | **NOT_RUN** | Final package and rights review; no provider binaries added here. |
 
-## Runtime route — all NOT_RUN, 20-minute budget
-
-Use copied saves and isolated profiles. Record host, executable, source commit, package hashes, dependency versions, logs, process handle and cleanup. Run UI-only and combined profiles separately.
+The initial 20-minute runtime route was:
 
 1. In an exterior, verify the map updates, compass disappears only after settling, and shout meter remains; inspect quest text and active effects for overlap.
 2. Press K to hide and show the map; verify native compass returns and replacement reacquires after settling. Check L and relevant input focus.
@@ -36,38 +65,29 @@ Use copied saves and isolated profiles. Record host, executable, source commit, 
 5. Restart with `bReplaceCompass=0`: verify native compass stays. Separately test the provider-absent profile and verify usable native navigation.
 6. Inspect Survival temperature behavior and record layout, marker and teardown results. Preserve logs and verify cleanup.
 
-## Limitations
+The initial route instructions required copied saves and isolated profiles; recording host, executable, source commit, package hashes, dependency versions, logs, process handle and cleanup; and separate UI-only and combined runs.
 
-Native MSVC compilation, generated SWF execution and gameplay remain unverified. The bounded clip check cannot establish current map imagery; stale frames are explicitly accepted by the owner. Temperature is hidden with the compass. Layout and marker behavior remain open. No game, Steam or Proton was launched and no commit or push was made.
+### Failed runtime attempts and fixes
+
+- Run `de93b86ff0b54fff8949a67aeead89db` (60 s), HUD movie `ac36c2ef…`, source `9cb576f`: **FAIL:** compass never disappeared. The lease's 4-unit edge margin rejected DEM's corner-flush frame (screenshot ≈ x 1278, y 3 on the 1280×720 HUD); this run had no lease logging yet. Commit `ac577fc` allowed an overhang and logged lease state changes to `skse64.log`.
+- Run `e0a74f54e995493cba4d1e7f4a6e7135` (60 s), HUD movie `6cc7834c…`, source `ac577fc`: **FAIL:** compass never disappeared. The log showed `bounds` with live clip 1147..1338 × 16..175; DEM's quest pointer and distance label overhang the edge. Commit `2f6bbef` judged placement by centre in the upper-right quadrant plus ≥50% of the area on screen.
+- Run `815386e841184693b0c87579203a32cd` (90 s), HUD movie `608bd786…`, source `2f6bbef`: **FAIL:** compass flickered, never stayed hidden. The log showed `suppressed`, but the engine calls `SetCompassAngle` every frame and writes `Compass._visible`, while the lease re-hid only at 100 ms samples. Commit `c4a39e1` kept the compass hidden inside that per-frame write while the lease was held; a frame-level contract fails on the previous hook.
+
+None of the three failures left the player without navigation: each kept the native compass visible.
 
 ## Runtime route — 2026-10-26
 
 All runs used the UI-only profile (175 files, pinned DEM/Infinity UI/LMU Line-17 + Common, preflight `EXACT`), Steam 1.7.104.0, SKSE 2.3.1, Address Library 13 and Proton Experimental 11, with the controller off. The save was the copied test save `Quicksave0_…_RiverwoodSleepingGiantInn_…_20261026144253`. Every run used the native package from `9cb576f` ([Windows run 40457081211](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40457081211) **PASS**): ZIP `3b3152529ba2151ae27f9a19cd32bf18058619b0c88c9e5edec8e0cd3a850379`, DLL `603049abfdfcd711f7de01cfa078536775664725af0f4f28c117464fd79d0c03`, `bReplaceCompass=1`. The runs differ only in the locally built HUD movie, because the later fixes changed ActionScript and the builder only. In every run the DLL logged all five provider files `exact`, `Minimap preflight exact=1`. Every run exited normally with no watchdog intervention, and every restoration **PASS**ed (no changed candidate files, no active profile, no Skyrim process). Records are under `/srv/storage/Projects/SkyCRPG/session-p3/p3-map-166*/`.
 
-| Run | HUD movie / source | Owner observation | Diagnosis and fix |
+| Run | HUD movie / source | Owner observation | Diagnosis |
 | --- | --- | --- | --- |
-| `de93b86ff0b54fff8949a67aeead89db` (60 s) | `ac36c2ef…` / `9cb576f` | **FAIL:** compass never disappeared | Fail-safe: the lease's 4-unit edge margin rejected DEM's corner-flush frame (screenshot ≈ x 1278, y 3 on the 1280×720 HUD). The run had no lease logging yet. `ac577fc` allows an overhang and logs lease state changes to `skse64.log`. |
-| `e0a74f54e995493cba4d1e7f4a6e7135` (60 s) | `6cc7834c…` / `ac577fc` | **FAIL:** compass never disappeared | Log: `bounds` with live clip 1147..1338 × 16..175. DEM's quest pointer and distance label overhang the edge. `2f6bbef` judges placement by centre in the upper-right quadrant plus ≥50% of the area on screen. |
-| `815386e841184693b0c87579203a32cd` (90 s) | `608bd786…` / `2f6bbef` | **FAIL:** compass flickered, never stayed hidden | Log showed `suppressed`, but the engine calls `SetCompassAngle` every frame and writes `Compass._visible`, while the lease re-hid only at 100 ms samples. `c4a39e1` keeps the compass hidden inside that per-frame write while the lease is held. A frame-level contract fails on the previous hook. |
 | `7571da8e3f4c42fbb4cfd8eaa1a6f5d7` (174 s) | `2de109b3ca9428c03f694268838e3125d0491e7bf1d1429268f384426e6729a4` / `c4a39e1` | **PASS (owner-reported): everything passed.** The compass hid with no flicker after load and after menus, interior/exterior and save/load, and returned on K | UI log `c84bc2cf…`, `skse64.log` `4ac35d2d…`. The lease cycled `menu`/`hidden`/`stale-sample` (release) → `settling` → `suppressed` across load, menus, K hide/show and cell changes. Live clip 1024.5..1285.9 × −0.9..217.7. No logged state left the map hidden with the compass suppressed. |
 
-None of the three failures left the player without navigation: each kept the native compass visible.
+None of the three historical failures left the player without navigation: each kept the native compass visible. Their run IDs, hashes, owner observations and fixes are listed under History.
 
-Updated ledger:
+### Updated 2026-10-26 ledger and follow-ups
 
-| Criterion | Result |
-| --- | --- |
-| UI-only working minimap without duplicate compass | **PASS (owner-reported, bounded)**, run `7571da8e`, owner ruling option (a) |
-| Combined profile | **PASS (owner-reported, bounded)**, run `5298264e`; see below |
-| Exterior/interior transitions keep usable navigation | **PASS (owner-reported, bounded)**: compass during load, map re-acquired then suppressed |
-| Quest text does not overlap the map | Owner reported no issue; the active-effect overlap at 1080p remains a DYL-168 measurement |
-| Disabled (`bReplaceCompass=0`) keeps compass | **PASS (owner-reported, bounded)**, run `6bf91540` |
-| Provider absent keeps compass | **PASS (owner-reported, bounded)**, run `a16a95c6` |
-| Permissions / no bundled third-party binaries | Source-only; no provider files added |
-
-### Follow-ups — 2026-10-26
-
-Both runs used the same DLL (`603049ab…`, source `9cb576f`) and HUD movie (`2de109b3…`, source `c4a39e1`) as the passing run `7571da8e`. Both exited normally with no watchdog intervention, and both restorations **PASS**ed.
+Both follow-up runs used the same DLL (`603049ab…`, source `9cb576f`) and HUD movie (`2de109b3…`, source `c4a39e1`) as the passing run `7571da8e`. Both exited normally with no watchdog intervention, and both restorations **PASS**ed.
 
 | Run | Variant | Owner observation | Log evidence |
 | --- | --- | --- | --- |
@@ -101,4 +121,6 @@ Route:
 
 Combined-profile observation: DEM's clip measured `1024.5,-0.9` to `1285.9,217.7` here, compared with `1136,0` to `1280,134` in the UI-only runs. Its centre is in the upper-right quadrant and most of it is on screen, so the lease accepted it. The lease cap of 32 lines was reached, so later transitions were not logged; the owner observation covers them.
 
-**Input device correction (2026-10-27).** The owner reports that all of the 2026-10-27 runs, including `5298264e` above, were played mostly with the controller (8BitDo Ultimate, XInput), although each launch was requested as "controller off". On this host, Skyrim ignores keyboard/mouse gameplay input while the controller is on, so this route is controller evidence. The observed results are unchanged.
+## Limitations
+
+Native MSVC compilation, generated SWF execution and gameplay were unverified in the original implementation work. The bounded clip check cannot establish current map imagery; stale frames are explicitly accepted by the owner. Temperature is hidden with the compass. Layout and marker behavior remain open. No game, Steam or Proton was launched by the original implementation worker, and no commit or push was made by that worker.
