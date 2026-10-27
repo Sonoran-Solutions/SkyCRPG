@@ -72,6 +72,8 @@ These are owner requests, not scope decisions: smart proximity targeting with ta
 ## Merge plan
 
 Proposed, subject to owner authorization: [#9](https://github.com/Sonoran-Solutions/SkyCRPG/pull/9) → retarget [#12](https://github.com/Sonoran-Solutions/SkyCRPG/pull/12) to main after #9 → [#10](https://github.com/Sonoran-Solutions/SkyCRPG/pull/10), resolving conflicts as on the integration branch and accounting for the in-progress fix → [#11](https://github.com/Sonoran-Solutions/SkyCRPG/pull/11) → [#13](https://github.com/Sonoran-Solutions/SkyCRPG/pull/13). None of these merges is claimed here. Then perform one bounded regression session on the exact merged main commit, with short camera-only and combined routes and recorded artifact identities. Any required fixes need their own review and evidence.
+The tested camera candidate is `integration/p2-camera-wave5` at `3ec6730`. Its conflict resolution (`155a3e3`) and its slide-classification/trace-dedup fix (`3ec6730`) exist only on that branch. When #10 is merged after #12, carry both forward, for example by merging the integration branch as the #10 resolution, and verify that the merged-main camera tree matches `3ec6730` apart from documentation.
+
 
 ## Integration regression run — 2026-10-26
 
