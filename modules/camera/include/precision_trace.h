@@ -26,6 +26,7 @@ struct PrecisionTraceRecord {
     unsigned device{}; // 0=none, 1=keyboard, 2=gamepad
     bool pressed{}, edge{};
     unsigned decision{}; // ToggleRequest, or zero when not applicable
+    std::uint64_t monotonicMs{};
 };
 // An opt-in session has a hard bound; callers decide which event boundaries
 // are useful and only write when take() succeeds. No per-frame logging.
@@ -56,10 +57,10 @@ constexpr std::uint32_t traceBits(const PrecisionTraceState& s) {
 inline bool formatPrecisionTrace(char* out, std::size_t size, const PrecisionTraceRecord& r) {
     if (!out || !size) return false;
     const int n = std::snprintf(out,size,
-        "precision_trace event=%u before=0x%03x after=0x%03x device=%u pressed=%u edge=%u decision=%u camera=%u/%u hazard=0x%03x/0x%03x",
+        "precision_trace event=%u before=0x%03x after=0x%03x device=%u pressed=%u edge=%u decision=%u camera=%u/%u hazard=0x%03x/0x%03x ms=%llu",
         static_cast<unsigned>(r.event),traceBits(r.before),traceBits(r.after),r.device,
         unsigned(r.pressed),unsigned(r.edge),r.decision,r.before.cameraState,r.after.cameraState,
-        r.before.hazardBits,r.after.hazardBits);
+        r.before.hazardBits,r.after.hazardBits,static_cast<unsigned long long>(r.monotonicMs));
     return n >= 0 && static_cast<std::size_t>(n) < size;
 }
 } // namespace skycrpg::camera

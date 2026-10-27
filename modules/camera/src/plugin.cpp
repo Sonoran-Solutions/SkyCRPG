@@ -14,6 +14,7 @@
 #include <bcrypt.h>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -179,6 +180,7 @@ Context context(bool allowZoomSlide = false, bool* hardSpecial = nullptr) {
 PrecisionTraceState traceState(Context c, bool hard, std::size_t key) {
     PrecisionTraceState result{c,hard,ownFirstPerson,keys[key].armed,keys[key].down};
     if (!precisionTraceEnabled) return result;
+    if (!c.world) { result.hazardBits = UINT32_MAX; return result; }
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto camera = RE::PlayerCamera::GetSingleton();
     const auto controls = RE::PlayerControls::GetSingleton();
@@ -204,7 +206,8 @@ void tracePrecision(PrecisionTraceEvent event, PrecisionTraceState before, Preci
     unsigned device = 0, bool pressed = false, bool edge = false, unsigned decision = 0) {
     if (!precisionTraceEnabled || !precisionTraceBudget.take()) return;
     char line[192]{};
-    if (formatPrecisionTrace(line,sizeof(line),{event,before,after,device,pressed,edge,decision})) log(line);
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (formatPrecisionTrace(line,sizeof(line),{event,before,after,device,pressed,edge,decision,static_cast<std::uint64_t>(now)})) log(line);
 }
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     const auto c = context();
@@ -262,10 +265,13 @@ public:
         if (!events) return RE::BSEventNotifyControl::kContinue;
         bool hardSpecial = true;
         const auto c = context(false,&hardSpecial);
-        const auto beforeRetention = traceState(c,hardSpecial,0);
+        const bool ownedBefore = ownFirstPerson;
         ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hardSpecial);
-        if (beforeRetention.owned != ownFirstPerson)
-            tracePrecision(PrecisionTraceEvent::retention,beforeRetention,traceState(c,hardSpecial,0));
+        if (precisionTraceEnabled && ownedBefore != ownFirstPerson) {
+            const auto after = traceState(c,hardSpecial,0);
+            auto before = after; before.owned = ownedBefore;
+            tracePrecision(PrecisionTraceEvent::retention,before,after);
+        }
         // Deliberate F6 can return from its OWN first-person request; native POV never auto-restores.
         const bool safe = c.prerequisites && c.world && !c.special && !c.menu;
         if (!safe) suspend();
