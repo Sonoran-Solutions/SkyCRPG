@@ -88,6 +88,7 @@ def transform(name, text):
         text = replace_once(text, mode_anchor, mode_sync)
         anchor = 'Stage.scaleMode = "showAll";'
         text = replace_once(text, anchor, anchor + "\n" + (ROOT / "scaleform/hud-init.as.inc").read_text())
+        text = replace_once(text, anchor, anchor + "\n" + (ROOT / "scaleform/compass-policy.as.inc").read_text())
     return text
 
 

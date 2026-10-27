@@ -49,3 +49,5 @@ The player panel anchors at bottom center with three engine-fed meters labeled H
 The native crosshair, target/activation prompt, compass and map provider retain their existing authority and placement. The upper-left reserved party panel says “Follower data unavailable”; it supplies no fabricated follower status. The existing upper-right map area remains reserved for its provider. No hotbar or Camera dependency is introduced.
 
 Preferences belong to `SkyCRPG_UI.ini`: version 1, startup scale 85–115%, horizontal offset ±120 and vertical offset ±60 movie-coordinate units, with viewport bounds. Reset by restoring the shipped defaults and restarting Skyrim. This bounded control does not implement the later full layout editor/controller coverage. See [core HUD evidence](evidence/p2/core-hud.md) for source/build checks and the separately open gameplay acceptance.
+
+Until a supported fresh-render readiness signal exists, keep the native compass visible even when the selected map is displayed. DEM K toggles the map and L toggles zoom; these are distinct from F6/F8 and hotbar 1–8. The 1080p active-effect overlap remains a DYL-168 layout check.
