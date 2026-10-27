@@ -28,7 +28,7 @@ Senior review of the worker candidate changed three behaviors in `inventory_brid
 
 - **List reconciliation no longer refuses the next action.** Previously, any difference between the copied and live inventory (for example after an equip) invalidated the snapshot and marked the list dirty, so the next press on the same item was refused once. A difference now requests a native list update without marking the list stale. Per-row safety is unchanged: each menu extra list must still belong to the live inventory before it is read, counts are bounded by live counts, traits are re-read, and `Publish` bumps the generation when rows differ. Engine container/equip events and stale tokens still mark the list dirty until the UI-task update runs.
 - **Passive overlays keep the inventory context.** `HUD Menu`, `Cursor Menu`, `Fader Menu` and `Mist Menu` open/close events no longer cancel a pending quantity intent or spend the current gesture. Any other menu still invalidates.
-- **An unsupported callback thread falls back to native behavior.** Previously, a GFx call off `Main::threadID` refused every activation and drop, which would trap the inventory if the actual dispatch thread differs. Live reads are still skipped on such a thread. Validation now returns permit, so the native menu, which remains authoritative, acts alone. It logs `unsupported-thread; native behavior retained` once. Any such log line means the validator is inactive on that host and DYL-163 stays open.
+- **An unsupported callback thread falls back to native behavior.** Previously, a GFx call off `Main::threadID` refused every activation and drop, which would trap the inventory if the actual dispatch thread differs. Live reads are still skipped on such a thread. Validation now returns permit, so the native menu, which remains authoritative, acts alone. It logs `unsupported-thread; native behavior retained` once. Any such log line means the validator was inactive for that call. Owner ruling 2026-10-27 (below): this fallback is accepted, and the line is a diagnostic, not a gate failure.
 
 Re-run after these changes with the lane runner — all 15 steps **PASS**. The runner holds host paths, so it lives outside the repository at `/srv/storage/Projects/SkyCRPG/session-p3/tools/dyl-163-run-checks.py`. Since integration it runs 15 steps; the pre-integration `git apply --check` step is retired. The bridge is not compiled locally; Windows CI is the compile check.
 
@@ -244,3 +244,20 @@ The log has four `duplicate-input` refusals (17:58:24, 17:58:50, 18:01:54, 18:02
 - **(b)** marshal off-thread Snapshot/Validate onto the main thread (`AddTask`) and refuse the custom path for that call.
 
 Option (b) needs a design change and Windows verification. The gate stays open until that is decided.
+
+## Owner ruling — 2026-10-27
+
+> Approve option (a) for DYL-163: accept native fallback on an unsupported thread and keep the bounded diagnostic.
+
+The thread gate is closed by owner decision (recorded in `docs/DECISIONS.md`). On an unsupported thread the native menu stays authoritative and acts alone for that call. The bounded `Inventory off-thread op=… thread=… main=…` diagnostic stays, so any recurrence is logged. No code change.
+
+This ruling does not accept DYL-163. Still open:
+- Senior review of #17.
+- Runtime rows still **NOT_RUN**:
+  - a same-base self-enchanted copy;
+  - a quest-item drop refusal;
+  - a modded form;
+  - the controller pass;
+  - the missing-DLL/old-bridge fallback;
+  - a combined profile.
+- The native favorite pre-dispatch guard, still **BLOCKED** (no AS callback).
