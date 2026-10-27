@@ -193,3 +193,26 @@ The owner ran the staged blocks (basic actions, tempered vs plain, stolen vs own
 The two `duplicate-input` refusals show the validator ran on the main thread and stopped repeated presses. The refusal log resets on every inventory open/close, so the two `unsupported-thread` lines mean **two separate inventory sessions** each had at least one `Snapshot` or `Validate` call off `Main::threadID`. On those calls native behavior acted unguarded. Under the rule above, the off-thread gate keeps DYL-163 open.
 
 Follow-up in this branch: every off-thread call now also logs `Inventory off-thread op=<snapshot|validate> thread=<id> main=<id> open=<0|1> loaded=<0|1>`, at most 32 lines per process, with no behavior change. A short rerun with that package names the operation and thread.
+
+## Off-thread diagnostic rerun — 2026-10-27
+
+**No off-thread call reproduced. The gate stays open.**
+
+| Field | Value |
+| --- | --- |
+| Source / CI | `7caac58`, Windows [run 40547955137](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40547955137) **PASS** |
+| Package | `SkyCRPG_UI-0.0.1-7caac58.zip` `03f1f95900515ee41d5136dd92a37282b5aaab0938836069b20d63e2074d33bd`; DLL `40480fdf9d9976aab56f567f12bf9ebc82155aeb4b9dabc98b39b1f58330e816`; INI unchanged; same SWFs as above |
+| Runs | `327b6a51…`: closed at the main menu after about 1 min, no save loaded, clean exit, no crash log (no evidence). `e8b145fbf60e4805a029fa3d9dae8697`: about 2 min of a 10 min budget, normal quit, watchdog did not intervene (minimum 13.1 GiB available) |
+| Save | Copied `Save3 … 20261027170446` from the fixture route; new quicksave kept in the test profile only |
+| UI log | `77981c4b…`: no `Inventory` lines at all — no `off-thread`, no `unsupported-thread`, no refusals |
+| Cleanup | Both restorations **PASS** |
+
+The owner opened the inventory at least once in each of six ways, acting on an item each time:
+- right after load;
+- with Tab → Items while standing;
+- while moving;
+- right after closing a container;
+- after quicksave plus quickload;
+- with rapid close and reopen.
+
+None produced an off-thread call. Ordinary opening paths are therefore not the trigger, at least not reliably. The fixture route's two occurrences happened during steps this rerun did not repeat: the quantity dialog (drop/cancel/close), grindstone crafting, console item changes, `player.kill` and reload, and the carry-weight drop. The next diagnostic run should repeat those steps with the `7caac58` package.
