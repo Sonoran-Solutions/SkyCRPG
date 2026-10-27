@@ -28,6 +28,7 @@
 #include "menu_focus.h"
 #include "favorite_slots.h"
 #include "minimap/adapter.h"
+#include "follower/adapter.h"
 
 #include <array>
 #include <atomic>
@@ -522,6 +523,7 @@ void ResourceLifecycle(SKSE::MessagingInterface::Message* message)
 {
 	if (!message) return;
 	skycrpg::ui::minimap::OnMessage(message);
+	skycrpg::ui::follower::OnMessage(message);
 	if (message->type == SKSE::MessagingInterface::kDataLoaded) {
 		static bool registered = false;
         static bool inputRegistered = false;
@@ -654,6 +656,7 @@ bool RegisterSkyCRPGUI(RE::GFxMovieView* movie, RE::GFxValue* root)
 	movie->CreateFunction(&function, handler);
 	if (!root->SetMember("getPlayerResources", function)) return false;
 	if (!skycrpg::ui::minimap::Register(movie, root)) return false;
+	if (!skycrpg::ui::follower::Register(movie, root)) return false;
 	RE::GFxValue value;
 	value.SetNumber(g_hudSettings.scalePercent);
 	if (!root->SetMember("hudScale", value)) return false;
