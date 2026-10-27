@@ -17,6 +17,7 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -48,7 +49,7 @@ TDM_API::IVTDM5* movement = nullptr;
 bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
 bool precisionTraceEnabled = false, lifecycleTraceEnabled = false;
 unsigned lifecycleLogCount = 0;
-int lastLifecycleState = -1;
+LifecycleTraceDebounce lifecycleTrace;
 PrecisionTraceBudget precisionTraceBudget;
 std::array<FreshPress,4> keys;
 using Look = void(*)(RE::ThirdPersonState*, const RE::NiPoint2&);
@@ -182,7 +183,7 @@ bool providerChainReady() {
     }
     return module != nullptr;
 }
-Context context(bool allowZoomSlide = false, bool* hardSpecial = nullptr) {
+Context context(bool* hardSpecial = nullptr) {
     Context c;
     if (hardSpecial) *hardSpecial = true;
     c.enabled = settings.enabled;
@@ -197,12 +198,12 @@ Context context(bool allowZoomSlide = false, bool* hardSpecial = nullptr) {
     const auto actorState = player->AsActorState();
     Hazards hazards{player->IsOnMount(), player->IsInKillMove(), actorState->IsSwimming(),
         actorState->GetSitSleepState() != RE::SIT_SLEEP_STATE::kNormal, actorState->IsBleedingOut(),
-        false, false, false};
+        false, false};
     const auto controls = RE::PlayerControls::GetSingleton();
     const auto controlMap = RE::ControlMap::GetSingleton();
     hazards.beast = controls && controls->data.povBeastMode;
     hazards.scripted = !controlMap || !controls || controls->data.povScriptMode;
-    hazards.slide = controls && controls->data.fovSlideMode && !allowZoomSlide;
+    c.slide = controls && controls->data.fovSlideMode;
     const bool hazard = specialHazard(hazards);
     c.special = stateSpecial || hazard;
     if (!c.firstPerson && camera->currentState->id == RE::CameraState::kThirdPerson &&
@@ -251,23 +252,22 @@ void lifecycleLog(const char* event, Context c, unsigned stateId) {
     if (!lifecycleTraceEnabled || lifecycleLogCount >= 128) return;
     ++lifecycleLogCount;
     char line[160]{};
-    std::snprintf(line,sizeof(line),"Lifecycle event=%s state=%u decision=%u owned=%u",event,stateId,
+    std::snprintf(line,sizeof(line),"Lifecycle event=%s hook=%s state=%u decision=%u owned=%u",event,
+        std::strcmp(event,"observe") == 0 ? "update" : "event",stateId,
         static_cast<unsigned>(select(c)),static_cast<unsigned>(ownFirstPerson));
     log(line);
 }
 void resetLifecycle(const char* event) {
     resetTransient(ownFirstPerson,recenter,applyZoom,keys);
     resetObstruction();
-    lastLifecycleState = -1;
+    lifecycleTrace.resetCandidate();
     lifecycleLog(event,Context{},UINT32_MAX);
 }
 void observeLifecycle(Context c, bool hard) {
     ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hard);
     const auto camera = RE::PlayerCamera::GetSingleton();
     const unsigned id = camera && camera->currentState ? static_cast<unsigned>(camera->currentState->id) : UINT32_MAX;
-    // Only log changes, with a hard process-wide cap.
-    const int signature = static_cast<int>(select(c)) * 256 + (id == UINT32_MAX ? 255 : static_cast<int>(id));
-    if (signature != lastLifecycleState) { lastLifecycleState = signature; lifecycleLog("observe",c,id); }
+    if (lifecycleTraceEnabled && lifecycleTrace.observe(select(c),id)) lifecycleLog("observe",c,id);
     // Obstruction is a normal-framing sub-state; suspending on it would reset its latch.
     if (!obstructionFramingAllowed(c)) suspend();
 }
@@ -286,6 +286,8 @@ void sampleObstruction(RE::ThirdPersonState* state) {
     const auto cell = player->GetParentCell()->GetFormID();
     if (obstructionCell != cell) resetObstruction();
     obstructionCell = cell;
+    // Do not accumulate slide duration into the next obstruction step.
+    if (pauseCorrection(c)) { obstructionSampleTime = std::chrono::steady_clock::now(); return; }
     const auto now = std::chrono::steady_clock::now();
     if (obstructionSampleTime == std::chrono::steady_clock::time_point{}) {
         obstructionSampleTime = now; return;
@@ -306,13 +308,12 @@ void sampleObstruction(RE::ThirdPersonState* state) {
         {actual.x,actual.y,actual.z},{goal.x,goal.y,goal.z},focus),dt,obstructionSettings);
 }
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
-    bool hard = true;
-    const auto c = context(false,&hard);
-    observeLifecycle(c,hard);
+    const auto c = context();
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (!obstructionFramingAllowed(c) || !camera || camera->currentState.get() != state || !state->freeRotationEnabled) {
         suspend(); previousLook(state,input); return;
     }
+    if (pauseCorrection(c)) { previousLook(state,input); return; }
     auto setting = RE::GetINISetting("fFreeRotationSpeed:Camera");
     static REL::Relocation<float*> delta{REL::ID(410200)};
     const float dt = *delta;
@@ -338,7 +339,7 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
     else sampleObstruction(state);
     previousUpdate(state,next); // native first; outer SmoothCam wrapper performs transforms AFTER us
     bool hard = true;
-    const auto c = context(true,&hard);
+    const auto c = context(&hard);
     observeLifecycle(c,hard);
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (!obstructionFramingAllowed(c) || !camera || camera->currentState.get() != state || (next && next.get() != state)) {
@@ -370,13 +371,13 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
         bool hard = true;
-        const auto c = precisionTraceEnabled ? context(false,&hard) : Context{};
+        const auto c = precisionTraceEnabled ? context(&hard) : Context{};
         const auto before = traceState(c,hard,0);
         movementConfigSafe = checkMovementConfig();
         suspend();
         if (precisionTraceEnabled && event && (c.world || ownFirstPerson)) {
             bool afterHard = true;
-            const auto after = context(false,&afterHard);
+            const auto after = context(&afterHard);
             tracePrecision(event->opening ? PrecisionTraceEvent::menuOpen : PrecisionTraceEvent::menuClose,
                 before,traceState(after,afterHard,0));
         }
@@ -385,7 +386,7 @@ public:
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
         if (!events) return RE::BSEventNotifyControl::kContinue;
         bool hardSpecial = true;
-        const auto c = context(false,&hardSpecial);
+        const auto c = context(&hardSpecial);
         const bool ownedBefore = ownFirstPerson;
         ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hardSpecial);
         if (precisionTraceEnabled && ownedBefore != ownFirstPerson) {
@@ -394,8 +395,9 @@ public:
             tracePrecision(PrecisionTraceEvent::retention,before,after);
         }
         // Deliberate F6 can return from its OWN first-person request; native POV never auto-restores.
-        const bool safe = c.prerequisites && c.world && !c.special && !c.menu;
-        if (!safe) suspend();
+        const bool lifecycleSafe = c.prerequisites && c.world && !c.special && !c.menu;
+        const bool safe = lifecycleSafe && !c.slide;
+        if (!lifecycleSafe) suspend();
         for (auto event = *events; event; event = event->next) {
             auto button = event->AsButtonEvent();
             if (!button) continue;
@@ -442,7 +444,7 @@ public:
                         static_cast<void>(camera->ForceFirstPerson());
                         // Do not claim a late or unrelated first-person transition.
                         bool afterHard = true;
-                        const auto after = context(false,&afterHard);
+                        const auto after = context(&afterHard);
                         ownFirstPerson = claimPrecisionOwnership(c,after);
                         if (precisionTraceEnabled) {
                             tracePrecision(PrecisionTraceEvent::toggleClaim,before,traceState(after,afterHard,keyIndex),pad?2u:1u,true,true);
