@@ -1,0 +1,9 @@
+{
+  "owner": "DYL-158 worker",
+  "purpose": "Verify manual precision return ownership, interruption, and state precedence",
+  "command": "timeout 600s bash -c 'g++ -std=c++20 -Wall -Wextra -Werror -I modules/camera/include modules/camera/tests/precision_policy_test.cpp -o /tmp/skycrpg-dyl158-precision-test && /tmp/skycrpg-dyl158-precision-test'",
+  "expected": "exit 0",
+  "timeout_seconds": 600,
+  "completion_signal": "process exit status and precision-test.log",
+  "cleanup": "process exits naturally or timeout terminates it; temporary binary retained"
+}
