@@ -85,7 +85,7 @@ An earlier provider-absent deployment that still contained the providers' transl
 | UI package | `SkyCRPG_UI-0.0.1-9cb576f.zip` `3b3152529ba2151a…` (DLL unchanged through `75e2641`); `hudmenu.swf` `2de109b3…` |
 | Camera package | Main's camera tree: `SkyCRPG_Camera-0.0.1-28aae27.zip` `b97997f62df7c914…`, Windows run [40450213582](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40450213582) |
 | Stage | Phase 2 `stage-combined-favorites` (SmoothCam, True Directional Movement, MCM Helper, SkyUI, the map trio) with only `hudmenu.swf` replaced; profile `combined`, 214 files |
-| Host | Steam 1.7.104.0 (exe `846efccf…`), SKSE 2.3.1, Address Library 13, Proton Experimental 11; keyboard and mouse, controller off |
+| Host | Steam 1.7.104.0 (exe `846efccf…`), SKSE 2.3.1, Address Library 13, Proton Experimental 11; **controller (8BitDo XInput)** — corrected 2026-10-27, see note below |
 | Save | Copied combined-profile `Save2 … Tamriel … 20261026185830` |
 | Run | `5298264e872545c0ab28f5b07becc551`, about 2.5 min, normal quit, watchdog did not intervene (minimum 13.3 GiB available) |
 | Logs | `SkyCRPG_UI.log` `5d429e77…`: preflight `exact=1` on all five paths. `skse64.log` `22e42cec…`: 32 lease lines (the cap), cycling `settling` → `suppressed`, with `hidden` (K) and `menu` releases, and `stale-sample` after loads. `SkyCRPG_Camera.log` `f4d5e85d…`: `no camera transform writes`, SmoothCam sole transform writer, no failures |
@@ -100,3 +100,5 @@ Route:
 6. save and load.
 
 Combined-profile observation: DEM's clip measured `1024.5,-0.9` to `1285.9,217.7` here, compared with `1136,0` to `1280,134` in the UI-only runs. Its centre is in the upper-right quadrant and most of it is on screen, so the lease accepted it. The lease cap of 32 lines was reached, so later transitions were not logged; the owner observation covers them.
+
+**Input device correction (2026-10-27).** The owner reports that all of the 2026-10-27 runs, including `5298264e` above, were played mostly with the controller (8BitDo Ultimate, XInput), although each launch was requested as "controller off". On this host, Skyrim ignores keyboard/mouse gameplay input while the controller is on, so this route is controller evidence. The observed results are unchanged.
