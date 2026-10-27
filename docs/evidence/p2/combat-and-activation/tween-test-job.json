@@ -1,0 +1,9 @@
+{
+  "owner": "DYL-158 worker",
+  "purpose": "Verify portable camera policy, precision retention, and opt-in trace tests for the tween candidate",
+  "command": "timeout 600s bash -c 'set -e; for test in policy_test precision_policy_test precision_trace_test; do g++ -std=c++20 -Wall -Wextra -Werror -I modules/camera/include modules/camera/tests/$test.cpp -o /tmp/skycrpg-dyl158-tween-$test; /tmp/skycrpg-dyl158-tween-$test; done'",
+  "expected": "each test exits 0; job exits 0",
+  "timeout_seconds": 600,
+  "completion_signal": "process exit status and /tmp/skycrpg-dyl158-tween-test.log",
+  "cleanup": "process exits naturally or timeout terminates it; temporary binaries and log retained in /tmp"
+}

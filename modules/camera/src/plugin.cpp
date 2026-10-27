@@ -3,6 +3,8 @@
 #include <SKSE/SKSE.h>
 #include <skycrpg/skeleton.h>
 #include "policy.h"
+#include "precision_policy.h"
+#include "precision_trace.h"
 #pragma warning(push)
 #pragma warning(disable: 4191) // permitted external API FARPROC conversion
 #define SMOOTHCAM_API_COMMONLIB
@@ -12,6 +14,7 @@
 #include <bcrypt.h>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -34,6 +37,8 @@ bool ready = false, loading = true, ownFirstPerson = false, recenter = false;
 SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
 bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
+bool precisionTraceEnabled = false;
+PrecisionTraceBudget precisionTraceBudget;
 std::array<FreshPress,4> keys;
 using Look = void(*)(RE::ThirdPersonState*, const RE::NiPoint2&);
 Look previousLook = nullptr;
@@ -117,6 +122,7 @@ void loadSettings() {
     s.recenterKey = number("Controls","iRecenterKey",65);
     s.toggleGamepad = number("Controls","iToggleGamepad",-1);
     s.recenterGamepad = number("Controls","iRecenterGamepad",-1);
+    precisionTraceEnabled = number("Debug","iPrecisionTrace",0) == 1;
     compatibleSettings = s.schema == 1;
     settings = validate(s);
 }
@@ -148,8 +154,9 @@ bool providerChainReady() {
     }
     return module != nullptr;
 }
-Context context(bool allowZoomSlide = false) {
+Context context(bool allowZoomSlide = false, bool* hardSpecial = nullptr) {
     Context c;
+    if (hardSpecial) *hardSpecial = true;
     c.enabled = settings.enabled;
     c.prerequisites = compatibleSettings && movementConfigSafe && ready && movement && movementLease && !movement->GetTargetLockState() && provider && provider->IsCameraEnabled() && provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
     const auto player = RE::PlayerCharacter::GetSingleton();
@@ -157,17 +164,53 @@ Context context(bool allowZoomSlide = false) {
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
     if (!c.world) return c;
     c.firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
-    c.special = (!c.firstPerson && camera->currentState->id != RE::CameraState::kThirdPerson) ||
-        player->IsOnMount() || player->IsInKillMove() || player->AsActorState()->IsSwimming();
+    c.tween = camera->currentState->id == RE::CameraState::kTween;
+    const bool stateSpecial = !c.firstPerson && camera->currentState->id != RE::CameraState::kThirdPerson;
+    bool hazard = player->IsOnMount() || player->IsInKillMove() || player->AsActorState()->IsSwimming();
     const auto controls = RE::PlayerControls::GetSingleton();
     const auto controlMap = RE::ControlMap::GetSingleton();
-    if (!controlMap || !controlMap->IsLookingControlsEnabled() || !controlMap->IsPOVSwitchControlsEnabled()) c.special = true;
-    if (!controls || controls->data.povScriptMode || controls->data.povBeastMode || (controls->data.fovSlideMode && !allowZoomSlide)) c.special = true;
+    if (!controlMap || !controls || controls->data.povScriptMode || controls->data.povBeastMode || (controls->data.fovSlideMode && !allowZoomSlide)) hazard = true;
+    c.special = stateSpecial || hazard;
     if (!c.firstPerson && camera->currentState->id == RE::CameraState::kThirdPerson &&
         static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) c.special = true;
+    // Tween is indeterminate, but real non-camera hazards remain hard.
+    if (hardSpecial) *hardSpecial = c.tween ? hazard : c.special;
+    if (controlMap && (!controlMap->IsLookingControlsEnabled() || !controlMap->IsPOVSwitchControlsEnabled())) c.special = true;
     c.menu = focused();
     // Precision/targeting/obstruction intervention is intentionally left to DYL157/158.
     return c;
+}
+PrecisionTraceState traceState(Context c, bool hard, std::size_t key) {
+    PrecisionTraceState result{c,hard,ownFirstPerson,keys[key].armed,keys[key].down};
+    if (!precisionTraceEnabled) return result;
+    if (!c.world) { result.hazardBits = UINT32_MAX; return result; }
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    const auto controls = RE::PlayerControls::GetSingleton();
+    const auto controlMap = RE::ControlMap::GetSingleton();
+    if (camera && camera->currentState) result.cameraState = static_cast<std::uint32_t>(camera->currentState->id);
+    if (player) {
+        result.hazardBits |= std::uint32_t(player->IsOnMount()) << 0;
+        result.hazardBits |= std::uint32_t(player->IsInKillMove()) << 1;
+        result.hazardBits |= std::uint32_t(player->AsActorState()->IsSwimming()) << 2;
+    }
+    result.hazardBits |= std::uint32_t(!controls) << 3;
+    result.hazardBits |= std::uint32_t(!controlMap) << 4;
+    if (controls) {
+        result.hazardBits |= std::uint32_t(controls->data.povScriptMode) << 5;
+        result.hazardBits |= std::uint32_t(controls->data.povBeastMode) << 6;
+        result.hazardBits |= std::uint32_t(controls->data.fovSlideMode) << 7;
+    }
+    if (camera && camera->currentState && camera->currentState->id == RE::CameraState::kThirdPerson)
+        result.hazardBits |= std::uint32_t(static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) << 8;
+    return result;
+}
+void tracePrecision(PrecisionTraceEvent event, PrecisionTraceState before, PrecisionTraceState after,
+    unsigned device = 0, bool pressed = false, bool edge = false, unsigned decision = 0) {
+    if (!precisionTraceEnabled || !precisionTraceBudget.take()) return;
+    char line[192]{};
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (formatPrecisionTrace(line,sizeof(line),{event,before,after,device,pressed,edge,decision,static_cast<std::uint64_t>(now)})) log(line);
 }
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     const auto c = context();
@@ -207,20 +250,43 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
 }
 class Events final : public RE::BSTEventSink<RE::InputEvent*>, public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
 public:
-    RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent*,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
+    RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
+        bool hard = true;
+        const auto c = precisionTraceEnabled ? context(false,&hard) : Context{};
+        const auto before = traceState(c,hard,0);
         movementConfigSafe = checkMovementConfig();
-        suspend(); return RE::BSEventNotifyControl::kContinue;
+        suspend();
+        if (precisionTraceEnabled && event && (c.world || ownFirstPerson)) {
+            bool afterHard = true;
+            const auto after = context(false,&afterHard);
+            tracePrecision(event->opening ? PrecisionTraceEvent::menuOpen : PrecisionTraceEvent::menuClose,
+                before,traceState(after,afterHard,0));
+        }
+        return RE::BSEventNotifyControl::kContinue;
     }
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
         if (!events) return RE::BSEventNotifyControl::kContinue;
-        const auto c = context();
+        bool hardSpecial = true;
+        const auto c = context(false,&hardSpecial);
+        const bool ownedBefore = ownFirstPerson;
+        ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hardSpecial);
+        if (precisionTraceEnabled && ownedBefore != ownFirstPerson) {
+            const auto after = traceState(c,hardSpecial,0);
+            auto before = after; before.owned = ownedBefore;
+            tracePrecision(PrecisionTraceEvent::retention,before,after);
+        }
         // Deliberate F6 can return from its OWN first-person request; native POV never auto-restores.
         const bool safe = c.prerequisites && c.world && !c.special && !c.menu;
         if (!safe) suspend();
         for (auto event = *events; event; event = event->next) {
             auto button = event->AsButtonEvent();
             if (!button) continue;
-            if (button->IsDown() && button->QUserEvent() == "Toggle POV") ownFirstPerson = false;
+            if (button->IsDown() && button->QUserEvent() == "Toggle POV") {
+                const auto before = traceState(c,hardSpecial,0);
+                ownFirstPerson = false;
+                tracePrecision(PrecisionTraceEvent::nativePov,before,traceState(c,hardSpecial,0),
+                    event->GetDevice() == RE::INPUT_DEVICE::kGamepad ? 2u : 1u,true,true);
+            }
             const auto device = event->GetDevice();
             const bool pad = device == RE::INPUT_DEVICE::kGamepad;
             if (!pad && device != RE::INPUT_DEVICE::kKeyboard) continue;
@@ -228,16 +294,42 @@ public:
             const std::array<int,2> bindings{pad?settings.toggleGamepad:settings.toggleKey,pad?settings.recenterGamepad:settings.recenterKey};
             for (std::size_t i = 0;i < bindings.size();++i) {
                 if (bindings[i] < 0 || id != bindings[i]) continue;
-                if (!safe) { keys[(pad?2:0)+i].observeSuppressed(button->IsPressed()); continue; }
+                const auto keyIndex = (pad?2u:0u)+i;
+                const auto before = traceState(c,hardSpecial,keyIndex);
+                if (i == 0 && (button->IsDown() || (!button->IsPressed() && before.down)))
+                    tracePrecision(button->IsPressed() ? PrecisionTraceEvent::togglePress : PrecisionTraceEvent::toggleRelease,
+                        before,before,pad?2u:1u,button->IsPressed(),button->IsDown());
+                if (!safe) {
+                    keys[keyIndex].observeSuppressed(button->IsPressed());
+                    if (i == 0 && (before.down != keys[keyIndex].down || before.armed != keys[keyIndex].armed))
+                        tracePrecision(PrecisionTraceEvent::toggleSuppressed,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,button->IsPressed(),button->IsDown());
+                    continue;
+                }
                 auto map = RE::ControlMap::GetSingleton();
                 // Never dispatch custom action on a mapped native gameplay button.
-                if (!map || !map->GetUserEventName(button->GetIDCode(),device).empty() || !button->QUserEvent().empty()) continue;
-                if (!keys[(pad?2:0)+i].update(button->IsPressed(),button->IsDown())) continue;
+                if (!map || !map->GetUserEventName(button->GetIDCode(),device).empty() || !button->QUserEvent().empty()) {
+                    if (i == 0 && button->IsDown()) tracePrecision(PrecisionTraceEvent::toggleMapped,before,before,pad?2u:1u,button->IsPressed(),button->IsDown());
+                    continue;
+                }
+                if (!keys[keyIndex].update(button->IsPressed(),button->IsDown())) {
+                    if (i == 0 && button->IsDown()) tracePrecision(PrecisionTraceEvent::toggleNoEdge,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,button->IsPressed(),button->IsDown());
+                    continue;
+                }
                 if (i == 0) {
                     auto camera = RE::PlayerCamera::GetSingleton();
                     const auto request = toggleRequest(c,ownFirstPerson);
+                    tracePrecision(PrecisionTraceEvent::toggleDecision,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,true,true,static_cast<unsigned>(request));
                     if (request == ToggleRequest::firstPerson) {
-                        settings.enabled = false; ownFirstPerson = true; suspend(); static_cast<void>(camera->ForceFirstPerson()); savePreferences();
+                        settings.enabled = false; ownFirstPerson = false; suspend();
+                        static_cast<void>(camera->ForceFirstPerson());
+                        // Do not claim a late or unrelated first-person transition.
+                        bool afterHard = true;
+                        const auto after = context(false,&afterHard);
+                        ownFirstPerson = claimPrecisionOwnership(c,after);
+                        if (precisionTraceEnabled) {
+                            tracePrecision(PrecisionTraceEvent::toggleClaim,before,traceState(after,afterHard,keyIndex),pad?2u:1u,true,true);
+                        }
+                        savePreferences();
                     } else if (request == ToggleRequest::enableOnly) {
                         settings.enabled = true; ownFirstPerson = false; applyZoom = true; suspend(); savePreferences();
                     } else if (request == ToggleRequest::thirdPerson) {

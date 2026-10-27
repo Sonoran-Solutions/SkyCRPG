@@ -49,7 +49,7 @@ inline float zoomRequest(float nativeRequest, const Settings& s, bool applyPrefe
 enum class State { disabled, invalidWorld, special, menu, firstPerson, precision, targeting, obstruction, normal };
 struct Context {
     bool enabled = false, prerequisites = false, world = false, special = false, menu = false;
-    bool firstPerson = false, precision = false, targeting = false, obstruction = false;
+    bool firstPerson = false, tween = false, precision = false, targeting = false, obstruction = false;
 };
 constexpr State select(Context c) {
     if (!c.enabled || !c.prerequisites) return State::disabled;
