@@ -143,3 +143,32 @@ Missing-DLL/old-bridge fallback requires a separately staged movie/profile with 
 - Complete snapshot reads occur on selection/new press and validation, not a frame loop. Performance at 500 entries and retained-state behavior are unmeasured. Diagnostic consumers must avoid per-cell/per-frame sampling.
 - No generated SWF, DLL or public redistributable was produced. Existing source/license notices are retained; no third-party code/art is copied into this lane.
 - Owner decisions needed: **none for this handoff**. Remaining work is engineering verification/completion, Windows build and owner/runtime evidence; no acceptance or dependency/scope decision is implied.
+
+## Runtime smoke — 2026-10-26
+
+**PASS (owner-reported, bounded quick check).** The owner reported that the inventory worked correctly. This was a quick check, not the fixture route above, so the fixture rows remain **NOT_RUN**.
+
+| Field | Value |
+| --- | --- |
+| Source / CI | `65c69d7b9887221ff9c1f58d0e85c98e9cbc50a5`, Windows [run 40456048615](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40456048615) **PASS** |
+| Package | `SkyCRPG_UI-0.0.1-65c69d7.zip` `9c07891aec28a83d08922bd9680baa06e75b34a97d135486359ab46539d658f4`; DLL `cf4a0e0a0b318c6d971290506d6ef307ce6f5858cf01f4c960ff006ffca7062b`; INI `de4162addb6df41b4d915dc7ca2a609cc6dadea8f7d62d5644bbfe43b63c229b` |
+| Movies | `inventorymenu.swf` `211115dc54857086198a3c2162a6b0e47fa849f91806461c24279c89b323f45d`; `skyui/inventorylists.swf` `8766d2b2054bedae20fe8e0877fa26b83de259bc588e4415d2527a631a0363fe`; `hudmenu.swf` `279f08f2df4649811311f26b6dbcee6b41912365c00611d711ab3cdb1987f03f` (Phase 2 HUD, unchanged) |
+| Profile / host | UI-only, 175 deployed files, pinned map trio; Steam 1.7.104.0, SKSE 2.3.1, Address Library 13, Proton Experimental 11, controller off |
+| Save | Copied test save `Quicksave0_…_RiverwoodSleepingGiantInn_…_20261026144253` from the camera-only test profile |
+| Run | `e927cb0545234cf79a8cde418932ea7c`, 141 s, normal exit; watchdog did not intervene (minimum 13.4 GiB available) |
+| UI log | `116d45537ac9a7a661fefe9102125ef1acdbb9bdebc367f96fd6b5fef3e701e5`: source commit and Address Library guard PASS; **zero inventory refusals and no `unsupported-thread` line** |
+| Cleanup | Restoration **PASS**: no changed candidate files, no active profile, no Skyrim process. Records under `/srv/storage/Projects/SkyCRPG/session-p3/p3-inv-163/` |
+
+What this shows: the gated InventoryMenu loaded and native actions went through on this host, and the validator ran on the main thread without refusing anything. No new save was written during the run, so save/load was not exercised.
+
+Still **NOT_RUN** (from the route above):
+- Same-base enchanted, tempered and renamed copies.
+- Stolen versus owned items.
+- Quest-item drop refusal.
+- Quantity dialog confirm, cancel and close.
+- External add/remove with a stale entry.
+- Sort/filter between selection and action.
+- Save/load and death.
+- A modded form.
+- Carry weight and encumbrance before and after.
+- Hold/repeat input.
