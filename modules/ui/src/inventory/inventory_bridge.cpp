@@ -71,6 +71,23 @@ void LogRefusal(std::uint64_t token, const char* reason)
         std::fclose(log);
     }
 }
+// Every off-main-thread call is logged, bounded per process, so the route can
+// name the operation and thread instead of one line per inventory session.
+void LogOffThread(const char* operation)
+{
+    static int logged = 0;
+    if (logged >= 32) return;
+    ++logged;
+    const auto* main = RE::Main::GetSingleton();
+    const auto path = skycrpg::LogDirectory() + L"SkyCRPG_UI.log";
+    FILE* log = nullptr;
+    if (_wfopen_s(&log, path.c_str(), L"a") == 0 && log) {
+        std::fprintf(log, "Inventory off-thread op=%s thread=%lu main=%lu open=%d loaded=%d\n", operation,
+            static_cast<unsigned long>(REX::W32::GetCurrentThreadId()),
+            static_cast<unsigned long>(main ? main->threadID : 0), g_open ? 1 : 0, g_loaded ? 1 : 0);
+        std::fclose(log);
+    }
+}
 void RequestListUpdate()
 {
     if (g_refreshQueued) return;
@@ -274,6 +291,7 @@ public:
             // Live reads are unsafe here. Native validation stays authoritative
             // instead of trapping every action; the log marks the gate open.
             LogRefusal(0, "unsupported-thread; native behavior retained");
+            LogOffThread(_operation == Operation::Validate ? "validate" : "snapshot");
             if (_operation == Operation::Validate) params.retVal->SetBoolean(true);
             return;
         }

@@ -174,3 +174,22 @@ Still **NOT_RUN** (from the route above):
 - A modded form.
 - Carry weight and encumbrance before and after.
 - Hold/repeat input.
+
+## Fixture route — 2026-10-27
+
+**Owner-reported PASS for the observed behavior. The thread gate stays open: two `unsupported-thread` lines.**
+
+| Field | Value |
+| --- | --- |
+| Source / package | Same as the 2026-10-26 smoke: `65c69d7`, ZIP `9c07891a…`, DLL `cf4a0e0a…`, same SWFs. No shipped source changed through `e7aeda3`. |
+| Profile / host | UI-only, 175 files; same host as the smoke; keyboard and mouse, controller off |
+| Save | Copied `Quicksave0 … RiverwoodSleepingGiantInn … 20261026144253`; the route wrote new saves only into the test profile (`Save3`/`Quicksave0 … 20261027170446`, preserved under `session-p3/p3-inv-163-fix/after-test-saves`) |
+| Run | `da296784e4b1430a8799032173b70c81`, about 9 min of a 20 min budget, normal quit, watchdog did not intervene (minimum 12.7 GiB available) |
+| UI log | `6c095c49…`: `unsupported-thread; native behavior retained` twice, and `duplicate-input` refusals for tokens 89 and 207 |
+| Cleanup | Restoration **PASS**: no changed candidate files, no active profile, no Skyrim process |
+
+The owner ran the staged blocks (basic actions, tempered vs plain, stolen vs owned if available, potion quantity/cancel/close/external add, stale selection with sort/category/external remove and other menus, save/load and death, carry weight if time allowed) and reported **all passed**. The run record does not itemize which optional subrows were available. Still **NOT_RUN**: same-base self-enchanted copy, quest-item drop refusal (no Golden Claw/Unusual Gem staged), modded form, and the controller pass.
+
+The two `duplicate-input` refusals show the validator ran on the main thread and stopped repeated presses. The refusal log resets on every inventory open/close, so the two `unsupported-thread` lines mean **two separate inventory sessions** each had at least one `Snapshot` or `Validate` call off `Main::threadID`. On those calls native behavior acted unguarded. Under the rule above, the off-thread gate keeps DYL-163 open.
+
+Follow-up in this branch: every off-thread call now also logs `Inventory off-thread op=<snapshot|validate> thread=<id> main=<id> open=<0|1> loaded=<0|1>`, at most 32 lines per process, with no behavior change. A short rerun with that package names the operation and thread.
