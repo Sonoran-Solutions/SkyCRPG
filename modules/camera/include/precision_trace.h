@@ -14,6 +14,11 @@ enum class PrecisionTraceEvent : unsigned {
 struct PrecisionTraceState {
     Context context{};
     bool hardSpecial{}, owned{}, armed{}, down{};
+    // Supplied by the integration owner; UINT32_MAX means unavailable.
+    std::uint32_t cameraState{UINT32_MAX};
+    // Bits: mount, killmove, swim, missing controls, missing control map,
+    // script POV, beast POV, FOV slide, inactive third-person state.
+    std::uint32_t hazardBits{};
 };
 struct PrecisionTraceRecord {
     PrecisionTraceEvent event{};
@@ -51,9 +56,10 @@ constexpr std::uint32_t traceBits(const PrecisionTraceState& s) {
 inline bool formatPrecisionTrace(char* out, std::size_t size, const PrecisionTraceRecord& r) {
     if (!out || !size) return false;
     const int n = std::snprintf(out,size,
-        "precision_trace event=%u before=0x%03x after=0x%03x device=%u pressed=%u edge=%u decision=%u",
+        "precision_trace event=%u before=0x%03x after=0x%03x device=%u pressed=%u edge=%u decision=%u camera=%u/%u hazard=0x%03x/0x%03x",
         static_cast<unsigned>(r.event),traceBits(r.before),traceBits(r.after),r.device,
-        unsigned(r.pressed),unsigned(r.edge),r.decision);
+        unsigned(r.pressed),unsigned(r.edge),r.decision,r.before.cameraState,r.after.cameraState,
+        r.before.hazardBits,r.after.hazardBits);
     return n >= 0 && static_cast<std::size_t>(n) < size;
 }
 } // namespace skycrpg::camera

@@ -16,6 +16,11 @@ int main() {
     char line[192]{};
     assert(formatPrecisionTrace(line,sizeof(line),r));
     assert(std::strstr(line,"event=3 before=0x1a6 after=0x13e") != nullptr);
+    before.cameraState = 7; before.hazardBits = 0x25;
+    after.cameraState = 0; after.hazardBits = 0;
+    r.before = before; r.after = after;
+    assert(formatPrecisionTrace(line,sizeof(line),r));
+    assert(std::strstr(line,"camera=7/0 hazard=0x025/0x000") != nullptr);
     char tiny[8]{};
     assert(!formatPrecisionTrace(tiny,sizeof(tiny),r));
     assert(!formatPrecisionTrace(nullptr,0,r));
