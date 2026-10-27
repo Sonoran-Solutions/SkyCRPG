@@ -10,14 +10,14 @@ constexpr bool claimPrecisionOwnership(Context before, Context after) {
         !before.firstPerson && after.prerequisites && after.world && !after.special && !after.menu &&
         after.firstPerson;
 }
-// `hardSpecial` excludes only the two control-map enabled flags: mounts,
-// swimming, killmoves, special camera states, missing control interfaces and
-// scripted/beast/FOV modes remain hard invalidations even during a menu.
-// Menu focus may temporarily disable the control-map flags without revoking a
-// valid first-person session. Menu focus still blocks F6 via toggleRequest.
-// Never force a camera transition from this predicate.
+// A menu can temporarily replace the first-person camera state, so defer
+// state-specific validation while it owns focus. Provider/world loss still
+// revokes immediately, and the input sink separately cancels on native POV.
+// On return to gameplay, all first-person and special-state guards must pass
+// before a subsequent F6 can reclaim the view. This cannot detect an unsafe
+// transition that starts and ends entirely while a menu owns focus.
 constexpr bool retainPrecisionOwnership(Context c, bool owned, bool hardSpecial) {
-    return owned && c.prerequisites && c.world && c.firstPerson && !hardSpecial &&
-        (c.menu || !c.special);
+    return owned && c.prerequisites && c.world &&
+        (c.menu || (c.firstPerson && !hardSpecial && !c.special));
 }
 } // namespace skycrpg::camera

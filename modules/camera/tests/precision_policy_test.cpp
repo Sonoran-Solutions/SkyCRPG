@@ -26,17 +26,27 @@ int main() {
     assert(retainPrecisionOwnership(c, true, false));
     c.special = true; // menu temporarily disables native look/POV controls
     assert(retainPrecisionOwnership(c, true, false));
-    assert(!retainPrecisionOwnership(c, true, true)); // menu plus true special state
+    assert(retainPrecisionOwnership(c, true, true)); // menu camera can report a special state
     c.prerequisites = false;
     assert(!retainPrecisionOwnership(c, true, false)); // provider disabled in menu
     c.prerequisites = true; c.world = false;
     assert(!retainPrecisionOwnership(c, true, false)); // load/death in menu
     c.world = true; c.firstPerson = false;
-    assert(!retainPrecisionOwnership(c, true, false)); // departed during menu
+    assert(retainPrecisionOwnership(c, true, true)); // menu temporarily replaced the camera state
     c.firstPerson = true;
     assert(toggleRequest(c, true) == ToggleRequest::none);
     c.menu = false; c.special = false;
     assert(toggleRequest(c, true) == ToggleRequest::thirdPerson);
+    // A menu-hidden interruption is deferred, not accepted: revalidate after focus.
+    c.firstPerson = false;
+    assert(!retainPrecisionOwnership(c, true, false));
+    c.firstPerson = true;
+    assert(!retainPrecisionOwnership(c, true, true)); // hard special remains after close
+    // Native POV cancellation is performed by the sink even while menu-focused.
+    c.menu = true;
+    bool canceled = false;
+    assert(!retainPrecisionOwnership(c, canceled, true));
+    c.menu = false;
     c.special = true;
     assert(!retainPrecisionOwnership(c, true, false));
     c.special = false; c.world = false;
@@ -76,6 +86,16 @@ int main() {
     assert(!key.update(false, false));
     assert(key.update(true, true));
     assert(toggleRequest(input, session) == ToggleRequest::thirdPerson);
+
+    // Recorded menu trace: focus is present while the engine reports a
+    // non-first-person, special camera; first-person resumes after close.
+    Context recorded{};
+    recorded.prerequisites = recorded.world = recorded.menu = recorded.special = true;
+    bool observedSession = retainPrecisionOwnership(recorded, true, true);
+    assert(observedSession && toggleRequest(recorded, observedSession) == ToggleRequest::none);
+    recorded.menu = recorded.special = false; recorded.firstPerson = true;
+    observedSession = retainPrecisionOwnership(recorded, observedSession, false);
+    assert(observedSession && toggleRequest(recorded, observedSession) == ToggleRequest::thirdPerson);
 
     // A provider interruption observed on input revokes return permission.
     input.prerequisites = false;
