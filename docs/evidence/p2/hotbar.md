@@ -1,23 +1,20 @@
 # DYL-161 hotbar candidate — incomplete validation
 
-Base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`. The owner-reported UI-only controller route and Windows build **PASS** on source `5b06523d675b5118fef2148b503026ba04fb2b92`; subsequent commits through `2bebb1b` are documentation-only. The native Favorites menu is the verified bounded controller selection route for the requested weapon, spell and consumable checks. Direct controller cycling or assigning custom slots is not implemented; keyboard-only bindings and live shout recovery remain open; the bounded combined smoke passed as recorded below. See the [controller retest](#controller-favorites-retest--2026-10-26) below; earlier failures and candidate histories remain preserved.
+## Current status
 
-| Current check | Result and limit |
-| --- | --- |
-| Windows target and generated HUD | **PASS** on tested source `5b06523`; exact DLL, native ZIP and SWF hashes are in the controller retest. The native ZIP does not include the SWF. |
-| UI-only controller Favorites route | **PASS, owner-reported** for requested weapon, spell, consumable, favorite removal, empty slot, display, menu visibility and duplicate-action observations. No independent action telemetry or screenshot was collected. |
-| Direct controller slot cycling/assignment | **NOT IMPLEMENTED**; select displayed favorites through the native Favorites menu. |
-| Numbered keyboard bindings and in-game shout recovery | **NOT_RUN** on the controller-only setup. |
-| Combined Camera/UI and scan performance | **PASS**, owner-reported bounded smoke on prior source; scan performance **NOT_RUN**. |
-| Previous UI-only candidate | **FAIL**: empty bar after attempted keyboard assignment in controller mode and overlap with Favorites; preserved in its historical route below. |
+- **PASS:** Windows UI build [40438723566](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40438723566) on source `ba10da6`; bounded, owner-reported keyboard auto-FAV select/equip/use, menu blocking and depletion refresh in combined run `8eb20c9ab8cf4a978fcfbbbfcf8833ec` (controller off), corroborated by dispatch logs. Earlier bounded controller Favorites and combined smoke routes also passed as recorded below; they do not establish full acceptance.
+- **NOT_RUN:** a truly native-number-bound press proving no duplicate action, weapon unequip on a second press, in-game shout recovery, full native cast/attack path, and scan performance. Direct controller slot cycling/assignment is not implemented; the bounded controller path uses native Favorites. On this host the controller must be off for keyboard/mouse input.
+- **Packaging:** the native ZIP excludes the separately generated HUD SWF and is not a complete installer. The tested SWF SHA-256 is `279f08f2df4649811311f26b6dbcee6b41912365c00611d711ab3cdb1987f03f`.
 
-## Unbound FAV slot dispatch candidate
+The following sections preserve candidate-time results and earlier failures. Later results supersede their then-current status; see especially [Unbound FAV dispatch owner retest](#unbound-fav-dispatch-owner-retest--2026-10-26).
+
+## Unbound FAV slot dispatch candidate — initial validation (historical)
 
 Keyboard Hotkey1–Hotkey8 down events now queue a game task for the displayed slot. Native-bound and empty slots dispatch nothing; the task refreshes bindings and menu focus and re-resolves ownership and inventory instances before acting. Unbound weapons and armor toggle, consumables use, scrolls equip, spells select the right hand, shouts select, and powers select the voice slot. A maximum of 64 press diagnostics per session includes native-bound slots. The slot IDs are right hand `0x13F42` and voice `0x25BEE`, matching the pinned SkyUI FavoritesManager scripts. This is a new candidate; prior gameplay results do not validate it.
 
 Focused Linux suite **PASS**: `timeout 600s bash /tmp/skycrpg-dyl161/tests.sh` (four portable C++ tests, two actual-AS harnesses and 14 Scaleform contract tests), exit 0; job record `/tmp/skycrpg-dyl161/dispatch-job.txt`, log `/tmp/skycrpg-dyl161/dispatch-tests.log`. **Windows build NOT_RUN; owner retest NOT_RUN.** No SWF source changed or rebuilt. No Skyrim process, profile or save was touched.
 
-## Current follow-up candidate — keyboard, voice and depletion
+## Earlier follow-up candidate — keyboard, voice and depletion (historical)
 
 The prior bounded controller route and combined smoke remain owner-reported **PASS** on their recorded hashes; they are not tests of this changed candidate. Native quick-key N maps to bar position N; existing unbound `FAV` entries fill holes and are not numbered actions. The UI has no gameplay input handler or synthetic dispatch. Skyrim owns menu focus and key conflicts; verify the native quick-key badges and behavior with keyboard input enabled. Item snapshots exclude counts at or below zero; a fresh snapshot clears a depleted binding or fills its position with another `FAV`. Pure mapping/count checks and the mocked HUD disappearance check **PASS**, actual zero-count engine behavior **NOT_RUN**.
 
@@ -45,7 +42,7 @@ New source SHA-256: plugin `34ce7eb2670a3ac6a3ab5254a54dc28f6b5a2e4de25bfb976e5f
 
 Initial Windows CI run `40394556388` **FAIL**: MSVC C4267 treated as an error on the `std::size_t` index passed to `BSTArray::operator[]`, whose pinned `size_type` is `uint32_t`. The correction uses that exact size type, bounded by both eight slots and the array size. Native source SHA-256 after this fix is `ff5b2b4c3b9201abc67e543b89fedecd5290b51422db43a077046aeba20424e5`; the SWF remains unchanged from the voice recovery candidate below. Actual-AS harness and 14 existing Scaleform source checks pass after the fix. **Windows rebuild NOT_RUN** for the corrected code; CI must verify the fix and compile the later voice-recovery additions. Source inspection confirms the recovery code includes `<cmath>`, uses the pinned CommonLib actor/AIProcess and TESShout declarations, and guards missing high process before the native getter; this is not a compiler or runtime result.
 
-## Native voice recovery follow-up — source audit
+## Native voice recovery follow-up — historical source audit
 
 Pinned SKSE 2.3.1 `scripts/vanilla/Actor.psc` calls `GetVoiceRecoveryTime` the actor voice recovery timer and specifies the corresponding setter's units as seconds. Pinned CommonLib 7.2.0 `Actor.cpp` maps its getter to AE ID 38808. The exact Address Library 13 file SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842` maps that ID to RVA `0x6d92b0`. Read-only disassembly of the exact Steam executable SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f` shows the getter follows `Actor+0xf8` to AIProcess, then high-process pointer `+0x10`, then reads float `+0x18`, matching the CommonLib `voiceRecoveryTime` member. The adjacent setter writes the same field. The binary check validates the mapped function and underlying field, not live countdown behavior or broader runtime safety.
 
@@ -83,7 +80,9 @@ The candidate registers no hotbar input handler and dispatches no synthetic acti
 
 The runtime target is Steam Skyrim 1.7.104.0, SKSE 2.3.1, Address Library 13, Ubuntu 26.04.1, Proton Experimental 11, RTX 3080, SkyUI Community 6.11, with other pins in [the runtime matrix](../../compatibility/runtime-matrix.md). The historical table above predates the UI-only owner routes below. Native UI ZIP still lacks generated `hudmenu.swf`; this candidate does not resolve licensing or public distribution.
 
-## Remaining obligations
+## Remaining obligations at the controller retest (historical)
+
+This snapshot predates the combined smoke and keyboard dispatch retest; see Current status above.
 
 The owner-reported controller route passed the bounded weapon, spell, consumable, empty/removal, menu and duplicate-action checks described below. Independent action telemetry was not collected. Keyboard-only numbered bindings, native bound item/magic precedence, instance-specific behavior, live shout recovery, inventory-scan overhead and combined Camera/UI smoke remain **NOT_RUN**. Direct custom-slot cycling/assignment is not implemented; the controller path uses the native Favorites menu. F6/F7/F8 remain Camera-owned and no UI gameplay input handler was added. The native UI ZIP lacks the generated SWF and does not establish public distribution readiness.
 
@@ -97,7 +96,9 @@ Pinned host and provider versions are as recorded above. The bounded run `dc8bcc
 
 The owner subsequently clarified that they were using controller mode and that mouse/keyboard input inside Skyrim had not worked even in the original unmodified baseline. This does not establish a regression in the hotbar. It does establish that this candidate's numbered-key assignment path is not usable for that controller-only setup; controller-accessible assignment/selection remains an unmet requirement. The cause of the mouse issue is outside the evidence collected here, and an independent keyboard-only binding test remains **NOT_RUN**.
 
-## Automatic favorite display for controller users — implementation
+## Automatic favorite display for controller users — historical implementation
+
+**Superseded:** the original display-only behavior described below was replaced by keyboard dispatch for auto-filled FAV slots. See the later [Unbound FAV dispatch owner retest](#unbound-fav-dispatch-owner-retest--2026-10-26). Native-bound slots remain Skyrim-owned.
 
 The owner expected favoriting an item to populate the bar and reported a controller-only Skyrim session. This candidate fills unoccupied positions with otherwise-unrepresented native favorites, sorted by form ID and limited to the first eight total entries. Native numbered bindings retain their original positions and take precedence, including SKSE's magic-over-item precedence. Automatically displayed entries say **FAV**, not a number: they do not acquire a binding and cannot be activated by the displayed position. Controller users select individual items through Skyrim/SkyUI's existing Favorites menu. Favorites beyond the eight displayed remain accessible in that native menu; removal or depletion can reorder the unbound entries. Direct controller cycling/assignment on the bar is not implemented or claimed.
 
@@ -106,6 +107,8 @@ Source membership follows pinned SKSE 2.3.1 `PapyrusGame.cpp` `IsObjectFavorited
 The bounded portable test covers bound-slot preservation, deterministic ordering, duplicate suppression, depletion/removal refresh and overflow; the actual-AS mocked HUD verifies numeric versus FAV labels and existing focus behavior. Fourteen existing source checks also pass. FFDec build **PASS / COMPILED_NOT_RUN**, output `hudmenu.swf` SHA-256 `a716d12a9668438f635564352539f1600d5a57c41a9d9c200b45a92c02a1f606`; job, log and generated asset are retained outside Git under `/srv/storage/Projects/SkyCRPG/session-p2-wave2/controller-favorites/`. Those checks and build were initially **NOT_RUN** at compilation time; the subsequent controller retest below records the owner-reported results. The native Favorites menu is the tested bounded fallback, not direct hotbar cycling or assignment.
 
 ## Controller Favorites retest — 2026-10-26
+
+The remaining NOT_RUN statements in this section describe this earlier run; see Current status for later evidence.
 
 The owner reported “All tests you asked me to do passed” for the requested UI-only controller route: favorite a weapon, spell and consumable; observe FAV entries, icons, counts and equipment markers; select/equip/use through native Favorites; check an empty slot and remove a favorite; and check that the bar hides for menus and returns. This is a bounded **owner-reported PASS** for those requested checks, including the requested duplicate-action observation. No independent action telemetry or screenshots were captured. Direct controller cycling of custom slots, keyboard-only numbered hotkeys, native shout recovery and combined Camera/UI gameplay remain **NOT_RUN**.
 
@@ -116,6 +119,8 @@ Tested source `5b06523d675b5118fef2148b503026ba04fb2b92`, Windows build [4040087
 The owner reported “Everything works fine on that test” for the requested combined smoke: elevated camera and FAV bar visibility, native Favorites selection/equip and bar refresh, world prompt, menu focus without accidental action, and normal camera controls. **PASS, owner-reported and bounded.** The known F6-after-menu failure was explicitly excluded and remains open. No independent action telemetry or screenshot was captured. Tested Camera source `3c1b6711907b76497b7958c8c9ecfcf8227bc3fb` / DLL `140d21a695e7db9ed7d76b837ddb8b36ca5baa9a49d995d7f9f409fd57435c43`; UI source `5b06523d675b5118fef2148b503026ba04fb2b92` / DLL `c7196fb511e138eb3b952b4a9114aff714f986f928296d16b67fa0dbff23e0b6`; SWF `a716d12a9668438f635564352539f1600d5a57c41a9d9c200b45a92c02a1f606`. The bounded run `231d6e3c787949ee8278f502680dd2a9` exited normally without watchdog intervention or remaining process; profile restoration **PASS**. Logs, copied test-save outputs and restoration record are retained under `/srv/storage/Projects/SkyCRPG/session-p2-20261026/wave4-combined-smoke/`. This smoke does not establish full lifecycle, keyboard binding or shout-recovery coverage.
 
 ## Native quick-key and voice candidate owner check — 2026-10-26
+
+This and the following input-isolation results describe the earlier candidate; the later dispatch retest supersedes its keyboard status.
 
 Combined Camera/UI run on UI source `513a9de06d1a6f67367a632e438d49ce9d1581ee` (Windows build [40430777974](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40430777974) **PASS**; UI DLL SHA-256 `6a9d1ad977ef24744d2b3dab5fccde7514d6278717343774c612048231d7d88c`, archive SHA-256 `078daf78d48d2e2640df1235d90f151e65cc40168d58f240be258ae4318b2138`, SWF SHA-256 `279f08f2df4649811311f26b6dbcee6b41912365c00611d711ab3cdb1987f03f`), Camera source `b33ab25`. The owner reported that favoriting items and their display on the hotbar work correctly. Pressing number keys did **not** equip or use the items: keyboard hotkeys are **BLOCKED (host input)**, not FAIL. On this host keyboard and mouse input did not reach the game generally: WASD movement and mouse look also did not work, while the controller did. A Deskflow client (software KVM) was running, and the Proton log recorded `dinput_mouse_rawinput_hook Unimplemented MOUSE_VIRTUAL_DESKTOP flag` (absolute virtual-desktop pointer input). The UI dispatches no hotkey action; numbered equip is native Skyrim behavior, so it cannot be evaluated until keyboard input reaches the game. Voice-line and depletion checks were not separately reported. Bounded run `1c303a5f442843e4aa1ce854c9b3fdde` quit normally; UI log SHA-256 `3e6583357b59c0d96ec0223acee1c4ed421dc2e7353ba78f2abee08dff9def29`; restoration **PASS**; records under `/srv/storage/Projects/SkyCRPG/session-p2-20261026/wave5-f6-tween-hotbar/`. Retest with a directly connected keyboard/mouse (Deskflow not routing input) is required.
 
@@ -128,6 +133,8 @@ Same combined artifacts, with Deskflow stopped and a directly connected keyboard
 Baseline profile (game + SKSE 2.3.1 only, no mods) run `7f0a621a266c4e889eb6715515b19b88` quit normally; restoration **PASS**. With the 8BitDo XInput controller switched off, the owner reported keyboard movement, keys and mouse buttons working; mouse look did not, consistent with Deskflow's absolute pointer input recorded earlier. **Diagnosis: host input configuration, not SkyCRPG code.** With `bGamepadEnable=1` and a connected controller, native keyboard/mouse gameplay input was ignored, while SKSE plugins still received raw F6/F8 `ButtonEvent`s. A read-only source audit found no input-consuming sink, control toggle, context push or cursor control in either module. Keyboard hotkey acceptance requires a combined retest with the controller off; mouse look requires a directly connected mouse (not Deskflow).
 
 ### No-controller combined retest — 2026-10-26
+
+This failure describes the earlier candidate and is superseded by the dispatch retest below.
 
 Same combined artifacts; controller off, keyboard via Deskflow. Run `5de63e4ae91a40bf9b99c4fda68b1356` quit normally; restoration **PASS**. Owner-reported: menu focus blocks number keys and the bar returns after menus **PASS**; depleted consumable slot refresh **PASS**; number keys using items shown on the bar **FAIL**; voice line **NOT_RUN** (character has no shouts). Keyboard input reached the game in this run, so the remaining failure is a design gap. Auto-filled `FAV` slots have no native quick-key binding, and the UI dispatches nothing, so pressing that slot's number has no effect.
 
