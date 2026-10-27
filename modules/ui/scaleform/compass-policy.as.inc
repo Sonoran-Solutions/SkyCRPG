@@ -49,11 +49,20 @@
          visible = visible && hud._visible == true && hud._alpha > 0;
          var bounds = visible && typeof(map.getBounds) == "function" ? map.getBounds(_root) : undefined;
          var inside = bounds != undefined && isFinite(bounds.xMin) && isFinite(bounds.xMax) &&
-            isFinite(bounds.yMin) && isFinite(bounds.yMax) && bounds.xMin < bounds.xMax && bounds.yMin < bounds.yMax &&
-            // DEM anchors its frame flush to the corner; allow a small overhang
-            // past the screen edge but keep the whole clip in the upper-right quadrant.
-            bounds.xMin >= Stage.width / 2 && bounds.xMax <= Stage.width + 8 &&
-            bounds.yMin >= -8 && bounds.yMax <= Stage.height / 2;
+            isFinite(bounds.yMin) && isFinite(bounds.yMax) && bounds.xMin < bounds.xMax && bounds.yMin < bounds.yMax;
+         if (inside) {
+            // DEM's frame sits flush to the corner and its quest pointer/distance
+            // label overhang the screen edge, so whole-clip containment is wrong.
+            // Require the clip's centre in the upper-right quadrant and at least
+            // half of its area on screen.
+            var centreX = (bounds.xMin + bounds.xMax) / 2;
+            var centreY = (bounds.yMin + bounds.yMax) / 2;
+            var shownWidth = Math.min(bounds.xMax, Stage.width) - Math.max(bounds.xMin, 0);
+            var shownHeight = Math.min(bounds.yMax, Stage.height) - Math.max(bounds.yMin, 0);
+            inside = centreX >= Stage.width / 2 && centreX <= Stage.width && centreY >= 0 && centreY <= Stage.height / 2 &&
+               shownWidth > 0 && shownHeight > 0 &&
+               shownWidth * shownHeight >= 0.5 * (bounds.xMax - bounds.xMin) * (bounds.yMax - bounds.yMin);
+         }
          var mode = hud.CompassShoutMeterHolder != undefined && hud.CheckAgainstHudMode(hud.CompassShoutMeterHolder);
          var blocked = bridge == undefined || typeof(bridge.isMenuFocusBlocked) != "function" || bridge.isMenuFocusBlocked() != false;
          var reason = map == undefined ? "no-map" : !visible ? "hidden" : !inside ? "bounds" : !mode ? "hud-mode" :

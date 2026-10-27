@@ -29,14 +29,19 @@ blocked = true; tick(1); assert.strictEqual(compass._visible, true); blocked = f
 hud.Minimap._visible = false; tick(1); assert.strictEqual(compass._visible, true); hud.Minimap._visible = true; acquire();
 const map = hud.Minimap; hud.Minimap = undefined; tick(1); assert.strictEqual(compass._visible, true); hud.Minimap = map; acquire();
 const bounds = map.getBounds; map.getBounds = () => ({xMin: 100, xMax: 200, yMin: 20, yMax: 200}); tick(1); assert.strictEqual(compass._visible, true); map.getBounds = bounds; acquire();
-// Runtime 2026-10-26: DEM's frame sits flush to the corner of a 1280x720 HUD
-// (about 1094,3 to 1278,195). That must count as in bounds; a clip
-// leaving the quadrant or overhanging far past the edge must not.
+// Runtime 2026-10-26 (runs de93b86f, e0a74f54): DEM's live clip on a 1280x720
+// HUD measured 1136,-0.04 to 1280,133.5 and, with its quest pointer, 1147,16
+// to 1338,175. Both are the corner map and must count as in bounds.
 Stage.width = 1280; Stage.height = 720;
+for (const live of [{xMin: 1136.25, xMax: 1280, yMin: -0.04, yMax: 133.54}, {xMin: 1147.1, xMax: 1337.9, yMin: 16.33, yMax: 175.24}]) {
+  map.getBounds = () => live; tick(100); tick(500); assert.strictEqual(compass._visible, false);
+}
+// Centre outside the quadrant, mostly off screen, or reaching the lower half: release.
+map.getBounds = () => ({xMin: 500, xMax: 700, yMin: 3, yMax: 195}); tick(1); assert.strictEqual(compass._visible, true);
 map.getBounds = () => ({xMin: 1094, xMax: 1278, yMin: 3, yMax: 195}); tick(100); tick(500); assert.strictEqual(compass._visible, false);
-map.getBounds = () => ({xMin: 1094, xMax: 1300, yMin: 3, yMax: 195}); tick(1); assert.strictEqual(compass._visible, true);
-map.getBounds = () => ({xMin: 600, xMax: 1278, yMin: 3, yMax: 195}); tick(1); assert.strictEqual(compass._visible, true);
-map.getBounds = () => ({xMin: 1094, xMax: 1278, yMin: 3, yMax: 400}); tick(1); assert.strictEqual(compass._visible, true);
+map.getBounds = () => ({xMin: 1200, xMax: 1600, yMin: 3, yMax: 195}); tick(1); assert.strictEqual(compass._visible, true);
+map.getBounds = () => ({xMin: 1094, xMax: 1278, yMin: 3, yMax: 195}); tick(100); tick(500); assert.strictEqual(compass._visible, false);
+map.getBounds = () => ({xMin: 1094, xMax: 1278, yMin: 200, yMax: 600}); tick(1); assert.strictEqual(compass._visible, true);
 assert.ok(logs.some((line) => line.indexOf('SkyCRPG compass lease bounds') == 0), 'refusal reason is logged');
 assert.ok(logs.some((line) => line.indexOf('SkyCRPG compass lease suppressed') == 0), 'suppression is logged');
 Stage.width = 1000; Stage.height = 800; map.getBounds = bounds; acquire();
