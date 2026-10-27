@@ -1,0 +1,42 @@
+{
+  "purpose": "Compile and run the portable compression/hysteresis policy and existing camera policy/probe regressions; no engine or profiles",
+  "command": [
+    "timeout",
+    "--kill-after=5s",
+    "600s",
+    "bash",
+    "/tmp/skycrpg-dyl157-compression-20261026/run.sh"
+  ],
+  "profile": "Linux portable C++20; Camera only, no Skyrim",
+  "expected_output": "Three test executables exit zero; PASS messages; no compiler warnings",
+  "timeout_seconds": 600,
+  "owner": "Codex DYL-157 obstruction worker",
+  "completion_signal": "Runner exit 0 with all three suites passed",
+  "cleanup": "timeout process group; retain only /tmp task binaries and tracked log; verify no surviving child processes",
+  "result": "PASS",
+  "base_commit": "0235d6f767922b4e7395569b3ee72154a902708a",
+  "host": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+  "compiler": "g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+  "previous_run": {
+    "result": "PASS",
+    "elapsed_seconds": 0.765,
+    "reason_for_new_run": "Source review added preference drift regression, integrated obstruction state selection, and guarded pending transitions/drawn state after native update."
+  },
+  "source_sha256": {
+    "modules/camera/include/obstruction_policy.h": "ae203f585e8833dce22f690237a7df3e4393c90a1eeaf14485b382be10189a0e",
+    "modules/camera/tests/obstruction_policy_test.cpp": "ccc568b3c8e950d258394f0904fe1bef3ec68fd27a0b588054779303d48da820",
+    "modules/camera/src/plugin.cpp": "c905e67183673cd2f49db9bafd0ef3bb733267909c6011d31d7efc5cd9651751",
+    "modules/camera/include/policy.h": "dad4164311a367271174412ab7a129871d2ac34df5cfda47dae47910a530f6b8",
+    "modules/camera/tests/policy_test.cpp": "de305ea7ca044d368cfb25137603d25cea7afd831cb8df984e7d3fdbb218d53a",
+    "modules/camera/include/obstruction_probe.h": "77f1dad789ee520055ea8db06ced9782401e389660e0be765d19323ff71c467d",
+    "modules/camera/tests/obstruction_probe_test.cpp": "37d428828888efc379ac07cc8f888fa50ce7cc1391f8f7519da9f8880f53f009",
+    "modules/camera/config/SkyCRPG_Camera.ini": "1f8ad8a7de38af8e1f4e2bccde680507b4eac7b7adb750c9474b688cdd16b291"
+  },
+  "runner_script": "set -eu\nfor suite in obstruction_policy policy obstruction_probe; do\n    g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/camera/include \"modules/camera/tests/${suite}_test.cpp\" -o \"/tmp/skycrpg-dyl157-compression-20261026/${suite}_test\"\n    \"/tmp/skycrpg-dyl157-compression-20261026/${suite}_test\"\n    echo \"PASS ${suite}_test\"\ndone\n",
+  "pid": 4,
+  "started_utc": "2026-10-27T01:16:17Z",
+  "deadline_utc": "2026-10-27T01:26:22Z",
+  "exit_code": 0,
+  "elapsed_seconds": 0.765,
+  "cleanup_result": "PASS: no surviving process group"
+}

@@ -3,6 +3,7 @@
 #include <SKSE/SKSE.h>
 #include <skycrpg/skeleton.h>
 #include "policy.h"
+#include "obstruction_policy.h"
 #pragma warning(push)
 #pragma warning(disable: 4191) // permitted external API FARPROC conversion
 #define SMOOTHCAM_API_COMMONLIB
@@ -12,6 +13,7 @@
 #include <bcrypt.h>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -30,6 +32,13 @@ static_assert(offsetof(RE::PlayerControlsData,povScriptMode) == 0x28);
 static_assert(offsetof(RE::PlayerControlsData,povBeastMode) == 0x29);
 static_assert(offsetof(RE::ControlMap::RUNTIME_DATA,enabledControls) == 0x30);
 Settings settings;
+ObstructionSettings obstructionSettings;
+ObstructionPolicy obstructionPolicy;
+ObstructionFrame obstructionFrame;
+std::chrono::steady_clock::time_point obstructionSampleTime{};
+RE::FormID obstructionCell = 0;
+bool adjustedZoomWritten = false;
+float lastAdjustedZoom = 0;
 bool ready = false, loading = true, ownFirstPerson = false, recenter = false;
 SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
@@ -119,6 +128,18 @@ void loadSettings() {
     s.recenterGamepad = number("Controls","iRecenterGamepad",-1);
     compatibleSettings = s.schema == 1;
     settings = validate(s);
+    ObstructionSettings o;
+    o.enabled = number("Obstruction","bEnabled",0) == 1;
+    o.enterRatio = number("Obstruction","fEnterRatio",o.enterRatio);
+    o.exitRatio = number("Obstruction","fExitRatio",o.exitRatio);
+    o.enterSeconds = number("Obstruction","fEnterSeconds",o.enterSeconds);
+    o.exitSeconds = number("Obstruction","fExitSeconds",o.exitSeconds);
+    o.warmupSeconds = number("Obstruction","fWarmupSeconds",o.warmupSeconds);
+    o.tightPitch = number("Obstruction","fTightPitchDegrees",o.tightPitch);
+    o.tightZoom = number("Obstruction","fTightZoom",o.tightZoom);
+    o.tightenRate = number("Obstruction","fTightenRate",o.tightenRate);
+    o.recoverRate = number("Obstruction","fRecoverRate",o.recoverRate);
+    obstructionSettings = validateObstruction(o,settings);
 }
 void savePreferences() {
     if (!compatibleSettings) return;
@@ -129,7 +150,11 @@ void savePreferences() {
         !WritePrivateProfileStringA("Camera","bEnabled",settings.enabled?"1":"0",path.c_str()) ||
         !WritePrivateProfileStringA("Camera","fZoom",zoom.c_str(),path.c_str())) log("Preferences write failed; session remains usable, disk settings unchanged or partial.");
 }
-void suspend() { recenter = false; for (auto& key : keys) key.suspend(); }
+void resetObstruction() {
+    obstructionPolicy.reset(); obstructionFrame = {};
+    obstructionSampleTime = {}; obstructionCell = 0;
+}
+void suspend() { resetObstruction(); recenter = false; for (auto& key : keys) key.suspend(); }
 bool focused() {
     const auto ui = RE::UI::GetSingleton();
     if (!ui || ui->GameIsPaused() || ui->IsApplicationMenuOpen() || ui->IsModalMenuOpen()) return true;
@@ -166,13 +191,48 @@ Context context(bool allowZoomSlide = false) {
     if (!c.firstPerson && camera->currentState->id == RE::CameraState::kThirdPerson &&
         static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) c.special = true;
     c.menu = focused();
-    // Precision/targeting/obstruction intervention is intentionally left to DYL157/158.
+    // DYL-158 supplies precision/targeting intervention; select() reserves their priority.
+    c.obstruction = obstructionFrame.obstructed;
     return c;
+}
+void sampleObstruction(RE::ThirdPersonState* state) {
+    auto c = context();
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    // No combat-mode classification is assumed on this branch. Conservatively
+    // release automatic framing for ALL drawn weapons/spells pending DYL-158.
+    if (player && player->IsWeaponDrawn()) c.precision = true;
+    if (!obstructionSettings.enabled || !obstructionFramingAllowed(c) || !camera || !player ||
+        camera->currentState.get() != state || !state->freeRotationEnabled || !camera->cameraRoot ||
+        camera->cameraTarget.get().get() != player) {
+        resetObstruction(); return;
+    }
+    const auto cell = player->GetParentCell()->GetFormID();
+    if (obstructionCell != cell) resetObstruction();
+    obstructionCell = cell;
+    const auto now = std::chrono::steady_clock::now();
+    if (obstructionSampleTime == std::chrono::steady_clock::time_point{}) {
+        obstructionSampleTime = now; return;
+    }
+    const double dt = std::chrono::duration<double>(now-obstructionSampleTime).count();
+    obstructionSampleTime = now;
+    // BEFORE native update: root still contains the last provider-rendered
+    // result. GetLastCameraPosition is pre-collision and must not be used here.
+    // This is an approximate current-goal signal, not a provider collision flag;
+    // interpolation/update ordering still requires exact-binary route validation.
+    RE::NiPoint3 goal{}, local{};
+    provider->GetGoalPosition(player,goal,local);
+    const auto actual = camera->cameraRoot->world.translate;
+    const ObstructionPoint focus{static_cast<double>(goal.x)-local.x,
+                                 static_cast<double>(goal.y)-local.y,
+                                 static_cast<double>(goal.z)-local.z};
+    obstructionFrame = obstructionPolicy.step(c,cameraCompression(
+        {actual.x,actual.y,actual.z},{goal.x,goal.y,goal.z},focus),dt,obstructionSettings);
 }
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     const auto c = context();
     const auto camera = RE::PlayerCamera::GetSingleton();
-    if (select(c) != State::normal || !camera || camera->currentState.get() != state || !state->freeRotationEnabled) {
+    if (!obstructionFramingAllowed(c) || !camera || camera->currentState.get() != state || !state->freeRotationEnabled) {
         suspend(); previousLook(state,input); return;
     }
     auto setting = RE::GetINISetting("fFreeRotationSpeed:Camera");
@@ -183,9 +243,11 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
         suspend(); previousLook(state,input); return;
     }
     const auto player = RE::PlayerCharacter::GetSingleton();
+    if (player->IsWeaponDrawn()) resetObstruction();
     const float currentPitch = player->GetAngleX()-state->freeRotation.y;
     RE::NiPoint2 filtered = input;
-    filtered.y = correction(currentPitch-radians(settings.pitch),radians(settings.pitchSpeed),gain,dt);
+    const float pitch = obstructionPitch(settings.pitch,obstructionFrame.blend,obstructionSettings);
+    filtered.y = correction(currentPitch-radians(pitch),radians(settings.pitchSpeed),gain,dt);
     if (recenter) {
         const float error = wrap(-state->freeRotation.x);
         filtered.x = correction(error,radians(settings.recenterSpeed),gain,dt);
@@ -194,16 +256,23 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     previousLook(state,filtered); // exactly once, retaining provider input lock + native update
 }
 void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>& next) {
+    if (next && next.get() != state) resetObstruction();
+    else sampleObstruction(state);
     previousUpdate(state,next); // native first; outer SmoothCam wrapper performs transforms AFTER us
     const auto c = context(true);
     const auto camera = RE::PlayerCamera::GetSingleton();
-    if (select(c) != State::normal || !camera || camera->currentState.get() != state) return;
+    if (!obstructionFramingAllowed(c) || !camera || camera->currentState.get() != state || (next && next.get() != state)) {
+        resetObstruction(); return;
+    }
+    if (RE::PlayerCharacter::GetSingleton()->IsWeaponDrawn()) resetObstruction();
     // Native controller POV-slide zoom bypasses HandleLookInput, so bound the
     // requested scalar after native update and BEFORE the outer provider update.
     // stateNotActive/POV transitions are excluded; current distance is never written.
-    state->targetZoomOffset = zoomRequest(state->targetZoomOffset,settings,applyZoom);
+    settings.zoom = preferredZoomRequest(state->targetZoomOffset,lastAdjustedZoom,adjustedZoomWritten,settings,applyZoom);
+    state->targetZoomOffset = obstructionZoom(settings.zoom,obstructionFrame.blend,obstructionSettings);
+    lastAdjustedZoom = state->targetZoomOffset;
+    adjustedZoomWritten = obstructionFrame.blend > 0;
     applyZoom = false;
-    settings.zoom = state->targetZoomOffset;
 }
 class Events final : public RE::BSTEventSink<RE::InputEvent*>, public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
 public:
@@ -243,7 +312,7 @@ public:
                     } else if (request == ToggleRequest::thirdPerson) {
                         settings.enabled = true; ownFirstPerson = false; suspend(); applyZoom = true; static_cast<void>(camera->ForceThirdPerson()); savePreferences();
                     }
-                } else if (select(c) == State::normal) recenter = true;
+                } else if (obstructionFramingAllowed(c)) recenter = true;
             }
         }
         return RE::BSEventNotifyControl::kContinue;

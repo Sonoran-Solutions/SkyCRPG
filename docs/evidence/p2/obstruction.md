@@ -1,6 +1,8 @@
-# DYL-157 obstruction investigation
+# DYL-157 obstruction candidate and investigation
 
-**Status: BLOCKED on a trustworthy obstruction signal and runtime validation.** This is an investigation, not a feature implementation or a review-ready candidate. Base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`. The portable diagnostic test below ran; no game, Windows build or deployment ran. No new native or generated game artifact exists.
+**Current status: source candidate; focused Linux policy tests PASS; Windows build and candidate owner route NOT_RUN.** The [read-only compression candidate](#read-only-compression-candidate--2026-10-26) below implements the supplied orchestrator direction on `phase2/dyl-157-obstruction`, draft PR #10. Automatic framing defaults off; runtime signal quality and gameplay acceptance remain open. No game, deployment, profile/save modification, Windows build, push or native artifact creation ran for this candidate.
+
+The investigation below predates the candidate (initial base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`). Its statements about absent implementation and proposed next steps are historical and superseded by the final candidate section. Its source/timing caveats still apply; physics queries remain rejected.
 
 The existing SmoothCam configuration retains provider collision; the Camera input policy supplies the F6 native first-person fallback and leaves the provider's F8 emergency toggle alone. The Phase 1 [gate route](../p1/gate.md) recorded an owner-observed PASS for a bounded corridor, ceiling, doorway, stair and open-room route using the earlier Phase 1 artifact. It did not establish comprehensive DYL-157 behavior on the current held-pitch controller. The [DYL-156 controls route](camera-controls.md) separately recorded F6 and deliberate return on its specified Camera artifact. Neither observation proves new obstruction handling.
 
@@ -23,7 +25,7 @@ An **unwired diagnostic-only** `modules/camera/include/obstruction_probe.h` pair
 
 Diagnostic sampler test **PASS** on the host: `timeout 600s` around `g++ -std=c++20 -Wall -Wextra -Werror -Imodules/camera/include modules/camera/tests/obstruction_probe_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p2-20261026/obstruction-probe/obstruction_probe_test` followed by that binary; exit 0, 0.3 seconds. Owner: obstruction worker; completion signal: zero exit; log: `/srv/storage/Projects/SkyCRPG/session-p2-20261026/obstruction-probe/test.log`; no surviving process or cleanup needed. Tests cover pairing, missing frames, generation changes, time discontinuities, invalid samples, suspension and the per-session limit. They verify bookkeeping only, not provider timing or gameplay.
 
-## Acceptance disposition
+## Previous investigation acceptance disposition
 
 | Check | Result | Limit |
 | --- | --- | --- |
@@ -62,3 +64,62 @@ For the pinned executable SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb8
 Collision layers, player self-hit filtering, units, query origin and current provider goal each need runtime calibration. TDM's inspected projectile aiming code uses an explicitly locked world cast with a different pick filter (`kItemPick`), not proof of the camera hull filter or of lock safety at this call site. A point hit may correspond to geometry the camera hull ignores; a point miss cannot certify that a swept camera hull fits. `GetGoalPosition` uses the provider's *current* interpolated offsets and zoom; after an adaptive adjustment, it cannot by itself test the original preferred framing. Do not interpret point-query hits or misses as an automatic obstruction/clearance state, or use them to release hysteresis, until these mismatches are resolved and the exact binary and fixtures have been validated. No point query was wired, built or run in game in this audit.
 
 CommonLib also exposes `hkpWorld::LinearCast`, which could theoretically sweep a separately owned collision shape without reusing the Camera's collision context. The pinned headers expose layouts for `hkpSphereShape`, `hkpCollidable` and `hkpLinearCastInput`, but do not expose a supported constructor or verified setup for a private sphere, collision body/motion and collector. No working pinned example was found in the inspected local provider sources. Shape initialization, filter equivalence, world locking, start-overlap handling, lifetime and interaction with the engine's physics update therefore remain unverified. Allocating or hand-constructing Havok objects from layout guesses is not a safe basis for a camera controller. This is an investigated alternative, not a claim that a separately owned hull cast is impossible.
+
+## Read-only compression candidate — 2026-10-26
+
+**Authority:** supplied orchestrator direction replaces the independent-query investigation with observation of SmoothCam's existing swept-hull result. D022 in [DECISIONS](../../DECISIONS.md) records the implementation as an **engineering recommendation**, not owner acceptance or a scope waiver. DYL-157 / P2-02 remains open pending Windows and runtime evidence; DYL-158 owns subsequent precision integration. Candidate base: `0235d6f767922b4e7395569b3ee72154a902708a`; the commit containing this section and the [source hashes](obstruction-policy-tests/job.json) identifies the candidate. Earlier owner-route source/DLL/archive identities above remain separate.
+
+Commit delivery on the original worktree branch is **BLOCKED** by the sandbox's read-only shared Git metadata: `git add` cannot create `/srv/storage/Projects/SkyCRPG/repo/.git/worktrees/p2-obstruction/index.lock`. The original branch/index were left unchanged. An importable source commit bundle and patch are prepared under `/tmp/skycrpg-dyl157-compression-20261026` using separate writable Git metadata; this is not a push, native build or update to the original branch.
+
+### Observation and guards
+
+The existing inner third-person update hook reads `RE::PlayerCamera::cameraRoot->world.translate` **before** its exactly-once chained native update, while the root still contains the preceding provider-rendered collision result. It calls only read-only SmoothCam V3 `GetGoalPosition(player, world, local)`. In the inspected pinned source, `world - local` is the provider focus, including its target-height treatment. Compression is `clamp(1 - distance(actual, focus) / distance(goal, focus), 0, 1)`. The current provider goal is the preferred goal before adaptation and the adjusted goal during adaptation. `GetLastCameraPosition` is unused because it is pre-collision. There are no point picks, private/engine casts, physics locks, extra hooks or transform writes.
+
+The adapter requires its existing exact runtime/provider hashes and hook-chain/ownership guards, valid loaded living player/cell, player camera target, third-person free rotation and no menu/special/first-person state. Precision and targeting outrank obstruction in the pure policy. This branch does not supply DYL-158's precision classification, so automatic framing conservatively releases for **all drawn weapons/spells**; the existing normal held-pitch policy is retained. Reset occurs on handoff, menu/load notifications, cell identity changes, invalid/missing samples and nonpositive/nonfinite or over-100-ms sample intervals. Only cell FormID and scalar values survive calls, with no retained engine pointers. Timing uses `steady_clock`; a 500-ms eligibility warmup precedes entry timing.
+
+This is an **approximate compression signal**, not a synchronized collision callback. SmoothCam's outer pre-update has already run and its outer post-update has not. Target motion, interpolation, provider early returns and POV changes may contaminate the comparison. Guards and dwell reduce transients but do not prove their absence. The pinned DLL must validate stationary open space, open-space motion and actual geometry. No exact frame alignment or source/binary equivalence is claimed.
+
+### Hysteresis and feedback
+
+Defaults enter at compression >= 25% continuously for 250 ms after warmup. A latched state eases toward 25-degree pitch / 0.35 native zoom, bounded by the configured pitch/zoom limits; preferences already lower/closer are never increased. The tightening rate is 0.8 framing blend/second, with the existing pitch-input speed limit also applied. Only the existing pitch-look input and requested zoom scalar are adjusted. Native transforms, collision settings, provider ownership and UI payloads are untouched; F6/native POV and SmoothCam F8 dispatch retain their existing paths.
+
+A clear adjusted goal **cannot release obstruction**. After reaching tight framing, compression <= 10% for 800 ms starts a slow probe toward the saved preferred framing at 0.15 blend/second. Any sample above 10% pauses probing and resets that low timer; resumption needs a new continuous 800-ms low interval. A blocked probe holds its last framing rather than repeatedly pulling tight and extending at a static doorway. Release requires reaching the full preferred framing and a **further** 800-ms low-compression dwell there. Preferred pitch/zoom remain separate from adaptive output; native zoom changes are deltas from the last adjusted request, and saving never persists tight framing. Tests check that unchanged native input does not cause rounding drift in the preference.
+
+This uses the orchestrator's allowed **current-goal plus sustained recovery-probe** alternative. It does not claim a clear adjusted goal certifies the original preferred swept-hull path. SmoothCam performs collision on each gradual extension. A narrow area may hold intermediate framing until movement improves clearance or the user requests native/F8 fallback. Lower pitch is a heuristic, not proof that every wall/ceiling becomes visible. Full default recovery takes about 6.7 seconds of probing plus both low-compression dwells; the owner must assess that pace.
+
+### Configuration
+
+Packaging has one Camera INI and no per-test-profile overlay. Both the missing-key and committed `[Obstruction] bEnabled=0` defaults are therefore **off**. For a future isolated Camera-only route, opt in with `[Obstruction] bEnabled=1` in a disposable candidate configuration before launch. No profile was modified here. Thresholds, dwell/warmup seconds, tight pitch/zoom and blend rates are documented in `modules/camera/config/SkyCRPG_Camera.ini`; finite values and dependent bounds are clamped at startup. Unsupported Camera schema still disables policy. The historical diagnostic-only `obstruction_probe.h` remains unwired.
+
+### Focused evidence
+
+| Check | Result | Limit |
+| --- | --- | --- |
+| C++20 compression/hysteresis policy | PASS | Compile-time timing assertion plus portable runtime tests; no engine simulation claim. |
+| Existing Camera policy and diagnostic-probe regressions | PASS | Standalone Linux tests only. |
+| Windows x64 Camera build/package | NOT_RUN | No candidate DLL/archive hashes; ABI/compiler integration unverified. |
+| Candidate owner interior route / before-after capture | NOT_RUN | Prior owner PASS belongs to the earlier held-pitch artifact. |
+| Candidate F8, F6/first person, precision/special interruption | NOT_RUN | Pure precedence tests PASS; actual input/provider behavior remains open. |
+
+The final focused run **PASS**: all three suites exited 0 in 0.765 seconds using Ubuntu g++ 15.2.0 on Linux kernel 7.0.0-38, with no compiler warnings or surviving process group. The [job record](obstruction-policy-tests/job.json) includes purpose, command, expected output, 600-second timeout, owner, PID/deadline, host/compiler, source hashes, completion and verified process cleanup. Output: [test.log](obstruction-policy-tests/test.log). It was recorded before compilation. The command compiles and runs all three focused suites with C++20 warnings as errors (create the task-specific output directory first):
+
+```bash
+timeout --kill-after=5s 600s bash -eu -c '
+for suite in obstruction_policy policy obstruction_probe; do
+  g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/camera/include "modules/camera/tests/${suite}_test.cpp" -o "/tmp/skycrpg-dyl157-compression-20261026/${suite}_test"
+  "/tmp/skycrpg-dyl157-compression-20261026/${suite}_test"
+done'
+```
+
+The equivalent runner script and portable binaries remain in the task's `/tmp/skycrpg-dyl157-compression-20261026` directory. Coverage includes exact enter/exit timing, interrupted timers, thousands of noisy/dead-band samples, a closed-loop static doorway then clearance, bounded rates across frame intervals, every higher-priority state, invalid/NaN/infinite positions/times, preference preservation and config bounds. These prove decision logic, not the rendered signal, clearance, ceiling visibility or in-game collision safety. No unrelated full matrix was warranted.
+
+### Owner route checklist (candidate NOT_RUN)
+
+After a separate bounded Windows build/package check, record candidate source/DLL/archive/INI hashes, executable/dependency versions and host from the pinned matrix. Use a copied save and isolated Camera-only profile with opt-in enabled; register one 20-minute route job with PID/log/deadline/cleanup before launch. Capture matching positions with automatic framing disabled/enabled in controlled starts.
+
+1. **Doorway:** establish preferred framing while stationary and moving in open space; cross the narrow doorway both ways and pause at its threshold. Confirm delayed smooth tightening, visibility and retained collision.
+2. **Low ceiling:** enter/leave slowly, then stop underneath. Check pitch/zoom adjustment and no roof/floor penetration or blind walking. Record the already-known jarring overhead-object pop separately.
+3. **Stairs:** ascend/descend, turn and stop on landings. Check that focus-height changes do not cause sustained false obstruction or near/far jumps.
+4. **Large room:** move clear and wait for slow probing plus the final dwell. Confirm full preferred framing returns smoothly; a blocked probe should hold instead of cycling.
+5. **Oscillation watch:** stop at the boundary for at least 30 seconds, then move clear. Watch for rhythmic pumping, false open-space compression and stuck intermediate framing. Try F6/native first person, a drawn weapon/spell and a menu while latched; automatic framing must release and require fresh warmup when eligible again.
+6. **F8:** use SmoothCam's emergency toggle while tight and while recovering. Confirm usable immediate fallback, no adaptive writes while disabled and a deliberate usable return. Quit normally; verify task-process cleanup and profile/save restoration.
