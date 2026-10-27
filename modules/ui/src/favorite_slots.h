@@ -7,6 +7,21 @@
 #include <vector>
 
 namespace skycrpg::ui {
+enum class ActionKind { None, Weapon, Armor, Consumable, Scroll, Spell, Shout, Power };
+enum class HotbarAction { None, Equip, Unequip, Use, EquipSpell, EquipShout, EquipPower };
+inline HotbarAction DecideHotbarAction(unsigned index, bool bound, ActionKind kind, bool equipped, int count, bool blocked)
+{
+    if (index >= 8 || bound || blocked || count <= 0) return HotbarAction::None;
+    switch (kind) {
+    case ActionKind::Weapon: case ActionKind::Armor: return equipped ? HotbarAction::Unequip : HotbarAction::Equip;
+    case ActionKind::Consumable: return HotbarAction::Use;
+    case ActionKind::Scroll: return HotbarAction::Equip;
+    case ActionKind::Spell: return HotbarAction::EquipSpell;
+    case ActionKind::Shout: return HotbarAction::EquipShout;
+    case ActionKind::Power: return HotbarAction::EquipPower;
+    default: return HotbarAction::None;
+    }
+}
 // The engine key index is the presentation index; magic is applied after items.
 template<class Slot>
 void SetNativeBinding(std::array<Slot, 8>& slots, unsigned index, Slot slot)

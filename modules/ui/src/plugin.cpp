@@ -1,4 +1,4 @@
-// SkyCRPG UI — validated, read-only HUD settings and resource bridge.
+// SkyCRPG UI — HUD bridge and native favorite hotbar dispatch.
 #include <SKSE/SKSE.h>
 #include <RE/G/GFxMovieView.h>
 #include <RE/G/GFxValue.h>
@@ -11,6 +11,12 @@
 #include <RE/U/UI.h>
 #include <RE/T/TESBoundObject.h>
 #include <RE/T/TESShout.h>
+#include <RE/A/ActorEquipManager.h>
+#include <RE/B/BGSEquipSlot.h>
+#include <RE/B/BSInputDeviceManager.h>
+#include <RE/B/ButtonEvent.h>
+#include <RE/I/InputEvent.h>
+#include <RE/S/SpellItem.h>
 
 // CommonLib's REX/W32 headers must precede the Windows API headers pulled by
 // the shared skeleton. Keep the skeleton below every CommonLib include.
@@ -28,6 +34,7 @@
 #include <cmath>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <bcrypt.h>
@@ -231,7 +238,7 @@ const char* HotbarKind(RE::TESForm* form)
 	switch (form->GetFormType()) {
 	case RE::FormType::Weapon: return "WEAPON";
 	case RE::FormType::Armor: return "ARMOR";
-	case RE::FormType::AlchemyItem: return "ALCHEMY";
+	case RE::FormType::AlchemyItem: case RE::FormType::Ingredient: return "ALCHEMY";
 	case RE::FormType::Spell: return "SPELL";
 	case RE::FormType::Shout: return "SHOUT";
 	case RE::FormType::Scroll: return "SCROLL";
@@ -325,6 +332,132 @@ void SampleHotbar(std::uint64_t generation)
 	g_hotbar.available = true;
 }
 
+// The input callback retains only copied snapshot data. Engine objects are
+// resolved and validated again on the game task queue.
+using skycrpg::ui::ActionKind;
+using skycrpg::ui::HotbarAction;
+ActionKind DispatchKind(RE::TESForm* form)
+{
+    if (!form) return ActionKind::None;
+    switch (form->GetFormType()) {
+    case RE::FormType::Weapon: return ActionKind::Weapon;
+    case RE::FormType::Armor: return ActionKind::Armor;
+    case RE::FormType::AlchemyItem: case RE::FormType::Ingredient: return ActionKind::Consumable;
+    case RE::FormType::Scroll: return ActionKind::Scroll;
+    case RE::FormType::Shout: return ActionKind::Shout;
+    case RE::FormType::Spell: {
+        auto* spell = form->As<RE::SpellItem>();
+        if (!spell) return ActionKind::None;
+        const auto type = spell->GetSpellType();
+        return type == RE::MagicSystem::SpellType::kPower || type == RE::MagicSystem::SpellType::kLesserPower ? ActionKind::Power : ActionKind::Spell;
+    }
+    default: return ActionKind::None;
+    }
+}
+const char* ActionName(HotbarAction action)
+{
+    switch (action) {
+    case HotbarAction::Equip: return "equip";
+    case HotbarAction::Unequip: return "unequip";
+    case HotbarAction::Use: return "use";
+    case HotbarAction::EquipSpell: return "spell";
+    case HotbarAction::EquipShout: return "shout";
+    case HotbarAction::EquipPower: return "power";
+    default: return "none";
+    }
+}
+std::atomic_uint g_hotkeyLogCount{};
+void DispatchHotbar(unsigned index, HotbarSlot pressed, std::uint64_t generation, bool available, bool blockedAtPress)
+{
+    RefreshMenuFocus();
+    bool blocked = blockedAtPress || g_menuBlocked.load(std::memory_order_acquire);
+    // Refresh bindings before dispatch so a newly assigned native key cannot
+    // race the snapshot and cause a second action.
+    SampleHotbar(generation);
+    {
+        std::scoped_lock lock(g_hotbar.mutex);
+        if (!g_hotbar.loaded || !g_hotbar.available || generation != g_hotbar.generation ||
+            g_hotbar.slots[index].bound || g_hotbar.slots[index].formID != pressed.formID) blocked = true;
+    }
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* manager = RE::ActorEquipManager::GetSingleton();
+    auto* form = pressed.formID ? RE::TESForm::LookupByID(pressed.formID) : nullptr;
+    auto kind = DispatchKind(form);
+    int count = 0;
+    bool equipped = false;
+    RE::ExtraDataList* extra = nullptr;
+    if (!available || !player || !player->Is3DLoaded() || !manager) blocked = true;
+    if (!blocked && form && (kind == ActionKind::Spell || kind == ActionKind::Power)) {
+        auto* spell = form->As<RE::SpellItem>();
+        count = spell && player->HasSpell(spell) ? 1 : 0;
+    } else if (!blocked && form && kind == ActionKind::Shout) {
+        auto* shout = form->As<RE::TESShout>();
+        count = shout && player->HasShout(shout) ? 1 : 0;
+    } else if (!blocked && form) {
+        auto inventory = player->GetInventory([](RE::TESBoundObject&) { return true; }, true);
+        for (auto& [object, item] : inventory) {
+            if (!object || object->GetFormID() != pressed.formID || !item.second) continue;
+            count = item.first;
+            if (item.second->extraLists) for (auto* candidate : *item.second->extraLists) {
+                if (!candidate) continue;
+                const bool worn = candidate->HasType<RE::ExtraWorn>() || candidate->HasType<RE::ExtraWornLeft>();
+                if (worn) { equipped = true; extra = candidate; break; }
+                if (!extra && candidate->GetByType<RE::ExtraHotkey>()) extra = candidate;
+            }
+            break;
+        }
+        // The inventory owns these instance pointers until the native call.
+        auto action = skycrpg::ui::DecideHotbarAction(index, pressed.bound, kind, equipped, count, blocked);
+        if (auto* object = form->As<RE::TESBoundObject>()) {
+            if (action == HotbarAction::Unequip) manager->UnequipObject(player, object, extra);
+            else if (action == HotbarAction::Equip || action == HotbarAction::Use) manager->EquipObject(player, object, extra);
+        } else action = HotbarAction::None;
+        if (g_hotkeyLogCount.fetch_add(1) < 64) {
+            std::array<char, 192> line{};
+            std::snprintf(line.data(), line.size(), "Hotkey slot=%u bound=%d kind=%s formID=%08X decision=%s\n", index + 1, pressed.bound, pressed.kind.c_str(), pressed.formID, ActionName(action));
+            AppendModuleLog(line.data());
+        }
+        return;
+    }
+    auto action = skycrpg::ui::DecideHotbarAction(index, pressed.bound, kind, equipped, count, blocked);
+    if (action == HotbarAction::EquipSpell || action == HotbarAction::EquipPower) {
+        // Skyrim.esm equip slots: right hand 0x13F42, voice 0x25BEE.
+        auto* slot = RE::TESForm::LookupByID<RE::BGSEquipSlot>(action == HotbarAction::EquipPower ? 0x25BEE : 0x13F42);
+        if (slot) manager->EquipSpell(player, form->As<RE::SpellItem>(), slot);
+        else action = HotbarAction::None;
+    } else if (action == HotbarAction::EquipShout) manager->EquipShout(player, form->As<RE::TESShout>());
+    if (g_hotkeyLogCount.fetch_add(1) < 64) {
+        std::array<char, 192> line{};
+        std::snprintf(line.data(), line.size(), "Hotkey slot=%u bound=%d kind=%s formID=%08X decision=%s\n", index + 1, pressed.bound, pressed.kind.c_str(), pressed.formID, ActionName(action));
+        AppendModuleLog(line.data());
+    }
+}
+class HotbarInput final : public RE::BSTEventSink<RE::InputEvent*> {
+public:
+    RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events, RE::BSTEventSource<RE::InputEvent*>*) override {
+        if (!events) return RE::BSEventNotifyControl::kContinue;
+        for (auto* event = *events; event; event = event->next) {
+            auto* button = event->AsButtonEvent();
+            if (!button || event->GetDevice() != RE::INPUT_DEVICE::kKeyboard || !button->IsDown()) continue;
+            const std::string_view name = button->QUserEvent().c_str();
+            if (name.size() != 7 || name.substr(0, 6) != "Hotkey" || name[6] < '1' || name[6] > '8') continue;
+            const unsigned index = static_cast<unsigned>(name[6] - '1');
+            HotbarSlot slot;
+            std::uint64_t generation;
+            bool available;
+            {
+                std::scoped_lock lock(g_hotbar.mutex);
+                available = g_hotbar.loaded && g_hotbar.available && ResourceClock::now() - g_hotbar.sampled <= std::chrono::seconds(2);
+                slot = g_hotbar.slots[index];
+                generation = g_hotbar.generation;
+            }
+            const bool blockedAtPress = g_menuBlocked.load(std::memory_order_acquire);
+            if (auto* tasks = SKSE::GetTaskInterface()) tasks->AddTask([index, slot, generation, available, blockedAtPress] { DispatchHotbar(index, slot, generation, available, blockedAtPress); });
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+} g_hotbarInput;
+
 class HotbarSnapshot final : public RE::GFxFunctionHandler {
 public:
 	void Call(Params& params) override {
@@ -387,6 +520,13 @@ void ResourceLifecycle(SKSE::MessagingInterface::Message* message)
 	if (!message) return;
 	if (message->type == SKSE::MessagingInterface::kDataLoaded) {
 		static bool registered = false;
+        static bool inputRegistered = false;
+        if (auto* input = RE::BSInputDeviceManager::GetSingleton(); input && !inputRegistered) {
+            input->AddEventSink(&g_hotbarInput);
+            inputRegistered = true;
+        } else if (!inputRegistered) {
+            AppendModuleLog("Hotbar input event source unavailable; dispatch disabled\n");
+        }
 		if (auto* ui = RE::UI::GetSingleton()) {
 			if (!registered) { ui->AddEventSink<RE::MenuOpenCloseEvent>(&g_menuFocusEvents); registered = true; }
 			RefreshMenuFocus();
@@ -582,8 +722,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* skseInterface)
 	g_hudSettings = parsed.settings;
 	LogHudSettings(iniPath, parsed);
 
-	// Pinned CommonLib supplies GFx and read-only player actor values.
-	// No actor state is written and the shared load ABI stays untouched.
+	// The UI bridge and hotbar input use the pinned CommonLib runtime.
 	SKSE::Init(reinterpret_cast<const SKSE::LoadInterface*>(skseInterface), false);
 	const auto* tasks = SKSE::GetTaskInterface();
 	const auto* messaging = SKSE::GetMessagingInterface();
@@ -596,7 +735,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* skseInterface)
 		AppendModuleLog("Scaleform settings registration: FAIL; native HUD fallback retained\n");
 		return true;
 	}
-	AppendModuleLog("scope extension: read-only HUD settings and player current/effective maximum snapshots; no gameplay writes\n");
+	AppendModuleLog("scope extension: HUD snapshots and native favorite hotbar dispatch\n");
 	AppendModuleLog("Scaleform settings registration: PASS read-only\n");
 	return true;
 }

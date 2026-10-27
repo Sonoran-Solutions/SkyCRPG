@@ -4,6 +4,15 @@
 #include <string>
 struct Slot { std::uint32_t formID{}; bool bound{}; std::string name; int count{}; };
 int main() {
+    using namespace skycrpg::ui;
+    assert(DecideHotbarAction(0, true, ActionKind::Weapon, false, 1, false) == HotbarAction::None);
+    assert(DecideHotbarAction(0, false, ActionKind::None, false, 1, false) == HotbarAction::None);
+    assert(DecideHotbarAction(0, false, ActionKind::Weapon, false, 1, false) == HotbarAction::Equip);
+    assert(DecideHotbarAction(0, false, ActionKind::Weapon, true, 1, false) == HotbarAction::Unequip);
+    assert(DecideHotbarAction(0, false, ActionKind::Consumable, false, 1, false) == HotbarAction::Use);
+    assert(DecideHotbarAction(0, false, ActionKind::Weapon, false, 0, false) == HotbarAction::None);
+    assert(DecideHotbarAction(0, false, ActionKind::Weapon, false, 1, true) == HotbarAction::None);
+    assert(DecideHotbarAction(8, false, ActionKind::Weapon, false, 1, false) == HotbarAction::None);
     using skycrpg::ui::FillFavoriteSlots;
     using skycrpg::ui::SetNativeBinding;
     std::array<Slot, 8> slots{};

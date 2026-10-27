@@ -11,6 +11,12 @@ Base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`. The owner-reported UI-only con
 | Combined Camera/UI and scan performance | **PASS**, owner-reported bounded smoke on prior source; scan performance **NOT_RUN**. |
 | Previous UI-only candidate | **FAIL**: empty bar after attempted keyboard assignment in controller mode and overlap with Favorites; preserved in its historical route below. |
 
+## Unbound FAV slot dispatch candidate
+
+Keyboard Hotkey1–Hotkey8 down events now queue a game task for the displayed slot. Native-bound and empty slots dispatch nothing; the task refreshes bindings and menu focus and re-resolves ownership and inventory instances before acting. Unbound weapons and armor toggle, consumables use, scrolls equip, spells select the right hand, shouts select, and powers select the voice slot. A maximum of 64 press diagnostics per session includes native-bound slots. The slot IDs are right hand `0x13F42` and voice `0x25BEE`, matching the pinned SkyUI FavoritesManager scripts. This is a new candidate; prior gameplay results do not validate it.
+
+Focused Linux suite **PASS**: `timeout 600s bash /tmp/skycrpg-dyl161/tests.sh` (four portable C++ tests, two actual-AS harnesses and 14 Scaleform contract tests), exit 0; job record `/tmp/skycrpg-dyl161/dispatch-job.txt`, log `/tmp/skycrpg-dyl161/dispatch-tests.log`. **Windows build NOT_RUN; owner retest NOT_RUN.** No SWF source changed or rebuilt. No Skyrim process, profile or save was touched.
+
 ## Current follow-up candidate — keyboard, voice and depletion
 
 The prior bounded controller route and combined smoke remain owner-reported **PASS** on their recorded hashes; they are not tests of this changed candidate. Native quick-key N maps to bar position N; existing unbound `FAV` entries fill holes and are not numbered actions. The UI has no gameplay input handler or synthetic dispatch. Skyrim owns menu focus and key conflicts; verify the native quick-key badges and behavior with keyboard input enabled. Item snapshots exclude counts at or below zero; a fresh snapshot clears a depleted binding or fills its position with another `FAV`. Pure mapping/count checks and the mocked HUD disappearance check **PASS**, actual zero-count engine behavior **NOT_RUN**.
