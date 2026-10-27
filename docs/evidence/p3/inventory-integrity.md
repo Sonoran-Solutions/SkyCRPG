@@ -573,3 +573,21 @@ Remaining **NOT_RUN**:
 - a two-follower configuration and a non-essential follower death (DYL-165 limitations).
 
 The favorite toggle is accepted native by owner ruling.
+
+## Keyboard/mouse pass — 2026-10-27: PASS
+
+**PASS (owner-reported, log-confirmed), controller switched off.** Run `4885a59564794db7a433d5952180097d`, UI-only stage `stage-ui-p3` with the final package (`951dc3e`, ZIP `a5147ddfb3f977af…`, DLL `a88dae00…`; movies `695ddda0…`, `8766d2b2…`, `cd1e1fa7…`), save `SkyCRPG_Fixture_CombinedAcceptance`. About 2.5 min, normal quit, watchdog did not intervene (minimum 12.2 GiB available); restoration **PASS**. `SkyCRPG_UI.log` `10a40ca6…`: **no inventory refusals of any kind**.
+
+Owner route, all passed:
+1. Mouse hover plus **R** on three different items: each dropped on the first press, with no jump to the categories.
+2. Mouse click equip, unequip, and equip of another item: each click acted once.
+3. Arrow keys plus **E** to equip, then arrows plus **R** to drop.
+4. Two drops in a row from the same stack.
+5. **Tab** close, reopen with **I**, then drop: it worked first time.
+6. Quantity dialog (potions raised to 8) confirmed a drop of 2 with keyboard/mouse.
+7. A quick double **R** dropped once.
+
+With this run, both input paths are exercised on the current code: controller (all earlier 2026-10-27 runs) and keyboard/mouse (this pass). DYL-163 has no remaining NOT_RUN runtime rows required by the senior re-review. Known, documented scope limits remain:
+- the native favorite toggle (owner ruling);
+- the off-main-thread fallback (owner ruling);
+- the high-process-list follower scope (DYL-165).
