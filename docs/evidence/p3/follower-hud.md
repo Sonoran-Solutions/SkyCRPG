@@ -79,3 +79,30 @@ The observer scans `ProcessLists::highActorHandles`; a teammate outside the high
 | Two-teammate fixture | **NOT_RUN**. |
 
 Review correction local checks: **PASS** `SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 timeout 600 python3 -I -m unittest discover -s modules/ui/tests -p '*.py'`; **PASS** each `timeout 600 /home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node modules/ui/tests/<test>.js modules/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11`; **PASS** each `timeout 600 g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/ui/src modules/ui/tests/<test>_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-165-review/<test>_test` and `timeout 600` on each resulting binary. Logs and job record: `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-165-review/`. Initial HUD harness attempts failed first because Node subprocess spawning returned EPERM and then because the legacy stub retained a callback requiring the removed method; the corrected harness passed. The old-line temporary-copy check failed as expected at the `none` visibility assertion.
+
+## Natural-follower route on a vanilla fixture save — 2026-10-27
+
+**PASS (owner-reported, bounded).** The owner reported that every step passed.
+
+| Field | Value |
+| --- | --- |
+| Source / CI | `8da9625` (includes merged #15), Windows [run 40563710877](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40563710877) **PASS** |
+| Package | `SkyCRPG_UI-0.0.1-8da9625.zip` `cb27341c4d61ee99…`; DLL `eb18922c64c0181a…`; `hudmenu.swf` `cd1e1fa7d8439b13…` (follower panel and compass policy) |
+| Profile / host | UI-only, 175 files; Steam 1.7.104.0, SKSE 2.3.1, Address Library 13, Proton Experimental 11; keyboard and mouse, controller off |
+| Save | Vanilla fixture `MainQuests.ess` from Nexus Mods "100 Percent Clean Save for Skyrim SE" (mod 178, file "All Main Quests" v.13); masters are the five official files only; main quest, Dawnguard and Dragonborn complete. Copied into the test profile as `SkyCRPG_Fixture_MainQuests.ess`. |
+| Run | `bf2a8387cdb942628b56b922bf7aefcb`, about 8 min of a 20 min budget, normal quit, watchdog did not intervene (minimum 12.6 GiB available) |
+| Logs | `SkyCRPG_UI.log` `f04339e2…`: source `8da9625`, minimap preflight `exact=1`. The follower adapter does not log; observations are the owner's. |
+| Cleanup | Restoration **PASS**: no changed files, no active profile, no Skyrim process |
+
+Route:
+1. With no follower, open and close the map, the inventory and a conversation: the panel must never appear.
+2. Recruit: the panel shows the follower's name and health.
+3. `damageav health 50`: the health percentage drops.
+4. Dragonsreach to Whiterun transition: the panel stays.
+5. Save and load: the panel returns with the name.
+6. Dismiss, then open and close menus: the panel stays hidden; recruit again.
+7. `kill`: the panel hides and stays hidden through menu changes.
+
+**Follower used:** the fixture save already had **Serana** as a follower. The owner used her for most of the route. Serana is a vanilla Dawnguard follower recruited through her native quest and dialogue, so this covers a naturally recruited vanilla humanoid follower instead of the console-made Orgnar of run `1617dd2c`. Lydia (Dragonsreach) was the staged target. The report does not itemize which steps, if any, used Lydia, or whether both followed at once (which would exercise the "Followers untested" label).
+
+**Caveat on step 7:** Serana is essential in vanilla, so `kill` on her normally causes bleedout, not death. If step 7 was done on Serana, the observed hide may have come from bleedout or dismissal rather than the `dead` state. The dead-state mode-change path is covered by the assembled `hud_contract.js` test (`dead` stays hidden); an in-game true death remains unconfirmed unless done on a non-essential follower. The two-teammate fixture remains **NOT_RUN**.
