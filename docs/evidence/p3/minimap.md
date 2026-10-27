@@ -61,6 +61,17 @@ Updated ledger:
 | Combined profile | **NOT_RUN** |
 | Exterior/interior transitions keep usable navigation | **PASS (owner-reported, bounded)**: compass during load, map re-acquired then suppressed |
 | Quest text does not overlap the map | Owner reported no issue; the active-effect overlap at 1080p remains a DYL-168 measurement |
-| Disabled (`bReplaceCompass=0`) restores compass | **NOT_RUN** in game (parser and policy tests PASS) |
-| Provider absent restores compass | **NOT_RUN** for this candidate (Phase 1 whole-provider-absent PASS is historical) |
+| Disabled (`bReplaceCompass=0`) keeps compass | **PASS (owner-reported, bounded)**, run `6bf91540` |
+| Provider absent keeps compass | **PASS (owner-reported, bounded)**, run `a16a95c6` |
 | Permissions / no bundled third-party binaries | Source-only; no provider files added |
+
+### Follow-ups — 2026-10-26
+
+Both runs used the same DLL (`603049ab…`, source `9cb576f`) and HUD movie (`2de109b3…`, source `c4a39e1`) as the passing run `7571da8e`. Both exited normally with no watchdog intervention, and both restorations **PASS**ed.
+
+| Run | Variant | Owner observation | Log evidence |
+| --- | --- | --- | --- |
+| `6bf91540692f4083bc8c74973a851950` (33 s) | Package ZIP `e646d4f5169afb2fb31a7b88520784450af56fc5c863b05be95985933e0bae59`: the `9cb576f` package with only `[Minimap] bReplaceCompass=0` changed (DLL byte-identical); exact provider stack | **PASS:** minimap and compass both visible | UI log `fd5aa767…`; install `exact=1`; the lease logged only `disabled`, `menu`, `hidden` and `stale-sample`, never `suppressed`. |
+| `a16a95c6690844f39de2844ba9123d99` (39 s) | Package `9cb576f` (`bReplaceCompass=1`); all Dragon's Eye, Infinity UI and Local Map Upgrade files removed, including translations and notices (141 deployed files); preflight `ABSENT` | **PASS:** no minimap, compass present, everything normal | UI log `71208316…`; all five pins `unavailable`, `exact=0`; the lease logged only `no-map`; `skse64.log` has no provider entries. |
+
+An earlier provider-absent deployment that still contained the providers' translation text and notices was restored before launch and never run (`p3-map-166-absent-aborted`).
