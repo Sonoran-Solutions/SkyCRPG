@@ -18,6 +18,12 @@ Do not claim universally safe mid-save uninstallation. If a selected provider or
 
 A missing optional minimap must not leave the standard compass permanently hidden. A disabled camera must not change UI-only behavior.
 
+## Camera candidate disable and recovery
+
+In a valid world state, F8 toggles SmoothCam's emergency disable; native Toggle POV returns to the native view. If an interrupted F6 precision session no longer returns, use native Toggle POV to reach third person, then F6 to enable the Camera policy. F7 recenters; it does not restore defaults. These are recovery controls, not a live DLL unload, and their full lifecycle coverage is **NOT_RUN**.
+
+For a candidate disable or settings reset, quit Skyrim completely first. In a disposable mod-manager profile with a copied save, disable the SkyCRPG Camera layer; leave the independently installed UI and shared prerequisites intact. Restore any Camera-owned SmoothCam/TDM overrides only when they still match the values installed by the candidate, using the prior backup or mod-manager layer; preserve and reconcile user edits. For a settings reset, back up and remove or replace only `Data/SKSE/Plugins/SkyCRPG_Camera.ini` with the candidate's default INI while the game is closed. Restart and check movement, camera, native menus and any installed UI on the copied save. Re-enable the Camera layer with the game closed to restore it. The copied-save disable/restart route remains **NOT_RUN**; this procedure does not establish safe mid-save uninstallation or removal of providers.
+
 ## Release publication distinction
 
 The four phases prepare and validate internal candidates. Public Nexus/GitHub release publication is a separate action after acceptance and any explicit release instruction.
