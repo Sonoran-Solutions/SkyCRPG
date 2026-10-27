@@ -1,0 +1,27 @@
+const fs = require('fs');
+const assert = require('assert');
+const source = fs.readFileSync('modules/ui/scaleform/compass-policy.as.inc', 'utf8');
+const init = new Function(source);
+const compass = {_visible: true};
+const shout = {_visible: true};
+const hud = {CompassShoutMeterHolder: {Compass: compass, ShoutMeterInstance: shout}};
+init.call(hud);
+assert.strictEqual(compass._visible, true);
+hud._skycrpgCompassApply(true);
+assert.strictEqual(compass._visible, false);
+assert.strictEqual(shout._visible, true);
+hud._skycrpgCompassApply(false);
+assert.strictEqual(compass._visible, true);
+compass._visible = false;
+hud._skycrpgCompassApply(true);
+hud._skycrpgCompassRelease();
+assert.strictEqual(compass._visible, false);
+compass._visible = true;
+hud._skycrpgCompassApply(true);
+compass._visible = true; // A different owner changed the value.
+hud._skycrpgCompassRelease();
+assert.strictEqual(compass._visible, true);
+hud._skycrpgCompassApply(true);
+init.call(hud);
+assert.strictEqual(compass._visible, true);
+assert.strictEqual(shout._visible, true);
