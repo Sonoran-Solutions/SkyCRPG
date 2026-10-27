@@ -216,3 +216,31 @@ The owner opened the inventory at least once in each of six ways, acting on an i
 - with rapid close and reopen.
 
 None produced an off-thread call. Ordinary opening paths are therefore not the trigger, at least not reliably. The fixture route's two occurrences happened during steps this rerun did not repeat: the quantity dialog (drop/cancel/close), grindstone crafting, console item changes, `player.kill` and reload, and the carry-weight drop. The next diagnostic run should repeat those steps with the `7caac58` package.
+
+## Targeted off-thread diagnostic — 2026-10-27
+
+**Not reproduced. Across three runs, `unsupported-thread` has appeared only in the original fixture route.**
+
+| Field | Value |
+| --- | --- |
+| Package | Same `7caac58` package as the rerun above (ZIP `03f1f959…`, DLL `40480fdf…`) |
+| Run | `e0e93ec476764d139e5719639c23f5b3`, about 5 min of a 20 min budget, normal quit, watchdog did not intervene (minimum 12.5 GiB available) |
+| Save | Copied `Save3 … 20261027170446`; new saves written only to the test profile |
+| UI log | `0f675911…`; timestamped watcher copy in `session-p3/p3-inv-163-diag3/log-timeline.txt` |
+| Cleanup | Restoration **PASS** |
+
+The owner did the five steps in order, pausing between them:
+
+1. **Quantity dialog:** one dialog drop of 3 potions. After that the stack was below SkyUI's `quantityMenu.minCount = 6` (pinned `data/interface/skyui/config.txt`; `InventoryMenu.as` line 100), so later drops went one at a time without a dialog. This is native SkyUI behavior. Dialog cancel and close-with-dialog-open were **NOT_RUN** here; they ran in the fixture route.
+2. **Grindstone:** tempered a sword, then equipped it.
+3. **Console:** added and removed items, then drank a potion.
+4. **Death:** saved, ran `player.kill`, reloaded, then acted on an item.
+5. **Carry weight:** added 40 swords and dropped them through the quantity dialog.
+
+The log has four `duplicate-input` refusals (17:58:24, 17:58:50, 18:01:54, 18:02:12 UTC): the validator ran on the main thread and stopped repeated presses. There were **no `off-thread` or `unsupported-thread` lines**.
+
+**Conclusion:** the off-thread call is rare and intermittent. It happened in 2 inventory sessions of the fixture route and in none of the ordinary-opening or targeted steps. On those calls the bridge left native behavior unguarded, as designed, and the owner saw no wrong-copy or double-count effect. The design question goes to review (owner/senior):
+- **(a)** accept the native fallback on an unsupported thread and keep the bounded diagnostic; or
+- **(b)** marshal off-thread Snapshot/Validate onto the main thread (`AddTask`) and refuse the custom path for that call.
+
+Option (b) needs a design change and Windows verification. The gate stays open until that is decided.
