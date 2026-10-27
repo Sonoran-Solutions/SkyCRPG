@@ -164,14 +164,17 @@ Context context(bool allowZoomSlide = false, bool* hardSpecial = nullptr) {
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
     if (!c.world) return c;
     c.firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
-    c.special = (!c.firstPerson && camera->currentState->id != RE::CameraState::kThirdPerson) ||
-        player->IsOnMount() || player->IsInKillMove() || player->AsActorState()->IsSwimming();
+    c.tween = camera->currentState->id == RE::CameraState::kTween;
+    const bool stateSpecial = !c.firstPerson && camera->currentState->id != RE::CameraState::kThirdPerson;
+    bool hazard = player->IsOnMount() || player->IsInKillMove() || player->AsActorState()->IsSwimming();
     const auto controls = RE::PlayerControls::GetSingleton();
     const auto controlMap = RE::ControlMap::GetSingleton();
-    if (!controlMap || !controls || controls->data.povScriptMode || controls->data.povBeastMode || (controls->data.fovSlideMode && !allowZoomSlide)) c.special = true;
+    if (!controlMap || !controls || controls->data.povScriptMode || controls->data.povBeastMode || (controls->data.fovSlideMode && !allowZoomSlide)) hazard = true;
+    c.special = stateSpecial || hazard;
     if (!c.firstPerson && camera->currentState->id == RE::CameraState::kThirdPerson &&
         static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) c.special = true;
-    if (hardSpecial) *hardSpecial = c.special;
+    // Tween is indeterminate, but real non-camera hazards remain hard.
+    if (hardSpecial) *hardSpecial = c.tween ? hazard : c.special;
     if (controlMap && (!controlMap->IsLookingControlsEnabled() || !controlMap->IsPOVSwitchControlsEnabled())) c.special = true;
     c.menu = focused();
     // Precision/targeting/obstruction intervention is intentionally left to DYL157/158.

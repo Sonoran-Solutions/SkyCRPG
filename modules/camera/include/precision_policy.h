@@ -13,11 +13,12 @@ constexpr bool claimPrecisionOwnership(Context before, Context after) {
 // A menu can temporarily replace the first-person camera state, so defer
 // state-specific validation while it owns focus. Provider/world loss still
 // revokes immediately, and the input sink separately cancels on native POV.
-// On return to gameplay, all first-person and special-state guards must pass
-// before a subsequent F6 can reclaim the view. This cannot detect an unsafe
-// transition that starts and ends entirely while a menu owns focus.
+// A hazard-free tween retains ownership but never acts; the next input in a
+// settled non-first-person state (including third person or furniture) revokes
+// it before F6 is evaluated. Native POV and provider/world loss still revoke
+// immediately. An unsafe transition wholly hidden by menu focus is unobserved.
 constexpr bool retainPrecisionOwnership(Context c, bool owned, bool hardSpecial) {
     return owned && c.prerequisites && c.world &&
-        (c.menu || (c.firstPerson && !hardSpecial && !c.special));
+        (c.menu || (c.firstPerson && !hardSpecial && !c.special) || (c.tween && !hardSpecial));
 }
 } // namespace skycrpg::camera

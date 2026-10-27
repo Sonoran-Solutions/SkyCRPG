@@ -97,6 +97,37 @@ int main() {
     observedSession = retainPrecisionOwnership(recorded, observedSession, false);
     assert(observedSession && toggleRequest(recorded, observedSession) == ToggleRequest::thirdPerson);
 
+    // Menu close can expose a tween before the settled camera state. Input
+    // revalidates the session before deciding what an F6 press may do.
+    Context tween{};
+    tween.prerequisites = tween.world = tween.menu = tween.special = tween.tween = true;
+    bool tweenSession = retainPrecisionOwnership(tween, true, false);
+    assert(tweenSession && toggleRequest(tween, tweenSession) == ToggleRequest::none);
+    tween.menu = false;
+    tweenSession = retainPrecisionOwnership(tween, tweenSession, false);
+    assert(tweenSession && toggleRequest(tween, tweenSession) == ToggleRequest::none);
+    assert(!claimPrecisionOwnership(before, tween));
+    auto settled = tween;
+    settled.tween = settled.special = false; settled.firstPerson = true;
+    assert(!claimPrecisionOwnership(tween, settled));
+    tweenSession = retainPrecisionOwnership(settled, tweenSession, false);
+    assert(tweenSession && toggleRequest(settled, tweenSession) == ToggleRequest::thirdPerson);
+
+    // If the tween ends in third person, retain runs before the F6 decision.
+    bool departed = retainPrecisionOwnership(tween, true, false);
+    settled.firstPerson = false;
+    departed = retainPrecisionOwnership(settled, departed, false);
+    assert(!departed && toggleRequest(settled, departed) != ToggleRequest::thirdPerson);
+    // Mount or script-mode hazards are hard even while the camera is tweening.
+    assert(!retainPrecisionOwnership(tween, true, true));
+    // Menu focus defers state/hazard validation, but native POV cancels it.
+    tween.menu = true;
+    assert(retainPrecisionOwnership(tween, true, true));
+    bool nativePovSession = false; // input sink clears ownership on Toggle POV
+    assert(!retainPrecisionOwnership(tween, nativePovSession, false));
+    tween.menu = false;
+    assert(!retainPrecisionOwnership(tween, nativePovSession, false));
+
     // A provider interruption observed on input revokes return permission.
     input.prerequisites = false;
     session = retainPrecisionOwnership(input, session, false);
