@@ -29,6 +29,7 @@
 #include "favorite_slots.h"
 #include "minimap/adapter.h"
 #include "follower/adapter.h"
+#include "inventory/inventory_bridge.h"
 
 #include <array>
 #include <atomic>
@@ -521,6 +522,7 @@ struct ResourceCache {
 
 void ResourceLifecycle(SKSE::MessagingInterface::Message* message)
 {
+	skycrpg::ui::inventory::OnSkseMessage(message);
 	if (!message) return;
 	skycrpg::ui::minimap::OnMessage(message);
 	skycrpg::ui::follower::OnMessage(message);
@@ -657,6 +659,7 @@ bool RegisterSkyCRPGUI(RE::GFxMovieView* movie, RE::GFxValue* root)
 	if (!root->SetMember("getPlayerResources", function)) return false;
 	if (!skycrpg::ui::minimap::Register(movie, root)) return false;
 	if (!skycrpg::ui::follower::Register(movie, root)) return false;
+	if (!skycrpg::ui::inventory::Register(movie, root)) return false;
 	RE::GFxValue value;
 	value.SetNumber(g_hudSettings.scalePercent);
 	if (!root->SetMember("hudScale", value)) return false;
