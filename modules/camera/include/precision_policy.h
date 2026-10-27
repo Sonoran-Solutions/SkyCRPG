@@ -6,8 +6,8 @@ namespace skycrpg::camera {
 // Claim only an immediately observed transition from an eligible third-person
 // state. A late, unrelated first-person transition cannot claim a session.
 constexpr bool claimPrecisionOwnership(Context before, Context after) {
-    return before.prerequisites && before.world && !before.special && !before.menu &&
-        !before.firstPerson && after.prerequisites && after.world && !after.special && !after.menu &&
+    return before.prerequisites && before.world && !before.special && !before.menu && !before.slide &&
+        !before.firstPerson && after.prerequisites && after.world && !after.special && !after.menu && !after.slide &&
         after.firstPerson;
 }
 // A menu can temporarily replace the first-person camera state, so defer

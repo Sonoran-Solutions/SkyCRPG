@@ -50,6 +50,7 @@ enum class State { disabled, invalidWorld, special, menu, firstPerson, precision
 struct Context {
     bool enabled = false, prerequisites = false, world = false, special = false, menu = false;
     bool firstPerson = false, tween = false, precision = false, targeting = false, obstruction = false;
+    bool slide = false;
 };
 constexpr State select(Context c) {
     if (!c.enabled || !c.prerequisites) return State::disabled;
@@ -64,7 +65,7 @@ constexpr State select(Context c) {
 }
 enum class ToggleRequest { none, firstPerson, thirdPerson, enableOnly };
 constexpr ToggleRequest toggleRequest(Context c, bool ownFirstPerson) {
-    if (!c.prerequisites || !c.world || c.special || c.menu) return ToggleRequest::none;
+    if (!c.prerequisites || !c.world || c.special || c.menu || c.slide) return ToggleRequest::none;
     if (c.firstPerson) return ownFirstPerson ? ToggleRequest::thirdPerson : ToggleRequest::none;
     return c.enabled ? ToggleRequest::firstPerson : ToggleRequest::enableOnly;
 }

@@ -6,11 +6,28 @@
 namespace skycrpg::camera {
 struct Hazards {
     bool mount = false, killmove = false, swimming = false, furniture = false;
-    bool bleedout = false, beast = false, scripted = false, slide = false;
+    bool bleedout = false, beast = false, scripted = false;
 };
 constexpr bool specialHazard(Hazards h) {
-    return h.mount || h.killmove || h.swimming || h.furniture || h.bleedout || h.beast || h.scripted || h.slide;
+    return h.mount || h.killmove || h.swimming || h.furniture || h.bleedout || h.beast || h.scripted;
 }
+// Slides pause correction without changing the selected lifecycle state.
+constexpr bool pauseCorrection(Context c) { return c.slide; }
+struct LifecycleTraceDebounce {
+    static constexpr unsigned stableFrames = 10;
+    State candidate = State::disabled, logged = State::disabled;
+    std::uint32_t candidateId = 0, loggedId = 0;
+    unsigned frames = 0;
+    bool hasCandidate = false, hasLogged = false;
+    bool observe(State state, std::uint32_t id) {
+        if (!hasCandidate || candidate != state || candidateId != id) {
+            candidate = state; candidateId = id; frames = 1; hasCandidate = true;
+        } else if (frames < stableFrames) ++frames;
+        if (frames < stableFrames || (hasLogged && logged == state && loggedId == id)) return false;
+        logged = state; loggedId = id; hasLogged = true; return true;
+    }
+    void resetCandidate() { hasCandidate = false; frames = 0; }
+};
 inline void resetTransient(bool& owned, bool& recenter, bool& applyZoom, std::array<FreshPress,4>& keys) {
     owned = recenter = false;
     applyZoom = true;
