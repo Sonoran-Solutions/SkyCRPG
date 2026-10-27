@@ -114,3 +114,7 @@ Camera-only, UI-only and combined provider load checks passed on Steam1.7.104.0,
 ## Phase 2 adapter build activation
 
 DYL-156/160 activate the existing conditional CommonLib7.2.0 selection at exact source `7a60f4de794095d7b0f8928d1b930a52e9a7da83`. Toolchain and transitive manifest baseline both use vcpkg `ee12231b20c95013c6638d845d04c91559a1d1ff`, Windows x64 static CRT/static dependencies, AE-only. Each DLL links its own copy; no shared runtime service or cross-module import. [Build contract](../../cmake/README.md) and per-module evidence record the native build results. This does not upgrade any runtime/provider or confer runtime acceptance.
+
+## DYL-165 Party Sheet capability check
+
+Party Sheet 3.7's DLL exports only `SKSEPlugin_Load`, `SKSEPlugin_Query` and `SKSEPlugin_Version`. Its binary strings suggest an internal HUD-visibility interface, but the extracted distribution has no public actor-data or portrait API header or contract. Its whitelist/allies/blacklist settings drive its own selection. It stays optional and is not a SkyCRPG follower dependency; its portraits are not copied or bundled. SkyCRPG UI uses its own bounded native observer instead. See [follower evidence](../evidence/p3/follower-hud.md).

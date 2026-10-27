@@ -7,7 +7,10 @@ const assert = require('node:assert/strict');
 
 const moduleRoot = process.argv[2];
 const skyuiRoot = process.argv[3];
-const snippet = fs.readFileSync(path.join(moduleRoot, 'scaleform/hud-init.as.inc'), 'utf8');
+// Mirror build_scaleform.hud_init_source(): feature panels are substituted at build time.
+const followerPanel = fs.readFileSync(path.join(moduleRoot, 'scaleform/follower-panel.as.inc'), 'utf8').trimEnd();
+const snippet = fs.readFileSync(path.join(moduleRoot, 'scaleform/hud-init.as.inc'), 'utf8')
+  .replace('         // SKYCRPG_FOLLOWER_PANEL', () => followerPanel);
 const hudSource = fs.readFileSync(path.join(skyuiRoot, 'source/actionscript/Vanilla/HUDMenu.as'), 'utf8');
 
 function extractFunction(name) {

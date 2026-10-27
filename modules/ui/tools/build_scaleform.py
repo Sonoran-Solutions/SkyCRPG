@@ -50,6 +50,12 @@ def replace_once(text, anchor, replacement):
     return text.replace(anchor, replacement, 1)
 
 
+def hud_init_source():
+    """HUD initialization as compiled: shared init with feature panels substituted."""
+    hud = (ROOT / "scaleform/hud-init.as.inc").read_text()
+    return replace_once(hud, "         // SKYCRPG_FOLLOWER_PANEL", (ROOT / "scaleform/follower-panel.as.inc").read_text().rstrip())
+
+
 def transform(name, text):
     if name.endswith("InventoryMenu.as"):
         text = replace_once(text, "_loc3_.layout = _loc5_;", "_loc3_.skycrpgGrid = true;\n      _loc3_.scrollDelta = 3;\n      _loc3_.layout = _loc5_;")
@@ -87,7 +93,7 @@ def transform(name, text):
    function SetLocationName(aLocation)"""
         text = replace_once(text, mode_anchor, mode_sync)
         anchor = 'Stage.scaleMode = "showAll";'
-        text = replace_once(text, anchor, anchor + "\n" + (ROOT / "scaleform/hud-init.as.inc").read_text())
+        text = replace_once(text, anchor, anchor + "\n" + hud_init_source())
     return text
 
 
