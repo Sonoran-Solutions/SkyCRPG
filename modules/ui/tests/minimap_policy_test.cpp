@@ -4,11 +4,10 @@
 int main()
 {
     using namespace skycrpg::ui::minimap;
-    for (int bits = 0; bits < 64; ++bits) {
+    for (int bits = 0; bits < 512; ++bits) {
         Capability state{bool(bits & 1), bool(bits & 2), bool(bits & 4),
-            bool(bits & 8), bool(bits & 16), bool(bits & 32)};
-        assert(ShouldSuppress(state) == (bits == 31));
-        state.ready = FunctionalReadinessProven();
-        assert(!ShouldSuppress(state));
+            bool(bits & 8), bool(bits & 16), bool(bits & 32), bool(bits & 64),
+            bool(bits & 128), bool(bits & 256)};
+        assert(ShouldSuppress(state) == (bits == 255));
     }
 }

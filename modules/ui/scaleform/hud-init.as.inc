@@ -1,3 +1,4 @@
+      if (this._skycrpgCompassRelease != undefined) this._skycrpgCompassRelease();
       // Release child frame callbacks and restore only the meter visibility we owned
       // before a repeated initialization. Do not attach another handler on refresh.
       if (this.SkyCRPGStatus != undefined) {

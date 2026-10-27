@@ -31,5 +31,13 @@ class PreflightTest(unittest.TestCase):
                 self.assertFalse(preflight.inspect(root, False)["launch_allowed"])
 
 
+class PinContractTest(unittest.TestCase):
+    def test_native_pins_match_preflight(self):
+        import re
+        header = (Path(__file__).resolve().parents[1] / "src/minimap/pins.h").read_text()
+        pins = dict(re.findall(r'\{"([^"\n]+)", "([0-9a-f]{64})"\}', header))
+        self.assertEqual(pins, preflight.EXPECTED)
+
+
 if __name__ == "__main__":
     unittest.main()

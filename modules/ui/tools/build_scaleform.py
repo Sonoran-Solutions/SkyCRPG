@@ -86,6 +86,8 @@ def transform(name, text):
    }
    function SetLocationName(aLocation)"""
         text = replace_once(text, mode_anchor, mode_sync)
+        compass_write = "      this.CompassRect._parent._visible = abShowCompass;"
+        text = replace_once(text, compass_write, compass_write + "\n      if (this._skycrpgCompassOwned == true) this._skycrpgCompassPrior = abShowCompass;")
         anchor = 'Stage.scaleMode = "showAll";'
         text = replace_once(text, anchor, anchor + "\n" + (ROOT / "scaleform/hud-init.as.inc").read_text())
         text = replace_once(text, anchor, anchor + "\n" + (ROOT / "scaleform/compass-policy.as.inc").read_text())

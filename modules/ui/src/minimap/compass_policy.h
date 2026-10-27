@@ -5,22 +5,25 @@ namespace skycrpg::ui::minimap
 struct Capability
 {
     bool enabled;
-    bool present;
-    bool compatible;
-    bool ready;
+    bool exact;
     bool gameplay;
-    bool transition;
+    bool attached;
+    bool visible;
+    bool inBounds;
+    bool hudMode;
+    bool settled;
+    bool cellChanged;
 };
+
+constexpr bool BoundedObservationReady(const Capability& capability)
+{
+    return capability.enabled && capability.exact && capability.gameplay &&
+        capability.attached && capability.visible && capability.inBounds &&
+        capability.hudMode && capability.settled && !capability.cellChanged;
+}
 
 constexpr bool ShouldSuppress(const Capability& capability)
 {
-    return capability.enabled && capability.present && capability.compatible &&
-        capability.ready && capability.gameplay && !capability.transition;
-}
-
-// No public DEM contract proves that a fresh map frame was rendered.
-constexpr bool FunctionalReadinessProven()
-{
-    return false;
+    return BoundedObservationReady(capability);
 }
 }
