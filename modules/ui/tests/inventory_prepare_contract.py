@@ -49,6 +49,23 @@ def check(out):
 
 @unittest.skipUnless(os.environ.get('SKYCRPG_SKYUI_SOURCE'), 'SKYCRPG_SKYUI_SOURCE not set')
 class InventoryPrepareContract(unittest.TestCase):
+    def test_native_rebuild_sampling_guard(self):
+        # Portable callbacks cannot execute the engine adapter on this host.
+        # Pin its safety ordering as well: neither dirty-list inspection nor
+        # stale-token handling may run before the in-progress refusal.
+        bridge = (ROOT / 'src/inventory/inventory_bridge.cpp').read_text()
+        sample = bridge[bridge.index('bool Sample('):bridge.index('void Invalidate(')]
+        self.assertRegex(sample, r'bool Sample\([^)]*\)\s*\{\s*if \(g_reconciliation\.Updating\(\)\) return false;')
+        self.assertRegex(bridge, r'\{\s*const ListReconciliation::UpdateScope updating\(g_reconciliation\);\s*'
+                         r'g_dirty.store\(true\);[^\n]*\n\s*menu->GetRuntimeData\(\).itemList->Update\(player\);\s*\}\s*'
+                         r'g_dirty.store\(false\);')
+        guard = bridge.index('if (_operation == Operation::Validate && g_reconciliation.Updating())')
+        snapshot = bridge.index('if (_operation == Operation::Snapshot)')
+        arguments = bridge.index('if (params.argCount != 4')
+        self.assertLess(guard, snapshot)
+        self.assertLess(guard, arguments)
+        self.assertRegex(bridge[guard:snapshot], r'SetBoolean\(false\);\s*return;')
+
     def test_transforms(self):
         with tempfile.TemporaryDirectory() as out:
             check(Path(out))

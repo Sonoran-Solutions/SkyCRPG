@@ -88,7 +88,7 @@ console.log('Portable policy adapter: g++ '+compile.join(' ')+' (timeout 600s)')
 const build = spawnSync('g++',compile,{encoding:'utf8',timeout:600000});
 assert.equal(build.status,0,build.stderr || String(build.error));
 function fixture() {
-  const state = {snapshots:0,drops:0,activates:0,refreshes:0,refusals:[],history:[],focused:true};
+  const state = {snapshots:0,drops:0,activates:0,refreshes:0,refusals:[],history:[],focused:true,updating:false,snapshotCalls:0};
   function step(command) {
     state.history.push(command);
     const history=path.join(scratch,'history');
@@ -112,6 +112,8 @@ function fixture() {
   global._root = {Menu_mc:instance};
   skse.plugins.SkyCRPGUI = {
     getInventorySnapshot() {
+      state.snapshotCalls++;
+      if (state.updating) return undefined; // Native rebuild guard, not a list observation.
       step('snapshot'); // Observe retires only a completed non-modal action.
       state.selectedIndex=instance.inventoryLists.itemList.selectedEntry.itemIndex;
       return {token:++state.snapshots,selectedIndex:instance.inventoryLists.itemList.selectedEntry.itemIndex};
@@ -120,6 +122,7 @@ function fixture() {
       step(`edge ${key} ${Number(down)}`);
     },
     validateItemAction(token,action,amount,phase) {
+      if (state.updating) return false;
       assert.equal(token,state.snapshots,'validator must receive the current bridge token');
       const focused=Number(state.focused && state.selectedIndex === instance.inventoryLists.itemList.selectedEntry.itemIndex);
       const result=step(phase === 'confirm' ? `confirm ${focused} ${amount}` :
@@ -139,6 +142,29 @@ function fixture() {
   return {state,instance,a,b,highlight,edge,drop(){native.DropItem.call(instance);},
     refresh(){lists.InvalidateListData.call(instance.inventoryLists);}};
 }
+
+// A native rebuild can re-enter highlight acquisition. The actual AS must
+// retain undefined, then reacquire on the first explicit action after Update.
+for (const callbackFirst of [false,true]) {
+  const f=fixture();
+  f.state.updating=true;
+  f.highlight(f.a);
+  assert.ok(f.state.snapshotCalls>0,'highlight must attempt acquisition during Update');
+  assert.equal(f.instance._skycrpgInventoryToken,undefined);
+  assert.equal(f.state.snapshots,0,'reentrant callbacks must not publish a token');
+  assert.deepEqual(f.state.history,[],'reentrant snapshots must not Observe');
+  assert.equal(f.state.refreshes,0);
+  assert.equal(f.state.drops,0);
+  f.state.updating=false;
+  if (!callbackFirst) f.edge('keyDown');
+  f.drop();
+  assert.equal(f.state.drops,1,'undefined token must recapture and drop on the first press after Update');
+  if (callbackFirst) f.edge('keyDown');
+  f.edge('keyUp');
+  assert.deepEqual(f.state.refusals,[]);
+  assert.equal(f.state.refreshes,0);
+}
+console.log('PASS: reentrant rebuild snapshot is undefined; first post-update press recaptures in either callback/down order');
 
 // The owner's sequence: DropItem BEFORE handleInput(keyDown), release, refresh,
 // and repeat. A preceding successful action leaves the old policy consumed.

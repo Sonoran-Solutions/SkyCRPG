@@ -164,6 +164,63 @@ void RefusedSelectionReconciliation() {
     reconciliation.Complete();
     std::cout << "PASS: refused highlights/Validate/reentrant selection queue at most one list update\n";
 }
+void ReentrantListUpdate() {
+    ListReconciliation reconciliation;
+    InventorySnapshots snapshots; snapshots.World(true); snapshots.Menu(true);
+    snapshots.Publish({Plain(0, 3)});
+    const auto selected = Select(snapshots.Get());
+    const auto original = snapshots.Get();
+    unsigned updates = 0, reads = 0, publications = 0;
+    bool dirty = false;
+    auto request = [&] { if (reconciliation.Request()) ++updates; };
+    auto sample = [&] {
+        if (reconciliation.Updating()) return false;
+        ++reads; // Includes acquiring the native list, before the dirty check.
+        if (dirty) { request(); return false; }
+        snapshots.Publish({Plain(0, 3)});
+        ++publications;
+        return true;
+    };
+    request(); // Unrelated drift: selected row and snapshot are still valid.
+    assert(sample()); // Pending alone must retain its existing semantics.
+    reads = 0; publications = 0;
+    auto update = [&] {
+        const ListReconciliation::UpdateScope updating(reconciliation);
+        dirty = true;
+        // ItemList::Update synchronously re-enters the snapshot callback while
+        // its items are incomplete. Refuse before reads, refresh or Publish.
+        for (int callback = 0; callback < 32; ++callback) {
+            assert(!sample());
+            assert(reads == 0 && publications == 0);
+            assert(updates == 1 && reconciliation.Pending());
+            assert(snapshots.Get().entries == original.entries);
+            assert(snapshots.Get().stamp == original.stamp);
+            // Validate must refuse even if it retained a previously valid token.
+            const bool allowed = !reconciliation.Updating() &&
+                Validate(selected, snapshots.Get(), true, Action::Drop, 1) == Refusal::None;
+            assert(!allowed);
+        }
+        {
+            const ListReconciliation::UpdateScope nested(reconciliation);
+            assert(reconciliation.Updating());
+        }
+        assert(reconciliation.Updating());
+    };
+    update();
+    assert(!reconciliation.Updating() && reconciliation.Pending());
+    dirty = false;
+    reconciliation.Complete();
+    assert(!reconciliation.Pending() && updates == 1);
+    assert(sample() && reads == 1 && publications == 1);
+    assert(Validate(selected, snapshots.Get(), true, Action::Drop, 1) == Refusal::None);
+    // Scope cleanup must also work on unwinding, independently of Pending.
+    try {
+        const ListReconciliation::UpdateScope updating(reconciliation);
+        throw 1;
+    } catch (int) {}
+    assert(!reconciliation.Updating() && !reconciliation.Pending());
+    std::cout << "PASS: reentrant rebuild refuses reads/publication/Validate without requeue; next sample and unrelated row succeed\n";
+}
 void GestureOrdering() {
     InventorySnapshots snapshots; snapshots.World(true); snapshots.Menu(true);
     snapshots.Publish({Plain(0, 8)});
@@ -236,6 +293,7 @@ void GestureOrdering() {
     std::cout << "PASS: engine callback/down ordering, mouse gestures, repeats, no retry and one-shot quantity confirm\n";
 }
 int main() {
+    ReentrantListUpdate();
     GestureOrdering();
     RowMatching();
     RefusedSelectionReconciliation();

@@ -470,3 +470,63 @@ Still open for DYL-163:
   - missing-DLL fallback;
   - combined profile;
   - baseline (no SkyCRPG) confirmation that vanilla merges stolen and owned units.
+
+## Senior re-review P2: no sampling during native list rebuild
+
+Base: `bdae681`, branch `phase3/dyl-163-inventory`, 2026-10-27. Addresses the bounded P2 in the [latest senior re-review](https://github.com/Sonoran-Solutions/SkyCRPG/pull/17#issuecomment-6454817858). `gh pr view 17 --comments` could not connect to GitHub on this host; the connected GitHub tool supplied the discussion, including that latest review. This correction does not close the remaining acceptance gates above.
+
+### Risk and correction
+
+An unrelated-form drift can queue `RequestListUpdate()` with `g_dirty` still false. `g_mutex` is recursive: synchronous selection/highlight callbacks from native `ItemList::Update(player)` can re-enter the snapshot handler on the same thread. Pending reconciliation coalesces requests but did not prevent sampling a partially rebuilt native list.
+
+The pinned CommonLibSSE-NG 7.2.0 source at `/srv/storage/Projects/SkyCRPG/session-p2-20261026/commonlib-7.2.0/src/RE/I/ItemList.cpp` only forwards `Update(TESObjectREFR*)` to `Update_Impl`, an opaque `RELOCATION_ID(50099, 51031)` call. It provides no reconstructed-list sequencing proof. The existing `Update(TESObjectREFR*)` signature was verified against the pinned `include/RE/I/ItemList.h`. No new engine API, hook or offset is used.
+
+`ListReconciliation::UpdateScope` sets a portable `Updating()` state and restores the previous state on scope exit, including nested scopes and unwinding. It does not alter `Request`/`Pending`/`Complete`. The queued UI task holds this scope around the actual native update and sets `g_dirty` true for the call, including updates requested by unrelated drift; normal completion clears dirty. The pending request completes afterward as before.
+
+`Sample()` tests `Updating()` first and returns false before acquiring or reading the list, requesting reconciliation, refreshing or logging. Reentrant Snapshot therefore leaves the GFx return undefined and clears its cached selection. Validate explicitly returns false during Update before argument/stale-token handling, with no logging or extra update request, even if it retained a formerly valid token. The off-thread native fallback remains unchanged.
+
+After Update returns, normal sampling resumes with the existing cleared drift baseline. An unrelated-form update does not bump the snapshot generation merely to mark the temporary dirty window; a still-matching selected row remains usable afterward. If a reentrant highlight obtained undefined, the existing AS first-acquisition path recaptures on the first explicit action after Update. No AS changes were needed. Row coverage, gesture rules, session reset, shared minimap/follower integration and all other production files are unchanged.
+
+### Verification
+
+All job purposes, exact commands, expected outputs, owners, limits, completion signals, PIDs/process groups, logs, deadlines, exits and cleanup results are recorded under `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/senior-review-p2/` in `run_checks.py`, `jobs.json` and `suite.log`. Focused jobs have 600-second limits; the requested lane runner has a 900-second outer limit. All 24 jobs met their expected results and their owned process groups were reaped and verified absent. Outputs stayed outside the repository.
+
+| Check | Result and limits |
+| --- | --- |
+| Portable `ReentrantListUpdate` regression | **PASS:** 32 synchronous sample callbacks during a mock rebuild perform zero list reads/publications and request no second update; retained-token Validate refuses. Pending alone permits sampling. The next post-update sample and validation of the unchanged selected row succeed. Nested scope and unwinding restore the state. |
+| Guard-disabled negative control | **PASS (expected regression FAIL):** compile the unchanged candidate test with a temporary copy of `list_reconciliation.h` whose scope no longer sets the update marker. It exits with SIGABRT (`-6`) at `reads == 0 && publications == 0` inside the reentrant callback. Compilation succeeds; `unguarded-reentrant-negative.log` records the assertion. The repository guard was never removed. |
+| Actual transformed AS replay | **PASS:** reentrant highlight acquisition gets undefined with no published token, Observe or refresh; the first post-update drop recaptures and dispatches once in both callback-before-down and down-before-callback orders, without an extra press. Native callbacks are mocked; this is not GFx/game evidence. Existing gesture/modal/fallback cases also pass. |
+| Native adapter source contract | **PASS:** checks immediate Sample refusal, dirty marking within the RAII native-call scope, and early false Validate before stale-token handling. This source check does not compile or execute the engine adapter. |
+| Requested lane runner | **PASS, 15/15 steps**, including portable inventory policies and the AS replay adapter. |
+| Python discovery | **PASS, 19 tests, no skips.** |
+| Follower, HUD, minimap compass and navigation JS contracts | **PASS, all four.** |
+| Every portable `modules/ui/tests/*_test.cpp` | **PASS, all seven build and execute** with `-std=c++20 -Wall -Wextra -Werror -pedantic`. |
+
+Commands from the worktree root (the recorded runner expands every loop into individual build/run jobs):
+
+```sh
+timeout 600 g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/ui/src modules/ui/tests/inventory_policy_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/senior-review-p2/inventory_policy_focused
+timeout 600 /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/senior-review-p2/inventory_policy_focused
+timeout 900 python3 -I /srv/storage/Projects/SkyCRPG/session-p3/tools/dyl-163-run-checks.py
+SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 timeout 600 python3 -I -m unittest discover -s modules/ui/tests -p "*.py"
+for test in follower_panel_test hud_contract minimap_compass_contract navigation_contract; do
+  timeout 600 /home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node "modules/ui/tests/$test.js" modules/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11
+done
+for source in modules/ui/tests/*_test.cpp; do
+  binary="/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/senior-review-p2/$(basename "$source" .cpp)"
+  timeout 600 g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/ui/src "$source" -o "$binary"
+  timeout 600 "$binary"
+done
+```
+
+### Runtime gate
+
+**NOT_RUN:** native Windows/MSVC `/W4 /WX /permissive-` build, SWF compilation, packaged candidate hashes, actual native rebuild/GFx callback ordering and first-press usability in game. No Skyrim, Steam, Proton, deployment, commit or push was performed. Existing round-2/3 runtime PASS evidence and favorite pre-dispatch **BLOCKED** status are unchanged.
+
+Owner/orchestrator follow-up (**NOT_RUN**, copied save and isolated profile): record source/DLL/SWF hashes, executable/runtime, dependencies and host; cause unrelated inventory drift, observe reconciliation/highlight callbacks, then drop or equip the unchanged selected row on the first press. Check native counts/weight, no partial-list crash/refusal storm or automatic retry, then repeat with a native list refresh and quantity action. A future native runtime result is required before claiming this guard's in-game acceptance.
+
+## Owner ruling — native favorite toggle (2026-10-27)
+
+> Owner ruling for DYL-163: the native favorite toggle stays native and unguarded, because it only flags an item and never moves, drops or consumes it; record it as an accepted, scoped limitation.
+
+Recorded in `docs/DECISIONS.md`. The favorite pre-dispatch row moves from **BLOCKED** to an **accepted limitation (owner ruling)**. Pinned SkyUI 6.11 exposes no Scaleform callback before the native favorite dispatch, and guarding it would need a new engine hook. DYL-163 continues to guard activate, equip and drop, including quantity confirm, and still observes favorite state in snapshots.

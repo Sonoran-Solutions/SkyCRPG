@@ -99,7 +99,11 @@ void RequestListUpdate()
             auto* player = RE::PlayerCharacter::GetSingleton();
             if (menu && player && menu->GetRuntimeData().itemList) {
                 g_native.clear(); // Native reconciliation resets the drift baseline.
-                menu->GetRuntimeData().itemList->Update(player);
+                {
+                    const ListReconciliation::UpdateScope updating(g_reconciliation);
+                    g_dirty.store(true); // Includes updates requested by unrelated drift.
+                    menu->GetRuntimeData().itemList->Update(player);
+                }
                 g_dirty.store(false);
             }
         }
@@ -197,6 +201,7 @@ bool Focused(RE::UI* ui, RE::InventoryMenu* inventory)
 }
 bool Sample(std::uint32_t& selectedIndex)
 {
+    if (g_reconciliation.Updating()) return false;
     if (!MainThread() || !g_loaded || !g_open) return false;
     auto* ui = RE::UI::GetSingleton();
     const auto menu = ui ? ui->GetMenu<RE::InventoryMenu>() : nullptr;
@@ -345,6 +350,10 @@ public:
             LogOffThread(_operation == Operation::Validate ? "validate" : "snapshot");
             if (_operation == Operation::Validate) params.retVal->SetBoolean(true);
             return;
+        }
+        if (_operation == Operation::Validate && g_reconciliation.Updating()) {
+            params.retVal->SetBoolean(false);
+            return; // No stale-token logging or reconciliation from an Update callback.
         }
         if (_operation == Operation::Snapshot) {
             if (!Sample(index)) { g_selection.reset(); return; }
