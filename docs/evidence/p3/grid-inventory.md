@@ -183,3 +183,45 @@ Both devices: All category, sort by name, scroll from first to last entry using 
 - Runtime fixture generation requires an offline source copy and native row verification; it has only synthetic parser evidence here. No personal save/game binary/dependency archive is committed.
 - Existing DYL-163 native favorite and unsupported-thread action rulings remain accepted scoped limitations. No lower inventory cap, provider change or new product-scope decision is proposed; `DECISIONS.md` and ticket scope need no amendment.
 - **Owner decisions needed:** accept or request layout adjustments after the route, then decide ticket acceptance using the runtime ledger. Any future relaxation of 500-entry performance/capacity or broadened slot/framework scope needs a separately recorded owner decision. Public redistribution/installer rights remain DYL-171/174; local derivative SWFs do not grant distribution rights.
+
+## Owner runtime — UI-only route, 2026-10-27: PASS (bounded)
+
+**PASS (owner-reported).** Run `e0abf83561b2494888fdef9e542cf823`.
+
+| Field | Value |
+| --- | --- |
+| Source / CI | `c1ae156`, Windows run [40601052249](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40601052249) **PASS** (scope, windows-x64 (ui)); ZIP `ffd8e2b0fdbb8dfb…`, DLL `b0d45120bed14f37…` (includes `getInventoryEquipment`) |
+| Movies | `inventorymenu.swf` `bcb3be2001d33e73…`, `skyui/inventorylists.swf` `8643994e174ce308…`, `hudmenu.swf` `cd1e1fa7…` (unchanged) |
+| Profile / host | UI-only, 175 files (merged Phase 3 stage with only the two inventory movies replaced); Steam 1.7.104.0 (exe `846efccf…`), SKSE 2.3.1, Address Library 13, Proton Experimental 11, 1280×720 baseline |
+| Input | **Both keyboard/mouse and controller**, as reported by the owner. Per-step device attribution is not recorded. |
+| Save | `SkyCRPG_Test_DYL164`, a disposable copy of the `SkyCRPG_Fixture_CombinedAcceptance` fixture (preserved fixture untouched) |
+| 500-entry fixture | `skycrpg-grid-500.txt` (`ebd8547e66dd84e7…`, 500 `player.additem` lines from an offline read-only copy of `Skyrim.esm`) was placed in the game root for `bat` only for this run and removed on restore (hash rechecked before removal) |
+| Run | About 4 min of a 20 min budget, normal quit, watchdog did not intervene (minimum 13.2 GiB available) |
+| Logs | `SkyCRPG_UI.log` `66fb3c6e…`: minimap preflight `exact=1`; **no inventory refusals of any kind** |
+| Cleanup | Restoration **PASS**; no changed candidate files, no active profile, no Skyrim process |
+
+Owner route, all reported passing with no issues:
+1. **Layout:** the 3-wide grid with icons, counts and E/F/S/Q markers, the equipment silhouette, the item card and the gold/weight footer showed with no overlap or off-screen elements.
+2. **Mouse:** hover plus R dropped on the first press; click equip, unequip and another item each acted once.
+3. **Keyboard:** arrow navigation in the grid with Up to the categories; E equips and R drops.
+4. **Equipment panel:** sword and armor slots updated on equip/unequip; empty slots read empty; no wrong names.
+5. **Rows:** plain, tempered and enchanted Iron Sword rows dropped separately; the stolen/owned helmet row and favorite toggle worked; Nettlebane could not be dropped.
+6. **Potions:** `player.additem 0003EADD 8`, quantity-dialog drop of 3, a cancelled dialog and a dialog-open close changed the count by 3 only.
+7. **500 entries:** `bat skycrpg-grid-500` added 500 distinct items; scrolling All top to bottom and back reached the end **with no noticeable lag** (owner observation; no timing instrumentation).
+
+Updated acceptance:
+
+| Criterion | Runtime |
+| --- | --- |
+| AC1 find/inspect/equip/consume/favorite/drop with accurate counts | **PASS (owner-reported, bounded)**; native consume of the plugin item was not repeated here (covered for the merged DYL-163 build in its combined run) |
+| AC2 long names, missing icons, large inventories | **PASS (owner-reported)** for large inventory and layout at 1280×720; long custom name and CC-icon fallback **NOT_RUN** in game |
+| AC3 500 entries usable | **PASS (owner-reported)**: no noticeable lag, end reachable; no instrumented timing |
+| Equipment slots | **PASS (owner-reported)** for sword/armor/empty; two-handed, left-hand spell/torch, multi-slot robe, ring and amulet **NOT_RUN** |
+
+Still **NOT_RUN**:
+- a dedicated controller-only pass (grid ±1/±3 movement, categories, search/sort escape);
+- the native poison confirmation dialog;
+- the long custom name;
+- native container/barter/crafting/Magic/journal/map coexistence plus save/load in this build;
+- 1920×1080 and increased text scale;
+- the combined Camera+UI smoke on this build.
