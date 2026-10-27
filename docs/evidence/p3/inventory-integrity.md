@@ -438,3 +438,35 @@ Records under `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/round3b/` i
 Next owner/orchestrator copied-save route (**NOT_RUN**): verify candidate DLL/SWF hashes; drop once on A, then once on B, then twice from the same remaining stack with list refresh between; repeat with keyboard/controller selection; equip with successive presses and mouse clicks; hold/repeat and check one native mutation; open quantity, release the initiating key, confirm once or cancel, then perform another action; exercise menu close/reopen and focus transitions. Record input/down/up/callback order, native counts/weight, focus retention and any `duplicate-input` refusal, together with executable/runtime, dependencies, host, source commit and package hashes.
 
 **Orchestrator review addition.** Re-arming only on the release of the last held key means a key-up that is never delivered keeps `_held` non-empty. Closing the inventory with Tab does exactly this: Tab's down reaches the menu, its up does not. The round-3 change also stopped clearing `_held` on invalidation, so every action in the next session would have been refused. `ActionIntents::ResetSession()` now clears held keys and re-arms when the InventoryMenu opens or closes and on load. No engine callback fires without a press inside the menu. `inventory_policy_test.cpp` covers a lost Tab up across a session and shows that the session would stay blocked without the reset.
+
+## Round 3 runtime — 2026-10-27: PASS
+
+**PASS (owner-reported, log-confirmed).**
+
+| Field | Value |
+| --- | --- |
+| Source / CI | `15f291a`, Windows run 40585055566 **PASS**; ZIP `336cc0c70afaab4c…`, DLL `2e0a0815eed7d36f…`; `inventorymenu.swf` `695ddda0af550d67…`, `skyui/inventorylists.swf` `8766d2b2…`, HUD `2de109b3…` |
+| Save | Owner-made `SkyCRPG_Fixture_InventoryItems` (from the vanilla Nexus fixture; plain, tempered and self-enchanted Iron Swords; stolen and owned Iron Helmets) |
+| Runs | `39b6e9bf…`: ended at about 1 min with no inventory activity, clean exit, restore PASS (no evidence). `ec0b4e3cd75f47568b46d20190a8f3da`: about 4 min, normal quit, watchdog did not intervene (minimum 11.9 GiB available); restoration **PASS** |
+| UI log | `f510e97a…`: **no inventory refusals of any kind** (0 row, 0 `duplicate-input`, 0 stale, 0 off-thread) |
+
+Owner route, all reported passing:
+1. Three different items highlighted with the mouse each dropped on the first click, with no jump to the categories.
+2. Two drops in a row from the same stack.
+3. The inventory closed with Tab, reopened, and the drop worked first time.
+4. A quick double press dropped only the expected item.
+
+The log has no `duplicate-input`, so the double press did not reach the guard as a second dispatch for the same press. The engine either issued one drop, or the second tap was a separate completed press acted on as one. The owner's observation is the evidence for the outcome.
+
+This closes the round-2 first-press defect. Row integrity from round 2 (plain, tempered and enchanted rows; the merged stolen-plus-owned row) is unchanged in round 3.
+
+Still open for DYL-163:
+- Senior review of the round-2/3 design points: native-row coverage rule, `ambiguous` informational for native actions, re-arm on release plus session reset.
+- Favorite pre-dispatch guard: **BLOCKED**.
+- **NOT_RUN:**
+  - quest-item drop refusal;
+  - modded form;
+  - controller;
+  - missing-DLL fallback;
+  - combined profile;
+  - baseline (no SkyCRPG) confirmation that vanilla merges stolen and owned units.
