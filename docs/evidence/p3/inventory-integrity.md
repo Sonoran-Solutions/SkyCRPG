@@ -30,7 +30,7 @@ Senior review of the worker candidate changed three behaviors in `inventory_brid
 - **Passive overlays keep the inventory context.** `HUD Menu`, `Cursor Menu`, `Fader Menu` and `Mist Menu` open/close events no longer cancel a pending quantity intent or spend the current gesture. Any other menu still invalidates.
 - **An unsupported callback thread falls back to native behavior.** Previously, a GFx call off `Main::threadID` refused every activation and drop, which would trap the inventory if the actual dispatch thread differs. Live reads are still skipped on such a thread. Validation now returns permit, so the native menu, which remains authoritative, acts alone. It logs `unsupported-thread; native behavior retained` once. Any such log line means the validator is inactive on that host and DYL-163 stays open.
 
-Re-run after these changes: `timeout 600 python3 -I modules/ui/tests/inventory_run_checks.py` — all 15 steps **PASS**. The bridge is not compiled locally; Windows CI is the compile check.
+Re-run after these changes with the lane runner — all 15 steps **PASS**. The runner holds host paths, so it lives outside the repository at `/srv/storage/Projects/SkyCRPG/session-p3/tools/dyl-163-run-checks.py`. Since integration it runs 15 steps; the pre-integration `git apply --check` step is retired. The bridge is not compiled locally; Windows CI is the compile check.
 
 ## CommonLib 7.2.0 source audit
 
@@ -56,16 +56,18 @@ There is no universal instance accessor or `InventoryEntryData::IsStolen()` in t
 
 All command specifications are recorded before jobs start in `suite-job.md`, subsequent changed-input job records, and `jobs.json` under `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/`. Owner: DYL-163 / Codex. Every focused command uses `timeout 600`; expected output is exit 0 plus assertions/portable binary/patch success. `jobs.json` records exact argv, PID, UTC start/deadline, log, elapsed time, exit/reaped status and cleanup. Completion is process exit, not quiet output. All final jobs exited normally; no test process remains pending. Binaries, staged sources and logs stay outside Git. `source-sha256.json` records the lane/integration file hashes; `cleanup.json` confirms recorded job PIDs are absent.
 
-Reproduce the complete suite from the worktree root:
+Reproduce the complete suite with the lane runner (host paths, kept outside Git):
 
 ```sh
-timeout 600 python3 -I modules/ui/tests/inventory_run_checks.py
+timeout 600 python3 -I /srv/storage/Projects/SkyCRPG/session-p3/tools/dyl-163-run-checks.py
 ```
+
+`inventory_prepare_contract.py` also runs under `unittest discover` when `SKYCRPG_SKYUI_SOURCE` is set (skipped otherwise), so the repository's `-p "*.py"` discovery works on trees that include DYL-163.
 
 Exact final commands (each compile/run is a separate logged job):
 
 ```sh
-timeout 600 python3 -I modules/ui/tests/inventory_prepare_contract.py /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163
+SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 timeout 600 python3 -I modules/ui/tests/inventory_prepare_contract.py /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163
 # T is inventory_policy, favorite_slots, menu_focus, resource_snapshot, hud_settings:
 timeout 600 g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/ui/src modules/ui/tests/${T}_test.cpp -o /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/${T}_test
 timeout 600 /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/${T}_test
