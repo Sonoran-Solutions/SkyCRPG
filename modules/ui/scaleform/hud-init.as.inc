@@ -109,6 +109,13 @@
          bar._visible = false;
          bar.dataReady = false;
          bar.nextSample = 0;
+         bar.createTextField("voice", 20, 4, 61, 528, 16);
+         bar.voice.setNewTextFormat(new TextFormat("$EverywhereFont", 11, 0xE8E1D1));
+         bar.voice.selectable = false;
+         bar.formatRecovery = function(seconds) {
+            return typeof(seconds) == "number" && isFinite(seconds) && seconds >= 0 ?
+               (Math.ceil(seconds) + "s") : "--";
+         };
          bar.syncVisibility = function() {
             var bridge = skse != undefined && skse.plugins != undefined ? skse.plugins.SkyCRPGUI : undefined;
             var blocked = bridge == undefined || typeof(bridge.isMenuFocusBlocked) != "function" ||
@@ -184,6 +191,7 @@
             }
             this.dataReady = true;
             this.syncVisibility();
+            this.voice.text = slots.voiceName ? "VOICE: " + slots.voiceName + "  " + this.formatRecovery(slots.voiceRecovery) : "";
             var i = 0;
             while (i < 8) {
                var cell = this["slot" + i];
@@ -201,9 +209,7 @@
                cell.name.text = value.name;
                // Native voice recovery is global to the player, not a spell timer.
                if (value.kind == "SHOUT") {
-                  cell.count.text = typeof(value.voiceRecovery) == "number" &&
-                     isFinite(value.voiceRecovery) && value.voiceRecovery >= 0 ?
-                     (value.voiceRecovery > 0 ? Math.ceil(value.voiceRecovery) + "s" : "READY") : "--";
+                  cell.count.text = this.formatRecovery(value.voiceRecovery);
                } else {
                   cell.count.text = value.count > 1 ? "x" + value.count : "";
                }

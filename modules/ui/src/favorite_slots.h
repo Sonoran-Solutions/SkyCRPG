@@ -7,6 +7,16 @@
 #include <vector>
 
 namespace skycrpg::ui {
+// The engine key index is the presentation index; magic is applied after items.
+template<class Slot>
+void SetNativeBinding(std::array<Slot, 8>& slots, unsigned index, Slot slot)
+{
+    if (index >= slots.size() || !slot.formID) return;
+    slot.bound = true;
+    slots[index] = std::move(slot);
+}
+
+inline bool HasInventoryCount(int count) { return count > 0; }
 // Fill holes after native bindings have been resolved. IDs exist only during
 // this snapshot; this is not an inventory database or an assignment system.
 // A duplicate form never consumes multiple auto-favorite slots.

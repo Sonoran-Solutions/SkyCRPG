@@ -20,7 +20,9 @@ The high-level action table includes future work. The DYL-156 candidate table be
 
 An action bar that merely draws icons is incomplete. Input must be usable and reflect actual selected/equipped state. No new spell cooldown, autoplay rotation, party order or turn-control binding is planned.
 
-The DYL-161 candidate shows actual numbered native bindings first and fills unused spaces with other native favorites marked `FAV`. A `FAV` label is not a numbered hotkey: select that item through the native Favorites menu using the controller. Favorites beyond eight remain in that menu. This path is pending controller gameplay validation; there is no direct controller cycling between custom slots. The candidate does not use SkyUI's multi-action groups as single hotbar actions.
+The DYL-161 candidate uses Skyrim's native favorite quick-keys: assign a favorite to 1–8 in the native Favorites menu, then use that key in gameplay. A numbered entry at position N represents native key N; magic overrides an item for the same native index. Unassigned positions may show other favorites marked `FAV`, sorted by form ID; these are selected through the native Favorites menu and are not activated by their position. Controller selection through that menu has owner-reported bounded PASS; direct controller slot cycling is not implemented.
+
+The UI registers no numbered-key handler and never dispatches an action. Native menu focus and native input mapping therefore own the keys: menus take precedence, and a conflicting mod or remapped control must be resolved in the game's or that mod's bindings rather than by adding a second UI binding. F6/F7/F8 and map K/L retain their documented owners. Keyboard behavior and menu suppression on the current candidate remain **NOT_RUN** in game. The voice line displays the selected shout or power and the native global voice recovery timer, sampled at most twice per second; `--` means unavailable and `0s` only means that timer is zero, not that a daily power is available.
 
 ## Phase 2 Camera candidate — DYL-156
 

@@ -5,7 +5,20 @@
 struct Slot { std::uint32_t formID{}; bool bound{}; std::string name; int count{}; };
 int main() {
     using skycrpg::ui::FillFavoriteSlots;
+    using skycrpg::ui::SetNativeBinding;
     std::array<Slot, 8> slots{};
+    for (unsigned i = 0; i < 8; ++i) {
+        SetNativeBinding(slots, i, Slot{ i + 1, false, "key", 1 });
+        assert(slots[i].formID == i + 1 && slots[i].bound);
+    }
+    SetNativeBinding(slots, 8, Slot{ 99, false, "invalid", 1 });
+    assert(slots[7].formID == 8);
+    SetNativeBinding(slots, 2, Slot{ 42, false, "magic override", 0 });
+    assert(slots[2].formID == 42 && slots[2].bound);
+    assert(skycrpg::ui::HasInventoryCount(1));
+    assert(!skycrpg::ui::HasInventoryCount(0));
+    assert(!skycrpg::ui::HasInventoryCount(-1));
+    slots = {};
     slots[2] = { 42, true, "bound", 1 };
     // Preserve real key positions, sort favorites deterministically, and
     // suppress duplicates of both bound and unbound forms.

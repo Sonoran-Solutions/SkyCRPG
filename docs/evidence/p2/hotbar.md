@@ -1,6 +1,6 @@
 # DYL-161 hotbar candidate — incomplete validation
 
-Base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`. The owner-reported UI-only controller route and Windows build **PASS** on source `5b06523d675b5118fef2148b503026ba04fb2b92`; subsequent commits through `2bebb1b` are documentation-only. The native Favorites menu is the verified bounded controller selection route for the requested weapon, spell and consumable checks. Direct controller cycling or assigning custom slots is not implemented; keyboard-only bindings, live shout recovery and combined Camera/UI gameplay remain open. See the [controller retest](#controller-favorites-retest--2026-10-26) below; earlier failures and candidate histories remain preserved.
+Base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`. The owner-reported UI-only controller route and Windows build **PASS** on source `5b06523d675b5118fef2148b503026ba04fb2b92`; subsequent commits through `2bebb1b` are documentation-only. The native Favorites menu is the verified bounded controller selection route for the requested weapon, spell and consumable checks. Direct controller cycling or assigning custom slots is not implemented; keyboard-only bindings and live shout recovery remain open; the bounded combined smoke passed as recorded below. See the [controller retest](#controller-favorites-retest--2026-10-26) below; earlier failures and candidate histories remain preserved.
 
 | Current check | Result and limit |
 | --- | --- |
@@ -8,8 +8,24 @@ Base: `c3903027791e046fc6f662ccde0cb05a4f7e7633`. The owner-reported UI-only con
 | UI-only controller Favorites route | **PASS, owner-reported** for requested weapon, spell, consumable, favorite removal, empty slot, display, menu visibility and duplicate-action observations. No independent action telemetry or screenshot was collected. |
 | Direct controller slot cycling/assignment | **NOT IMPLEMENTED**; select displayed favorites through the native Favorites menu. |
 | Numbered keyboard bindings and in-game shout recovery | **NOT_RUN** on the controller-only setup. |
-| Combined Camera/UI and scan performance | **NOT_RUN**; this is not evidence of combined behavior or a performance measurement. |
+| Combined Camera/UI and scan performance | **PASS**, owner-reported bounded smoke on prior source; scan performance **NOT_RUN**. |
 | Previous UI-only candidate | **FAIL**: empty bar after attempted keyboard assignment in controller mode and overlap with Favorites; preserved in its historical route below. |
+
+## Current follow-up candidate — keyboard, voice and depletion
+
+The prior bounded controller route and combined smoke remain owner-reported **PASS** on their recorded hashes; they are not tests of this changed candidate. Native quick-key N maps to bar position N; existing unbound `FAV` entries fill holes and are not numbered actions. The UI has no gameplay input handler or synthetic dispatch. Skyrim owns menu focus and key conflicts; verify the native quick-key badges and behavior with keyboard input enabled. Item snapshots exclude counts at or below zero; a fresh snapshot clears a depleted binding or fills its position with another `FAV`. Pure mapping/count checks and the mocked HUD disappearance check **PASS**, actual zero-count engine behavior **NOT_RUN**.
+
+The game task copies `Actor::selectedPower` name and `GetVoiceRecoveryTime()` into the bounded snapshot; a separate voice line shows the selected shout or power even if it is not a favorite. The timer is global and read-only; finite nonnegative seconds are rounded up, zero displays `0s`, and unavailable displays `--`. It does not establish daily power availability. Sampling is requested at most 2 Hz, one task pending, with existing expiry and load invalidation. Selected-power layout, GFx array properties, visual placement and live timer semantics require the pinned host. **Windows build NOT_RUN; owner gameplay NOT_RUN** for this candidate.
+
+Focused Linux validation, owner Codex, 600-second timeouts, process exit as completion and timeout cleanup: **PASS** four portable C++ tests (`g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/ui/src` for `favorite_slots`, `menu_focus`, `resource_snapshot`, `hud_settings`), actual-AS HUD and navigation harnesses using `/home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node`, and 14 `test_scaleform_contract.py` tests with `SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11`. Logs and job specifications: `/tmp/skycrpg-dyl161/jobs.txt`, `tests-final.log`. Initial test attempt **FAIL** exit 127 because `node` was not on PATH after the C++ tests passed; the diagnostic rerun used the pinned explicit Node path and passed.
+
+FFDec 26.0.0 / Java 17 HUD build **PASS / COMPILED_NOT_RUN**, 600-second timeout, exit 0 and nonempty output, with the pinned SkyUI checkout and Nexus 6.11 base. Command:
+
+```sh
+timeout 600s python3 modules/ui/tools/build_scaleform.py --skyui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 --nexus-interface /srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface --java /srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java --target hudmenu.swf --owner DYL-161 --out /tmp/skycrpg-dyl161/swf-final
+```
+
+The builder stages the source patch, invokes FFDec `-importScript` with a 512 MiB heap, and leaves the derivative outside Git. Output SHA-256 `279f08f2df4649811311f26b6dbcee6b41912365c00611d711ab3cdb1987f03f`; log `/tmp/skycrpg-dyl161/build-final.log`, manifest and compiler log under `swf-final`. Temporary paths are not durable release artifacts. No Skyrim process, save, profile or camera files were touched.
 
 ## Menu focus correction and binding investigation — historical
 

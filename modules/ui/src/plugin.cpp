@@ -219,6 +219,8 @@ struct HotbarSlot {
 struct HotbarCache {
 	std::mutex mutex;
 	std::array<HotbarSlot, 8> slots{};
+	std::string voiceName;
+	float voiceRecovery{-1.0f};
 	ResourceClock::time_point sampled{};
 	std::uint64_t generation{};
 	bool available{}, pending{}, loaded{};
@@ -255,6 +257,8 @@ void SampleHotbar(std::uint64_t generation)
 	}
 	std::array<HotbarSlot, 8> slots{};
 	std::vector<HotbarSlot> favorites;
+	auto* selectedVoice = player->GetActorRuntimeData().selectedPower;
+	const char* voiceName = selectedVoice ? selectedVoice->GetName() : nullptr;
 	const auto equippedLeft = player->GetEquippedObject(true);
 	const auto equippedRight = player->GetEquippedObject(false);
 	float voiceRecovery = -1.0f;
@@ -265,7 +269,7 @@ void SampleHotbar(std::uint64_t generation)
 	}
 	auto inventory = player->GetInventory([](RE::TESBoundObject&) { return true; }, true);
 	for (auto& [form, item] : inventory) {
-		if (!form || item.first <= 0 || !item.second || !item.second->extraLists) continue;
+		if (!form || !skycrpg::ui::HasInventoryCount(item.first) || !item.second || !item.second->extraLists) continue;
 		bool favorited = false;
 		bool equipped = false;
 		for (auto* extra : *item.second->extraLists) {
@@ -279,8 +283,8 @@ void SampleHotbar(std::uint64_t generation)
 			if (index >= slots.size()) continue;
 			// Do not call InventoryEntryData::GetDisplayName: it may add extra data.
 			const auto* name = form->GetName();
-			slots[index] = { name ? name : "", HotbarKind(form), item.first,
-				worn, -1.0f, form->GetFormID(), true };
+			skycrpg::ui::SetNativeBinding(slots, index, HotbarSlot{ name ? name : "", HotbarKind(form), item.first,
+				worn, -1.0f, form->GetFormID(), true });
 		}
 		if (favorited) {
 			const auto* name = form->GetName();
@@ -293,9 +297,9 @@ void SampleHotbar(std::uint64_t generation)
 		auto* form = magic->hotkeys[i];
 		if (!form) continue;
 		const auto* name = form->GetName();
-		slots[i] = { name ? name : "", HotbarKind(form), 0,
-			form == equippedLeft || form == equippedRight || form == player->GetCurrentShout(),
-			-1.0f, form->GetFormID(), true };
+		skycrpg::ui::SetNativeBinding(slots, i, HotbarSlot{ name ? name : "", HotbarKind(form), 0,
+			form == equippedLeft || form == equippedRight || form == selectedVoice,
+			-1.0f, form->GetFormID(), true });
 		if (form->GetFormType() == RE::FormType::Shout) slots[i].voiceRecovery = voiceRecovery;
 	}
 	// SKSE IsObjectFavorited uses MagicFavorites::spells for magic forms and
@@ -305,7 +309,7 @@ void SampleHotbar(std::uint64_t generation)
 		if (!form) continue;
 		const auto* name = form->GetName();
 		HotbarSlot entry{ name ? name : "", HotbarKind(form), 0,
-			form == equippedLeft || form == equippedRight || form == player->GetCurrentShout(),
+			form == equippedLeft || form == equippedRight || form == selectedVoice,
 			-1.0f, form->GetFormID(), false };
 		if (form->GetFormType() == RE::FormType::Shout) entry.voiceRecovery = voiceRecovery;
 		favorites.push_back(std::move(entry));
@@ -315,6 +319,8 @@ void SampleHotbar(std::uint64_t generation)
 	g_hotbar.pending = false;
 	if (!g_hotbar.loaded || generation != g_hotbar.generation) return;
 	g_hotbar.slots = std::move(slots);
+	g_hotbar.voiceName = voiceName ? voiceName : "";
+	g_hotbar.voiceRecovery = voiceRecovery;
 	g_hotbar.sampled = ResourceClock::now();
 	g_hotbar.available = true;
 }
@@ -326,12 +332,14 @@ public:
 		params.retVal->SetUndefined();
 		if (!params.movie) return;
 		std::array<HotbarSlot, 8> slots;
+		std::string voiceName;
+		float voiceRecovery = -1.0f;
 		bool available = false, request = false;
 		std::uint64_t generation = 0;
 		{
 			std::scoped_lock lock(g_hotbar.mutex);
 			available = g_hotbar.loaded && g_hotbar.available && ResourceClock::now() - g_hotbar.sampled <= std::chrono::seconds(2);
-			if (available) slots = g_hotbar.slots;
+			if (available) { slots = g_hotbar.slots; voiceName = g_hotbar.voiceName; voiceRecovery = g_hotbar.voiceRecovery; }
 			if (g_hotbar.loaded && !g_hotbar.pending) {
 				g_hotbar.pending = true; generation = g_hotbar.generation; request = true;
 			}
@@ -340,6 +348,11 @@ public:
 		if (!available) return;
 		RE::GFxValue array;
 		params.movie->CreateArray(&array);
+		RE::GFxValue voiceValue;
+		params.movie->CreateString(&voiceValue, voiceName.c_str());
+		if (!array.SetMember("voiceName", voiceValue)) return;
+		voiceValue.SetNumber(voiceRecovery);
+		if (!array.SetMember("voiceRecovery", voiceValue)) return;
 		for (const auto& slot : slots) {
 			RE::GFxValue object, value;
 			params.movie->CreateObject(&object);
