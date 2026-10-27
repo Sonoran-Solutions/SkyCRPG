@@ -544,3 +544,32 @@ The owner reports that **all of today's runs were played mostly with the control
 Consequences:
 - **Controller path: exercised (owner-reported)** on the current design across rounds 2 and 3, the baseline and the missing-DLL checks. The round-3 first-press defect was observed with controller input. Its cause (engine `DropItem`/`AttemptEquip` before the input edge) and fix (re-arm on release, session reset) are device-independent, and the harness tests cover key, mouse and callback orderings.
 - **Keyboard/mouse path on the current code: NOT_RUN.** The only keyboard/mouse inventory run is the 2026-10-26 smoke `e927cb05` on `65c69d7`, before the P1 rounds. A short keyboard/mouse pass (controller off) is still needed for the mouse-highlight and key-edge orderings in game.
+
+## Combined Camera + UI acceptance — 2026-10-27: PASS
+
+**PASS (owner-reported, log-confirmed).** All three Phase 3 UI features (DYL-166 minimap, DYL-165 follower, DYL-163 inventory) ran together with the camera module.
+
+| Field | Value |
+| --- | --- |
+| Source / CI | UI `951dc3e` (main with #15 and #16 merged in), Windows run 40593455538 **PASS**; ZIP `a5147ddfb3f977af…`, DLL `a88dae00840128b4…`. Camera: main's `28aae27` package `b97997f62df7c914…` |
+| Movies | `inventorymenu.swf` `695ddda0…`, `skyui/inventorylists.swf` `8766d2b2…`, `hudmenu.swf` `cd1e1fa7…` (follower panel and compass policy); Phase 2 combined stage otherwise; 214 files |
+| Host / input | Steam 1.7.104.0 (exe `846efccf…`), SKSE 2.3.1, Address Library 13, Proton Experimental 11; **controller** (8BitDo XInput) |
+| Save | `SkyCRPG_Fixture_InventoryItems`; the owner's end-of-run save is preserved as `SkyCRPG_Fixture_CombinedAcceptance` (`session-p3/fixtures/`) |
+| Run | `69f8c8e004e54d97abc60eaa3eb623fb`, about 8 min, normal quit, watchdog did not intervene (minimum 12.8 GiB available) |
+| Logs | `SkyCRPG_UI.log` `1074f66e…`: minimap preflight `exact=1`; **no inventory refusals of any kind**. `skse64.log` compass lease: 8 `settling` → 8 `suppressed`, with `menu`/`hidden`/`stale-sample` releases. `SkyCRPG_Camera.log`: SmoothCam is the sole transform writer, no failures |
+| Cleanup | Restoration **PASS**; the only changed file was our own `SkyCRPG_Camera.ini`, rewritten by the camera module with the same values (as in run `5298264e`), preserved and removed on restore |
+
+Owner route, all passed:
+1. **Coexistence:** the minimap took over from the compass outside, the camera behaved as usual, and the Serana follower panel showed (a screenshot in the Temple of Kynareth shows the panel, the minimap, and the native compass while the console was open).
+2. **Quest item:** Danica's **Nettlebane** (The Blessings of Nature) could not be dropped; the native quest-item restriction held and the count was unchanged.
+3. **Stacked consumables:** 8 Potions of Minor Healing → dropped 3 through the quantity dialog → dialog cancelled → dialog opened, then the inventory closed: the count ended at **5**.
+4. **Plugin form:** a Creation Club plugin item (Rare Curios `FE…` ESL or Fishing `05+` ESM; the owner did not name which) was dropped once and used once. `help "ironwood" 4` found nothing, so the first suggested item does not exist in this pack.
+5. **Rows and gestures:** plain and enchanted sword equip and drop acted on their own copies; a double press dropped once.
+
+This covers the senior re-review's quest-item, stacked-consumable, modded-form and combined-integration rows.
+
+Remaining **NOT_RUN**:
+- a keyboard/mouse pass on the current code, with the controller really off;
+- a two-follower configuration and a non-essential follower death (DYL-165 limitations).
+
+The favorite toggle is accepted native by owner ruling.
