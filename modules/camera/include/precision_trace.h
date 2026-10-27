@@ -1,6 +1,7 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #pragma once
 #include "policy.h"
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 
@@ -26,10 +27,16 @@ struct PrecisionTraceRecord {
 class PrecisionTraceBudget {
 public:
     static constexpr unsigned limit = 64;
-    bool take() { if (used_ == limit) return false; ++used_; return true; }
-    unsigned used() const { return used_; }
+    bool take() {
+        auto current = used_.load(std::memory_order_relaxed);
+        while (current < limit) {
+            if (used_.compare_exchange_weak(current,current + 1,std::memory_order_relaxed)) return true;
+        }
+        return false;
+    }
+    unsigned used() const { return used_.load(std::memory_order_relaxed); }
 private:
-    unsigned used_{};
+    std::atomic_uint used_{};
 };
 // Bit ordering is fixed for offline comparison of pre/post event states.
 constexpr std::uint32_t traceBits(const PrecisionTraceState& s) {
