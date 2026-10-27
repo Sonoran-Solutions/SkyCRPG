@@ -25,7 +25,7 @@ inline ObstructionSettings validateObstruction(ObstructionSettings s, const Sett
     return s;
 }
 constexpr bool obstructionFinite(double v) {
-    return v >= -std::numeric_limits<double>::max() && v <= std::numeric_limits<double>::max();
+    return v >= -(std::numeric_limits<double>::max)() && v <= (std::numeric_limits<double>::max)();
 }
 struct ObstructionPoint { double x, y, z; };
 constexpr bool obstructionFinite(ObstructionPoint p) {
@@ -74,7 +74,7 @@ public:
             latched_ = true;
         }
         if (!probing_) {
-            blend_ = std::min(1.0f,blend_+s.tightenRate*static_cast<float>(dt));
+            blend_ = (std::min)(1.0f,blend_+s.tightenRate*static_cast<float>(dt));
             if (blend_ < 1.0f) return {true,true,blend_};
             probing_ = true;
             low_ = 0;
@@ -86,7 +86,7 @@ public:
                 latched_ = probing_ = false; high_ = low_ = 0;
                 return {true,false,0};
             }
-            blend_ = std::max(0.0f,blend_-s.recoverRate*static_cast<float>(dt));
+            blend_ = (std::max)(0.0f,blend_-s.recoverRate*static_cast<float>(dt));
             if (blend_ == 0) low_ = 0; // dwell at preferred, not only at tight goal
         }
         return {true,true,blend_};
@@ -97,10 +97,10 @@ private:
     bool latched_ = false, probing_ = false;
 };
 constexpr float obstructionPitch(float preferred, float blend, const ObstructionSettings& s) {
-    return preferred + (std::min(preferred,s.tightPitch)-preferred)*blend;
+    return preferred + ((std::min)(preferred,s.tightPitch)-preferred)*blend;
 }
 constexpr float obstructionZoom(float preferred, float blend, const ObstructionSettings& s) {
-    return preferred + (std::min(preferred,s.tightZoom)-preferred)*blend;
+    return preferred + ((std::min)(preferred,s.tightZoom)-preferred)*blend;
 }
 // Native zoom changes are deltas relative to the last adjusted input. Persist
 // only the user's preferred zoom, never the obstruction controller's output.
