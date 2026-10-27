@@ -182,7 +182,7 @@ Still **NOT_RUN** (from the route above):
 | Field | Value |
 | --- | --- |
 | Source / package | Same as the 2026-10-26 smoke: `65c69d7`, ZIP `9c07891a…`, DLL `cf4a0e0a…`, same SWFs. No shipped source changed through `e7aeda3`. |
-| Profile / host | UI-only, 175 files; same host as the smoke; keyboard and mouse, controller off |
+| Profile / host | UI-only, 175 files; same host as the smoke; **controller (8BitDo XInput), corrected 2026-10-27** — see “Input device correction” |
 | Save | Copied `Quicksave0 … RiverwoodSleepingGiantInn … 20261026144253`; the route wrote new saves only into the test profile (`Save3`/`Quicksave0 … 20261027170446`, preserved under `session-p3/p3-inv-163-fix/after-test-saves`) |
 | Run | `da296784e4b1430a8799032173b70c81`, about 9 min of a 20 min budget, normal quit, watchdog did not intervene (minimum 12.7 GiB available) |
 | UI log | `6c095c49…`: `unsupported-thread; native behavior retained` twice, and `duplicate-input` refusals for tokens 89 and 207 |
@@ -536,3 +536,11 @@ Recorded in `docs/DECISIONS.md`. The favorite pre-dispatch row moves from **BLOC
 **Vanilla baseline (no SkyCRPG, no SkyUI): native stolen/owned merge confirmed.** Run `8cb5cded000f497db2fd9a888750e28f`, baseline profile (game + SKSE 2.3.1 only, 2 files), save `SkyCRPG_Fixture_InventoryItems`. About 2 min, normal quit, watchdog did not intervene (minimum 12.9 GiB available); restoration **PASS**. The owner saw the 2 Iron Helmets (1 stolen, 1 owned, console-added) as **one row, both flagged stolen**. A dropped helmet reported that taking it back would be stealing, and the remaining one stayed flagged stolen. The merged "all stolen" row seen with SkyCRPG is therefore vanilla grouping and flagging, not SkyCRPG behavior. The round-2 rule permits this native row by design.
 
 **Missing-DLL fallback: PASS (owner-reported).** Run `6f033b451ef744ae8675bf565d03bd47`, UI-only stage `stage-ui-p3` (merged inventory `695ddda0…`, HUD `cd1e1fa7…`) with package `SkyCRPG_UI-0.0.1-15f291a-nodll.zip` `761f0de1d2ce369f…` (INI and docs only, **no `SkyCRPG_UI.dll`**; 174 files). About 2 min, game exit 0. The profile tool reports `success=false` with `load_problems: SKSE did not report SkyCRPG_UI.dll loaded; no fresh SkyCRPG_UI.log`, as expected for this route; restoration **PASS**. The owner reports that equip, unequip, drop and quantity-dialog drops all behaved natively. With no bridge, `skycrpgInventoryBridge()` returns undefined and every gate permits. The compass lease logged only `menu`/`hidden` (never `suppressed`), so the native compass stayed.
+
+## Input device correction — 2026-10-27
+
+The owner reports that **all of today's runs were played mostly with the controller** (8BitDo Ultimate, XInput), although each launch was requested as "controller off". This applies to the fixture route `da296784`, diagnostic runs `e8b145fb`/`e0e93ec4`, P1 runs `3c5b1837`/`5f95c0b0`, round-3 run `ec0b4e3c`, baseline `8cb5cded` and missing-DLL `6f033b45`. Earlier "keyboard and mouse" or "mouse highlight" wording for those runs is superseded. On this host, Skyrim ignores keyboard/mouse gameplay input while the controller is on.
+
+Consequences:
+- **Controller path: exercised (owner-reported)** on the current design across rounds 2 and 3, the baseline and the missing-DLL checks. The round-3 first-press defect was observed with controller input. Its cause (engine `DropItem`/`AttemptEquip` before the input edge) and fix (re-arm on release, session reset) are device-independent, and the harness tests cover key, mouse and callback orderings.
+- **Keyboard/mouse path on the current code: NOT_RUN.** The only keyboard/mouse inventory run is the 2026-10-26 smoke `e927cb05` on `65c69d7`, before the P1 rounds. A short keyboard/mouse pass (controller off) is still needed for the mouse-highlight and key-edge orderings in game.
