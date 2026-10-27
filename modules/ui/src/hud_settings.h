@@ -11,6 +11,7 @@ namespace skycrpg::ui {
 struct HudSettings
 {
 	bool enabled{ true };
+	bool replaceCompass{ false };
 	int scalePercent{ 100 };
 	int offsetX{ 0 };
 	int offsetY{ 0 };
@@ -21,6 +22,7 @@ struct ParseResult
 	HudSettings settings{};
 	bool supportedVersion{ true };
 	bool enabledWasValid{ true };
+	bool replaceCompassWasValid{ true };
 	bool scaleWasValid{ true };
 	bool offsetXWasValid{ true };
 	bool offsetYWasValid{ true };
@@ -46,7 +48,8 @@ inline bool ParseInteger(std::wstring_view text, int& value)
 }
 
 inline ParseResult ParseHudSettings(std::wstring_view version, std::wstring_view enabled,
-	std::wstring_view scale, std::wstring_view offsetX, std::wstring_view offsetY)
+	std::wstring_view scale, std::wstring_view offsetX, std::wstring_view offsetY,
+	std::wstring_view replaceCompass = L"")
 {
 	ParseResult result{};
 	int parsedVersion = 0;
@@ -59,6 +62,11 @@ inline ParseResult ParseHudSettings(std::wstring_view version, std::wstring_view
 	result.enabledWasValid = ParseInteger(enabled, parsed) && (parsed == 0 || parsed == 1);
 	if (result.enabledWasValid) {
 		result.settings.enabled = parsed == 1;
+	}
+
+	result.replaceCompassWasValid = ParseInteger(replaceCompass, parsed) && (parsed == 0 || parsed == 1);
+	if (result.replaceCompassWasValid) {
+		result.settings.replaceCompass = parsed == 1;
 	}
 
 	result.scaleWasValid = ParseInteger(scale, parsed);

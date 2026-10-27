@@ -86,8 +86,14 @@ def transform(name, text):
    }
    function SetLocationName(aLocation)"""
         text = replace_once(text, mode_anchor, mode_sync)
+        compass_write = "      this.CompassRect._parent._visible = abShowCompass;"
+        # The engine calls SetCompassAngle every frame. While the SkyCRPG lease is
+        # held, record the native-desired value and keep the compass hidden in the
+        # same call, so it never shows for a frame between lease samples.
+        text = replace_once(text, compass_write, compass_write + "\n      if (this._skycrpgCompassOwned == true) {\n         this._skycrpgCompassPrior = abShowCompass;\n         this.CompassRect._parent._visible = false;\n      }")
         anchor = 'Stage.scaleMode = "showAll";'
         text = replace_once(text, anchor, anchor + "\n" + (ROOT / "scaleform/hud-init.as.inc").read_text())
+        text = replace_once(text, anchor, anchor + "\n" + (ROOT / "scaleform/compass-policy.as.inc").read_text())
     return text
 
 
