@@ -39,3 +39,28 @@ Use copied saves and isolated profiles. Record host, executable, source commit, 
 ## Limitations
 
 Native MSVC compilation, generated SWF execution and gameplay remain unverified. The bounded clip check cannot establish current map imagery; stale frames are explicitly accepted by the owner. Temperature is hidden with the compass. Layout and marker behavior remain open. No game, Steam or Proton was launched and no commit or push was made.
+
+## Runtime route — 2026-10-26
+
+All runs used the UI-only profile (175 files, pinned DEM/Infinity UI/LMU Line-17 + Common, preflight `EXACT`), Steam 1.7.104.0, SKSE 2.3.1, Address Library 13 and Proton Experimental 11, with the controller off. The save was the copied test save `Quicksave0_…_RiverwoodSleepingGiantInn_…_20261026144253`. Every run used the native package from `9cb576f` ([Windows run 40457081211](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40457081211) **PASS**): ZIP `3b3152529ba2151ae27f9a19cd32bf18058619b0c88c9e5edec8e0cd3a850379`, DLL `603049abfdfcd711f7de01cfa078536775664725af0f4f28c117464fd79d0c03`, `bReplaceCompass=1`. The runs differ only in the locally built HUD movie, because the later fixes changed ActionScript and the builder only. In every run the DLL logged all five provider files `exact`, `Minimap preflight exact=1`. Every run exited normally with no watchdog intervention, and every restoration **PASS**ed (no changed candidate files, no active profile, no Skyrim process). Records are under `/srv/storage/Projects/SkyCRPG/session-p3/p3-map-166*/`.
+
+| Run | HUD movie / source | Owner observation | Diagnosis and fix |
+| --- | --- | --- | --- |
+| `de93b86ff0b54fff8949a67aeead89db` (60 s) | `ac36c2ef…` / `9cb576f` | **FAIL:** compass never disappeared | Fail-safe: the lease's 4-unit edge margin rejected DEM's corner-flush frame (screenshot ≈ x 1278, y 3 on the 1280×720 HUD). The run had no lease logging yet. `ac577fc` allows an overhang and logs lease state changes to `skse64.log`. |
+| `e0a74f54e995493cba4d1e7f4a6e7135` (60 s) | `6cc7834c…` / `ac577fc` | **FAIL:** compass never disappeared | Log: `bounds` with live clip 1147..1338 × 16..175. DEM's quest pointer and distance label overhang the edge. `2f6bbef` judges placement by centre in the upper-right quadrant plus ≥50% of the area on screen. |
+| `815386e841184693b0c87579203a32cd` (90 s) | `608bd786…` / `2f6bbef` | **FAIL:** compass flickered, never stayed hidden | Log showed `suppressed`, but the engine calls `SetCompassAngle` every frame and writes `Compass._visible`, while the lease re-hid only at 100 ms samples. `c4a39e1` keeps the compass hidden inside that per-frame write while the lease is held. A frame-level contract fails on the previous hook. |
+| `7571da8e3f4c42fbb4cfd8eaa1a6f5d7` (174 s) | `2de109b3ca9428c03f694268838e3125d0491e7bf1d1429268f384426e6729a4` / `c4a39e1` | **PASS (owner-reported): everything passed.** The compass hid with no flicker after load and after menus, interior/exterior and save/load, and returned on K | UI log `c84bc2cf…`, `skse64.log` `4ac35d2d…`. The lease cycled `menu`/`hidden`/`stale-sample` (release) → `settling` → `suppressed` across load, menus, K hide/show and cell changes. Live clip 1024.5..1285.9 × −0.9..217.7. No logged state left the map hidden with the compass suppressed. |
+
+None of the three failures left the player without navigation: each kept the native compass visible.
+
+Updated ledger:
+
+| Criterion | Result |
+| --- | --- |
+| UI-only working minimap without duplicate compass | **PASS (owner-reported, bounded)**, run `7571da8e`, owner ruling option (a) |
+| Combined profile | **NOT_RUN** |
+| Exterior/interior transitions keep usable navigation | **PASS (owner-reported, bounded)**: compass during load, map re-acquired then suppressed |
+| Quest text does not overlap the map | Owner reported no issue; the active-effect overlap at 1080p remains a DYL-168 measurement |
+| Disabled (`bReplaceCompass=0`) restores compass | **NOT_RUN** in game (parser and policy tests PASS) |
+| Provider absent restores compass | **NOT_RUN** for this candidate (Phase 1 whole-provider-absent PASS is historical) |
+| Permissions / no bundled third-party binaries | Source-only; no provider files added |
