@@ -261,3 +261,51 @@ This ruling does not accept DYL-163. Still open:
   - the missing-DLL/old-bridge fallback;
   - a combined profile.
 - The native favorite pre-dispatch guard, still **BLOCKED** (no AS callback).
+
+## Senior review P1 correction
+
+2026-10-27, DYL-163, working tree based on `f8b5752` (`phase3/dyl-163-inventory`, including merged #15). [PR #17 senior review](https://github.com/Sonoran-Solutions/SkyCRPG/pull/17#issuecomment-6450506611) identified a stale selected-row authorization window. The old path queued a native list update on whole-inventory drift, then allowed `Publish` with an unchanged menu row and token. Bounding its count by the total base-form count did not prove that the selected instance still matched: a row of 1 could pass against a newly increased live count of 2, or omit a new distinguishable extra list. This correction supersedes the reconciliation safety claim in “Orchestrator review changes” above.
+
+`inventory/row_match.h` now owns the engine-free `MatchRow` policy. It compares the selected form's copied live observation with that form's previous observation, if present in this menu session. Selected-form drift refuses; a change confined to another form still only queues the existing native update. Every represented extra must belong to the live entry; the adapter retains its pointer-membership check before calling `Traits` or `GetCount` on a menu extra. Portable inputs use per-sample live-instance indices plus copied traits/counts, never retained engine pointers.
+
+Coverage must account for the row's count using its represented matching extras and the live unextra'd/plain count, with no duplicate extras or inconsistent counts. The count must also fit the live count of matching traits. If the row needs an unrepresented remainder and another live same-base instance has differing temper, enchantment, ownership/stolen, name, poison, charge, worn/worn-left, favorite or quest traits, it refuses. A fully represented matching row can still permit beside a differing same-base row. A menu session with no prior observation still has to prove coverage. Native grouping that cannot prove this remains refused; the adapter never substitutes another same-base copy.
+
+Refusal is an actual false `Sample` result, before `Publish`, rather than a diagnostic-only flag. `RefuseRow` logs `row-drift`, `row-coverage` or `row-extra-missing` through the existing bounded `LogRefusal`, invalidates the snapshot/generation, clears selection and pending intent, and marks the list dirty while requesting native reconciliation. Validate retains false and cannot begin/confirm an action from that sample. Further samples cannot bypass the refusal just because the copied live observation has advanced: the dirty gate stays closed until the queued native `ItemList::Update(player)` finishes. A reconciled, matching row can then publish a fresh selection; old tokens remain stale. No input is replayed.
+
+Passive menus, owner-approved off-main-thread native fallback and bounded diagnostics, native event invalidation, generation bumps, native actions, and ActionScript are unchanged. No hooks, offsets, dependencies, shared integration changes, or new native actions were added.
+
+### Portable and source verification
+
+**PASS:** expanded `inventory_policy_test.cpp` covers no-event same-base count increases/decreases; same-count trait changes; empty and partial extra lists with all listed distinguishable traits; matching-count shortage despite sufficient total count; fully matched rows after reconciliation; unrelated-form drift; missing extras checked before trait/count inspection; duplicate/mixed/malformed extras; nonfinite traits; stale selection and quantity confirmation after invalidation. It remains in the existing lane runner's `inventory_policy` target, so no runner change is needed.
+
+All 18 final automated jobs **PASS**: six portable C++ compile/run pairs, the pinned-source transform preparation, all four JavaScript contracts, and Python discovery (**18 tests, no skips**). Owner: DYL-163 / Codex; timeout: 600 seconds per command; expected output: exit 0 and successful compile/assertions/contracts; completion: process exit plus log. Specifications were recorded before execution in `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/senior-review-p1/jobs.json`, with PID, UTC deadline, command, result, log and cleanup. All owned children were reaped and process groups verified absent. The focused inventory compile/run preceded the remaining suite. Initial focused fixture **FAIL**: the quest variant attempted to reserve a drop under the strict portable quest rule. Corrected the fixture to supply the adapter's existing `nativeQuestFeedback=true`; no policy was relaxed. Initial records/logs and `changed-input.txt` are retained alongside final evidence.
+
+Exact reproduction commands (each compile/run below was a separate recorded job; variables expand to the recorded argv):
+
+```sh
+OUT=/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/senior-review-p1
+SKYUI=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11
+NODE=/home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node
+for T in inventory_policy favorite_slots hud_settings menu_focus minimap_policy resource_snapshot; do
+    timeout 600 g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/ui/src "modules/ui/tests/${T}_test.cpp" -o "$OUT/${T}_test"
+    timeout 600 "$OUT/${T}_test"
+done
+SKYCRPG_SKYUI_SOURCE="$SKYUI" timeout 600 python3 -I modules/ui/tests/inventory_prepare_contract.py "$OUT"
+timeout 600 "$NODE" modules/ui/tests/inventory_actions_contract.js modules/ui "$OUT/InventoryMenu.as"
+for T in hud_contract minimap_compass_contract navigation_contract; do
+    timeout 600 "$NODE" "modules/ui/tests/${T}.js" modules/ui "$SKYUI"
+done
+SKYCRPG_SKYUI_SOURCE="$SKYUI" timeout 600 python3 -I -m unittest discover -s modules/ui/tests -p "*.py"
+```
+
+The recorded driver invocations were `timeout 600 python3 -I /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-163/senior-review-p1/run-checks.py --focused`, then the same command with `--remaining` (reusing the focused PASS). Outputs remain outside the repository.
+
+CommonLib declarations rechecked against `/srv/storage/Projects/SkyCRPG/session-p2-20261026/commonlib-7.2.0/include`: `TESObjectREFR.h` defines `Count = std::int32_t`, `InventoryItemMap` and `GetInventory(std::function<bool(TESBoundObject&)>, bool)`; `InventoryEntryData.h` declares `object` and `BSSimpleList<ExtraDataList*>* extraLists`; `ExtraDataList.h` declares `std::int32_t GetCount() const`, `GetByType<T>()`, `HasType<T>()` and `HasQuestObjectAlias()`; `StandardItemData.h` declares `std::uint32_t GetCount()` and `bool GetEnabled()`; `ItemList.h` declares `items`, `GetSelectedItem()` and `Update(TESObjectREFR*)`. Existing trait fields/accessors (`ExtraHealth::health`, `ExtraEnchantment::enchantment`, `ExtraOwnership::owner`, `ExtraTextDisplayData::displayName`, `ExtraPoison::poison/count`, `ExtraCharge::charge`, `InventoryEntryData::IsOwnedBy(Actor*, bool)`) were also verified. `SKSE/Interfaces.h` retains `AddUITask(TaskFn) const`. No new CommonLib API was introduced. Signed native counts are checked before unsigned conversion and sums use 64 bits; the new code uses no `min`/`max` calls.
+
+### Runtime confirmation still required
+
+**NOT_RUN:** Windows MSVC `/W4 /WX /permissive-` compilation for this correction and runtime confirmation with tempered/enchanted/stolen rows undergoing a no-event same-base change. Portable compilation and mocked contracts do not establish native grouping, pointer lifetime or task/callback ordering. Skyrim was never launched. No corrected DLL/SWF/package hashes or owner acceptance are claimed; existing runtime rows and the favorite-guard **BLOCKED** status above are unchanged.
+
+For the orchestrator's existing isolated copied-save fixture, within a single 20-minute route: record the selected row/token/generation/count/traits and sibling instances; use a controlled fixture change without an inventory event to (1) increase the same-base count from 1 to 2 and (2) add/change a tempered, enchanted or stolen instance while the row has empty or partial extras. Attempt activation/drop and quantity confirmation before native reconciliation; expect no native dispatch and one bounded row refusal. After the native list rebuild, explicitly reselect a fully represented matching row and perform one deliberate action; verify only that instance changes, with native counts/ownership/weight preserved. Repeat an unrelated-form change and confirm a still-matching selected row remains usable. Record callback thread diagnostics: an off-main-thread fallback is owner-accepted native behavior and cannot count as guarded-row confirmation. Result: **NOT_RUN**.
+
+**Orchestrator review note on the correction.** The remainder rule refuses a row with no extras (or only some) whenever the same base form has a differing live instance that the row does not list. That is correct if the native menu merges those copies into one row. If the native menu instead shows the plain stack and the tempered/stolen/enchanted copy as **separate rows**, the plain row's `extraLists` may never list the other copy, and the plain stack would be refused for as long as both exist: safe, but a usability FAIL. The native grouping is not established from source. Each refused selected row therefore also logs one bounded line (≤32 per process): `Inventory row <reason> form=<id> row=<count> ambiguous=<0|1> represented=<n>/<count> live=<total> extras=<n>/<count> differing=<n>`. The runtime fixture must act on the **plain** row while a tempered, a stolen and an enchanted copy of the same base exist. If those actions are refused with `row-coverage`, the rule needs a native-grouping-aware relaxation backed by that log before acceptance.

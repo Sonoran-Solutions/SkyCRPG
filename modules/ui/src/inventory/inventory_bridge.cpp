@@ -30,6 +30,7 @@
 #include <REX/W32/KERNEL32.h>
 #include <skycrpg/skeleton.h>
 #include "action_intent.h"
+#include "row_match.h"
 #include <atomic>
 #include <cstdio>
 #include <string_view>
@@ -47,12 +48,6 @@ std::optional<Selection> g_selection;
 std::uint64_t g_nextToken{};
 bool g_loaded{}, g_open{}, g_refreshQueued{};
 std::set<std::uint64_t> g_loggedTokens;
-struct NativeForm {
-    FormIdentity base;
-    int count{};
-    std::vector<std::pair<ItemTraits, int>> instances;
-    bool operator==(const NativeForm&) const = default;
-};
 std::vector<NativeForm> g_native;
 std::atomic_bool g_dirty{true};
 
@@ -114,6 +109,37 @@ void Refresh()
 {
     g_dirty.store(true);
     RequestListUpdate();
+}
+// Bounded per process: shows how the native menu grouped the refused row, so a
+// route can tell a real stale row from a native split the policy cannot prove.
+void LogRowDetail(RowMatch reason, const Entry& row, const std::vector<RowExtra>& represented, const NativeForm& live)
+{
+    static int logged = 0;
+    if (logged >= 32) return;
+    ++logged;
+    std::uint64_t representedCount = 0, extraCount = 0;
+    for (const auto& extra : represented) representedCount += static_cast<std::uint64_t>(extra.count);
+    std::size_t differing = 0;
+    for (const auto& [traits, count] : live.instances) {
+        extraCount += static_cast<std::uint64_t>(count);
+        if (traits != row.identity.traits) ++differing;
+    }
+    const auto path = skycrpg::LogDirectory() + L"SkyCRPG_UI.log";
+    FILE* log = nullptr;
+    if (_wfopen_s(&log, path.c_str(), L"a") == 0 && log) {
+        std::fprintf(log, "Inventory row %s form=%08X row=%u ambiguous=%d represented=%zu/%llu live=%d extras=%zu/%llu differing=%zu\n",
+            Reason(reason), static_cast<unsigned>(live.base.runtime), static_cast<unsigned>(row.count), row.ambiguous ? 1 : 0,
+            represented.size(), static_cast<unsigned long long>(representedCount), static_cast<int>(live.count),
+            live.instances.size(), static_cast<unsigned long long>(extraCount), differing);
+        std::fclose(log);
+    }
+}
+bool RefuseRow(RowMatch reason)
+{
+    LogRefusal(g_selection ? g_selection->token : 0, Reason(reason));
+    g_snapshots.Invalidate(); g_selection.reset(); g_intents.Cancel();
+    Refresh(); // Stay unavailable until the queued native reconciliation runs.
+    return false;
 }
 FormIdentity Form(RE::TESForm* form)
 {
@@ -190,10 +216,10 @@ bool Sample(std::uint32_t& selectedIndex)
     std::sort(observed.begin(), observed.end(), [](const NativeForm& left, const NativeForm& right) {
         return left.base.runtime < right.base.runtime;
     });
-    // External favorite/name/temper changes may have no event. Reconcile the
-    // displayed list, but keep validating: each row below is checked against
-    // the live inventory, and Publish bumps the generation when rows differ.
+    // Unrelated form drift only queues reconciliation. The selected form must
+    // also match its previous observation and prove row coverage before Publish.
     if (!g_native.empty() && g_native != observed) RequestListUpdate();
+    const auto previous = std::move(g_native);
     g_native = std::move(observed);
     std::vector<Entry> entries;
     bool foundSelection = false;
@@ -202,22 +228,41 @@ bool Sample(std::uint32_t& selectedIndex)
         if (!item || !item->data.objDesc || !item->data.objDesc->object) continue;
         auto* desc = item->data.objDesc;
         const auto actual = live.find(desc->object);
-        if (actual == live.end() || actual->second.first <= 0 || !actual->second.second) return false;
-        Entry entry{{index, Traits(desc->object, nullptr, player)}, item->data.GetCount(), false, item->data.GetEnabled()};
-        if (entry.count > static_cast<std::uint32_t>(actual->second.first)) return false;
+        if (actual == live.end() || actual->second.first <= 0 || !actual->second.second) return RefuseRow(RowMatch::Coverage);
+        const auto plain = Traits(desc->object, nullptr, player);
+        Entry entry{{index, plain}, item->data.GetCount(), false, item->data.GetEnabled()};
+        if (entry.count > static_cast<std::uint32_t>(actual->second.first)) return RefuseRow(RowMatch::Coverage);
+        std::vector<RowExtra> represented;
         bool first = true;
         if (desc->extraLists) for (auto* extra : *desc->extraLists) {
             if (!extra) continue;
             bool exists = false;
+            std::size_t liveIndex = 0;
             if (actual->second.second->extraLists) for (auto* current : *actual->second.second->extraLists) {
                 if (current == extra) { exists = true; break; }
+                if (current) ++liveIndex; // Matches the non-null copied instances.
             }
-            if (!exists) return false; // Do not dereference a stale menu extra list.
+            if (!exists) return RefuseRow(RowMatch::MissingExtra); // Do not dereference a stale menu extra list.
             const auto traits = Traits(desc->object, extra, player);
+            represented.push_back({liveIndex, traits, extra->GetCount()});
             if (first) { entry.identity.traits = traits; first = false; }
             else if (entry.identity.traits != traits) entry.ambiguous = true;
         }
         if (!ValidTraits(entry.identity.traits)) entry.ambiguous = true;
+        if (item == selected) {
+            const auto current = std::find_if(g_native.begin(), g_native.end(), [&plain](const NativeForm& form) {
+                return form.base == plain.base;
+            });
+            if (current == g_native.end()) return RefuseRow(RowMatch::Coverage);
+            const auto prior = std::find_if(previous.begin(), previous.end(), [&plain](const NativeForm& form) {
+                return form.base == plain.base;
+            });
+            const auto match = MatchRow(entry, represented, plain, *current, prior == previous.end() ? nullptr : &*prior);
+            if (match != RowMatch::Permit) {
+                LogRowDetail(match, entry, represented, *current);
+                return RefuseRow(match);
+            }
+        }
         entries.push_back(std::move(entry));
         if (item == selected) { selectedIndex = index; foundSelection = true; }
     }
