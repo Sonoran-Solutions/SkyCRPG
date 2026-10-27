@@ -39,6 +39,15 @@ int main()
 	assert(wrongVersion.settings.enabled && wrongVersion.settings.scalePercent == 100);
 	assert(wrongVersion.settings.offsetX == 0 && wrongVersion.settings.offsetY == 0);
 
+	assert(!defaults.settings.replaceCompass && !defaults.replaceCompassWasValid);
+	auto mapEnabled = ParseHudSettings(L"1", L"1", L"100", L"0", L"0", L"1");
+	assert(mapEnabled.settings.replaceCompass && mapEnabled.replaceCompassWasValid);
+	auto mapDisabled = ParseHudSettings(L"1", L"1", L"100", L"0", L"0", L"0");
+	assert(!mapDisabled.settings.replaceCompass && mapDisabled.replaceCompassWasValid);
+	auto mapMalformed = ParseHudSettings(L"1", L"1", L"100", L"0", L"0", L"2");
+	assert(!mapMalformed.settings.replaceCompass && !mapMalformed.replaceCompassWasValid);
+	assert(!ParseHudSettings(L"2", L"1", L"100", L"0", L"0", L"1").settings.replaceCompass);
+
 	auto disableHud = ParseHudSettings(L"1", L"0", L"85", L"120", L"-60");
 	assert(disableHud.settings.enabled == false);
 	assert(disableHud.settings.scalePercent == 85);
