@@ -88,7 +88,7 @@ Review correction local checks: **PASS** `SKYCRPG_SKYUI_SOURCE=/srv/storage/Proj
 | --- | --- |
 | Source / CI | `8da9625` (includes merged #15), Windows [run 40563710877](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40563710877) **PASS** |
 | Package | `SkyCRPG_UI-0.0.1-8da9625.zip` `cb27341c4d61ee99…`; DLL `eb18922c64c0181a…`; `hudmenu.swf` `cd1e1fa7d8439b13…` (follower panel and compass policy) |
-| Profile / host | UI-only, 175 files; Steam 1.7.104.0, SKSE 2.3.1, Address Library 13, Proton Experimental 11; keyboard and mouse, controller off |
+| Profile / host | UI-only, 175 files; Steam 1.7.104.0, SKSE 2.3.1, Address Library 13, Proton Experimental 11; **controller (8BitDo XInput)** — corrected 2026-10-27, see note below |
 | Save | Vanilla fixture `MainQuests.ess` from Nexus Mods "100 Percent Clean Save for Skyrim SE" (mod 178, file "All Main Quests" v.13); masters are the five official files only; main quest, Dawnguard and Dragonborn complete. Copied into the test profile as `SkyCRPG_Fixture_MainQuests.ess`. |
 | Run | `bf2a8387cdb942628b56b922bf7aefcb`, about 8 min of a 20 min budget, normal quit, watchdog did not intervene (minimum 12.6 GiB available) |
 | Logs | `SkyCRPG_UI.log` `f04339e2…`: source `8da9625`, minimap preflight `exact=1`. The follower adapter does not log; observations are the owner's. |
@@ -106,3 +106,5 @@ Route:
 **Follower used:** the fixture save already had **Serana** as a follower. The owner used her for most of the route. Serana is a vanilla Dawnguard follower recruited through her native quest and dialogue, so this covers a naturally recruited vanilla humanoid follower instead of the console-made Orgnar of run `1617dd2c`. Lydia (Dragonsreach) was the staged target. The report does not itemize which steps, if any, used Lydia, or whether both followed at once (which would exercise the "Followers untested" label).
 
 **Caveat on step 7:** Serana is essential in vanilla, so `kill` on her normally causes bleedout, not death. If step 7 was done on Serana, the observed hide may have come from bleedout or dismissal rather than the `dead` state. The dead-state mode-change path is covered by the assembled `hud_contract.js` test (`dead` stays hidden); an in-game true death remains unconfirmed unless done on a non-essential follower. The two-teammate fixture remains **NOT_RUN**.
+
+**Input device correction (2026-10-27).** The owner reports that all of the 2026-10-27 runs, including `bf2a8387` above, were played mostly with the controller (8BitDo Ultimate, XInput), although each launch was requested as "controller off". On this host, Skyrim ignores keyboard/mouse gameplay input while the controller is on, so this route is controller evidence. The observed results are unchanged.
