@@ -2,10 +2,12 @@
       // before a repeated initialization. Do not attach another handler on refresh.
       if (this.SkyCRPGStatus != undefined) {
          this.SkyCRPGStatus.onEnterFrame = null;
+         if (this.SkyCRPGHotbar != undefined) this.SkyCRPGHotbar.onEnterFrame = null;
          var skycrpgRemoveIndex = this.HudElements.length - 1;
          while (skycrpgRemoveIndex >= 0) {
             if (this.HudElements[skycrpgRemoveIndex] == this.SkyCRPGStatus ||
-               this.HudElements[skycrpgRemoveIndex] == this.SkyCRPGPartyArea) {
+               this.HudElements[skycrpgRemoveIndex] == this.SkyCRPGPartyArea ||
+               this.HudElements[skycrpgRemoveIndex] == this.SkyCRPGHotbar) {
                this.HudElements.splice(skycrpgRemoveIndex, 1);
             }
             skycrpgRemoveIndex--;
@@ -19,6 +21,7 @@
          this.SkyCRPGStatus.removeMovieClip();
       }
       if (this.SkyCRPGPartyArea != undefined) this.SkyCRPGPartyArea.removeMovieClip();
+      if (this.SkyCRPGHotbar != undefined) this.SkyCRPGHotbar.removeMovieClip();
 
       // Read-only config is published by the UI DLL at SKSE plugin initialization.
       // If it is absent/disabled, leave every native meter and prompt untouched.
@@ -94,6 +97,126 @@
             };
             skycrpgIndex++;
          }
+         // Presentation only. Native hotkeys and the native Favorites menu own
+         // input and dispatch; this clip has no listeners or synthetic actions.
+         var bar = this.createEmptyMovieClip("SkyCRPGHotbar", 18002);
+         bar.All = true;
+         bar.placeAtStage = skycrpg.placeAtStage;
+         bar.placeAtStage(Math.max(16, Math.min(Stage.width - 16 - 536 * skycrpgSettings.hudScale / 100,
+            Stage.width / 2 - 268 * skycrpgSettings.hudScale / 100 + skycrpgSettings.hudOffsetX)),
+            Math.max(16, Math.min(Stage.height - 16 - 116 * skycrpgSettings.hudScale / 100,
+            Stage.height - 122 + skycrpgSettings.hudOffsetY)), skycrpgSettings.hudScale);
+         bar._visible = false;
+         bar.dataReady = false;
+         bar.nextSample = 0;
+         bar.createTextField("voice", 20, 4, 61, 528, 16);
+         bar.voice.setNewTextFormat(new TextFormat("$EverywhereFont", 11, 0xE8E1D1));
+         bar.voice.selectable = false;
+         bar.formatRecovery = function(seconds) {
+            return typeof(seconds) == "number" && isFinite(seconds) && seconds >= 0 ?
+               (Math.ceil(seconds) + "s") : "--";
+         };
+         bar.syncVisibility = function() {
+            var bridge = skse != undefined && skse.plugins != undefined ? skse.plugins.SkyCRPGUI : undefined;
+            var blocked = bridge == undefined || typeof(bridge.isMenuFocusBlocked) != "function" ||
+               bridge.isMenuFocusBlocked() != false;
+            this._visible = this.dataReady && !blocked && this._parent.CheckAgainstHudMode(this);
+         };
+         bar.onModeChange = function(mode) { this.syncVisibility(); };
+         var slotIndex = 0;
+         while (slotIndex < 8) {
+            var slot = bar.createEmptyMovieClip("slot" + slotIndex, slotIndex + 1);
+            slot._x = slotIndex * 67;
+            slot.createTextField("key", 1, 4, 2, 58, 15);
+            slot.key.setNewTextFormat(new TextFormat("$EverywhereFont", 11, 0xE9D59C, true));
+            slot.key.text = String(slotIndex + 1);
+            slot.icon = slot.createEmptyMovieClip("icon", 5);
+            slot.icon._x = 43;
+            slot.icon._y = 2;
+            // Original vector symbols identify only broad native form classes;
+            // no spell school, weapon subtype or alchemy effect is inferred.
+            slot.icon.drawKind = function(kind) {
+               this.clear();
+               this.lineStyle(1.5, 0xE9D59C, 100);
+               if (kind == "WEAPON") {
+                  this.moveTo(1, 1); this.lineTo(13, 13);
+                  this.moveTo(13, 1); this.lineTo(1, 13);
+                  this.moveTo(1, 8); this.lineTo(6, 13);
+                  this.moveTo(8, 13); this.lineTo(13, 8);
+               } else if (kind == "ARMOR") {
+                  this.moveTo(2, 1); this.lineTo(12, 1); this.lineTo(12, 8);
+                  this.lineTo(7, 14); this.lineTo(2, 8); this.lineTo(2, 1);
+               } else if (kind == "ALCHEMY") {
+                  this.moveTo(5, 1); this.lineTo(9, 1); this.lineTo(9, 5);
+                  this.lineTo(12, 8); this.lineTo(12, 13); this.lineTo(2, 13);
+                  this.lineTo(2, 8); this.lineTo(5, 5); this.lineTo(5, 1);
+               } else if (kind == "SPELL") {
+                  this.moveTo(7, 0); this.lineTo(9, 5); this.lineTo(14, 7);
+                  this.lineTo(9, 9); this.lineTo(7, 14); this.lineTo(5, 9);
+                  this.lineTo(0, 7); this.lineTo(5, 5); this.lineTo(7, 0);
+               } else if (kind == "SHOUT") {
+                  this.moveTo(1, 2); this.lineTo(12, 2); this.lineTo(12, 9);
+                  this.lineTo(7, 9); this.lineTo(4, 13); this.lineTo(4, 9);
+                  this.lineTo(1, 9); this.lineTo(1, 2);
+               } else if (kind == "SCROLL") {
+                  this.moveTo(3, 1); this.lineTo(11, 1); this.lineTo(11, 13);
+                  this.lineTo(3, 13); this.lineTo(3, 1);
+                  this.moveTo(5, 4); this.lineTo(9, 4);
+                  this.moveTo(5, 7); this.lineTo(9, 7);
+               } else if (kind != "") {
+                  this.moveTo(2, 2); this.lineTo(12, 2); this.lineTo(12, 12);
+                  this.lineTo(2, 12); this.lineTo(2, 2);
+               }
+               this.lastKind = kind;
+            };
+            slot.createTextField("kind", 2, 4, 17, 58, 14);
+            slot.kind.setNewTextFormat(new TextFormat("$EverywhereFont", 10, 0xD8C69B, true));
+            slot.createTextField("name", 3, 4, 30, 58, 15);
+            slot.name.setNewTextFormat(new TextFormat("$EverywhereFont", 10, 0xE8E1D1));
+            slot.createTextField("count", 4, 4, 44, 58, 14);
+            slot.count.setNewTextFormat(new TextFormat("$EverywhereFont", 10, 0xE8E1D1));
+            slot.key.selectable = slot.kind.selectable = slot.name.selectable = slot.count.selectable = false;
+            slotIndex++;
+         }
+         bar.onEnterFrame = function() {
+            // Menu transitions must hide immediately even between 2Hz snapshots.
+            this.syncVisibility();
+            var now = getTimer();
+            if (now < this.nextSample) return;
+            this.nextSample = now + 500;
+            var bridge = skse != undefined && skse.plugins != undefined ? skse.plugins.SkyCRPGUI : undefined;
+            var slots = bridge != undefined && typeof(bridge.getHotbar) == "function" ? bridge.getHotbar() : undefined;
+            if (slots == undefined || slots.length != 8) {
+               this.dataReady = false; this.syncVisibility(); return;
+            }
+            this.dataReady = true;
+            this.syncVisibility();
+            this.voice.text = slots.voiceName ? "VOICE: " + slots.voiceName + "  " + this.formatRecovery(slots.voiceRecovery) : "";
+            var i = 0;
+            while (i < 8) {
+               var cell = this["slot" + i];
+               var value = slots[i];
+               // Only real native hotkey bindings receive a number. FAV is a
+               // native favorite selected through the game's Favorites menu.
+               cell.key.text = value.kind == "" ? String(i + 1) : (value.bound == true ? String(i + 1) : "FAV");
+               cell.clear();
+               cell.lineStyle(1, value.equipped ? 0xE9D59C : 0x806E49, 100);
+               cell.beginFill(0x171715, 85);
+               cell.moveTo(0, 0); cell.lineTo(64, 0); cell.lineTo(64, 59);
+               cell.lineTo(0, 59); cell.lineTo(0, 0); cell.endFill();
+               cell.icon.drawKind(value.kind);
+               cell.kind.text = value.kind == "" ? "EMPTY" : value.kind;
+               cell.name.text = value.name;
+               // Native voice recovery is global to the player, not a spell timer.
+               if (value.kind == "SHOUT") {
+                  cell.count.text = this.formatRecovery(value.voiceRecovery);
+               } else {
+                  cell.count.text = value.count > 1 ? "x" + value.count : "";
+               }
+               i++;
+            }
+         };
+         this.HudElements.push(bar);
          var skycrpgParty = this.createEmptyMovieClip("SkyCRPGPartyArea", 18001);
          skycrpgParty.All = true;
          skycrpgParty.placeAtStage = skycrpg.placeAtStage;

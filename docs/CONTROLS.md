@@ -1,8 +1,8 @@
 # Controls contract
 
-The normative ownership/precedence contract is in [ARCHITECTURE](ARCHITECTURE.md#input-and-menu-contract). Proven spike controls: SmoothCam F8/scan66 toggle; native POV precision fallback; controller grid adjacent/row movement and explicit category focus as recorded in [UI evidence](evidence/p1/ui-spike.md). DYL-156 now implements and owner-tests F6 native-view fallback/return and F7 recenter, documented in the candidate controls table below. Full reset/lifecycle, hotbar and broader input mappings remain later-ticket obligations.
+The normative ownership/precedence contract is in [ARCHITECTURE](ARCHITECTURE.md#input-and-menu-contract). Proven spike controls: SmoothCam F8/scan66 toggle; native POV precision fallback; controller grid adjacent/row movement and explicit category focus as recorded in [UI evidence](evidence/p1/ui-spike.md). DYL-156 now implements and owner-tests F6 native-view fallback/return and F7 recenter, documented in the candidate controls table below. Full reset/lifecycle and broader input mappings remain later-ticket obligations; the DYL-161 hotbar candidate is described below.
 
-The high-level action table includes future work. The DYL-156 candidate table below is authoritative for the implemented Camera defaults; hotbar defaults remain P2-06 work.
+The high-level action table includes future work. The DYL-156 candidate table below is authoritative for the implemented Camera defaults; the DYL-161 candidate describes current hotbar behavior and its validation limits.
 
 | Action | Intended behavior | Binding status |
 | --- | --- | --- |
@@ -19,6 +19,10 @@ The high-level action table includes future work. The DYL-156 candidate table be
 | UI scale/reset | Restore safe anchors and readable defaults. | P3-06. |
 
 An action bar that merely draws icons is incomplete. Input must be usable and reflect actual selected/equipped state. No new spell cooldown, autoplay rotation, party order or turn-control binding is planned.
+
+The DYL-161 candidate maps keyboard hotkey events 1–8 to the slot shown. Native quick-key bindings take precedence: assign a favorite in Skyrim's Favorites menu and Skyrim handles that numbered slot. Magic overrides an item at the same native index. Unbound favorites marked `FAV` fill remaining positions in form ID order; pressing the corresponding hotkey requests one native equip/use action. Weapons and armor toggle; consumables are used; spells select the right hand, powers select the voice slot, and shouts are selected. Casting and attacks still use native controls. Controller selection through the native Favorites menu has owner-reported bounded PASS; direct controller slot cycling is not implemented.
+
+The keyboard sink observes Skyrim's mapped Hotkey1–Hotkey8 key-down events without consuming them. For a native quick-key-bound slot, Skyrim handles the press and the UI dispatches nothing. For an auto-filled `FAV` slot, the UI requests one action through `ActorEquipManager`; blocking menus prevent that dispatch. Resolve conflicting remaps in the game's or conflicting mod's bindings. F6/F7/F8 and map K/L retain their documented owners. Windows build **PASS** on UI source `ba10da6` ([build 40438723566](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40438723566)); keyboard FAV dispatch **PASS**, owner-reported and bounded, in run `8eb20c9ab8cf4a978fcfbbbfcf8833ec` with the controller off. On the test host the controller must be off for keyboard/mouse input. A truly native-number-bound press proving no duplicate action, weapon unequip on a second press, in-game shout recovery, and the full native cast/attack path are **NOT_RUN**; see [evidence](evidence/p2/hotbar.md). The voice line displays the selected shout or power and the native global voice recovery timer, sampled at most twice per second; `--` means unavailable and `0s` only means that timer is zero, not that a daily power is available.
 
 ## Phase 2 Camera candidate — DYL-156
 

@@ -100,7 +100,8 @@ function makeMenu(width, height, settings, transform = {}) {
 function frame(menu, elapsed = 100) { menu.now = (menu.now || 0) + elapsed; menu.SkyCRPGStatus.onEnterFrame.call(menu.SkyCRPGStatus); }
 function settings(scale, offsetX, offsetY, enabled = true) {
   return {hudEnabled: enabled, hudScale: scale, hudOffsetX: offsetX, hudOffsetY: offsetY,
-    sample: undefined, calls: 0, getPlayerResources() { this.calls++; return this.sample; }};
+    sample: undefined, calls: 0, getPlayerResources() { this.calls++; return this.sample; },
+    menuBlocked: false, isMenuFocusBlocked() { return this.menuBlocked; }};
 }
 
 function globalBounds(clip, width, height) {
@@ -218,12 +219,92 @@ bridge.sample = {health: 50, healthMax: 100, magicka: 100, magickaMax: 100, stam
 frame(menu);
 assert.equal(menu.Health._visible, false);
 assert.equal(menu.geometryLogs.length, 2, 'subsequent samples and fallback do not spam diagnostics');
+// Execute the actual hotbar clip against snapshots; it never dispatches input.
+const hotbar = menu.SkyCRPGHotbar;
+let hotbarCalls = 0;
+let hotbarData;
+bridge.getHotbar = () => { hotbarCalls++; return hotbarData; };
+menu.now += 500;
+hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, false, 'missing native binding snapshot hides bar');
+hotbarData = Array.from({length: 8}, () => ({name:'', kind:'', count:0, equipped:false}));
+hotbarData[0] = {name:'Iron Sword', kind:'WEAPON', count:1, equipped:true, bound:true};
+hotbarData[1] = {name:'Flames', kind:'SPELL', count:0, equipped:false, bound:false};
+hotbarData[2] = {name:'Potion', kind:'ALCHEMY', count:4, equipped:false};
+hotbarData[4] = {name:'Unrelenting Force', kind:'SHOUT', count:0, equipped:true, voiceRecovery:3.2};
+hotbarData.voiceName = 'Unrelenting Force';
+hotbarData.voiceRecovery = 3.2;
+menu.now += 500;
+hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, true);
+bridge.menuBlocked = true;
+menu.now += 1; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, false, 'Favorites hides immediately before the next snapshot');
+menu.ShowElements('All', true);
+assert.equal(hotbar._visible, false, 'HUD mode changes cannot reveal hotbar over Favorites');
+menu.ShowElements('All', false);
+bridge.menuBlocked = false;
+menu.now += 1; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, true, 'closing Favorites restores a ready hotbar');
+const menuGate = bridge.isMenuFocusBlocked;
+bridge.isMenuFocusBlocked = undefined;
+menu.now += 1; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, false, 'missing menu gate fails closed');
+bridge.isMenuFocusBlocked = menuGate;
+menu.now += 1; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, true);
+assert.equal(hotbar.slot0.name.text, 'Iron Sword');
+assert.equal(hotbar.slot1.kind.text, 'SPELL');
+assert.equal(hotbar.slot0.key.text, '1', 'native key number is shown only for a bound item');
+assert.equal(hotbar.slot1.key.text, 'FAV', 'unbound favorite is not misrepresented as a hotkey');
+assert.equal(hotbar.slot3.key.text, '4', 'empty position retains an available native key number');
+assert.equal(hotbar.slot0.icon.lastKind, 'WEAPON');
+assert.equal(hotbar.slot1.icon.lastKind, 'SPELL');
+assert.equal(hotbar.slot2.icon.lastKind, 'ALCHEMY');
+assert.equal(hotbar.slot3.icon.lastKind, '');
+assert.equal(hotbar.slot2.count.text, 'x4');
+assert.equal(hotbar.slot3.kind.text, 'EMPTY');
+assert.equal(hotbar.slot4.count.text, '4s', 'native voice timer displays remaining seconds');
+assert.equal(hotbar.voice.text, 'VOICE: Unrelenting Force  4s');
+hotbarData.voiceName = 'Battle Cry';
+hotbarData.voiceRecovery = -1;
+menu.now += 500; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar.voice.text, 'VOICE: Battle Cry  --', 'selected power need not be a favorite');
+hotbarData.voiceRecovery = 0;
+menu.now += 500; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar.voice.text, 'VOICE: Battle Cry  0s');
+hotbarData.voiceName = '';
+menu.now += 500; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar.voice.text, '', 'clearing selected voice clears display');
+hotbarData[4].voiceRecovery = -1;
+menu.now += 500; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar.slot4.count.text, '--', 'missing native timer is not shown as ready');
+hotbarData[4].voiceRecovery = 0;
+menu.now += 500; hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar.slot4.count.text, '0s');
+const beforeHotbarCalls = hotbarCalls;
+menu.now += 1;
+hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbarCalls, beforeHotbarCalls, 'snapshot sampling capped at 2Hz');
+hotbarData[2] = {name:'', kind:'', count:0, equipped:false};
+menu.now += 500;
+hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar.slot2.kind.text, 'EMPTY', 'removed/depleted binding refreshes');
+assert.equal(hotbar.slot2.icon.lastKind, '', 'removed icon clears');
+assert.equal(hotbar.slot2.count.text, '');
+menu.ShowElements('Favor', true);
+menu.now += 500;
+hotbar.onEnterFrame.call(hotbar);
+assert.equal(hotbar._visible, false, 'native HUD mode governs hotbar visibility');
+menu.ShowElements('Favor', false);
 const staleStatus = menu.SkyCRPGStatus;
 const staleParty = menu.SkyCRPGPartyArea;
 vm.runInContext(snippet, vm.createContext(Object.assign(menu, {
   Stage: {width: 1280, height: 720}, TextFormat: function () {}, skse: undefined,
 })), {filename: 'hud-init-reinit.as.inc'});
 assert.equal(staleStatus.onEnterFrame, null, 'teardown clears the owned frame handler');
+assert.equal(hotbar.onEnterFrame, null, 'teardown clears hotbar frame handler');
+assert.equal(menu.SkyCRPGHotbar, undefined, 'teardown removes hotbar');
 assert.equal(menu.SkyCRPGStatus, undefined, 'teardown removes old status clip');
 assert.equal(menu.SkyCRPGPartyArea, undefined, 'missing bridge leaves no stale party clip');
 assert.equal(menu.Health._visible, true, 'teardown restores native meters');
