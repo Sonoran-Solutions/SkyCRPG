@@ -266,21 +266,23 @@ public:
                 if (bindings[i] < 0 || id != bindings[i]) continue;
                 const auto keyIndex = (pad?2u:0u)+i;
                 const auto before = traceState(c,hardSpecial,keyIndex);
-                if (i == 0) tracePrecision(button->IsPressed() ? PrecisionTraceEvent::togglePress : PrecisionTraceEvent::toggleRelease,
-                    before,before,pad?2u:1u,button->IsPressed(),button->IsDown());
+                if (i == 0 && (button->IsDown() || (!button->IsPressed() && before.down)))
+                    tracePrecision(button->IsPressed() ? PrecisionTraceEvent::togglePress : PrecisionTraceEvent::toggleRelease,
+                        before,before,pad?2u:1u,button->IsPressed(),button->IsDown());
                 if (!safe) {
                     keys[keyIndex].observeSuppressed(button->IsPressed());
-                    if (i == 0) tracePrecision(PrecisionTraceEvent::toggleSuppressed,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,button->IsPressed(),button->IsDown());
+                    if (i == 0 && (before.down != keys[keyIndex].down || before.armed != keys[keyIndex].armed))
+                        tracePrecision(PrecisionTraceEvent::toggleSuppressed,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,button->IsPressed(),button->IsDown());
                     continue;
                 }
                 auto map = RE::ControlMap::GetSingleton();
                 // Never dispatch custom action on a mapped native gameplay button.
                 if (!map || !map->GetUserEventName(button->GetIDCode(),device).empty() || !button->QUserEvent().empty()) {
-                    if (i == 0) tracePrecision(PrecisionTraceEvent::toggleMapped,before,before,pad?2u:1u,button->IsPressed(),button->IsDown());
+                    if (i == 0 && button->IsDown()) tracePrecision(PrecisionTraceEvent::toggleMapped,before,before,pad?2u:1u,button->IsPressed(),button->IsDown());
                     continue;
                 }
                 if (!keys[keyIndex].update(button->IsPressed(),button->IsDown())) {
-                    if (i == 0) tracePrecision(PrecisionTraceEvent::toggleNoEdge,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,button->IsPressed(),button->IsDown());
+                    if (i == 0 && button->IsDown()) tracePrecision(PrecisionTraceEvent::toggleNoEdge,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,button->IsPressed(),button->IsDown());
                     continue;
                 }
                 if (i == 0) {
@@ -291,10 +293,10 @@ public:
                         settings.enabled = false; ownFirstPerson = false; suspend();
                         static_cast<void>(camera->ForceFirstPerson());
                         // Do not claim a late or unrelated first-person transition.
-                        ownFirstPerson = claimPrecisionOwnership(c,context());
+                        bool afterHard = true;
+                        const auto after = context(false,&afterHard);
+                        ownFirstPerson = claimPrecisionOwnership(c,after);
                         if (precisionTraceEnabled) {
-                            bool afterHard = true;
-                            const auto after = context(false,&afterHard);
                             tracePrecision(PrecisionTraceEvent::toggleClaim,before,traceState(after,afterHard,keyIndex),pad?2u:1u,true,true);
                         }
                         savePreferences();
