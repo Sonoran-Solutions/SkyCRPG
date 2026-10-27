@@ -50,6 +50,7 @@ GAME = Path(os.environ.get("SKYRIM_DIR", STEAM / "steamapps/common/Skyrim Specia
 COMPAT = Path(os.environ.get("SKYRIM_COMPATDATA", STEAM / "steamapps/compatdata/489830"))
 PROTON = Path(os.environ.get("PROTON_DIR", STEAM / "steamapps/common/Proton - Experimental"))
 RUNTIME = Path(os.environ.get("STEAM_RUNTIME_DIR", STEAM / "steamapps/common/SteamLinuxRuntime_4"))
+SHADER_CACHE = Path(os.environ.get("SKYRIM_SHADER_CACHE", STEAM / "steamapps/shadercache/489830"))
 PROFILE_ROOT = Path(os.environ.get("SKYCRPG_PROFILE_ROOT", "/srv/storage/Projects/SkyCRPG/profiles"))
 
 MY_GAMES = COMPAT / "pfx/drive_c/users/steamuser/Documents/My Games/Skyrim Special Edition"
@@ -395,6 +396,11 @@ def cmd_launch(args) -> int:
                STEAM_COMPAT_DATA_PATH=str(COMPAT),
                STEAM_COMPAT_CLIENT_INSTALL_PATH=str(STEAM),
                STEAM_COMPAT_INSTALL_PATH=str(GAME),
+               # Steam normally supplies these; without them Proton's media
+               # converter cannot open its databases and xWMA dialogue is silent.
+               STEAM_COMPAT_SHADER_PATH=str(SHADER_CACHE),
+               STEAM_COMPAT_MEDIA_PATH=str(SHADER_CACHE / "fozmediav1"),
+               STEAM_COMPAT_TRANSCODED_MEDIA_PATH=str(SHADER_CACHE),
                PROTON_LOG="1", PROTON_LOG_DIR=str(run_dir))
     command = launch_command()
     mode = "interactive" if args.interactive else "until-loaded"
