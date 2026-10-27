@@ -1,0 +1,9 @@
+# F6 menu recovery diagnostic contract
+
+The owner reported that source `3c1b6711907b76497b7958c8c9ecfcf8227bc3fb` enters first person with F6, but F6 does not return after opening and closing a menu; native controller POV recovers the view. The cause is **unconfirmed**. In particular, the current sink clears F6 ownership on a native Toggle POV down edge without checking menu focus, and other possible causes include provider prerequisites, hard-special state, first-person observation, mapped input and fresh-press suppression. The existing log cannot distinguish them.
+
+`precision_trace.h` supplies a diagnostic-only numeric record format and a maximum of 64 records. The integration owner must opt in explicitly, record only relevant menu/F6/native-POV event boundaries, and avoid recording menu names, raw input strings, save names, forms or unrelated controls. Gate startup events so a session can capture the actual test. The proposed integration is not wired by this commit; neither the record helper nor its test changes camera behavior.
+
+State bit mask: bit 0 `enabled`, 1 `prerequisites`, 2 `world`, 3 `special`, 4 `menu`, 5 `firstPerson`, 6 `hardSpecial`, 7 `owned`, 8 fresh-press `armed`, 9 fresh-press `down`. Each record has before/after masks, a fixed numeric event ID, device class, pressed/edge flags and a `ToggleRequest` decision when applicable. In particular, record ownership transitions and Toggle POV edges even during menu focus, plus F6 suppression/mapping/freshness decisions. A lack of an event is not proof of its cause; the trace needs an exact candidate and a bounded reproduction.
+
+The helper's bit encoding, truncation behavior and 64-record limit were exercised in the portable `precision_trace_test.cpp` (**PASS**). Native Windows compilation, trace wiring and runtime use remain **NOT_RUN**. Diagnostic output must be recorded with the exact INI, source and binary hashes and disabled for ordinary operation.
