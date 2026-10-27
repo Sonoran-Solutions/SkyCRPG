@@ -36,3 +36,33 @@ Use an isolated UI-only profile on the pinned runtime, Party Sheet absent, a cop
 5. **NOT_RUN** Reload the copied save and start a new game or return to the fixture; verify old name/status never persists. Repeat with Party Sheet absent (default) and verify no missing-provider errors. If an explicitly configured two-follower fixture exists, record the untested label and no wrong status; do not install a framework solely for this route.
 
 Owner decisions needed: none proposed; runtime acceptance and any expansion beyond one vanilla humanoid require owner evidence/decision. In-game and integrated-build gates remain open.
+
+## Runtime route — 2026-10-26
+
+**PASS (owner-reported, bounded).** The owner reported that every step below passed. Party Sheet was absent, which is the default stack.
+
+| Field | Value |
+| --- | --- |
+| Source / CI | `ed22860e5947f36099db49020a16118a278b9994`, Windows [run 40454404866](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40454404866) **PASS** |
+| Package | `SkyCRPG_UI-0.0.1-ed22860.zip` `cef6cb7b718077c925bb8725b0526519e1202209294a6e5261ac507e7e9f9826`; DLL `ef6f65302a9c8b5722971aa92b2b0df2a73e54e82470d300c4392035051d705d` |
+| Movie | `hudmenu.swf` `bbb69dff61ce0fa4db48d3e25e84e1bc425206845d26eb8925aacf322cf73e4e` (inventory movies: Phase 2 grid, unchanged) |
+| Profile / host | UI-only, 175 files, pinned map trio, no Party Sheet; Steam 1.7.104.0, SKSE 2.3.1, Address Library 13, Proton Experimental 11, controller off |
+| Save / fixture | Copied test save `Quicksave0_…_RiverwoodSleepingGiantInn_…_20261026144253`. Follower: Orgnar (ref `0009DCDF`, base `0006512C`), made recruitable with `addfac 5C84D 1` and `setrelationshiprank player 3`, then recruited and dismissed through native dialogue |
+| Run | `1617dd2c7d574a99b9d7fe92376d8776`, 345 s, normal exit; watchdog did not intervene (minimum 13.4 GiB available) |
+| UI log | `fe4a07d9d1a31bb7f248535e34acd3424f46cf7e9b82c40fd4d76cfd5a5724bb`: Address Library guard and Scaleform registration PASS; resource snapshot valid |
+| Cleanup | Restoration **PASS**: no changed candidate files, no active profile, no Skyrim process. Records under `/srv/storage/Projects/SkyCRPG/session-p3/p3-fol-165/` |
+
+Steps the owner reported as passing:
+
+1. **No follower:** the panel was hidden. The owner's screenshot confirms this before recruitment.
+2. **Recruit:** name, silhouette and health appeared.
+3. **Injury:** `damageav health 50` updated the health shown.
+4. **Cell change:** leaving and re-entering the inn reacquired the follower.
+5. **Dismiss:** the panel disappeared.
+6. **Death:** `kill` cleared the panel. Whether Orgnar is essential, and so only entered bleedout, was not recorded.
+7. **Load:** reloading showed no stale name.
+
+Still open:
+- No second-follower or unsupported configuration was tested.
+- The recruit used a console-made potential follower, not a vanilla housecarl or hireling.
+- Magicka and stamina are not displayed.
