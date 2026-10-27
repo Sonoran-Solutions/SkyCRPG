@@ -53,9 +53,33 @@ def replace_once(text, anchor, replacement):
 def transform(name, text):
     if name.endswith("InventoryMenu.as"):
         text = replace_once(text, "_loc3_.layout = _loc5_;", "_loc3_.skycrpgGrid = true;\n      _loc3_.scrollDelta = 3;\n      _loc3_.layout = _loc5_;")
+        # DYL-163: gate the existing player-only dispatch sites. No new native action.
+        text = replace_once(text, "   function handleInput(details, pathToFocus)\n   {",
+                            "   function handleInput(details, pathToFocus)\n   {\n      this.skycrpgInventoryInput(details);")
+        text = replace_once(text, '         gfx.io.GameDelegate.call("ItemSelect",[a_slot]);',
+                            '         if(!this.skycrpgInventoryAllow("activate",1,"dispatch")) return;\n         gfx.io.GameDelegate.call("ItemSelect",[a_slot]);')
+        text = replace_once(text, '         gfx.io.GameDelegate.call("ItemSelect",[]);',
+                            '         if(this.skycrpgInventoryBridge() != undefined && event.entry != this.inventoryLists.itemList.selectedEntry) return;\n         if(!this.skycrpgInventoryAllow("activate",1,"dispatch")) return;\n         gfx.io.GameDelegate.call("ItemSelect",[]);')
+        drop = "      if(this.shouldProcessItemsListInput(false) && this.inventoryLists.itemList.selectedEntry != undefined)\n      {"
+        text = replace_once(text, drop, drop + '\n         if(!this.skycrpgInventoryAllow("drop",1,"quantity")) return;')
+        text = replace_once(text, '      gfx.io.GameDelegate.call("ItemDrop",[event.amount]);',
+                            '      if(!this.skycrpgInventoryAllow("drop",event.amount,"confirm")) return;\n      gfx.io.GameDelegate.call("ItemDrop",[event.amount]);')
+        text = replace_once(text, "   function startMenuFade()\n   {",
+                            "   function startMenuFade()\n   {\n      this.skycrpgInventoryCancel();")
+        text = replace_once(text, "      super.onItemCardSubMenuAction(event);",
+                            '      if(event.opening == false && event.canceled == true) this.skycrpgInventoryCancel();\n      super.onItemCardSubMenuAction(event);')
+        text = replace_once(text, "      super.onItemHighlightChange(event);",
+                            "      super.onItemHighlightChange(event);\n      this.skycrpgInventoryCapture();")
+        pos = text.rfind("}")
+        text = text[:pos] + (ROOT / "scaleform/inventory-actions.as.inc").read_text() + text[pos:]
     elif name.endswith("InventoryLists.as"):
         anchor = "if(this.categoryList.handleInput(details,pathToFocus))"
         text = replace_once(text, anchor, (ROOT / "scaleform/grid-routing.as.inc").read_text() + "\n      " + anchor)
+        # Shared lists notify only the player menu; other contexts have no hook.
+        for method in ("InvalidateListData()", "onFilterChange()", "onSortChange(event)", "showItemsList()"):
+            view_anchor = "   function " + method + "\n   {"
+            text = replace_once(text, view_anchor, view_anchor +
+                                '\n      if(typeof _root.Menu_mc.skycrpgInventoryViewChanged == "function") _root.Menu_mc.skycrpgInventoryViewChanged();')
     elif name.endswith("ScrollingList.as"):
         text = replace_once(text, "// That makes no sense, does it?", "if (this.skycrpgMove(details)) return true;\n\n        // That makes no sense, does it?")
         text = replace_once(text, "this.setClipCount(this._maxListIndex);", "if (this.skycrpgGrid) this._maxListIndex = 18;\n        this.setClipCount(this._maxListIndex);")
