@@ -272,4 +272,15 @@ UI-only profile, 1920×1080, package `SkyCRPG_UI-0.0.1-46a7809.zip` (`17d7a838�
 
 `SkyCRPG_UI.log` confirms the engine-cache approach took effect and that `itemPos.x` uses the same units as `fInventory3DItemPosX`. The menu reported a card column with centre 1011.8 and half-width 252.2 stage units. Before: `itemPos=(-36.403, -500.000, 13.750) itemScale=1.500`. After: `itemPos=(-46.471, -500.000, 13.750) itemScale=1.339`. No INI setting was written.
 
-Still **NOT_RUN** on this build: the 720p and 115% owned-HUD-scale captures, and the DEM/active-effect overlap measurement. No owner screenshots were supplied for this run.
+No owner screenshots were supplied for this run.
+
+### Owner display-size captures on `46a7809`
+
+Both runs used the UI-only profile, the same package and a controller only (owner-confirmed). Each setting was changed only inside the run's profile: `SkyrimPrefs.ini` and the plugin INI are restored by `runtime_profile.py` (restore **PASS** both times).
+
+| Run | Display / HUD scale | Owner result | Notes |
+| --- | --- | --- | --- |
+| `1bca86a3f64342ab875a6b1c54c53ff7` | 1920×1080 windowed, `[HUD] iScalePercent=115` (log: `scale=115% (valid=1 clamped=0)`) | **PASS**: "Everything passes" | One owner screenshot (1913×1080 px). The hotbar spans x 493–1413, y 818–920 (centred). The `VOICE` line is at y ≈ 938. `ADVENTURER STATUS` spans y 980–1060, about 20 px above the bottom edge. None of the three overlap. The follower panel (Serana) spans x 25–360, y 93–178. The DEM minimap spans x 1635–1910, y 3–280, with its location label below. Active-effect icons were showing and did not overlap the minimap (owner-observed; not in the screenshot). |
+| `fc323c277e6946c98a102f119b485a67` | 1280×720 windowed, HUD 100% | **PASS**: "It all passes, looks good" | HUD, minimap and active effects, and the inventory (preview placement, frame padding, brackets, card, Favorites, modal). The log shows the same card-column placement as at 1080p (`centre=1011.8 half=252.2`, `itemScale=1.339`), as expected: the GFx stage is 1280×720 at both sizes. No screenshots supplied. |
+
+The historical DYL-161 minimap/active-effect **FAIL** is resolved for this build by owner observation at 1080p and 720p. No pixel-box measurement of the effect icons was captured.
