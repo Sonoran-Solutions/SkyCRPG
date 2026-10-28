@@ -27,3 +27,11 @@ For a candidate disable or settings reset, quit Skyrim completely first. In a di
 ## Release publication distinction
 
 The four phases prepare and validate internal candidates. Public Nexus/GitHub release publication is a separate action after acceptance and any explicit release instruction.
+
+## UI candidate configuration and recovery
+
+With Skyrim closed, back up `Data/SKSE/Plugins/SkyCRPG_UI.ini` and replace it with the candidate's shipped INI to reset presentation preferences; restart to read changes. Settings are separate from save-authoritative items and followers. Missing or unsupported `iVersion` selects safe defaults; invalid individual values default, and numeric scale and offsets clamp to their supported bounds. The parser's fallback for missing or invalid `bReplaceCompass` is off, while the shipped INI requests it on. Recovery behavior is covered by portable tests; a malformed-file restart route remains untested in game.
+
+To disable or remove the UI candidate, quit Skyrim, disable its mod-manager layer including its generated SkyCRPG UI movies, DLL and INI, and restart using a disposable profile and copied save. Preserve independent Camera and shared provider layers; restore an overwritten shared file from the mod manager's original layer rather than deleting the provider. Check native inventory, controls and compass after restart. This candidate removal route remains **NOT_RUN** and is not a claim of universal mid-save uninstall safety. `bEnabled=0` disables the custom HUD on restart; it is not removal of the inventory patch or DLL.
+
+If the selected minimap provider is absent or fails the exact preflight, the UI does not take the compass lease; native navigation remains available. The owner-tested provider-absent route is recorded in [minimap evidence](evidence/p3/minimap.md). The provider has no supported fresh-render signal, so its approved lease still has a documented stale-frame limitation.
