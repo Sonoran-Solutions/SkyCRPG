@@ -89,10 +89,11 @@ uppercase strings such as `"0x00000014"`; absent objects are `null`.
 
 | `ev` | Additional fields |
 | --- | --- |
-| `probe_loaded` | `runtime`, `skse` (four-part version strings), `probe_version`, `build_commit` (`"unknown"` if not supplied), `enabled`, `state_interval_ms` |
+| `probe_loaded` | `runtime`, `skse` (four-part version strings), `probe_version`, `snapshot_dispatch` (`"ui_task_captured_thread_v1"`), `build_commit` (`"unknown"` if not supplied), `enabled`, `state_interval_ms` |
 | `data_loaded` | None; SKSE `kDataLoaded` |
 | `game_loaded` | `success` from SKSE `kPostLoadGame`'s pointer-encoded boolean; `save_name` copied from `kPreLoadGame`, or `null` |
 | `new_game` | None; SKSE `kNewGame` |
+| `thread_context` | `source` (`data_loaded`, `pre_load_game`, `post_load_game`, `new_game`, `menu`, `skse_task_post_load`), `current_thread_id`, `captured_main_thread_id`, `main_thread_id` (CommonLib's `Main::threadID`, or `null` without a singleton) |
 | `menu` | `name`, `opening` |
 | `equip` | Player only: `form_id` (base object), `name`, `equipped`. Slot omitted because the event has no reliable slot field. |
 | `container` | Player in/out only: `form_id`, `name`, `player_in`, `player_out`, `old_container`, `new_container`, signed `count_delta`, `new_count`, `count_status` |
@@ -108,11 +109,23 @@ callbacks copy only IDs/scalars into a main-thread task, where names are read.
 Missing forms produce `name:null`; observations queued across a load are
 discarded with a diagnostic.
 
-All snapshots execute through `SKSE::GetTaskInterface()->AddTask`. They
-reacquire player/cell/UI/camera and retain no engine pointers. A load generation
-prevents old queued tasks from reading a new world. An unavailable snapshot has
-`available:false` and `reason` (`world_unavailable_or_changed` or
-`player_unavailable`), plus request metadata; state fields are omitted. A main
+All snapshots execute through `SKSE::GetTaskInterface()->AddUITask`, drained
+after SKSE's native UI event processing. The timer only polls files and queues
+work; it never reads player/cell/UI/camera. The probe captures the main thread
+ID once in `kDataLoaded`, checks that ID before engine state reads, and never
+rebinds it from a task or a later conflicting callback. `Main::threadID` is
+diagnostic only. Menu and lifecycle `thread_context` events validate the capture;
+one ordinary `AddTask` after each saved-game load reports only executor thread
+diagnostics, so the old scheduling assumption can be checked from JSONL.
+
+Snapshots reacquire player/cell/UI/camera and retain no engine pointers. Every
+`player_state` includes the three thread fields above, `queued_generation`,
+`current_generation`, and `loaded`. A load generation prevents old queued tasks
+from reading a new world. An unavailable snapshot has `available:false` and
+`reason`, selected in order: `off_main_thread`, `generation_changed`,
+`not_loaded`, then `player_unavailable`; request metadata is preserved and state
+fields are omitted. `off_main_thread` always includes the observed current and
+engine thread IDs, plus the captured ID. A main
 or loading menu also makes player state unavailable. Missing camera/UI/cell
 components yield `null`. `paused` is `UI::GameIsPaused()`. `open_menus` lists
 registered menus whose `IMenu::OnStack()` flag is set; ordering is unspecified.
@@ -126,11 +139,15 @@ ownership/weight evidence.
 ```bash
 g++ -std=c++20 -Wall -Wextra -Werror -pedantic tools/testprobe/tests/json_line_test.cpp -o /tmp/skycrpg-probe-json-test
 /tmp/skycrpg-probe-json-test
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic tools/testprobe/tests/snapshot_policy_test.cpp -o /tmp/skycrpg-probe-policy-test
+/tmp/skycrpg-probe-policy-test
 ```
 
 This tests escaping, UTF-8 preservation, numeric formatting (including a decimal
 comma locale), envelope formatting, raw request parsing/bounds and interval
 parsing. It does not compile the Windows adapter or prove engine behavior.
+The policy test covers unknown/matching/mismatched thread IDs, all eight
+thread/generation/load combinations and checkpoint tag preservation in failures.
 Windows MSVC and the first orchestrator-launched, owner-supervised runtime
 check remain required. The process-lifetime sinks/timer do not support hot
 unloading. C++ exceptions are caught at plugin/callback/task boundaries; native

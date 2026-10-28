@@ -18,6 +18,7 @@
 // CommonLib/REX headers must precede the Windows headers in the skeleton.
 #include <skycrpg/skeleton.h>
 #include "json_line.h"
+#include "snapshot_policy.h"
 
 #include <bcrypt.h>
 
@@ -48,6 +49,7 @@ struct Probe {
 	Clock::time_point origin{ Clock::now() };
 	std::atomic_bool loaded{ false };
 	std::atomic_uint64_t generation{ 0 };
+	std::atomic_uint32_t mainThreadID{ 0 };
 	std::atomic_bool timerBusy{ false };
 	std::atomic_bool timerPending{ false };
 	std::uint32_t interval{ 1000 };
@@ -103,8 +105,34 @@ void Emit(std::string_view event, const json::Object& fields = {}) noexcept
 
 bool MainThread()
 {
+	return json::IsMainThread(GetCurrentThreadId(), g_probe->mainThreadID.load());
+}
+
+void ThreadFields(json::Object& fields)
+{
+	fields.Numeric("current_thread_id", GetCurrentThreadId())
+		.Numeric("captured_main_thread_id", g_probe->mainThreadID.load());
 	const auto* main = RE::Main::GetSingleton();
-	return main && main->threadID == GetCurrentThreadId();
+	if (main) fields.Numeric("main_thread_id", main->threadID);
+	else fields.Null("main_thread_id");
+}
+
+void ThreadContext(std::string_view source) noexcept
+{
+	try {
+		json::Object fields;
+		fields.String("source", source);
+		ThreadFields(fields);
+		Emit("thread_context", fields);
+	} catch (...) { Log("SkyCRPG_TestProbe: thread diagnostic failed\n"); }
+}
+
+void CaptureMainThread()
+{
+	// kDataLoaded is a known main-thread callback. Never learn affinity from
+	// a task delegate, and never silently rebind it to a conflicting callback.
+	std::uint32_t unset = 0;
+	g_probe->mainThreadID.compare_exchange_strong(unset, GetCurrentThreadId());
 }
 
 void FormField(json::Object& fields, std::string_view key, const RE::TESForm* form)
@@ -142,9 +170,15 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
 	json::Object fields;
 	fields.Boolean("requested", requested);
 	if (requested) fields.String("tag", tag);
+	ThreadFields(fields);
+	const auto currentGeneration = g_probe->generation.load();
+	const bool loaded = g_probe->loaded.load();
+	fields.Numeric("queued_generation", generation).Numeric("current_generation", currentGeneration)
+		.Boolean("loaded", loaded);
 	// A request always gets a response, even if there is no usable world yet.
-	if (!MainThread() || generation != g_probe->generation.load() || !g_probe->loaded.load()) {
-		fields.Boolean("available", false).String("reason", "world_unavailable_or_changed");
+	const auto reason = json::SnapshotReason(MainThread(), generation, currentGeneration, loaded);
+	if (!reason.empty()) {
+		fields.Boolean("available", false).String("reason", reason);
 		Emit("player_state", fields);
 		return;
 	}
@@ -205,6 +239,8 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
 
 // Only the timer coalesces outstanding samples, so a stalled main thread cannot
 // grow an unbounded timer queue. Menu-close/load snapshots are separate tasks.
+// SKSE's ordinary task-pool queue has multiple drain sites. Use the UI event
+// queue (Hooks_UI.cpp:46-86), then validate captured affinity before any reads.
 bool QueueSnapshot(bool requested = false, std::string tag = {}, bool timer = false) noexcept
 {
 	try {
@@ -215,7 +251,7 @@ bool QueueSnapshot(bool requested = false, std::string tag = {}, bool timer = fa
 		}
 		if (timer && g_probe->timerPending.exchange(true)) return false;
 		const auto generation = g_probe->generation.load();
-		tasks->AddTask([requested, tag = std::move(tag), generation, timer] {
+		tasks->AddUITask([requested, tag = std::move(tag), generation, timer] {
 			try { Snapshot(requested, tag, generation); }
 			catch (...) { Log("SkyCRPG_TestProbe: snapshot failed; skipped\n"); }
 			if (timer) g_probe->timerPending.store(false);
@@ -375,6 +411,7 @@ public:
 	{
 		try {
 			if (!event) { Log("SkyCRPG_TestProbe: null menu event\n"); return RE::BSEventNotifyControl::kContinue; }
+			ThreadContext("menu");
 			Emit("menu", json::Object{}.String("name", event->menuName.c_str()).Boolean("opening", event->opening));
 			if (!event->opening) QueueSnapshot();
 		} catch (...) { Log("SkyCRPG_TestProbe: menu event failed; skipped\n"); }
@@ -390,7 +427,7 @@ public:
 			const auto formID = event->baseObject;
 			const bool equipped = event->equipped;
 			if (MainThread()) Equip(formID, equipped, generation);
-			else if (const auto* tasks = SKSE::GetTaskInterface()) tasks->AddTask([formID, equipped, generation] {
+			else if (const auto* tasks = SKSE::GetTaskInterface()) tasks->AddUITask([formID, equipped, generation] {
 				try { Equip(formID, equipped, generation); }
 				catch (...) { Log("SkyCRPG_TestProbe: queued equip observation failed\n"); }
 			});
@@ -410,7 +447,7 @@ public:
 			const auto count = event->itemCount;
 			const auto generation = g_probe->generation.load();
 			if (MainThread()) Container(oldID, newID, formID, count, true, generation);
-			else if (const auto* tasks = SKSE::GetTaskInterface()) tasks->AddTask([oldID, newID, formID, count, generation] {
+			else if (const auto* tasks = SKSE::GetTaskInterface()) tasks->AddUITask([oldID, newID, formID, count, generation] {
 				try { Container(oldID, newID, formID, count, false, generation); }
 				catch (...) { Log("SkyCRPG_TestProbe: queued container observation failed\n"); }
 			});
@@ -426,6 +463,8 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 		if (!message) { Log("SkyCRPG_TestProbe: null SKSE message\n"); return; }
 		switch (message->type) {
 		case SKSE::MessagingInterface::kDataLoaded: {
+			CaptureMainThread();
+			ThreadContext("data_loaded");
 			Emit("data_loaded");
 			static auto* events = new Events();
 			static bool registered = false;
@@ -445,6 +484,7 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 		case SKSE::MessagingInterface::kPreLoadGame: {
 			g_probe->loaded.store(false);
 			g_probe->generation.fetch_add(1);
+			ThreadContext("pre_load_game");
 			std::scoped_lock lock(g_probe->lifecycleMutex);
 			g_probe->hasSaveName = message->data && message->dataLen <= json::kMaxRequestBytes;
 			g_probe->saveName.clear();
@@ -453,6 +493,7 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 			break;
 		}
 		case SKSE::MessagingInterface::kPostLoadGame: {
+			ThreadContext("post_load_game");
 			// SKSE encodes success in the pointer value (0/1), not a bool*.
 			const bool success = message->data != nullptr;
 			g_probe->loaded.store(success);
@@ -465,9 +506,16 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 			}
 			Emit("game_loaded", fields);
 			QueueSnapshot();
+			// Diagnostic only: identify the old task-pool executor in the next
+			// JSONL without reading player/UI/camera on that thread. Enqueue it
+			// after lifecycle work, so a diagnostic allocation cannot skip load.
+			if (const auto* tasks = SKSE::GetTaskInterface()) tasks->AddTask([] {
+				ThreadContext("skse_task_post_load");
+			});
 			break;
 		}
 		case SKSE::MessagingInterface::kNewGame: {
+			ThreadContext("new_game");
 			g_probe->generation.fetch_add(1);
 			g_probe->loaded.store(true);
 			{
@@ -523,6 +571,7 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* sks
 		g_probe->interval = json::ParseInterval(interval.data());
 		const auto fields = json::Object{}.String("runtime", Version(skseInterface->runtimeVersion))
 			.String("skse", Version(skseInterface->skseVersion)).String("probe_version", SKYCRPG_VERSION)
+			.String("snapshot_dispatch", "ui_task_captured_thread_v1")
 			.String("build_commit", SKYCRPG_SOURCE_COMMIT).Boolean("enabled", enabled).Numeric("state_interval_ms", g_probe->interval);
 		if (!enabled) { Emit("probe_loaded", fields); return true; }
 		if (!PinnedAddressLibrary()) {
