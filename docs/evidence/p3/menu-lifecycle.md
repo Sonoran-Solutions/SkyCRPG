@@ -45,7 +45,7 @@ Logs and job specifications: `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-
 | Criterion | Status |
 | --- | --- |
 | 1. Native controls/no unintended action | Keyboard/mouse hotbar suppression behind console, Favorites and inventory, plus a key held across inventory close: automated PASS [R]. Dialogue: owner-reported PASS on controller and keyboard/mouse [O]. Remaining contexts: N. |
-| 2. Save/load/new game and configuration recovery | Console save/load with the same equipped item, HUD and minimap: automated PASS [R]. Quit to main menu then load, new game, and death then reload: owner-reported PASS on controller and keyboard/mouse [O]. Malformed-INI runtime: N. |
+| 2. Save/load/new game and configuration recovery | Console save/load with the same equipped item, HUD and minimap: automated PASS [R]. Quit to main menu then load, new game, and death then reload: owner-reported PASS on controller and keyboard/mouse [O]. Malformed/out-of-range INI: PASS [I] (log-verified and owner-reported); iVersion-mismatch whole-layout reset: N. |
 | 3. Native menu coexistence without loss/trap | P [G] bounded menu route, [A] bounded item/quantity actions; inventory quantity cancel with no drop: automated PASS [R]. Complete transition matrix: N. |
 | 4. No global pause in combat | Source audit supports no UI pause/time-scale setter; real-time combat with hotbar use: owner-reported PASS on controller and keyboard/mouse [O]. |
 
@@ -77,9 +77,29 @@ Both runs checked:
 
 Log notes from that session: `SkyCRPG_UI.log` has 4 slot-1 keyboard dispatches (equip, unequip, equip, equip) and no `decision=none` lines. Controller hotbar use goes through native Favorites, which logs no `Hotkey` lines. `skse64.log` shows 4 pre-load and 3 post-load dispatches, and no new-game dispatch.
 
+**[I] Malformed-INI session** `p3-ini-167`, about 18:31–18:37Z.
+
+- **Setup:** after prepare, with the game closed, only the deployed `SkyCRPG_UI.ini` was replaced. The shipped `c7222ebd…` became the test copy `session-p3/logs/dyl-167/malformed-ini/SkyCRPG_UI.malformed.ini` (`cbd4a14e…`). The test values were:
+  - `bEnabled=yes`;
+  - `iScalePercent=400`;
+  - `iOffsetX=-9999`;
+  - `iOffsetY=abc`;
+  - `bResetLayout=maybe`;
+  - `bManageItemPreview=7`;
+  - `fItemPreviewScale=5`;
+  - `fItemPreviewXShift=right`;
+  - `bReplaceCompass=2`.
+- **Log:** `SkyCRPG_UI.log` matched every expected line:
+  - `version=1; enabled=1 (valid=0); scale=115% (valid=1 clamped=1); offset=(-120,0) (valid=1/0 clamped=1/0)`;
+  - `bManageItemPreview=1 (invalid, default) fItemPreviewScale=set (clamped) fItemPreviewXShift=auto (invalid, auto)`;
+  - no reset-layout line;
+  - runtime check PASS.
+- **Compass:** `skse64.log` shows the SkyCRPG compass lease `disabled`, so the native compass was used as the fallback.
+- **Owner checks:** all reported PASS: startup, HUD scaled and shifted but on screen, native compass, hotbar toggles once per press, and inventory preview placement. The UI log shows 18 keyboard hotbar dispatches, alternating 9 equip and 9 unequip.
+- **Restore:** PASS. The test INI was recorded as an owned-file change and removed, and no user INI changed.
+
 **Still N:**
 
-- the malformed/out-of-range INI step with the game closed;
 - UI-only disable/restart;
 - the rest of the transition matrix.
 
