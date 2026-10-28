@@ -373,10 +373,11 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation, 
 	equipped.Boolean("two_handed", weapon && json::TwoHandedWeapon(static_cast<unsigned>(weapon->GetWeaponType())));
 	using Slot = RE::BGSBipedObjectForm::BipedObjectSlot;
 	if (requested) {
+		FormField(equipped, "head", player->GetWornArmor(Slot::kHead, true));
 		FormField(equipped, "body", player->GetWornArmor(Slot::kBody, true));
 		FormField(equipped, "ring", player->GetWornArmor(Slot::kRing, true));
 		FormField(equipped, "amulet", player->GetWornArmor(Slot::kAmulet, true));
-	} else equipped.Null("body").Null("ring").Null("amulet");
+	} else equipped.Null("head").Null("body").Null("ring").Null("amulet");
 	fields.Raw("equipped", equipped.Json());
 	FormField(fields, "selected_power", player->GetActorRuntimeData().selectedPower);
 	const auto* process = player->GetActorRuntimeData().currentProcess;

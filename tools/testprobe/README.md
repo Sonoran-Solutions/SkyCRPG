@@ -121,7 +121,7 @@ uppercase strings such as `"0x00000014"`; absent objects are `null`.
 | `inventory_open` | `label`, `cold` (first inventory open in this process), `correlated`, `key_qpc_ms` (or null), `open_qpc_ms`, `pre_open_median_ms`, `t_event_ms`, `t_settled_ms` (each null if unavailable), `periods_ms` (up to the first 30 post-open UI-drain periods) |
 | `resource_check` | `phase` (`start`/`stop`); `t` defines the memory analysis window |
 | `process_memory` | `private_bytes`, `working_set_bytes`; sampled by the existing timer while loaded, at `iStateIntervalMs`, coalesced if a tick is busy. Failed queries omit the event and log once. |
-| `player_state` | `requested`, optional `tag`, `available`; when available: `position:{x,y,z}`, `cell:{form_id,editor_id,name}` or `null`, `health`, `magicka`, `stamina` (each `{current,max}`), `equipped:{right,left,ammo,two_handed,body,ring,amulet}`, `camera_state`, `paused`, `open_menus`, `item_card_submenu`; protocol 2 adds carry/count/weight/voice/HUD/inventory fields documented below |
+| `player_state` | `requested`, optional `tag`, `available`; when available: `position:{x,y,z}`, `cell:{form_id,editor_id,name}` or `null`, `health`, `magicka`, `stamina` (each `{current,max}`), `equipped:{right,left,ammo,two_handed,head,body,ring,amulet}`, `camera_state`, `paused`, `open_menus`, `item_card_submenu`; protocol 2 adds carry/count/weight/voice/HUD/inventory fields documented below |
 
 `container.count_delta` is positive into the player and negative out; a transfer
 from the player to itself is zero. `new_count` is currently always `null`
@@ -304,10 +304,12 @@ Additional available `player_state` fields:
   The filtered `GetInventoryCounts(filter, true)` scan runs only for an explicit
   request with IDs, once per request, never per frame or periodic snapshot.
 - `equipped`: existing `right`, `left`, `ammo`, plus `two_handed` (right-hand
-  weapon type: two-handed sword/axe, bow or crossbow), and `body`, `ring`,
+  weapon type: two-handed sword/axe, bow or crossbow), and `head`, `body`, `ring`,
   `amulet` (worn armor FormID or null). Armor reads use `GetWornArmor(slot,true)`
-  only on explicit requested snapshots; those three fields are null on periodic
+  only on explicit requested snapshots; those four fields are null on periodic
   snapshots to avoid adding periodic inventory scans.
+  `head` is additive protocol 2 for the audited Iron Helmet hotbar equip/unequip
+  check; rebuild the probe DLL in Windows CI before using the revised routes.
 - `selected_power`, `voice_recovery` (null without a current high process),
   `weapon_drawn`: native shout/power, remaining global voice recovery seconds
   and native drawn state. These do not implement a cooldown or combat policy.
@@ -323,9 +325,14 @@ Additional available `player_state` fields:
   The runner correlates decision logs with native equip/container events and
   requests authoritative counts separately.
 - `inventory`: null when InventoryMenu is closed or its list cannot resolve;
-  otherwise `{grid_active,selected_name,selected_count}`. Missing `skycrpgGrid`
+  otherwise `{grid_active,selected_name,selected_count,selected_favorite}`. Missing `skycrpgGrid`
   on a stock list means false; an unexpected property type means null. A missing
-  selection has null name/count.
+  selection has null name/count/favorite. `selected_favorite` is a read-only
+  nullable boolean copied from SkyUI 6.11 `selectedEntry.favorite`, the member
+  used by `InventoryListEntry.setEntry` for the favorite icon. Missing or wrongly
+  typed data remains null, never false. This additive protocol-2 field requires
+  a CI rebuild of the probe DLL; the favorite-setup runner refuses old snapshots
+  before sending a favorite toggle. No request parsing changes are needed.
 
 The exact read-only movie paths were checked against SkyUI 6.11's source:
 `source/actionscript/Vanilla/HUDMenu.as`, `HUDWidgets/WidgetLoader.as` and
