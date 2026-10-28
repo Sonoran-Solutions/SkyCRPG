@@ -26,7 +26,7 @@
    function skycrpgLayout()
    {
       var rect = Stage.visibleRect;
-      var scale = Math.min(1, rect.width / 1280, rect.height / 720);
+      var scale = Math.min(1, (rect.width - 32) / 1280, (rect.height - 32) / 720);
       this._skycrpgScale = scale;
       var left = rect.x + (rect.width - 1280 * scale) / 2;
       var top = rect.y + (rect.height - 720 * scale) / 2;
@@ -88,6 +88,10 @@
          this.createEmptyMovieClip("_skycrpgModalShade", this.getNextHighestDepth());
          holder.swapDepths(this.getNextHighestDepth());
       }
+      // Native quantity/confirmation owns the only visible interactive layer.
+      this.inventoryLists._visible = !this._skycrpgModal;
+      if(this._skycrpgPanel != undefined) this._skycrpgPanel._visible = !this._skycrpgModal;
+      if(this._skycrpgDetailPanel != undefined) this._skycrpgDetailPanel._visible = !this._skycrpgModal;
       var shade = this._skycrpgModalShade;
       shade.clear(); shade.beginFill(0x080A0D, 96);
       shade.moveTo(rect.x,rect.y); shade.lineTo(rect.x + rect.width,rect.y);

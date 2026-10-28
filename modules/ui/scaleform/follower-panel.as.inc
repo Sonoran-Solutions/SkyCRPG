@@ -2,11 +2,13 @@
          var skycrpgParty = this.createEmptyMovieClip("SkyCRPGPartyArea", 18001);
          skycrpgParty.All = true;
          skycrpgParty.placeAtStage = skycrpg.placeAtStage;
+         var skycrpgPartyRect = Stage.visibleRect;
+         if (skycrpgPartyRect == undefined) skycrpgPartyRect = {x:0, y:0, width:Stage.width, height:Stage.height};
          skycrpgParty.placeAtStage(
-            Math.max(16, Math.min(Stage.width - 16 - 194 * skycrpgSettings.hudScale / 100,
-               20 + skycrpgSettings.hudOffsetX)),
-            Math.max(16, Math.min(Stage.height - 16 - 49 * skycrpgSettings.hudScale / 100,
-               62 + skycrpgSettings.hudOffsetY)), skycrpgSettings.hudScale);
+            Math.max(skycrpgPartyRect.x + 16, Math.min(skycrpgPartyRect.x + skycrpgPartyRect.width - 16 - 194 * skycrpgSettings.hudScale / 100,
+               skycrpgPartyRect.x + 20 + skycrpgSettings.hudOffsetX)),
+            Math.max(skycrpgPartyRect.y + 16, Math.min(skycrpgPartyRect.y + skycrpgPartyRect.height - 16 - 49 * skycrpgSettings.hudScale / 100,
+               skycrpgPartyRect.y + 62 + skycrpgSettings.hudOffsetY)), skycrpgSettings.hudScale);
          skycrpgParty.lineStyle(1, 0x806E49, 55);
          skycrpgParty.beginFill(0x171715, 45);
          skycrpgParty.moveTo(0, 0); skycrpgParty.lineTo(194, 0); skycrpgParty.lineTo(194, 49);
@@ -23,6 +25,8 @@
          skycrpgParty.createTextField("availability", 2, 42, 25, 145, 18);
          skycrpgParty.availability.selectable = false;
          skycrpgParty.availability.setNewTextFormat(new TextFormat("$EverywhereFont", 11, 0xE8E1D1));
+         skycrpgParty.heading.textAutoSize = "shrink";
+         skycrpgParty.availability.textAutoSize = "shrink";
          skycrpgParty.nextSample = 0;
          skycrpgParty.state = "unknown";
          skycrpgParty.syncVisibility = function() {
@@ -38,6 +42,8 @@
             var sample = bridge != undefined && typeof(bridge.getFollowerStatus) == "function" ? bridge.getFollowerStatus() : undefined;
             this.state = sample != undefined ? sample.state : "unknown";
             this.heading.text = sample != undefined && sample.name ? String(sample.name).substr(0, 22) : "PARTY STATUS";
+            if (sample != undefined && sample.name && String(sample.name).length > 22)
+               this.heading.text = String(sample.name).substr(0,19) + "...";
             if (this.state == "live" && typeof(sample.health) == "number" && isFinite(sample.health)) {
                this.availability.text = "HEALTH " + Math.round(Math.max(0, Math.min(1, sample.health)) * 100) + "%";
             } else if (this.state == "unsupported") {

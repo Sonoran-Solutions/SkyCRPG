@@ -91,6 +91,21 @@ def transform(name, text):
         pos = text.rfind("}")
         text = text[:pos] + (ROOT / "scaleform/inventory-actions.as.inc").read_text() + (ROOT / "scaleform/inventory-presentation.as.inc").read_text() + text[pos:]
     elif name.endswith("InventoryLists.as"):
+        # DYL-168: controller search consumes input before native sort/search.
+        search_anchor = "      if(this._platform != 0)\n      {\n         if(details.skseKeycode == this._sortOrderKey)"
+        text = replace_once(text, search_anchor,
+                            '      if(this.skycrpgSearchInput(details)) return true;\n' + search_anchor)
+        # Reflect native search ownership/caret and keep the filter caption fresh.
+        for callback, tail in (
+                ("onSearchInputStart(event)", '      this._nameFilter.filterText = "";'),
+                ("onSearchInputEnd(event)", "      this._nameFilter.filterText = event.data;")):
+            start = text.index("   function " + callback)
+            end = text.index("\n   }", start)
+            body = text[start:end]
+            body = replace_once(body, tail, tail + "\n      this.skycrpgDrawFocus();")
+            if callback.startswith("onSearchInputEnd"):
+                body += "\n      if(this.itemList.skycrpgGrid) this.skycrpgSearchLabel(event.data);"
+            text = text[:start] + body + text[end:]
         anchor = "if(this.categoryList.handleInput(details,pathToFocus))"
         text = replace_once(text, anchor, (ROOT / "scaleform/grid-routing.as.inc").read_text() + "\n      " + anchor)
         # Shared lists notify only the player menu; other contexts have no hook.
