@@ -78,8 +78,18 @@ def transform(name, text):
                             "      super.onItemHighlightChange(event);\n      this.skycrpgInventoryCapture();")
         text = replace_once(text, "   function onItemHighlightChange(event)\n   {",
                             "   function onItemHighlightChange(event)\n   {\n      this.skycrpgInventoryCapture();")
+        # DYL-164: player-only presentation. Install row-aligned scrolling on
+        # this instance; native shared-list bodies and other contexts are unchanged.
+        text = replace_once(text, "      _loc3_.skycrpgGrid = true;",
+                            "      _loc3_.skycrpgGrid = true;\n      _loc3_.updateScrollPosition = _loc3_.skycrpgUpdateScrollPosition;\n      _loc3_.calculateMaxScrollPosition = _loc3_.skycrpgCalculateMaxScrollPosition;")
+        text = replace_once(text, "      _loc3_.layout = _loc5_;",
+                            "      _loc3_.layout = _loc5_;\n      this.skycrpgLayout();\n      this.skycrpgRequestEquipment();")
+        text = replace_once(text, "      this.skycrpgInventoryCancel();",
+                            "      this.skycrpgInventoryCancel();\n      this.skycrpgPresentationClose();")
+        text = replace_once(text, "      super.onItemCardSubMenuAction(event);",
+                            "      super.onItemCardSubMenuAction(event);\n      this._skycrpgModal = event.opening == true;\n      this.skycrpgPositionCard();")
         pos = text.rfind("}")
-        text = text[:pos] + (ROOT / "scaleform/inventory-actions.as.inc").read_text() + text[pos:]
+        text = text[:pos] + (ROOT / "scaleform/inventory-actions.as.inc").read_text() + (ROOT / "scaleform/inventory-presentation.as.inc").read_text() + text[pos:]
     elif name.endswith("InventoryLists.as"):
         anchor = "if(this.categoryList.handleInput(details,pathToFocus))"
         text = replace_once(text, anchor, (ROOT / "scaleform/grid-routing.as.inc").read_text() + "\n      " + anchor)
@@ -88,6 +98,8 @@ def transform(name, text):
             view_anchor = "   function " + method + "\n   {"
             text = replace_once(text, view_anchor, view_anchor +
                                 '\n      if(typeof _root.Menu_mc.skycrpgInventoryViewChanged == "function") _root.Menu_mc.skycrpgInventoryViewChanged();')
+        pos = text.rfind("}")
+        text = text[:pos] + (ROOT / "scaleform/inventory-list-layout.as.inc").read_text() + text[pos:]
     elif name.endswith("ScrollingList.as"):
         text = replace_once(text, "// That makes no sense, does it?", "if (this.skycrpgMove(details)) return true;\n\n        // That makes no sense, does it?")
         text = replace_once(text, "this.setClipCount(this._maxListIndex);", "if (this.skycrpgGrid) this._maxListIndex = 18;\n        this.setClipCount(this._maxListIndex);")

@@ -28,6 +28,7 @@
       var snapshot = bridge.getInventorySnapshot();
       this._skycrpgInventoryToken = snapshot == undefined ? undefined : snapshot.token;
       this._skycrpgInventoryIndex = snapshot == undefined ? undefined : snapshot.selectedIndex;
+      if(typeof this.skycrpgInventoryPresent == "function") this.skycrpgInventoryPresent(snapshot);
    }
    function skycrpgInventoryInput(details)
    {
@@ -84,6 +85,8 @@
       if(bridge != undefined) bridge.inventoryViewChanged();
       this._skycrpgInventoryToken = undefined;
       this._skycrpgInventoryQuantity = false;
+      this.inventoryLists.itemList.skycrpgObservation = undefined;
+      if(typeof this.skycrpgRequestEquipment == "function") this.skycrpgRequestEquipment();
       // A list refresh is not a physical release of the current gesture.
    }
    function onMouseDown()
