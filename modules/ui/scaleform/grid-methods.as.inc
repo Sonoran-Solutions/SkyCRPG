@@ -37,6 +37,12 @@
         clip.beginFill(selected ? 0x48402A : 0x16191D, 98);
         clip.moveTo(0,0); clip.lineTo(165,0); clip.lineTo(165,68);
         clip.lineTo(0,68); clip.lineTo(0,0); clip.endFill();
+        if (selected) {
+            // Corner brackets distinguish selection without relying on color.
+            clip.lineStyle(3, 0xF0E8D8, 100);
+            clip.moveTo(3,14); clip.lineTo(3,3); clip.lineTo(14,3);
+            clip.moveTo(151,65); clip.lineTo(162,65); clip.lineTo(162,54);
+        }
         if (clip.skycrpgFallback == undefined) clip.createEmptyMovieClip("skycrpgFallback", 899);
         this.skycrpgTypeIcon(clip.skycrpgFallback, entry.formType);
         clip.skycrpgFallback._x = 8; clip.skycrpgFallback._y = 7;
@@ -142,6 +148,9 @@
     private function onItemRollOver(a_index: Number)
     {
         if (this.skycrpgGrid && !this.isListAnimating && !this.disableInput && !this.disableSelection)
+        {
             this.skycrpgCategoryFocus = false;
+            if (typeof this.skycrpgFocusOwner.skycrpgDrawFocus == "function") this.skycrpgFocusOwner.skycrpgDrawFocus();
+        }
         super.onItemRollOver(a_index);
     }

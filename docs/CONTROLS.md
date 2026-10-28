@@ -50,3 +50,33 @@ Native menus, dialogue, loading/death, first person and unsupported special stat
 Inventory uses Skyrim's normal paused menu behavior. Cancel a quantity dialog before closing the inventory; the native menu owns its controls. Container, barter, crafting, Magic, map and journal remain native/SkyUI screens. Console, dialogue, Favorites, loading and other focus-taking menus suppress SkyCRPG's auto-favorite dispatch; a queued press from before a focus transition is discarded. Native quick-key bindings remain Skyrim's responsibility. Release and press again after returning to gameplay. SkyCRPG does not request a global pause or change time scale; action combat stays real time outside native menu behavior.
 
 Inventory selection and action gestures are invalidated across menu transitions and load/new game; snapshots are reacquired from Skyrim. The minimap releases its compass lease on menu, load, cell change, hide and teardown, then may reacquire it in gameplay. These are candidate behaviors; the [lifecycle audit](evidence/p3/menu-lifecycle.md) separates prior bounded gameplay evidence from remaining checks.
+
+## Input bindings and focus
+
+DYL-168 candidate; physical device passes and resolution captures remain **NOT_RUN** in [input/layout evidence](evidence/p3/input-and-layout.md). Use the current native prompts if bindings were remapped. On the pinned host turn the 8BitDo XInput controller OFF for the keyboard/mouse pass and ON for a separate controller pass; record which device performed each step.
+
+| Action | Keyboard/mouse | Controller (XInput defaults) |
+| --- | --- | --- |
+| Open/close inventory | I / native Inventory; Tab or native Back to close | Native character menu → Items; B backs out |
+| Select / inspect | Hover/click or arrows; native card shows selected item | D-pad/stick navigation ±1 horizontally, ±3 vertically; native card follows selection |
+| Categories | Click category; Up from first row, Left/Right, Down/Enter to return | Up from first row, Left/Right, Down/A to return; return does not equip |
+| Equip/unequip / consume/read | Native E/Enter or mouse equip/use prompt; native hand controls | Native Equip/Use prompt (A or hand triggers as shown); no new dispatch |
+| Drop / quantity | Native R; native quantity slider/arrows and confirm; cancel with native Back | Native X; D-pad/slider and A confirm; B cancels without a drop |
+| Favorite/unfavorite | Native F or prompt | Native Y or remapped prompt |
+| Equipment slots | Display-only; select the equipped item's grid row for full inspection/actions | Same; no slot focus stop or pointer requirement |
+| Search | Space or click search; type; native Enter/Back ends editing | R3 opens character pad; D-pad moves, A chooses; Done applies, B restores previous filter; Clear + Done removes it |
+| Sort | Click native header/column menu | LB/RB selects native sort column; tap L3 reverses order, hold L3 opens native column dialog; B cancels |
+| Quantity / poison confirmation | Native confirm/cancel; one dialog owns input | A confirms, B cancels the native modal and returns to the menu |
+| Hotbar assign | Favorite an item; native Favorites (Q by default) → select, press 1–8 for a native numbered binding, or use auto-FAV placement | Favorite with native Y; native Favorites (D-pad Up/Down in gameplay) → select/use; eligible unbound favorites automatically occupy spare HUD slots |
+| Hotbar use | Native numbered 1–8 has precedence; auto-FAV slot uses one existing native equip/use request | Select/use through native Favorites; native attack/cast after selection; no direct custom slot-cycling capture |
+| Hotbar page | One fixed eight-slot page; no page action | Same. SkyUI Favorites groups are separate provider functionality, not HUD pages |
+
+The new R3 path uses SKSE keycode 273 only inside the player grid, when neither list nor category is disabled. F6/F7/F8, map K/L and gameplay bindings retain their current owners. The character pad accepts A–Z, 0–9 and space (32 characters); it has a `>` marker and outlined selection, consumes input before native sort/search, and blocks inventory actions underneath. Its filter caption sits beneath the grid. B/Tab/Escape cancels it; after Done or Cancel focus returns to categories. Empty results permit category change, R3 → Clear → Done, or B to exit. Native keyboard search retains its own input-end behavior; Back from an empty category reaches the native menu exit.
+
+Grid selection uses corner brackets as well as color; separate brackets mark the active category/grid region. Native search caret, sort selector, dialog slider/buttons and Favorites keep their provider indicators. The equipment/follower panels and the HUD bar are display-only and never capture focus. Native Favorites provides the controller action path; individual numbered assignment of all eight slots from the controller and custom HUD page/cycle gestures are not implemented. Favorite assignment and native Favorites use are the MVP controller path carried from DYL-161, not an assertion that SkyUI groups equal numbered native hotkeys.
+
+Reset HUD layout: exit Skyrim, set `[HUD] bResetLayout=1` in `Data/SKSE/Plugins/SkyCRPG_UI.ini`, and restart. With the DYL-168 integration patch, scale/offsets become 100/0/0 at load; enable and compass settings are preserved. The flag is read-only and remains 1. Set it to 0 and restart to resume the stored preferences, or write `iScalePercent=100`, `iOffsetX=0`, `iOffsetY=0` for persistent default keys. There is no live reload or engine hook. Scale is 85–115%; X offset is ±120, Y ±60, with viewport clamping. These preferences scale the owned HUD panels, not the native inventory fonts, quest text or DEM.
+
+On gamepad, the native inventory bottom bar labels search with the R3 button (SKSE keycode 273) in the player grid instead of the keyboard Space key; keyboard/mouse keeps the configured key.
+
+Inventory 3D preview: `[Inventory] bManageItemPreview=1` (default) centres the native 3D item preview over the item card and scales it to fit while the player inventory is open. It adjusts only the game's in-memory preview placement for that menu (not during zoom; zoom in/out keeps working) and writes no INI setting or file; container, barter, gift and magic menus start from the game's own values. Optional `fItemPreviewScale` (0.4–1.0, a factor on the game's preview scale) and `fItemPreviewXShift` (−100 to 20 position units added to the game's horizontal position instead of centring; negative is right) override the computed values; leave them empty for the defaults. Set `bManageItemPreview=0` and restart to leave the preview untouched.

@@ -18,6 +18,8 @@ Do not claim universally safe mid-save uninstallation. If a selected provider or
 
 A missing optional minimap must not leave the standard compass permanently hidden. A disabled camera must not change UI-only behavior.
 
+The UI plugin's `[Inventory] bManageItemPreview` (default 1 in `Data/SKSE/Plugins/SkyCRPG_UI.ini`) adjusts the native 3D inventory preview in memory while the player inventory is open; it writes no user or game INI setting or file, and every later menu starts from the game's own values. To rule it out while troubleshooting the item preview, set it to 0 with the game closed and restart; see [Controls](CONTROLS.md).
+
 ## Camera candidate disable and recovery
 
 In a valid world state, F8 toggles SmoothCam's emergency disable; native Toggle POV returns to the native view. If an interrupted F6 precision session no longer returns, use native Toggle POV to reach third person, then F6 to enable the Camera policy. F7 recenters; it does not restore defaults. These are recovery controls, not a live DLL unload, and their full lifecycle coverage is **NOT_RUN**.

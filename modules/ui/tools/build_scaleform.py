@@ -88,9 +88,35 @@ def transform(name, text):
                             "      this.skycrpgInventoryCancel();\n      this.skycrpgPresentationClose();")
         text = replace_once(text, "      super.onItemCardSubMenuAction(event);",
                             "      super.onItemCardSubMenuAction(event);\n      this._skycrpgModal = event.opening == true;\n      this.skycrpgPositionCard();")
+        # DYL-168: re-apply the preview placement before SkyUI's UpdateItem3D.
+        text = replace_once(text, "   function onItemHighlightChange(event)\n   {\n      this.skycrpgInventoryCapture();",
+                            "   function onItemHighlightChange(event)\n   {\n      this.skycrpgInventoryCapture();\n      this.skycrpgPlaceItemPreview();")
+        # DYL-168: the status line follows the card's fade on highlight changes.
+        text = replace_once(text, "      super.onItemHighlightChange(event);\n      this.skycrpgInventoryCapture();",
+                            "      super.onItemHighlightChange(event);\n      this.skycrpgInventoryCapture();\n      this.skycrpgSyncStatus();")
+        text = replace_once(text, "      super.onHideItemsList(event);",
+                            "      super.onHideItemsList(event);\n      if(this._skycrpgDetailPanel != undefined) this._skycrpgDetailPanel._visible = false;")
+        # DYL-168: the player grid's gamepad search is R3 (SKSE 273), not Space.
+        text = replace_once(text, "   function updateBottomBar(a_bSelected)\n   {",
+                            "   function updateBottomBar(a_bSelected)\n   {\n      if(this._platform != 0 && this.inventoryLists.itemList.skycrpgGrid) this._searchControls = {keyCode:273};")
         pos = text.rfind("}")
         text = text[:pos] + (ROOT / "scaleform/inventory-actions.as.inc").read_text() + (ROOT / "scaleform/inventory-presentation.as.inc").read_text() + text[pos:]
     elif name.endswith("InventoryLists.as"):
+        # DYL-168: controller search consumes input before native sort/search.
+        search_anchor = "      if(this._platform != 0)\n      {\n         if(details.skseKeycode == this._sortOrderKey)"
+        text = replace_once(text, search_anchor,
+                            '      if(this.skycrpgSearchInput(details)) return true;\n' + search_anchor)
+        # Reflect native search ownership/caret and keep the filter caption fresh.
+        for callback, tail in (
+                ("onSearchInputStart(event)", '      this._nameFilter.filterText = "";'),
+                ("onSearchInputEnd(event)", "      this._nameFilter.filterText = event.data;")):
+            start = text.index("   function " + callback)
+            end = text.index("\n   }", start)
+            body = text[start:end]
+            body = replace_once(body, tail, tail + "\n      this.skycrpgDrawFocus();")
+            if callback.startswith("onSearchInputEnd"):
+                body += "\n      if(this.itemList.skycrpgGrid) this.skycrpgSearchLabel(event.data);"
+            text = text[:start] + body + text[end:]
         anchor = "if(this.categoryList.handleInput(details,pathToFocus))"
         text = replace_once(text, anchor, (ROOT / "scaleform/grid-routing.as.inc").read_text() + "\n      " + anchor)
         # Shared lists notify only the player menu; other contexts have no hook.

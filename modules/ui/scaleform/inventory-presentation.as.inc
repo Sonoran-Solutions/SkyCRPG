@@ -23,17 +23,34 @@
       if(list._updateRequestID != undefined || list._invalidateRequestID != undefined) return;
       if(typeof list.UpdateList == "function") list.UpdateList();
    }
+   // Layout limit: the panel's real right edge stays 16 units left of 0.66 W.
+   // The engine 3D preview is centred over the card column to its right.
+   function skycrpgModelColumn()
+   {
+      var rect = Stage.visibleRect;
+      return {left:rect.x + 0.66 * rect.width,right:rect.x + rect.width - 16};
+   }
    function skycrpgLayout()
    {
       var rect = Stage.visibleRect;
-      var scale = Math.min(1, rect.width / 1280, rect.height / 720);
-      this._skycrpgScale = scale;
-      var left = rect.x + (rect.width - 1280 * scale) / 2;
-      var top = rect.y + (rect.height - 720 * scale) / 2;
       var lists = this.inventoryLists;
-      lists._xscale = lists._yscale = 100 * scale;
-      lists._x = left + 300 * scale; lists._y = top + 30 * scale;
+      lists._skycrpgMenu = this;
+      // Lay out the panel locally, then measure its real visible right edge
+      // (frame, scrollbar, header rule) instead of assuming 542 units.
       lists.skycrpgLayout();
+      var extent = lists.skycrpgPanelExtent(lists);
+      var reach = 298 + Math.max(542, extent == undefined ? 542 : extent.xMax);
+      var limit = this.skycrpgModelColumn().left - 16;
+      var scale = Math.min(1, (rect.width - 32) / 1280, (rect.height - 32) / 720);
+      // Preserve 165-unit tiles with 172-unit spacing.
+      // Move the whole left block before reducing its uniform scale.
+      scale = Math.min(scale, (limit - rect.x - 16) / (reach - 18));
+      this._skycrpgScale = scale;
+      var left = Math.max(rect.x + 16 - 18 * scale,
+         Math.min(rect.x + (rect.width - 1280 * scale) / 2, limit - reach * scale));
+      var top = rect.y + (rect.height - 720 * scale) / 2;
+      lists._xscale = lists._yscale = 100 * scale;
+      lists._x = left + 298 * scale; lists._y = top + 30 * scale;
       if(this._skycrpgPanel == undefined)
       {
          this.createEmptyMovieClip("_skycrpgPanel", this.getNextHighestDepth());
@@ -42,7 +59,6 @@
       this._skycrpgPanel._x = left + 18 * scale; this._skycrpgPanel._y = top + 40 * scale;
       this._skycrpgPanel._xscale = this._skycrpgPanel._yscale = 100 * scale;
       if(this._skycrpgDetailPanel == undefined) this.createEmptyMovieClip("_skycrpgDetailPanel",this.getNextHighestDepth());
-      this._skycrpgDetailPanel._x = left + 852 * scale; this._skycrpgDetailPanel._y = top + 40 * scale;
       this._skycrpgDetailPanel._xscale = this._skycrpgDetailPanel._yscale = 100 * scale;
       this.skycrpgPositionCard();
    }
@@ -54,8 +70,13 @@
       {
          var entry = list.selectedEntry;
          list.skycrpgCellText(this._skycrpgDetailPanel,"status",900,0,0,408,52,
-            entry == undefined ? "Select an item to inspect" : list.skycrpgStatus(entry,true),13,0xF0E8D8,false);
-         this._skycrpgDetailPanel.status.multiline = this._skycrpgDetailPanel.status.wordWrap = true;
+            entry == undefined ? "" : list.skycrpgStatus(entry,true),13,0xF0E8D8,false);
+         var status = this._skycrpgDetailPanel.status;
+         status.multiline = status.wordWrap = true;
+         // Centred over the card, which is centred in its column.
+         var centred = new TextFormat();
+         centred.align = "center";
+         status.setTextFormat(centred);
       }
       this.skycrpgPositionCard();
    }
@@ -68,7 +89,7 @@
    {
       var holder = this.itemCard._parent;
       var rect = Stage.visibleRect;
-      var scale = this._skycrpgScale;
+      var scale = this._skycrpgModal ? Math.min(1, (rect.width - 32) / 1280, (rect.height - 32) / 720) : this._skycrpgScale;
       var left = rect.x + (rect.width - 1280 * scale) / 2;
       var top = rect.y + (rect.height - 720 * scale) / 2;
       // Measure local art bounds rather than assuming a particular card frame.
@@ -76,18 +97,61 @@
       var bounds = holder.getBounds(holder);
       var width = Math.max(1, bounds.xMax - bounds.xMin);
       var height = Math.max(1, bounds.yMax - bounds.yMin);
-      var fit = this._skycrpgModal ? Math.min(1, 700 / width, 540 / height) : Math.min(1, 408 / width, 510 / height);
-      holder._xscale = holder._yscale = fit * scale * 100;
-      holder._x = left + ((this._skycrpgModal ? (1280 - width * fit) / 2 : 852) - bounds.xMin * fit) * scale;
-      holder._y = top + ((this._skycrpgModal ? (620 - height * fit) / 2 + 30 : 96) - bounds.yMin * fit) * scale;
-      // The old preview's mouse rectangle must not sit over the grid.
-      this.mouseRotationRect._x = left + 852 * scale;
-      this.mouseRotationRect._width = 408 * scale;
+      var fit;
+      if(this._skycrpgModal)
+      {
+         fit = Math.min(1, 700 / width, 540 / height);
+         holder._xscale = holder._yscale = fit * scale * 100;
+         holder._x = left + ((1280 - width * fit) / 2 - bounds.xMin * fit) * scale;
+         holder._y = top + ((620 - height * fit) / 2 + 30 - bounds.yMin * fit) * scale;
+      }
+      else
+      {
+         // Fixed card column: 16 units right of the panel's real visible edge
+         // (frame, scrollbar, header rule) to 16 units from the screen edge.
+         var extent = this.inventoryLists.skycrpgPanelExtent(this);
+         var columnX = (extent == undefined ? this.inventoryLists._x + 542 * scale : extent.xMax) + 16;
+         var columnWidth = Math.max(0, rect.x + rect.width - 16 - columnX);
+         var cardWidth = Math.min(408 * scale, columnWidth);
+         var centre = columnX + columnWidth / 2;
+         // The plugin centres the engine 3D preview over the card.
+         this._skycrpgPreviewCentre = centre;
+         this._skycrpgPreviewHalf = rect.x + rect.width - 16 - centre;
+         this._skycrpgPreviewLeft = columnX;
+         // SkyUI reserves the top 55% of the visible stage for model interaction.
+         var cardTop = rect.y + 0.55 * rect.height + 8 * scale;
+         // The full status line sits directly above the card, centred with it.
+         if(this._skycrpgDetailPanel != undefined)
+         {
+            this._skycrpgDetailPanel._x = centre - cardWidth / 2;
+            this._skycrpgDetailPanel._y = cardTop;
+            if(this._skycrpgDetailPanel.status != undefined) this._skycrpgDetailPanel.status._width = cardWidth / scale;
+            cardTop += 28 * scale;
+         }
+         var barTop = this.bottomBar.getBounds(this).yMin;
+         var available = Math.max(0, barTop - 8 * scale - cardTop);
+         // Zero is the minimum for a degenerate box; never enter the preview.
+         fit = Math.max(0, Math.min(1, cardWidth / width, available / height));
+         holder._xscale = holder._yscale = fit * 100;
+         // Same centre for every item, whatever the card's own width.
+         holder._x = centre - (bounds.xMin + width / 2) * fit;
+         holder._y = cardTop - bounds.yMin * fit;
+      }
+      var model = this.skycrpgModelColumn();
+      var modelLeft = this._skycrpgPreviewLeft == undefined ? model.left : this._skycrpgPreviewLeft;
+      this.mouseRotationRect.Lock("T");
+      this.mouseRotationRect._x = modelLeft;
+      this.mouseRotationRect._width = rect.x + rect.width - modelLeft;
+      this.mouseRotationRect._height = 0.55 * rect.height;
       if(this._skycrpgModalShade == undefined)
       {
          this.createEmptyMovieClip("_skycrpgModalShade", this.getNextHighestDepth());
          holder.swapDepths(this.getNextHighestDepth());
       }
+      // Native quantity/confirmation owns the only visible interactive layer.
+      this.inventoryLists._visible = !this._skycrpgModal;
+      if(this._skycrpgPanel != undefined) this._skycrpgPanel._visible = !this._skycrpgModal;
+      this.skycrpgSyncStatus();
       var shade = this._skycrpgModalShade;
       shade.clear(); shade.beginFill(0x080A0D, 96);
       shade.moveTo(rect.x,rect.y); shade.lineTo(rect.x + rect.width,rect.y);
@@ -98,6 +162,36 @@
          shade.swapDepths(this.getNextHighestDepth());
          holder.swapDepths(this.getNextHighestDepth());
       }
+   }
+   // The status line is shown only with a visible card for a selected grid entry.
+   function skycrpgSyncStatus()
+   {
+      var panel = this._skycrpgDetailPanel;
+      if(panel == undefined) return;
+      var list = this.inventoryLists.itemList;
+      panel._visible = !this._skycrpgModal && !this._bMenuClosing && this._bItemCardFadedIn == true &&
+         !list.skycrpgCategoryFocus && list.selectedIndex != -1 && list.selectedEntry != undefined &&
+         list.getListEnumSize() > 0;
+   }
+   // Ask the plugin to centre the engine preview over the card (stage units).
+   // It adjusts only Inventory3DManager's cached placement for this open.
+   function skycrpgPlaceItemPreview()
+   {
+      if(this._bMenuClosing || this._skycrpgPreviewCentre == undefined) return;
+      var bridge = skse == undefined || skse.plugins == undefined ? undefined : skse.plugins.SkyCRPGUI;
+      if(bridge != undefined && typeof bridge.placeItemPreview == "function")
+         bridge.placeItemPreview(this._skycrpgPreviewCentre,this._skycrpgPreviewHalf);
+   }
+   // Invoked by the plugin once per open from a UI task. SkyUI's own
+   // positionFloatingElements re-requests the current model with its existing
+   // UpdateItem3D call; no new engine dispatch site is added.
+   function skycrpgRefreshItemPreview()
+   {
+      if(this._bMenuClosing || this._skycrpgModal) return;
+      this.skycrpgPlaceItemPreview();
+      if(this._bItemCardFadedIn == true && this._bItemCardPositioned == true &&
+         this.inventoryLists.itemList.selectedIndex != -1)
+         this.positionFloatingElements();
    }
    function skycrpgRequestEquipment()
    {
