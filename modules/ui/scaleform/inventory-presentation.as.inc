@@ -27,12 +27,17 @@
    {
       var rect = Stage.visibleRect;
       var scale = Math.min(1, (rect.width - 32) / 1280, (rect.height - 32) / 720);
+      // Preserve 165-unit tiles with 172-unit spacing.
+      // Move the whole left block before reducing its uniform scale.
+      scale = Math.min(scale, (0.63 * rect.width - 16) / 822);
       this._skycrpgScale = scale;
-      var left = rect.x + (rect.width - 1280 * scale) / 2;
+      var left = Math.max(rect.x + 16 - 18 * scale,
+         Math.min(rect.x + (rect.width - 1280 * scale) / 2,
+                  rect.x + 0.63 * rect.width - 840 * scale));
       var top = rect.y + (rect.height - 720 * scale) / 2;
       var lists = this.inventoryLists;
       lists._xscale = lists._yscale = 100 * scale;
-      lists._x = left + 300 * scale; lists._y = top + 30 * scale;
+      lists._x = left + 298 * scale; lists._y = top + 30 * scale;
       lists.skycrpgLayout();
       if(this._skycrpgPanel == undefined)
       {
@@ -68,7 +73,7 @@
    {
       var holder = this.itemCard._parent;
       var rect = Stage.visibleRect;
-      var scale = this._skycrpgScale;
+      var scale = this._skycrpgModal ? Math.min(1, (rect.width - 32) / 1280, (rect.height - 32) / 720) : this._skycrpgScale;
       var left = rect.x + (rect.width - 1280 * scale) / 2;
       var top = rect.y + (rect.height - 720 * scale) / 2;
       // Measure local art bounds rather than assuming a particular card frame.
@@ -87,9 +92,16 @@
       else
       {
          // SkyUI reserves the top 55% of the visible stage for model interaction.
-         var columnX = left + 852 * scale;
-         var columnWidth = 408 * scale;
+         var columnX = rect.x + 0.63 * rect.width;
+         var columnWidth = Math.min(408 * scale, rect.x + rect.width - 16 - columnX);
          var cardTop = rect.y + 0.55 * rect.height + 8 * scale;
+         // The full status line sits directly above the card, outside the category bar.
+         if(this._skycrpgDetailPanel != undefined)
+         {
+            this._skycrpgDetailPanel._x = columnX + (columnWidth - 408 * scale) / 2;
+            this._skycrpgDetailPanel._y = cardTop;
+            cardTop += 28 * scale;
+         }
          var barTop = this.bottomBar.getBounds(this).yMin;
          var available = Math.max(0, barTop - 8 * scale - cardTop);
          // Zero is the minimum for a degenerate box; never enter the preview.
@@ -99,8 +111,8 @@
          holder._y = cardTop - bounds.yMin * fit;
       }
       this.mouseRotationRect.Lock("T");
-      this.mouseRotationRect._x = left + 852 * scale;
-      this.mouseRotationRect._width = 408 * scale;
+      this.mouseRotationRect._x = rect.x + 0.63 * rect.width;
+      this.mouseRotationRect._width = 0.37 * rect.width;
       this.mouseRotationRect._height = 0.55 * rect.height;
       if(this._skycrpgModalShade == undefined)
       {

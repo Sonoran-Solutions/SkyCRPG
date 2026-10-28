@@ -5,6 +5,13 @@
       var panel = this.panelContainer;
       panel.ListBackground._width = 542; panel.ListBackground._height = 570;
       this.categoryList._x = 0; this.categoryList._y = 12;
+      // CategoryList derives its selector-rule extent from background width.
+      var categoryBackground = this.categoryList.background;
+      if(categoryBackground != undefined)
+      {
+         var categoryRule = categoryBackground.getBounds(panel);
+         categoryBackground._width = Math.max(0, categoryBackground._width + 542 - categoryRule.xMax);
+      }
       var list = this.itemList;
       list._x = 0; list._y = 126;
       list.listHeight = 444;
@@ -50,11 +57,19 @@
       var focus = this._skycrpgFocus;
       focus.clear();
       focus._visible = !this.itemList.disableInput && !this.itemList.disableSelection;
-      var top = this.itemList.skycrpgCategoryFocus ? 0 : 120;
-      var bottom = this.itemList.skycrpgCategoryFocus ? 64 : 570;
+      var panelBounds = this.panelContainer.ListBackground.getBounds(this.panelContainer);
+      var listBounds = this.itemList.background.getBounds(this.panelContainer);
+      var headerBounds = this.itemList.header.getBounds(this.panelContainer);
+      var first = this.itemList.getClipByIndex(0);
+      var firstBounds = first != undefined && first._visible ? first.getBounds(this.panelContainer) : listBounds;
+      var top = this.itemList.skycrpgCategoryFocus ? 0 : Math.max(panelBounds.yMin, headerBounds.yMax, firstBounds.yMin);
+      var bottom = this.itemList.skycrpgCategoryFocus ? 64 : Math.min(panelBounds.yMax, listBounds.yMax);
+      top = Math.min(top, bottom);
+      var xMin = this.itemList.skycrpgCategoryFocus ? 0 : panelBounds.xMin;
+      var xMax = this.itemList.skycrpgCategoryFocus ? 528 : panelBounds.xMax;
       focus.lineStyle(2,0xF0E8D8,100);
-      focus.moveTo(0,top + 14); focus.lineTo(0,top); focus.lineTo(14,top);
-      focus.moveTo(528,bottom - 14); focus.lineTo(528,bottom); focus.lineTo(514,bottom);
+      focus.moveTo(xMin,top + 14); focus.lineTo(xMin,top); focus.lineTo(xMin + 14,top);
+      focus.moveTo(xMax,bottom - 14); focus.lineTo(xMax,bottom); focus.lineTo(xMax - 14,bottom);
    }
    // A bounded controller character pad uses the existing native name filter.
    // No pointer emulation, text-entry engine hook or item dispatch is involved.
