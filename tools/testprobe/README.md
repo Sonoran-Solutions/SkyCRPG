@@ -1,0 +1,137 @@
+# SkyCRPG TestProbe (internal tests only)
+
+`SkyCRPG_TestProbe.dll` is a read-only SKSE observer for the unattended-test
+runner. It is **never shipped** in Camera/UI release ZIPs or manifests. It
+installs no hooks, emits no input, changes no game state and has no runtime
+dependency on either SkyCRPG module. Inventory reads explicitly use
+`a_noInit=true`; no inventory initialization, display-name mutation or item
+actions are performed.
+
+The target is Windows x64, Skyrim **1.7.104.0**, SKSE **2.3.1**, and the existing
+CommonLibSSE-NG **7.2.0** source pin. The runner must supply Address Library 13
+in every disposable profile using this probe (including a baseline profile).
+Before CommonLib initialization, the probe checks
+`versionlib-1-7-104-0.bin` against SHA-256
+`8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842`.
+Missing or mismatched libraries cause load rejection, with a diagnostic.
+
+The default build switch is OFF. To build just this target in the repository's
+pinned Windows toolchain:
+
+```powershell
+cmake --preset windows-x64-release -DSKYCRPG_BUILD_CAMERA=OFF -DSKYCRPG_BUILD_UI=OFF -DSKYCRPG_BUILD_TEST_PROBE=ON -DSKYCRPG_SOURCE_COMMIT=<sha> -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
+cmake --build --preset windows-x64-release --target SkyCRPG_TestProbe --parallel 2
+```
+
+CI uploads only the DLL and `SHA256SUMS` as `skycrpg-testprobe-<full-sha>`.
+It does not run the release packager for this target. The normal packager's
+explicit Camera/UI file lists remain unchanged.
+
+The **runner** verifies that checksum and installs the DLL only into the
+disposable profile's `Data/SKSE/Plugins/`, then removes it during profile
+restoration. It may copy the sample `SkyCRPG_TestProbe.ini` alongside the DLL or
+generate the same settings. This package does not deploy anything, edit the
+owner's files or launch the game. Keep CommonLib's source/license notices with
+internal candidate provenance; see `LICENSES/CommonLibSSE-NG-*` and
+`cmake/README.md`. No public distribution is authorized.
+
+```ini
+[Probe]
+bEnabled=1
+iStateIntervalMs=1000
+```
+
+Settings are read once at startup; a missing INI uses these defaults.
+`bEnabled=0` writes only `probe_loaded` with `enabled:false`, then stays inert.
+`iStateIntervalMs=0` disables both the timer and request polling; load/new-game
+and menu-close snapshots still run while enabled. Intervals from 1 through
+2147483647 ms are accepted; invalid values fall back to 1000 ms.
+
+Output is appended to `<My Games>/Skyrim Special Edition/SKSE/` using
+`skycrpg::LogDirectory()`:
+
+- `SkyCRPG_TestProbe.jsonl`: one JSON object and LF per event; writes are
+  serialized by a mutex and flushed before returning.
+- `SkyCRPG_TestProbe.log`: best-effort diagnostics for unavailable state,
+  registration, I/O and caught C++ exceptions (also sent to the debug output).
+
+The runner should record the starting JSONL offset; previous runs remain in the
+file. Times restart on a new process. Normal periodic samples start after a
+successful saved-game load or new game. A timer queues at most one outstanding
+sample; main-thread stalls delay/coalesce timer ticks. Every menu close and
+post-load message queues its own additional sample.
+
+## Checkpoint requests
+
+Write UTF-8 text to `<My Games>/Skyrim Special Edition/SKSE/SkyCRPG_TestProbe.request`
+(an empty touched file is valid). Prefer a completed temporary file atomically
+renamed into place. The timer reads it at its configured cadence and queues a
+main-thread `player_state` with `requested:true` and **the exact file contents**
+in `tag`. Tags are raw text, not JSON; whitespace, newlines and NULs are
+preserved and JSON-escaped. The maximum tag is 65536 bytes. Oversized/unreadable
+requests are logged and left on disk; ordinary periodic samples continue.
+
+After enqueueing, the opened request file is marked for deletion by handle,
+preventing a path race with a later checkpoint. A sharing violation is retried
+on a later tick. Deletion failure is diagnosed and can yield repeated tags;
+deletion acknowledges enqueueing, not completion. Send one request at a time
+and wait for the matching `tag` with `available:true` before asserting game
+state. An unavailable/world-changed response is explicit and must not count as
+a successful checkpoint. No request polling occurs with the timer disabled.
+
+## JSONL schema
+
+Every line has `t` (nonnegative monotonic milliseconds since probe startup),
+`wall` (UTC `YYYY-MM-DDTHH:MM:SSZ`) and `ev`. Numbers use locale-independent
+formatting; non-finite values become `null`. Names/tags are UTF-8; quotes,
+backslashes and control characters are escaped. Form IDs are fixed-width
+uppercase strings such as `"0x00000014"`; absent objects are `null`.
+
+| `ev` | Additional fields |
+| --- | --- |
+| `probe_loaded` | `runtime`, `skse` (four-part version strings), `probe_version`, `build_commit` (`"unknown"` if not supplied), `enabled`, `state_interval_ms` |
+| `data_loaded` | None; SKSE `kDataLoaded` |
+| `game_loaded` | `success` from SKSE `kPostLoadGame`'s pointer-encoded boolean; `save_name` copied from `kPreLoadGame`, or `null` |
+| `new_game` | None; SKSE `kNewGame` |
+| `menu` | `name`, `opening` |
+| `equip` | Player only: `form_id` (base object), `name`, `equipped`. Slot omitted because the event has no reliable slot field. |
+| `container` | Player in/out only: `form_id`, `name`, `player_in`, `player_out`, `old_container`, `new_container`, signed `count_delta`, `new_count`, `count_status` |
+| `player_state` | `requested`, optional `tag`, `available`; when available: `position:{x,y,z}`, `cell:{form_id,editor_id,name}` or `null`, `health`, `magicka`, `stamina` (each `{current,max}`), `equipped:{right,left,ammo}`, `camera_state`, `paused`, `open_menus` |
+
+`container.count_delta` is positive into the player and negative out; a transfer
+from the player to itself is zero. `new_count` is observed on the original
+event thread only when it is the main thread and inventory changes are already
+initialized (`count_status:"event_thread"`). Otherwise it is `null`, with
+`count_status:"off_thread"` or `"inventory_unavailable"`; no later count is
+misrepresented as the immediate post-event count. Off-thread equip/container
+callbacks copy only IDs/scalars into a main-thread task, where names are read.
+Missing forms produce `name:null`; observations queued across a load are
+discarded with a diagnostic.
+
+All snapshots execute through `SKSE::GetTaskInterface()->AddTask`. They
+reacquire player/cell/UI/camera and retain no engine pointers. A load generation
+prevents old queued tasks from reading a new world. An unavailable snapshot has
+`available:false` and `reason` (`world_unavailable_or_changed` or
+`player_unavailable`), plus request metadata; state fields are omitted. A main
+or loading menu also makes player state unavailable. Missing camera/UI/cell
+components yield `null`. `paused` is `UI::GameIsPaused()`. `open_menus` lists
+registered menus whose `IMenu::OnStack()` flag is set; ordering is unspecified.
+`camera_state` is the native numeric camera state ID, not a claim about which
+mod owns the camera. Resources use live current values and permanent plus
+temporary maximums; this is base-form telemetry, not instance identity or
+ownership/weight evidence.
+
+## Portable check
+
+```bash
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic tools/testprobe/tests/json_line_test.cpp -o /tmp/skycrpg-probe-json-test
+/tmp/skycrpg-probe-json-test
+```
+
+This tests escaping, UTF-8 preservation, numeric formatting (including a decimal
+comma locale), envelope formatting, raw request parsing/bounds and interval
+parsing. It does not compile the Windows adapter or prove engine behavior.
+Windows MSVC and the first orchestrator-launched, owner-supervised runtime
+check remain required. The process-lifetime sinks/timer do not support hot
+unloading. C++ exceptions are caught at plugin/callback/task boundaries; native
+engine faults and disk/power-loss atomicity cannot be guaranteed by this probe.
