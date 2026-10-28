@@ -6,16 +6,12 @@
 int main()
 {
 	using namespace skycrpg::testprobe;
-	assert(!IsMainThread(0, 0));
-	assert(!IsMainThread(42, 0));
-	assert(!IsMainThread(43, 42));
-	assert(IsMainThread(42, 42));
 	// Exhaust every combination, including overlapping failure conditions.
-	for (const bool main : { false, true }) {
+	for (const bool drain : { false, true }) {
 		for (const bool sameGeneration : { false, true }) {
 			for (const bool loaded : { false, true }) {
-				const auto reason = SnapshotReason(main, 7, sameGeneration ? 7 : 8, loaded);
-				assert(reason == (!main ? "off_main_thread" : !sameGeneration ?
+				const auto reason = SnapshotReason(drain, 7, sameGeneration ? 7 : 8, loaded);
+				assert(reason == (!drain ? "outside_task_drain" : !sameGeneration ?
 					"generation_changed" : !loaded ? "not_loaded" : ""));
 			}
 		}

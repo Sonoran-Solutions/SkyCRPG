@@ -103,9 +103,24 @@ void Emit(std::string_view event, const json::Object& fields = {}) noexcept
 	}
 }
 
-bool MainThread()
+// Set only while a probe task delegate runs inside SKSE's UI task drain.
+thread_local bool t_inTaskDrain = false;
+
+bool InTaskDrain() noexcept { return t_inTaskDrain; }
+
+template <class F>
+bool QueueProbeTask(F&& task) noexcept
 {
-	return json::IsMainThread(GetCurrentThreadId(), g_probe->mainThreadID.load());
+	try {
+		const auto* tasks = SKSE::GetTaskInterface();
+		if (!tasks) return false;
+		tasks->AddUITask([task = std::forward<F>(task)]() mutable {
+			t_inTaskDrain = true;
+			try { task(); } catch (...) { Log("SkyCRPG_TestProbe: queued task failed; skipped\n"); }
+			t_inTaskDrain = false;
+		});
+		return true;
+	} catch (...) { return false; }
 }
 
 void ThreadFields(json::Object& fields)
@@ -176,7 +191,7 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
 	fields.Numeric("queued_generation", generation).Numeric("current_generation", currentGeneration)
 		.Boolean("loaded", loaded);
 	// A request always gets a response, even if there is no usable world yet.
-	const auto reason = json::SnapshotReason(MainThread(), generation, currentGeneration, loaded);
+	const auto reason = json::SnapshotReason(InTaskDrain(), generation, currentGeneration, loaded);
 	if (!reason.empty()) {
 		fields.Boolean("available", false).String("reason", reason);
 		Emit("player_state", fields);
@@ -240,23 +255,22 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
 // Only the timer coalesces outstanding samples, so a stalled main thread cannot
 // grow an unbounded timer queue. Menu-close/load snapshots are separate tasks.
 // SKSE's ordinary task-pool queue has multiple drain sites. Use the UI event
-// queue (Hooks_UI.cpp:46-86), then validate captured affinity before any reads.
+// queue (Hooks_UI.cpp:46-86); reads are gated on running inside that drain.
 bool QueueSnapshot(bool requested = false, std::string tag = {}, bool timer = false) noexcept
 {
 	try {
-		const auto* tasks = SKSE::GetTaskInterface();
-		if (!tasks) {
-			Log("SkyCRPG_TestProbe: task interface unavailable\n");
-			return false;
-		}
 		if (timer && g_probe->timerPending.exchange(true)) return false;
 		const auto generation = g_probe->generation.load();
-		tasks->AddUITask([requested, tag = std::move(tag), generation, timer] {
+		const bool queued = QueueProbeTask([requested, tag = std::move(tag), generation, timer] {
 			try { Snapshot(requested, tag, generation); }
 			catch (...) { Log("SkyCRPG_TestProbe: snapshot failed; skipped\n"); }
 			if (timer) g_probe->timerPending.store(false);
 		});
-		return true;
+		if (!queued) {
+			if (timer) g_probe->timerPending.store(false);
+			Log("SkyCRPG_TestProbe: task interface unavailable\n");
+		}
+		return queued;
 	} catch (...) {
 		if (timer) g_probe->timerPending.store(false);
 		Log("SkyCRPG_TestProbe: snapshot enqueue failed\n");
@@ -359,8 +373,8 @@ void CALLBACK TimerTick(void*, BOOLEAN) noexcept
 
 void Equip(std::uint32_t formID, bool equipped, std::uint64_t generation)
 {
-	if (!MainThread() || generation != g_probe->generation.load()) {
-		Log("SkyCRPG_TestProbe: stale/off-thread equip observation skipped\n");
+	if (!InTaskDrain() || generation != g_probe->generation.load()) {
+		Log("SkyCRPG_TestProbe: stale/out-of-drain equip observation skipped\n");
 		return;
 	}
 	json::Object fields;
@@ -372,8 +386,8 @@ void Equip(std::uint32_t formID, bool equipped, std::uint64_t generation)
 void Container(std::uint32_t oldID, std::uint32_t newID, std::uint32_t formID,
 	std::int32_t count, bool onEventThread, std::uint64_t generation)
 {
-	if (!MainThread() || generation != g_probe->generation.load()) {
-		Log("SkyCRPG_TestProbe: stale/off-thread container observation skipped\n");
+	if (!InTaskDrain() || generation != g_probe->generation.load()) {
+		Log("SkyCRPG_TestProbe: stale/out-of-drain container observation skipped\n");
 		return;
 	}
 	const bool incoming = newID == kPlayerFormID;
@@ -426,12 +440,8 @@ public:
 			const auto generation = g_probe->generation.load();
 			const auto formID = event->baseObject;
 			const bool equipped = event->equipped;
-			if (MainThread()) Equip(formID, equipped, generation);
-			else if (const auto* tasks = SKSE::GetTaskInterface()) tasks->AddUITask([formID, equipped, generation] {
-				try { Equip(formID, equipped, generation); }
-				catch (...) { Log("SkyCRPG_TestProbe: queued equip observation failed\n"); }
-			});
-			else Log("SkyCRPG_TestProbe: no task interface for equip event\n");
+			if (!QueueProbeTask([formID, equipped, generation] { Equip(formID, equipped, generation); }))
+				Log("SkyCRPG_TestProbe: no task interface for equip event\n");
 		} catch (...) { Log("SkyCRPG_TestProbe: equip event failed; skipped\n"); }
 		return RE::BSEventNotifyControl::kContinue;
 	}
@@ -446,12 +456,10 @@ public:
 			const auto formID = event->baseObj;
 			const auto count = event->itemCount;
 			const auto generation = g_probe->generation.load();
-			if (MainThread()) Container(oldID, newID, formID, count, true, generation);
-			else if (const auto* tasks = SKSE::GetTaskInterface()) tasks->AddUITask([oldID, newID, formID, count, generation] {
-				try { Container(oldID, newID, formID, count, false, generation); }
-				catch (...) { Log("SkyCRPG_TestProbe: queued container observation failed\n"); }
-			});
-			else Log("SkyCRPG_TestProbe: no task interface for container event\n");
+			// Inventory counts stay off: the drained task runs after the event, so
+			// its count would not be the immediate post-event value.
+			if (!QueueProbeTask([oldID, newID, formID, count, generation] { Container(oldID, newID, formID, count, false, generation); }))
+				Log("SkyCRPG_TestProbe: no task interface for container event\n");
 		} catch (...) { Log("SkyCRPG_TestProbe: container event failed; skipped\n"); }
 		return RE::BSEventNotifyControl::kContinue;
 	}
@@ -571,7 +579,7 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* sks
 		g_probe->interval = json::ParseInterval(interval.data());
 		const auto fields = json::Object{}.String("runtime", Version(skseInterface->runtimeVersion))
 			.String("skse", Version(skseInterface->skseVersion)).String("probe_version", SKYCRPG_VERSION)
-			.String("snapshot_dispatch", "ui_task_captured_thread_v1")
+			.String("snapshot_dispatch", "ui_task_drain_v2")
 			.String("build_commit", SKYCRPG_SOURCE_COMMIT).Boolean("enabled", enabled).Numeric("state_interval_ms", g_probe->interval);
 		if (!enabled) { Emit("probe_loaded", fields); return true; }
 		if (!PinnedAddressLibrary()) {

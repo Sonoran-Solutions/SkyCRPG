@@ -58,7 +58,7 @@ Output is appended to `<My Games>/Skyrim Special Edition/SKSE/` using
 The runner should record the starting JSONL offset; previous runs remain in the
 file. Times restart on a new process. Normal periodic samples start after a
 successful saved-game load or new game. A timer queues at most one outstanding
-sample; main-thread stalls delay/coalesce timer ticks. Every menu close and
+sample; engine stalls delay/coalesce timer ticks. Every menu close and
 post-load message queues its own additional sample.
 
 ## Checkpoint requests
@@ -66,7 +66,7 @@ post-load message queues its own additional sample.
 Write UTF-8 text to `<My Games>/Skyrim Special Edition/SKSE/SkyCRPG_TestProbe.request`
 (an empty touched file is valid). Prefer a completed temporary file atomically
 renamed into place. The timer reads it at its configured cadence and queues a
-main-thread `player_state` with `requested:true` and **the exact file contents**
+task-drain `player_state` with `requested:true` and **the exact file contents**
 in `tag`. Tags are raw text, not JSON; whitespace, newlines and NULs are
 preserved and JSON-escaped. The maximum tag is 65536 bytes. Oversized/unreadable
 requests are logged and left on disk; ordinary periodic samples continue.
@@ -89,7 +89,7 @@ uppercase strings such as `"0x00000014"`; absent objects are `null`.
 
 | `ev` | Additional fields |
 | --- | --- |
-| `probe_loaded` | `runtime`, `skse` (four-part version strings), `probe_version`, `snapshot_dispatch` (`"ui_task_captured_thread_v1"`), `build_commit` (`"unknown"` if not supplied), `enabled`, `state_interval_ms` |
+| `probe_loaded` | `runtime`, `skse` (four-part version strings), `probe_version`, `snapshot_dispatch` (`"ui_task_drain_v2"`), `build_commit` (`"unknown"` if not supplied), `enabled`, `state_interval_ms` |
 | `data_loaded` | None; SKSE `kDataLoaded` |
 | `game_loaded` | `success` from SKSE `kPostLoadGame`'s pointer-encoded boolean; `save_name` copied from `kPreLoadGame`, or `null` |
 | `new_game` | None; SKSE `kNewGame` |
@@ -100,31 +100,30 @@ uppercase strings such as `"0x00000014"`; absent objects are `null`.
 | `player_state` | `requested`, optional `tag`, `available`; when available: `position:{x,y,z}`, `cell:{form_id,editor_id,name}` or `null`, `health`, `magicka`, `stamina` (each `{current,max}`), `equipped:{right,left,ammo}`, `camera_state`, `paused`, `open_menus` |
 
 `container.count_delta` is positive into the player and negative out; a transfer
-from the player to itself is zero. `new_count` is observed on the original
-event thread only when it is the main thread and inventory changes are already
-initialized (`count_status:"event_thread"`). Otherwise it is `null`, with
-`count_status:"off_thread"` or `"inventory_unavailable"`; no later count is
-misrepresented as the immediate post-event count. Off-thread equip/container
-callbacks copy only IDs/scalars into a main-thread task, where names are read.
+from the player to itself is zero. `new_count` is currently always `null`
+with `count_status:"off_thread"`: equip/container callbacks copy only
+IDs/scalars into a probe task, where names are read, and a count taken there
+would not be the immediate post-event count.
 Missing forms produce `name:null`; observations queued across a load are
 discarded with a diagnostic.
 
 All snapshots execute through `SKSE::GetTaskInterface()->AddUITask`, drained
 after SKSE's native UI event processing. The timer only polls files and queues
-work; it never reads player/cell/UI/camera. The probe captures the main thread
-ID once in `kDataLoaded`, checks that ID before engine state reads, and never
-rebinds it from a task or a later conflicting callback. `Main::threadID` is
-diagnostic only. Menu and lifecycle `thread_context` events validate the capture;
-one ordinary `AddTask` after each saved-game load reports only executor thread
-diagnostics, so the old scheduling assumption can be checked from JSONL.
+work; it never reads player/cell/UI/camera. SKSE drains these tasks on
+rotating engine worker threads (observed 424-444 on 1.7.104 under Proton), never
+on `Main::threadID` or the `kDataLoaded` thread, so the probe does not gate on a
+thread ID. Each probe task sets a thread-local flag while it runs inside the
+drain, and engine reads require that flag. The captured `kDataLoaded` ID and
+`Main::threadID` are diagnostic only; menu and lifecycle `thread_context` events
+and one ordinary `AddTask` after each saved-game load record executor threads.
 
 Snapshots reacquire player/cell/UI/camera and retain no engine pointers. Every
 `player_state` includes the three thread fields above, `queued_generation`,
 `current_generation`, and `loaded`. A load generation prevents old queued tasks
 from reading a new world. An unavailable snapshot has `available:false` and
-`reason`, selected in order: `off_main_thread`, `generation_changed`,
+`reason`, selected in order: `outside_task_drain`, `generation_changed`,
 `not_loaded`, then `player_unavailable`; request metadata is preserved and state
-fields are omitted. `off_main_thread` always includes the observed current and
+fields are omitted. Unavailable snapshots always include the observed current and
 engine thread IDs, plus the captured ID. A main
 or loading menu also makes player state unavailable. Missing camera/UI/cell
 components yield `null`. `paused` is `UI::GameIsPaused()`. `open_menus` lists
@@ -146,8 +145,7 @@ g++ -std=c++20 -Wall -Wextra -Werror -pedantic tools/testprobe/tests/snapshot_po
 This tests escaping, UTF-8 preservation, numeric formatting (including a decimal
 comma locale), envelope formatting, raw request parsing/bounds and interval
 parsing. It does not compile the Windows adapter or prove engine behavior.
-The policy test covers unknown/matching/mismatched thread IDs, all eight
-thread/generation/load combinations and checkpoint tag preservation in failures.
+The policy test covers all eight drain/generation/load combinations and checkpoint tag preservation in failures.
 Windows MSVC and the first orchestrator-launched, owner-supervised runtime
 check remain required. The process-lifetime sinks/timer do not support hot
 unloading. C++ exceptions are caught at plugin/callback/task boundaries; native

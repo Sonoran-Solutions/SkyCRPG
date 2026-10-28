@@ -5,17 +5,15 @@
 #include <string_view>
 
 namespace skycrpg::testprobe {
-inline constexpr bool IsMainThread(std::uint32_t current, std::uint32_t captured) noexcept
-{
-	return captured != 0 && current == captured;
-}
-
-// Check thread affinity before touching engine objects. A stale request must
+// SKSE drains UI tasks on rotating engine worker threads (observed ids 424-444
+// on 1.7.104 under Proton), never on Main::threadID or the kDataLoaded thread.
+// The drain itself is the synchronisation point, so engine reads are allowed
+// only from a probe task while it runs inside that drain. A stale request must
 // never read the replacement world, even after that world finishes loading.
-inline constexpr std::string_view SnapshotReason(bool onMainThread,
+inline constexpr std::string_view SnapshotReason(bool inTaskDrain,
 	std::uint64_t queuedGeneration, std::uint64_t currentGeneration, bool loaded) noexcept
 {
-	if (!onMainThread) return "off_main_thread";
+	if (!inTaskDrain) return "outside_task_drain";
 	if (queuedGeneration != currentGeneration) return "generation_changed";
 	if (!loaded) return "not_loaded";
 	return {};
