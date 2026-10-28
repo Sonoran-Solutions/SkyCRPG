@@ -295,7 +295,7 @@ void UIFields(json::Object& fields, RE::UI* ui)
 	const auto movie = ui->GetMovieView("InventoryMenu");
 	constexpr const char* list = "_root.Menu_mc.inventoryLists.itemList";
 	json::Object inventory;
-	RE::GFxValue itemList, grid, selected, name, count;
+	RE::GFxValue itemList, grid, selected, name, count, favorite;
 	if (!Variable(movie.get(), list, itemList)) { fields.Null("inventory"); return; }
 	// skycrpgGrid is absent from a stock movie and explicitly false on a generated fallback.
 	const bool hasGrid = itemList.GetMember("skycrpgGrid", &grid) && !grid.IsUndefined();
@@ -306,7 +306,11 @@ void UIFields(json::Object& fields, RE::UI* ui)
 		else inventory.Null("selected_name");
 		if (selected.GetMember("count", &count) && count.IsNumber()) inventory.Numeric("selected_count", count.GetNumber());
 		else inventory.Null("selected_count");
-	} else inventory.Null("selected_name").Null("selected_count");
+		// SkyUI 6.11 InventoryListEntry.setEntry reads entry.favorite == true.
+		// Missing/invalid data stays unknown; it must never authorize a toggle.
+		if (selected.GetMember("favorite", &favorite) && favorite.IsBool()) inventory.Boolean("selected_favorite", favorite.GetBool());
+		else inventory.Null("selected_favorite");
+	} else inventory.Null("selected_name").Null("selected_count").Null("selected_favorite");
 	fields.Raw("inventory", inventory.Json());
 }
 
@@ -363,7 +367,9 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation, 
 	FormField(equipped, "left", player->GetEquippedObject(true));
 	FormField(equipped, "ammo", player->GetCurrentAmmo());
 	const auto* right = player->GetEquippedObject(false);
-	const auto* weapon = right ? right->As<RE::TESObjectWEAP>() : nullptr;
+	// Form-type check plus static_cast: the static CommonLib build does not
+	// instantiate TESForm::As<T> (same link failure fixed in ba10da6).
+	const auto* weapon = right && right->GetFormType() == RE::FormType::Weapon ? static_cast<const RE::TESObjectWEAP*>(right) : nullptr;
 	equipped.Boolean("two_handed", weapon && json::TwoHandedWeapon(static_cast<unsigned>(weapon->GetWeaponType())));
 	using Slot = RE::BGSBipedObjectForm::BipedObjectSlot;
 	if (requested) {
@@ -388,7 +394,8 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation, 
 		}, true) : RE::TESObjectREFR::InventoryCountMap{};
 		for (std::size_t i = 0; i < request.count; ++i) {
 			const auto formID = request.forms[i];
-			const auto* form = RE::TESForm::LookupByID<RE::TESBoundObject>(formID);
+			const auto* raw = RE::TESForm::LookupByID(formID);
+			const auto* form = raw && raw->IsBoundObject() ? static_cast<const RE::TESBoundObject*>(raw) : nullptr;
 			if (!form) { counts.Null(json::FormID(formID)); weights.Null(json::FormID(formID)); continue; }
 			weights.Numeric(json::FormID(formID), form->GetWeight());
 			if (!inventoryAvailable) { counts.Null(json::FormID(formID)); continue; }
