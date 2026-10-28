@@ -3,15 +3,15 @@ name: build
 on:
   push:
     branches: [main]
-    paths: ["modules/**", "shared/**", "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
+    paths: ["modules/**", "shared/**", "tools/testprobe/**", "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
   pull_request:
-    paths: ["modules/**", "shared/**", "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
+    paths: ["modules/**", "shared/**", "tools/testprobe/**", "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
   workflow_dispatch:
     inputs:
       module:
         description: Independent target
         type: choice
-        options: [ui, camera, both]
+        options: [ui, camera, both, testprobe, all]
         default: ui
 
 permissions:
@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 3
     outputs:
       modules: ${{ steps.scope.outputs.modules }}
+      testprobe: ${{ steps.scope.outputs.testprobe }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -38,6 +39,8 @@ jobs:
 
   windows-x64:
     needs: scope
+    # A probe-only change selects no production module; skip the empty matrix.
+    if: needs.scope.outputs.modules != '[]'
     strategy:
       fail-fast: false
       matrix:
@@ -111,3 +114,74 @@ jobs:
             build/windows-x64-release/vcpkg-manifest-install.log
             build/windows-x64-release/CMakeCache.txt
             build/windows-x64-release/modules/${{ matrix.module }}/Release/*.pdb
+
+  # Independent internal artifact: never run tools/package.py for the probe.
+  # Owner: Package C; purpose: MSVC /W4 /WX build + SHA-256; completion: artifact
+  # upload/exit 0. Deadline/cleanup: 30-minute job timeout, hosted runner disposal.
+  testprobe:
+    needs: scope
+    if: needs.scope.outputs.testprobe == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Pinned dependency toolchain
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: ee12231b20c95013c6638d845d04c91559a1d1ff
+          path: external/vcpkg
+      - name: Bootstrap pinned vcpkg
+        shell: pwsh
+        run: external/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+      - uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: windows-static-vcpkg-${{ hashFiles('vcpkg.json') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            build/windows-x64-release/_deps
+            build/windows-x64-release/vcpkg_installed
+          key: commonlib-static-ae-${{ runner.os }}-${{ env.ImageVersion }}-${{ hashFiles('cmake/CommonLib.cmake', 'vcpkg.json') }}
+      - name: Build only the test probe and checksum it
+        shell: pwsh
+        run: |
+          cmake --preset windows-x64-release "-DSKYCRPG_SOURCE_COMMIT=$env:SOURCE_SHA" -DSKYCRPG_BUILD_CAMERA=OFF -DSKYCRPG_BUILD_UI=OFF -DSKYCRPG_BUILD_TEST_PROBE=ON "-DCMAKE_TOOLCHAIN_FILE=$pwd/external/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build --preset windows-x64-release --target SkyCRPG_TestProbe --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force testprobe-artifact | Out-Null
+          Copy-Item build/windows-x64-release/tools/testprobe/Release/SkyCRPG_TestProbe.dll testprobe-artifact/
+          $hash = (Get-FileHash testprobe-artifact/SkyCRPG_TestProbe.dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$pwd/testprobe-artifact/SHA256SUMS", "$hash  SkyCRPG_TestProbe.dll`n", [Text.UTF8Encoding]::new($false))
+      - uses: actions/upload-artifact@v5
+        with:
+          name: skycrpg-testprobe-${{ env.SOURCE_SHA }}
+          path: testprobe-artifact/
+          if-no-files-found: error
+
+  # Portable probe policy tests (JSON lines, snapshot gate, opt-in config).
+  # No Windows or engine headers; they run wherever the probe is selected.
+  testprobe-portable:
+    needs: scope
+    if: needs.scope.outputs.testprobe == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build and run portable probe tests
+        run: |
+          set -euo pipefail
+          for test in tools/testprobe/tests/*_test.cpp; do
+            name=$(basename "$test" .cpp)
+            g++ -std=c++20 -Wall -Wextra -Werror -pedantic "$test" -o "$RUNNER_TEMP/$name"
+            "$RUNNER_TEMP/$name"
+            echo "$name PASS"
+          done
