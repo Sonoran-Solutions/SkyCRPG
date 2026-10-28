@@ -268,7 +268,7 @@ Round-5 in-game verification **NOT_RUN**.
 
 ### Owner recheck `87823c897a1a4b9288e7dcc66af77070` on `46a7809`
 
-UI-only profile, 1920×1080, package `SkyCRPG_UI-0.0.1-46a7809.zip` (`17d7a838…`), DLL `e638dbdf…`, movies inventorymenu `2302b306…`, inventorylists `34e32f04…`, hudmenu `54937d9d…`. The owner reports the inventory layout "looks good now" and approves it: **PASS** for the round-5 preview placement, frame padding and grid bracket. Device not stated for this run (pending owner confirmation).
+UI-only profile, 1920×1080, package `SkyCRPG_UI-0.0.1-46a7809.zip` (`17d7a838…`), DLL `e638dbdf…`, movies inventorymenu `2302b306…`, inventorylists `34e32f04…`, hudmenu `54937d9d…`. The owner reports the inventory layout "looks good now" and approves it: **PASS** for the round-5 preview placement, frame padding and grid bracket. Controller only (owner-confirmed).
 
 `SkyCRPG_UI.log` confirms the engine-cache approach took effect and that `itemPos.x` uses the same units as `fInventory3DItemPosX`. The menu reported a card column with centre 1011.8 and half-width 252.2 stage units. Before: `itemPos=(-36.403, -500.000, 13.750) itemScale=1.500`. After: `itemPos=(-46.471, -500.000, 13.750) itemScale=1.339`. No INI setting was written.
 
