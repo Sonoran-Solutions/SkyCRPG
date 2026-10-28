@@ -38,6 +38,13 @@ global.Shared = {GlobalFunc:{IsKeyPressed:d=>d.value==='keyDown'||d.value==='key
 const listsSource = staged['ItemMenus/InventoryLists.as'];
 const gridSource = staged['Common/skyui/components/list/ScrollingList.as'];
 const menuSource = staged['ItemMenus/InventoryMenu.as'];
+function box(x,y,w,h,parent) {
+  return {_x:x,_y:y,_width:w,_height:h,getBounds() {
+    const px=parent ? parent._x : 0, py=parent ? parent._y : 0;
+    return {xMin:px+this._x,yMin:py+this._y,xMax:px+this._x+this._width,yMax:py+this._y+this._height};
+  }};
+}
+function intersects(a,b) { return a.xMin < b.xMax && b.xMin < a.xMax && a.yMin < b.yMax && b.yMin < a.yMax; }
 function listsFixture() {
   const list = {skycrpgGrid:true,selectedIndex:10,skycrpgCategoryFocus:false,
     entries:[{itemIndex:10},{itemIndex:40},{itemIndex:20},{itemIndex:70}],
@@ -46,10 +53,12 @@ function listsFixture() {
     getListEnumEntry(i){return this.entries[i];},
     doSetSelectedIndex(i){this.selectedIndex=i;},selectDefaultIndex(){this.selectedIndex=this.entries[0].itemIndex;},
     header:{},background:{},scrollbar:{}};
+  list.header=box(0,-30,516,20,list); list.background=box(0,0,516,444,list);
   for (const name of ['skycrpgMove','skycrpgCellText']) list[name] = method(gridSource,name);
   const lists = {_currentState:1,_platform:1,_sortOrderKey:272,_searchKey:57,
-    itemList:list,panelContainer:new Clip(),categoryList:{handleInput(){return false;}},
-    categoryLabel:{},searchWidget:{},columnSelectButton:{},_nameFilter:{filterText:''}};
+    itemList:list,panelContainer:new Clip(),categoryList:box(0,12,510,44),
+    categoryLabel:box(8,67,145,22),searchWidget:box(0,0,140,20),columnSelectButton:box(0,0,18,20),_nameFilter:{filterText:''}};
+  lists.categoryList.handleInput=()=>false;
   lists.panelContainer.ListBackground = {};
   for (const name of ['skycrpgLayout','skycrpgDrawFocus','skycrpgSearchInput','skycrpgDrawSearch',
     'skycrpgEndSearch','skycrpgSearchLabel','handleInput','onSearchInputStart','onSearchInputEnd']) lists[name] = method(listsSource,name);
@@ -157,7 +166,7 @@ for (const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:1
   {x:-320,y:0,width:2560,height:1080},{x:50,y:30,width:1024,height:600}]) {
   global.Stage={visibleRect:rect};
   const lists=listsFixture(), holder=new Clip(), menu=new Clip();
-  Object.assign(menu,{inventoryLists:lists,itemCard:{_parent:holder},mouseRotationRect:{},skycrpgDrawEquipment(){}});
+  Object.assign(menu,{inventoryLists:lists,itemCard:{_parent:holder},mouseRotationRect:{Lock(){}},bottomBar:{getBounds(){return {yMin:rect.y+rect.height-50};}},skycrpgDrawEquipment(){}});
   for(const name of ['skycrpgLayout','skycrpgPositionCard']) menu[name]=method(menuSource,name);
   menu.skycrpgLayout();
   const scale=menu._skycrpgScale;
@@ -166,6 +175,13 @@ for (const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:1
     assert.ok(clip._x+w*scale<=rect.x+rect.width-16);
     assert.ok(clip._y+h*scale<=rect.y+rect.height-16);
   }
+  const preview={xMin:menu.mouseRotationRect._x,xMax:menu.mouseRotationRect._x+menu.mouseRotationRect._width,yMin:rect.y,yMax:rect.y+rect.height*0.55};
+  const card={xMin:holder._x-15*holder._xscale/100,xMax:holder._x+485*holder._xscale/100,yMin:holder._y+50*holder._yscale/100,yMax:holder._y+650*holder._yscale/100};
+  assert.ok(!intersects(card,preview)); assert.ok(card.yMax<=rect.y+rect.height-50-8*scale+0.001);
+  assert.ok(lists._x+542*scale<=preview.xMin); assert.ok(menu._skycrpgPanel._x+264*scale<=preview.xMin);
+  const panel=lists.panelContainer, search=lists.searchWidget.getBounds(panel), gear=lists.columnSelectButton.getBounds(panel), header=lists.itemList.header.getBounds(panel), caption=lists.categoryLabel.getBounds(panel);
+  for(const [a,b] of [[search,gear],[search,header],[gear,header],[search,caption],[caption,lists.categoryList.getBounds(panel)]]) assert.ok(!intersects(a,b));
+  assert.ok(Math.abs(search.yMax-caption.yMax)<0.001 && Math.abs(gear.yMax-caption.yMax)<0.001);
   const pad=lists._skycrpgSearchPad;
   assert.equal(pad,undefined);
   menu._skycrpgModal=true;menu.skycrpgPositionCard();

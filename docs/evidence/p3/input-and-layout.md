@@ -1,10 +1,18 @@
 # DYL-168 / P3-06 — input and layout evidence
 
-Candidate implementation and automated checks **PASS** as scoped below. All new gameplay, physical controller-only checks, screenshots and external-HUD measurements are **NOT_RUN**. This is not ticket acceptance or a public release.
+Candidate implementation and automated checks **PASS** as scoped below. The owner controller-only run and its visual failures are recorded below; other new gameplay and external-HUD measurements remain **NOT_RUN**. This is not ticket acceptance or a public release.
 
 Ticket: DYL-168. Base `6e7dff671c1ca4e53eb116f3d3e4cf47925ba79f`; branch `phase3/dyl-168-input-layout`, worktree `p3-layout`. Candidate `<head SHA>` plus this diff; Windows `<CI run>`, DLL `<DLL sha256>`, package `<package sha256>`. Final local `<SWF sha256>` values are listed below. `plugin.cpp` startup integration remains an external patch, not applied here.
 
 Local host `dq-MEG-Z590-Trident-X-MS-B926`, Linux, Python 3.14.4, Node v24.19.0, g++ 15.2.0. Target unchanged: Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, Address Library 13, CommonLibSSE-NG 7.2.0 (`7a60f4de`), SkyUI Community 6.11, DEM 1.7.5 / Infinity UI NG 2.1.3 / LMU 1.3.4 with Common + Line-17, recorded Proton host. No runtime host, save, profile, game INI or install was touched. No engine API was introduced. The integration uses the existing Win32 INI reader and logger; Windows MSVC compilation remains **NOT_RUN** here.
+
+## Owner controller-only run `2683055a…`
+
+Owner reports all ten functional steps **PASS**, controller only, on `0b8c865`, UI-only profile, 1920×1080 windowed. This records the owner's aggregate result; the individual ten step descriptions and per-step observations were not supplied with this report. It does not establish keyboard/mouse or other display-size coverage.
+
+The owner screenshots show two visual **FAIL** results on that same build: the engine-rendered bow/quiver obscures the item card, and the native FILTER/search control collides with the DAM sort label; the row is also misaligned. The faint text behind WEAPONS and category text overlapping the final icon remain open observations. Screenshots: `session-p3/p3-input-168/owner-screens/weapons-arrow-selected.webp` and `weapons-bow-selected.webp`.
+
+**Fix: automated PASS; in-game NOT_RUN.** Pinned SkyUI `ItemMenu.positionFloatingElements()` locks `mouseRotationRect` to the top and assigns 0.55 of `Stage.visibleRect.height`; its model-interaction area is the basis for reserving the top 55% of the right column. The non-modal card uses runtime art bounds, uniform scale at most 1, a 408-design-unit column cap, and an 8-design-unit gap below the reservation and above the runtime bottom-bar top. The minimum scale is 0 for a degenerate available box, preventing preview intrusion. Modal placement and ownership remain unchanged. At 1280×720 the fitted design has equipment right edge 298 and grid right edge 833, while the preview starts at 843 (rounded); neither intrudes. Runtime-measured category label and controls share a row, the search keeps its native width unless limited (minimum 48 units), and the native header moves below the row. The selected category label is placed below the measured category list. The separate right-end “Favorite” caption is not identified in the staged ActionScript and remains **OPEN**, as does the faint ghost: the staged code identifies `categoryLabel` as the selected-category text and `searchWidget` as a separate native control, but does not establish the ghost's timeline clip. Automated geometry and modal contract **PASS** at 1280×720, 1920×1080 and 2560×1080 with x −320; these stubs do not establish actual GFx font, art or engine-rendered model extents. Full regression and SWF compilation **PASS**; see `session-p3/logs/dyl-168/fix/final-2.md`. In-game verification of the fix is **NOT_RUN**.
 
 ## Audit before implementation
 

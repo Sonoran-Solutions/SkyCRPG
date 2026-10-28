@@ -224,12 +224,14 @@ const panelLayout=method(staged['ItemMenus/InventoryLists.as'],'skycrpgLayout');
 for(const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:1080},
   {x:50,y:30,width:1024,height:600}]) {
   global.Stage={visibleRect:rect};
-  const layoutList={skycrpgGrid:true,header:{},background:{},scrollbar:{}};
-  const lists={_x:0,_y:0,itemList:layoutList,panelContainer:{ListBackground:{}},categoryList:{},
-    categoryLabel:{},searchWidget:{},columnSelectButton:{},skycrpgLayout:panelLayout};
+  function box(x,y,w,h,parent) { return {_x:x,_y:y,_width:w,_height:h,getBounds() {return {xMin:(parent?parent._x:0)+this._x,yMin:(parent?parent._y:0)+this._y,xMax:(parent?parent._x:0)+this._x+this._width,yMax:(parent?parent._y:0)+this._y+this._height};}}; }
+  const layoutList={skycrpgGrid:true,scrollbar:{}};
+  layoutList.header=box(0,-30,516,20,layoutList); layoutList.background=box(0,0,516,444,layoutList);
+  const lists={_x:0,_y:0,itemList:layoutList,panelContainer:{ListBackground:{}},categoryList:box(0,12,510,44),
+    categoryLabel:box(8,67,145,22),searchWidget:box(0,0,140,20),columnSelectButton:box(0,0,18,20),skycrpgLayout:panelLayout};
   const holder=new MovieClip();
   const layoutMenu=new MovieClip();
-  Object.assign(layoutMenu,{inventoryLists:lists,itemCard:{_parent:holder},mouseRotationRect:{},
+  Object.assign(layoutMenu,{inventoryLists:lists,itemCard:{_parent:holder},mouseRotationRect:{Lock(){}},bottomBar:{getBounds(){return {yMin:rect.y+rect.height-50};}},
     skycrpgDrawEquipment(){},skycrpgPositionCard:method(menuSource,'skycrpgPositionCard'),skycrpgLayout:method(menuSource,'skycrpgLayout')});
   layoutMenu.skycrpgLayout();
   const scale=layoutMenu._skycrpgScale;
@@ -237,7 +239,7 @@ for(const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:10
   assert.ok(lists._x+542*scale<=layoutMenu._skycrpgDetailPanel._x);
   assert.ok(lists._y+(layoutList._y+444)*scale<=rect.y+rect.height);
   assert.ok(lists.searchWidget._x+lists.searchWidget._width<=520);
-  assert.equal(layoutList.listHeight,444);assert.equal(layoutList.header._y,-30);
+  assert.equal(layoutList.listHeight,444);assert.ok(layoutList.header.getBounds().yMin>=lists.searchWidget.getBounds().yMax);
   assert.ok(holder._x-15*holder._xscale/100>=layoutMenu._skycrpgDetailPanel._x-0.001);
   assert.ok(holder._x+485*holder._xscale/100<=rect.x+rect.width);
   layoutMenu._skycrpgModal=true;layoutMenu.skycrpgPositionCard();

@@ -76,13 +76,32 @@
       var bounds = holder.getBounds(holder);
       var width = Math.max(1, bounds.xMax - bounds.xMin);
       var height = Math.max(1, bounds.yMax - bounds.yMin);
-      var fit = this._skycrpgModal ? Math.min(1, 700 / width, 540 / height) : Math.min(1, 408 / width, 510 / height);
-      holder._xscale = holder._yscale = fit * scale * 100;
-      holder._x = left + ((this._skycrpgModal ? (1280 - width * fit) / 2 : 852) - bounds.xMin * fit) * scale;
-      holder._y = top + ((this._skycrpgModal ? (620 - height * fit) / 2 + 30 : 96) - bounds.yMin * fit) * scale;
-      // The old preview's mouse rectangle must not sit over the grid.
+      var fit;
+      if(this._skycrpgModal)
+      {
+         fit = Math.min(1, 700 / width, 540 / height);
+         holder._xscale = holder._yscale = fit * scale * 100;
+         holder._x = left + ((1280 - width * fit) / 2 - bounds.xMin * fit) * scale;
+         holder._y = top + ((620 - height * fit) / 2 + 30 - bounds.yMin * fit) * scale;
+      }
+      else
+      {
+         // SkyUI reserves the top 55% of the visible stage for model interaction.
+         var columnX = left + 852 * scale;
+         var columnWidth = 408 * scale;
+         var cardTop = rect.y + 0.55 * rect.height + 8 * scale;
+         var barTop = this.bottomBar.getBounds(this).yMin;
+         var available = Math.max(0, barTop - 8 * scale - cardTop);
+         // Zero is the minimum for a degenerate box; never enter the preview.
+         fit = Math.max(0, Math.min(1, columnWidth / width, available / height));
+         holder._xscale = holder._yscale = fit * 100;
+         holder._x = columnX + (columnWidth - width * fit) / 2 - bounds.xMin * fit;
+         holder._y = cardTop - bounds.yMin * fit;
+      }
+      this.mouseRotationRect.Lock("T");
       this.mouseRotationRect._x = left + 852 * scale;
       this.mouseRotationRect._width = 408 * scale;
+      this.mouseRotationRect._height = 0.55 * rect.height;
       if(this._skycrpgModalShade == undefined)
       {
          this.createEmptyMovieClip("_skycrpgModalShade", this.getNextHighestDepth());

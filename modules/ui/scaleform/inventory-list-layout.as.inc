@@ -5,17 +5,37 @@
       var panel = this.panelContainer;
       panel.ListBackground._width = 542; panel.ListBackground._height = 570;
       this.categoryList._x = 0; this.categoryList._y = 12;
-      this.categoryLabel._x = 8; this.categoryLabel._y = 67;
-      this.searchWidget._width = 108;
-      this.searchWidget._x = 405; this.searchWidget._y = 70;
-      this.columnSelectButton._width = 18;
-      this.columnSelectButton._x = 520; this.columnSelectButton._y = 70;
-      this._columnSelectDialogX = 210;
       var list = this.itemList;
       list._x = 0; list._y = 126;
       list.listHeight = 444;
       list.header._y = -30;
       list.background._width = 516;
+      // Selected category caption occupies the left of the controls row.
+      this.categoryLabel._x = 8; this.categoryLabel._y = 67;
+      var categories = this.categoryList.getBounds(panel);
+      var caption = this.categoryLabel.getBounds(panel);
+      if(caption.yMin < categories.yMax + 4)
+         this.categoryLabel._y += categories.yMax + 4 - caption.yMin;
+      caption = this.categoryLabel.getBounds(panel);
+      var background = list.background.getBounds(panel);
+      var gear = this.columnSelectButton.getBounds(panel);
+      this.columnSelectButton._x += background.xMax - gear.xMax;
+      gear = this.columnSelectButton.getBounds(panel);
+      if(this._skycrpgSearchWidth == undefined) this._skycrpgSearchWidth = this.searchWidget._width;
+      var room = Math.max(48, gear.xMin - 8 - caption.xMax - 8);
+      this.searchWidget._width = Math.min(this._skycrpgSearchWidth, room);
+      var search = this.searchWidget.getBounds(panel);
+      this.searchWidget._x += gear.xMin - 8 - search.xMax;
+      search = this.searchWidget.getBounds(panel);
+      // Align visual bottom edges, then move the native header beneath the row.
+      this.searchWidget._y += caption.yMax - search.yMax;
+      this.columnSelectButton._y += caption.yMax - gear.yMax;
+      search = this.searchWidget.getBounds(panel);
+      gear = this.columnSelectButton.getBounds(panel);
+      var header = list.header.getBounds(panel);
+      var rowBottom = Math.max(caption.yMax, search.yMax, gear.yMax);
+      if(header.yMin < rowBottom + 4) list.header._y += rowBottom + 4 - header.yMin;
+      this._columnSelectDialogX = gear.xMax + 4;
       list.scrollbar._x = 526;
       list.scrollbar.height = 444;
       list.skycrpgFocusOwner = this;
