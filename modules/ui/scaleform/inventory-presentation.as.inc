@@ -1,5 +1,6 @@
    // Player-menu presentation only. No mutation or synthetic activation.
    var _skycrpgEquipmentTimer;
+   var _skycrpgRepaintTimer;
    var _skycrpgPanel;
    var _skycrpgModalShade;
    var _skycrpgDetailPanel;
@@ -9,7 +10,18 @@
    {
       var list = this.inventoryLists.itemList;
       list.skycrpgObservation = snapshot == undefined ? undefined : snapshot.entries;
-      if(typeof list.requestUpdate == "function") list.requestUpdate();
+      if(this._bMenuClosing || this._skycrpgRepaintTimer != undefined) return;
+      this._skycrpgRepaintTimer = setInterval(this,"skycrpgRepaintInventory",1);
+   }
+   function skycrpgRepaintInventory()
+   {
+      clearInterval(this._skycrpgRepaintTimer);
+      delete this._skycrpgRepaintTimer;
+      if(this._bMenuClosing) return;
+      var list = this.inventoryLists.itemList;
+      // A pending native commit includes this repaint; never request its timer.
+      if(list._updateRequestID != undefined || list._invalidateRequestID != undefined) return;
+      if(typeof list.UpdateList == "function") list.UpdateList();
    }
    function skycrpgLayout()
    {
@@ -154,6 +166,8 @@
    }
    function skycrpgPresentationClose()
    {
+      if(this._skycrpgRepaintTimer != undefined) clearInterval(this._skycrpgRepaintTimer);
+      delete this._skycrpgRepaintTimer;
       if(this._skycrpgEquipmentTimer != undefined) clearInterval(this._skycrpgEquipmentTimer);
       delete this._skycrpgEquipmentTimer;
       this.inventoryLists.itemList.skycrpgObservation = undefined;

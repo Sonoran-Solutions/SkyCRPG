@@ -259,3 +259,71 @@ Remaining **NOT_RUN**:
 - 1920×1080 and increased text scale;
 - equipment slots for a two-handed weapon, left-hand spell/torch, multi-slot robe, ring and amulet;
 - the CC-item icon fallback in game.
+
+## Senior review P1: coalesced repaint, no SkyUI interval
+
+2026-10-28 UTC, branch `phase3/dyl-164-grid`, base `fd79d55134c93fe77186dc84d730844d2cd3b725` plus uncommitted changes. Addresses [PR #20 senior review](https://github.com/Sonoran-Solutions/SkyCRPG/pull/20#issuecomment-6456859814). `gh pr view 20 --comments` could not connect; the connected GitHub tool supplied the latest review. This correction has automated/build evidence only; prior gameplay rows above apply to their recorded candidates.
+
+Pinned SkyUI Community 6.11 source root: `/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11`, commit `3d537a366f1a45c14a7012ea0aa00be18108f073`. In `source/actionscript/Common/skyui/components/list/BasicList.as:209–220`, `requestUpdate()` creates a 1ms interval without checking `_updateRequestID`; only a pending `_invalidateRequestID` suppresses it. `commitUpdate()` at lines 238–245 clears only the currently stored ID and calls `UpdateList()`. Repeated requests overwrite the ID and orphan earlier repeating intervals. `requestInvalidate()` at lines 193–207 and `commitInvalidate()` at lines 222–236 likewise can clear only the stored update ID. Native SkyUI also requests updates (`InventoryLists.as:217`, `ItemMenu.as:389`), so guarding only our calls against an already pending native request would still permit a later native call to overwrite our interval ID.
+
+`skycrpgInventoryPresent()` still publishes the latest observation immediately, then coalesces repaint requests into one `_skycrpgRepaintTimer` per menu. Its callback first clears/deletes that timer, returns during closing, and skips painting when either native list request ID is pending. Otherwise it calls the native `UpdateList()` directly. `skycrpgPresentationClose()` clears/deletes the repaint timer; both the existing close hook and `onUnload()` use that cleanup. No SkyCRPG code calls `requestUpdate()` or `requestInvalidate()`, and `BasicList.as` is not added to compiled sources. Painting, native selection/action gates and equipment acquisition are unchanged.
+
+Audit command: `rg -n 'requestUpdate|requestInvalidate|setInterval|onEnterFrame' modules/ui/scaleform/`, also checked against the DYL-164 base `945afd1`. The only DYL-164 intervals are the new repaint one-shot and the existing equipment one-shot. `_skycrpgEquipmentTimer` still coalesces at 100ms, clears/deletes itself before reading equipment, and is cancelled on close/unload. The existing HUD/minimap/follower frame handlers predate this ticket and are unchanged.
+
+### Regression and negative control
+
+`grid_contract.js` extracts and executes the actual pinned `requestUpdate`, `requestInvalidate`, `commitUpdate` and `commitInvalidate` bodies. It verifies the BasicList source SHA-256 `99012374aeece667f0a56fdc74119df9a6c0c42ec53c21333b28111de6eea7a2`. Its instrumented AS2 timer registry retains repeating IDs until explicitly cleared; a bounded five-tick drain detects leaks.
+
+- **PASS:** 27 combinations of 2, 3 or 50 snapshots in one tick, native update absent/before/after, and invalidation absent/before/after. Each ends with zero intervals and 1–2 visible-window repaints (18–36 cell paints), retains the latest snapshot, and stays idle after input stops.
+- **PASS:** pending native update/invalidate commits paint exactly once when our callback runs first; close and unload remove each menu's pending repaint independently; an already closing menu neither repaints nor schedules another timer.
+- **PASS:** the existing 500-entry/18-clip, native selection/action-gating and geometry checks. A 500-request equipment burst still creates exactly one 100ms timer, clears it after firing, and leaves zero intervals after close.
+- **FAIL reproduced on old code (expected):** a temporary copy of `modules/ui` used the unchanged `fd79d55:modules/ui/scaleform/inventory-presentation.as.inc` with the new contract. Command: `timeout 600 /home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node modules/ui/tests/grid_contract.js /tmp/dyl164-old-repaint-5jjca31u/ui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11`. Exit **1**, assertion `2 snapshots, native update none, invalidate none: zero active intervals after callbacks`, actual **1**, expected **0**. Log: `session-p3/logs/dyl-164/senior-p1/old-code-negative-control.log`. The temporary old-code tree was removed; the working tree was never reverted.
+
+Initial harness setup **FAIL**: the new timer fixture left rendered clips before the existing navigation fixture replaced its entries; navigation then tried an unassigned clip index. Repainting the new two-entry fixture before navigation corrected that setup. The final focused contract and all subsequent jobs pass. Initial log/job record retained under `session-p3/logs/dyl-164/senior-p1-initial/`; no unchanged retry was made.
+
+### Commands and results
+
+Host `dq-MEG-Z590-Trident-X-MS-B926`, Linux; Python 3.14.4, Node v24.19.0, g++ 15.2.0. Before execution, all 28 final job specifications recorded purpose, exact argv/environment, expected output, owner (DYL-164 senior P1 / Codex), completion signal, log, timeout and cleanup in `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-164/senior-p1/jobs.json`. Records include PID, UTC start/deadline, exit, elapsed time and verified process-group cleanup. All jobs completed as expected, including the intentional old-code exit 1. Runner: `/srv/storage/Projects/SkyCRPG/session-p3/tools/dyl-164-review-checks.py`. The lane runner retains its own child-job records under `lane-final/`.
+
+```sh
+timeout 900 python3 -I /srv/storage/Projects/SkyCRPG/session-p3/tools/dyl-163-run-checks.py
+SKYCRPG_SKYUI_SOURCE=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 timeout 600 python3 -I -m unittest discover -s modules/ui/tests -p "*.py"
+
+NODE=/home/dq/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node
+SKYUI=/srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11
+OUT=/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-164/senior-p1
+SKYCRPG_SKYUI_SOURCE="$SKYUI" timeout 600 python3 -I modules/ui/tests/inventory_prepare_contract.py "$OUT"
+for test in modules/ui/tests/*.js; do
+  case "$test" in
+    */inventory_actions_contract.js) timeout 600 "$NODE" "$test" modules/ui "$OUT/InventoryMenu.as" ;;
+    *) timeout 600 "$NODE" "$test" modules/ui "$SKYUI" ;;
+  esac
+done
+for test in modules/ui/tests/*_test.cpp; do
+  binary="$OUT/$(basename "$test" .cpp)"
+  timeout 600 g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/ui/src "$test" -o "$binary"
+  timeout 600 "$binary"
+done
+
+timeout 900 python3 modules/ui/tools/build_scaleform.py --skyui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 --nexus-interface /srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface --java /srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java --owner DYL-164 --out /srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-164/swf-review-1
+```
+
+| Check | Result |
+| --- | --- |
+| Requested DYL-163 lane runner | **PASS**, all 18 child steps |
+| All Python discovery | **PASS**, 21 tests, no skips |
+| All six JS contracts | **PASS**: follower panel, grid, HUD, inventory actions, minimap compass, navigation |
+| All eight `*_test.cpp` compile/run pairs | **PASS**: favorite slots, follower policy, HUD settings, inventory equipment, inventory policy, menu focus, minimap policy, resource snapshot |
+| Focused fixed-code / temporary old-code proof | **PASS** / expected **FAIL**, respectively |
+| SWF compilation | **PASS**, all three FFDec jobs; manifest `COMPILED_NOT_RUN` |
+| Runtime high-frequency highlight/scroll smoke | **NOT_RUN**; no Skyrim launch |
+
+New output directory `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-164/swf-review-1`; SHA-256 values verified against `build.json` and the output files:
+
+| SWF | SHA-256 |
+| --- | --- |
+| `inventorymenu.swf` | `5b64a4a050f05a6479af835e4513f4b6349bb50a838e717c5c31ae02b87340bc` |
+| `skyui/inventorylists.swf` | `8643994e174ce3086d138baf2ef1395dcfece01ae3ac4c3006df07bd6847f651` |
+| `hudmenu.swf` | `cd1e1fa7d8439b1399dbf5d66be590eba68f76a34344777ed0cd8b7a0347f96d` |
+
+Runtime smoke remains **NOT_RUN**: the orchestrator should rapidly highlight/scroll the existing 500-entry copied-save fixture, stop input and confirm repaint work stops, then close/reopen and verify selection, native equip/drop gates and equipment refresh. Automated timer ordering and compilation do not establish actual GFx scheduling or game performance. No C++, plugin registration, CMake, builder, dependency or other feature was changed. No commit, push, deployment or game launch was performed.

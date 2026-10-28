@@ -1,6 +1,7 @@
 // Actual transformed AS under movie/native-list stubs, not a GFx/game test.
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
+const {createHash} = require('node:crypto');
 const {spawnSync} = require('node:child_process');
 const root = process.argv[2], provider = process.argv[3];
 // Purpose: exercise the production builder's sources. Completion: exit 0 + JSON;
@@ -22,6 +23,21 @@ function method(source,name) {
     .replace(/function (get|set) /,'function ')
     .replace(/super\.(\w+)\(/g,'this.native_$1(');
   return eval('('+text+')');
+}
+// AS2 intervals repeat until explicitly cleared; callbacks can cancel another
+// interval in the same tick. Keep leaked IDs active rather than hiding them.
+const intervals=new Map();
+let nextInterval=1;
+global.setInterval=(target,name,delay)=>{
+  const id=nextInterval++;intervals.set(id,{target,name,delay});return id;
+};
+global.clearInterval=id=>intervals.delete(id);
+function tick() {
+  for(const [id,{target,name}] of [...intervals]) if(intervals.has(id)) target[name]();
+}
+function drain(label) {
+  for(let i=0;i<5 && intervals.size;i++) tick();
+  assert.equal(intervals.size,0,label+': zero active intervals after callbacks');
 }
 class MovieClip {
   constructor() { this._visible=true; this._totalframes=1; this._currentframe=1; }
@@ -105,18 +121,78 @@ for(const n of [0,1,17,18,19,20,21,499,500]) {
   assert.equal(pool._clipPool.filter(c=>c._visible).length,0);
 }
 assert.equal(list.largest,18);
+// Execute all four unmodified timer bodies from the actual pinned provider.
+// BasicList is test input only, never a compiled SkyCRPG source.
+const basic=fs.readFileSync(provider+'/source/actionscript/Common/skyui/components/list/BasicList.as','utf8');
+assert.equal(createHash('sha256').update(basic).digest('hex'),
+  '99012374aeece667f0a56fdc74119df9a6c0c42ec53c21333b28111de6eea7a2');
+for(const name of ['requestUpdate','requestInvalidate','commitUpdate','commitInvalidate']) list[name]=method(basic,name);
+list.InvalidateData=function(){this.calculateMaxScrollPosition();this.UpdateList();};
+const menuSource=staged['ItemMenus/InventoryMenu.as'];
+function presentationMenu(itemList=list) {
+  const menu={inventoryLists:{itemList}};
+  for(const name of ['skycrpgInventoryPresent','skycrpgRepaintInventory','skycrpgPresentationClose','onUnload']) {
+    // An old-source negative control must reach the leak assertion, even though
+    // that revision has no SkyCRPG repaint callback.
+    if(menuSource.includes('function '+name+'(')) menu[name]=method(menuSource,name);
+  }
+  return menu;
+}
+for(const n of [2,3,50]) for(const native of ['none','before','after'])
+  for(const invalidation of ['none','before','after']) {
+    const label=`${n} snapshots, native update ${native}, invalidate ${invalidation}`;
+    const repaintMenu=presentationMenu();
+    list.entries=Array.from({length:18},(_,i)=>({itemIndex:i,text:'Timer row '+i,count:1}));
+    list._scrollPosition=0;list._selectedIndex=-1;list.calculateMaxScrollPosition();list.paints=0;
+    if(invalidation==='before') list.requestInvalidate();
+    if(native==='before') list.requestUpdate();
+    let latest;
+    for(let i=0;i<n;i++) repaintMenu.skycrpgInventoryPresent({entries:latest=[{itemIndex:i,count:i+1}]});
+    if(native==='after') list.requestUpdate();
+    if(invalidation==='after') list.requestInvalidate();
+    assert.equal(list.skycrpgObservation,latest,label+': latest snapshot wins');
+    drain(label);
+    assert.ok(list.paints>=18 && list.paints<=36,label+': at least one, at most two visible-window paints');
+    assert.equal(repaintMenu._skycrpgRepaintTimer,undefined);
+    assert.equal(list._updateRequestID,undefined);assert.equal(list._invalidateRequestID,undefined);
+    const paints=list.paints;tick();tick();assert.equal(list.paints,paints,label+': stays idle');
+  }
+// Pending native commits are left untouched; our one-shot must skip its paint.
+for(const request of ['requestUpdate','requestInvalidate']) {
+  const repaintMenu=presentationMenu();list.paints=0;
+  repaintMenu.skycrpgInventoryPresent(undefined);list[request]();
+  assert.equal(list.skycrpgObservation,undefined);
+  tick();assert.equal(list.paints,18,request+': exactly the native commit paints');
+  drain(request);
+}
+// Each menu owns its own one-shot. Close and unload cancel only that instance.
+for(const close of ['skycrpgPresentationClose','onUnload']) {
+  const first=presentationMenu(),second=presentationMenu({...list,paints:0});
+  first.skycrpgInventoryPresent({entries:[]});second.skycrpgInventoryPresent({entries:[]});
+  assert.equal(intervals.size,2);
+  first[close]();assert.equal(first._skycrpgRepaintTimer,undefined);
+  assert.equal(list.skycrpgObservation,undefined);assert.equal(intervals.size,1);
+  second[close]();drain(close);
+}
+const closingMenu=presentationMenu();list.paints=0;
+closingMenu.skycrpgInventoryPresent({entries:[]});closingMenu._bMenuClosing=true;
+drain('closing callback');assert.equal(list.paints,0);
+closingMenu.skycrpgInventoryPresent({entries:[]});assert.equal(intervals.size,0);
+console.log('PASS: pinned BasicList timers; 27 rapid-snapshot/native-update/invalidate interleavings, bounded repaint, idle after callbacks, per-menu close/unload cleanup');
 // Selection still reaches the actual gated dispatch; painting/navigation cannot.
 let dispatches=0, validations=0;
-const menuSource=staged['ItemMenus/InventoryMenu.as'];
 list.entries=[{itemIndex:19,text:'Sword',count:1},{itemIndex:7,text:'Potion',count:2}];
+list.calculateMaxScrollPosition();list.UpdateList();
 list._selectedIndex=19;list.skycrpgMove({navEquivalent:'right',value:'keyDown'});
 assert.equal(list._selectedIndex,7);assert.equal(dispatches,0);
 const menu={inventoryLists:{itemList:list},shouldProcessItemsListInput(){return true;},confirmSelectedEntry(){return true;},checkBook(){}};
 for(const name of ['skycrpgInventoryBridge','skycrpgInventoryCapture','skycrpgInventoryAllow','skycrpgInventoryPresent','AttemptEquip']) menu[name]=method(menuSource,name);
+if(menuSource.includes('function skycrpgRepaintInventory(')) menu.skycrpgRepaintInventory=method(menuSource,'skycrpgRepaintInventory');
 global.skse={plugins:{SkyCRPGUI:{validateItemAction(){validations++;return true;},getInventorySnapshot(){return {token:3,selectedIndex:7};},inventoryInputEdge(){},cancelInventoryAction(){},inventoryViewChanged(){}}}};
 menu.AttemptEquip(1,false);assert.equal(validations,1);assert.equal(dispatches,1);
 skse.plugins.SkyCRPGUI.validateItemAction=()=>false;list.InvalidateListData=()=>{};menu.inventoryLists.InvalidateListData=()=>{};
 menu.AttemptEquip(1,false);assert.equal(dispatches,1);
+drain('gated actions');
 // Actual equipment drawing: all eight slots clear previous data on absence.
 const equipmentMenu={_skycrpgPanel:new MovieClip(), inventoryLists:{itemList:list}};
 equipmentMenu.skycrpgDrawEquipment=method(menuSource,'skycrpgDrawEquipment');
@@ -127,18 +203,19 @@ assert.equal(equipmentMenu._skycrpgPanel.slot7.name.text,'Unknown');
 equipmentMenu.skycrpgDrawEquipment(undefined);
 assert.equal(equipmentMenu._skycrpgPanel.slot1.name.text,'Unknown');
 // Refresh coalesces a burst to one 100ms task, never a per-frame actor read.
-let timers=0,cleared=0;
-global.setInterval=(target,name,delay)=>{assert.equal(delay,100);timers++;return 42;};
-global.clearInterval=()=>{cleared++;};
 for(const name of ['skycrpgRequestEquipment','skycrpgRefreshEquipment','skycrpgPresentationClose']) equipmentMenu[name]=method(menuSource,name);
 let equipmentDraws=0;
 const drawEquipment=equipmentMenu.skycrpgDrawEquipment;
 equipmentMenu.skycrpgDrawEquipment=function(slots){equipmentDraws++;drawEquipment.call(this,slots);};
 for(let i=0;i<500;i++) equipmentMenu.skycrpgRequestEquipment();
 assert.equal(equipmentDraws,1);
-assert.equal(timers,1);equipmentMenu.skycrpgRefreshEquipment();assert.equal(cleared,1);assert.equal(equipmentDraws,2);
+assert.equal(intervals.size,1);assert.equal(intervals.get(equipmentMenu._skycrpgEquipmentTimer).delay,100);
+drain('equipment refresh');assert.equal(equipmentDraws,2);
+assert.equal(equipmentMenu._skycrpgEquipmentTimer,undefined);
 assert.equal(equipmentMenu._skycrpgPanel.slot1.name.text,'Unknown');
-equipmentMenu.skycrpgRequestEquipment();equipmentMenu.skycrpgPresentationClose();assert.equal(cleared,2);
+equipmentMenu.skycrpgRequestEquipment();equipmentMenu.skycrpgPresentationClose();drain('equipment close');
+assert.equal(equipmentMenu._skycrpgEquipmentTimer,undefined);
+const draws=equipmentDraws;tick();assert.equal(equipmentDraws,draws);
 console.log('PASS: native paint/fallbacks; 0/1/17/18/19/20/21/499/500 rows, 18-clip pool, row alignment, selection gates, empty/unknown equipment and bounded refresh');
 
 // Layout executes the player-list helper and menu fitting against representative
