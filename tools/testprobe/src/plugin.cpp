@@ -1,7 +1,12 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
-// Test-only observer. No hooks, input, serialization or game-state mutations.
+// Test-only observer. No hooks, input emission, serialization or game-state mutations.
 #include <SKSE/SKSE.h>
 #include <RE/A/ActorValueOwner.h>
+#include <RE/B/BSInputDeviceManager.h>
+#include <RE/B/ButtonEvent.h>
+#include <RE/B/BSTimer.h>
+#include <RE/C/ControlMap.h>
+#include <RE/I/InputEvent.h>
 #include <RE/G/GFxMovieView.h>
 #include <RE/G/GFxValue.h>
 #include <RE/M/Main.h>
@@ -22,8 +27,10 @@
 #include "json_line.h"
 #include "probe_config.h"
 #include "snapshot_policy.h"
+#include "perf_policy.h"
 
 #include <bcrypt.h>
+#include <psapi.h>
 
 #include <array>
 #include <atomic>
@@ -46,6 +53,14 @@ struct Probe {
 	std::mutex outputMutex;
 	std::mutex logMutex;
 	std::mutex lifecycleMutex;
+	std::mutex perfMutex;
+	LARGE_INTEGER qpcFrequency{};
+	json::FrameRing<16384> frames, engineFrames;
+	json::FrameChain frameChain;
+	json::InventoryWindow inventory;
+	std::string captureLabel;
+	bool hasInventoryKey{}, inventoryMenuOpen{}, inventoryEverOpened{};
+	double previousFrameMs{}, captureStartMs{}, inventoryKeyMs{}, preOpenMedian{};
 	std::wstring directory;
 	std::string saveName;
 	bool hasSaveName{ false };
@@ -55,6 +70,7 @@ struct Probe {
 	std::atomic_uint32_t mainThreadID{ 0 };
 	std::atomic_bool timerBusy{ false };
 	std::atomic_bool timerPending{ false };
+	std::atomic_bool memoryFailureLogged{ false };
 	std::uint32_t interval{ 1000 };
 	HANDLE timer{};
 };
@@ -304,6 +320,225 @@ bool QueueSnapshot(bool requested = false, std::string tag = {}, bool timer = fa
 	}
 }
 
+// QPC samples are anchored on the UI drain, with a main-queue helper between
+// samples. Neither delegate requeues into its own currently draining queue.
+// Persistent Run/Dispose delegates use CommonLib's passthrough pointer overloads.
+double PerfNow() noexcept
+{
+	LARGE_INTEGER now{};
+	if (!QueryPerformanceCounter(&now)) return 0;
+	return static_cast<double>(now.QuadPart) * 1000.0 / static_cast<double>(g_probe->qpcFrequency.QuadPart);
+}
+
+void EmitInventory()
+{
+	auto& window = g_probe->inventory;
+	if (!window.active) return;
+	window.active = false;
+	json::Object fields;
+	fields.String("label", g_probe->captureLabel).Boolean("cold", window.cold)
+		.Boolean("correlated", window.correlated).Numeric("pre_open_median_ms", window.preMedian)
+		.Numeric("open_qpc_ms", window.openMs);
+	if (window.correlated) fields.Numeric("key_qpc_ms", window.keyMs);
+	else fields.Null("key_qpc_ms");
+	if (window.correlated) fields.Numeric("t_event_ms", window.openMs - window.keyMs);
+	else fields.Null("t_event_ms");
+	if (window.settled) fields.Numeric("t_settled_ms", window.settledMs);
+	else fields.Null("t_settled_ms");
+	std::string periods = "[";
+	for (std::size_t i = 0; i < window.count; ++i) {
+		if (i) periods += ',';
+		periods += json::Number(window.periods[i]);
+	}
+	fields.Raw("periods_ms", periods + ']');
+	Emit("inventory_open", fields);
+}
+
+void QueueFrameHop(json::FrameChain::Hop hop) noexcept;
+
+void AbortFrameCapture(const char* reason)
+{
+	g_probe->frameChain.stop();
+	g_probe->inventory = {};
+	g_probe->hasInventoryKey = false;
+	Emit("perf_capture", json::Object{}.String("label", g_probe->captureLabel)
+		.String("phase", "abort").Boolean("available", false).String("reason", reason));
+}
+
+class FrameUITask final : public SKSE::detail::UIDelegate_v1 {
+public:
+	void Run() noexcept override
+	{
+		try {
+			{
+				std::scoped_lock lock(g_probe->perfMutex);
+				const double now = PerfNow();
+				const auto tick = g_probe->frameChain.uiRun(now);
+				if (tick == json::FrameChain::Tick::idle) return;
+				if (tick == json::FrameChain::Tick::runaway) {
+					Log("SkyCRPG_TestProbe: frame capture stopped: runaway\n");
+					AbortFrameCapture("runaway");
+					return;
+				}
+				const auto* timer = RE::BSTimer::GetSingleton();
+				const double engineMs = timer ? static_cast<double>(timer->realTimeDelta) * 1000.0 : 0;
+				if (g_probe->previousFrameMs > 0 && now > g_probe->previousFrameMs) {
+					const double period = now - g_probe->previousFrameMs;
+					g_probe->frames.push(period);
+					if (engineMs > 0) g_probe->engineFrames.push(engineMs);
+					if (g_probe->inventory.observe(period, now)) EmitInventory();
+				}
+				g_probe->previousFrameMs = now;
+			}
+			QueueFrameHop(json::FrameChain::Hop::main);
+		} catch (...) {
+			std::scoped_lock lock(g_probe->perfMutex);
+			g_probe->frameChain.enqueueFailed();
+			AbortFrameCapture("ui_task_failed");
+			Log("SkyCRPG_TestProbe: frame UI task failed\n");
+		}
+	}
+	void Dispose() noexcept override {}  // process-lifetime, never self-requeue
+};
+
+class FrameMainTask final : public SKSE::detail::TaskDelegate {
+public:
+	void Run() noexcept override
+	{
+		try {
+			bool queueUI = false;
+			{
+				std::scoped_lock lock(g_probe->perfMutex);
+				queueUI = g_probe->frameChain.mainRun();
+			}
+			if (queueUI) QueueFrameHop(json::FrameChain::Hop::ui);
+		} catch (...) {
+			std::scoped_lock lock(g_probe->perfMutex);
+			g_probe->frameChain.enqueueFailed();
+			AbortFrameCapture("main_task_failed");
+			Log("SkyCRPG_TestProbe: frame main helper failed\n");
+		}
+	}
+	void Dispose() noexcept override {}
+};
+FrameUITask g_frameUITask;
+FrameMainTask g_frameMainTask;
+
+void QueueFrameHop(json::FrameChain::Hop hop) noexcept
+{
+	// Never hold perfMutex while acquiring SKSE's UI queue lock: the UI drain
+	// holds that lock while calling Run, which itself acquires perfMutex.
+	try {
+		if (const auto* tasks = SKSE::GetTaskInterface()) {
+			if (hop == json::FrameChain::Hop::ui)
+				tasks->AddUITask(reinterpret_cast<::UIDelegate_v1*>(&g_frameUITask));
+			else if (hop == json::FrameChain::Hop::main)
+				tasks->AddTask(reinterpret_cast<::TaskDelegate*>(&g_frameMainTask));
+			return;
+		}
+	} catch (...) { /* emit a single unavailable result below */ }
+	std::scoped_lock lock(g_probe->perfMutex);
+	g_probe->frameChain.enqueueFailed();
+	AbortFrameCapture("enqueue_failed");
+	Log("SkyCRPG_TestProbe: frame enqueue failed\n");
+}
+
+void PerfRequest(const std::string& tag)
+{
+	const auto request = json::ParsePerfRequest(tag);
+	std::unique_lock lock(g_probe->perfMutex);
+	bool queueUI = false;
+	bool available = false;
+	if (request.command == json::PerfCommand::start && !g_probe->frameChain.active() && g_probe->loaded.load()) {
+		g_probe->captureLabel = request.label;
+		g_probe->frames.clear();
+		g_probe->engineFrames.clear();
+		g_probe->inventory = {};
+		g_probe->hasInventoryKey = false;
+		g_probe->previousFrameMs = 0;
+		g_probe->captureStartMs = PerfNow();
+		queueUI = g_probe->frameChain.start();
+		available = g_probe->frameChain.queued();
+		if (!available) g_probe->frameChain.stop();
+		if (available && request.label == "resource") Emit("resource_check", json::Object{}.String("phase", "start"));
+	} else if (request.command == json::PerfCommand::stop && g_probe->frameChain.active() && request.label == g_probe->captureLabel) {
+		g_probe->frameChain.stop();
+		EmitInventory();
+		const auto summary = g_probe->frames.summary();
+		const auto engine = g_probe->engineFrames.summary();
+		json::Object fields;
+		fields.String("label", g_probe->captureLabel)
+			.Numeric("count", summary.count).Numeric("total_count", g_probe->frames.total())
+			.Numeric("median", summary.median).Numeric("p95", summary.p95).Numeric("p99", summary.p99)
+			.Numeric("max", summary.maximum).Numeric("over33", summary.over33).Numeric("over50", summary.over50)
+			.Numeric("engine_count", engine.count).Numeric("engine_total_count", g_probe->engineFrames.total())
+			.Numeric("engine_median", engine.median).Numeric("engine_p95", engine.p95)
+			.Numeric("duration_ms", PerfNow() - g_probe->captureStartMs);
+		if (engine.median > 0 && summary.count > 0) fields.Numeric("anchor_ratio", summary.median / engine.median);
+		else fields.Null("anchor_ratio");
+		Emit("frame_summary", fields);
+		if (request.label == "resource") Emit("resource_check", json::Object{}.String("phase", "stop"));
+		available = true;
+	}
+	Emit("perf_capture", json::Object{}.String("tag", tag).String("label", request.label)
+		.String("phase", request.command == json::PerfCommand::start ? "start" : "stop").Boolean("available", available));
+	lock.unlock();
+	if (queueUI) QueueFrameHop(json::FrameChain::Hop::ui);
+}
+
+void InventoryMenuEvent(bool opening, double now)
+{
+	std::scoped_lock lock(g_probe->perfMutex);
+	if (opening) {
+		const bool cold = !g_probe->inventoryEverOpened;
+		g_probe->inventoryEverOpened = true;
+		g_probe->inventoryMenuOpen = true;
+		if (g_probe->frameChain.active()) {
+			EmitInventory();
+			const bool correlated = g_probe->hasInventoryKey && now >= g_probe->inventoryKeyMs && now - g_probe->inventoryKeyMs <= 10000;
+			g_probe->inventory.begin(g_probe->inventoryKeyMs, now, g_probe->preOpenMedian, correlated, cold);
+		}
+		g_probe->hasInventoryKey = false;
+	} else {
+		g_probe->inventoryMenuOpen = false;
+		EmitInventory();
+	}
+}
+
+class InputEvents final : public RE::BSTEventSink<RE::InputEvent*> {
+public:
+	RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,
+		RE::BSTEventSource<RE::InputEvent*>*) noexcept override
+	{
+		try {
+			if (!events) return RE::BSEventNotifyControl::kContinue;
+			{
+				std::scoped_lock lock(g_probe->perfMutex);
+				if (!g_probe->frameChain.active()) return RE::BSEventNotifyControl::kContinue;
+			}
+			for (auto* event = *events; event; event = event->next) {
+				const auto* button = event->AsButtonEvent();
+				if (!button || !button->IsDown()) continue;
+				const double now = PerfNow();
+				const auto* controls = RE::ControlMap::GetSingleton();
+				if (!controls) continue;
+				const auto device = event->GetDevice();
+				const auto key = button->GetIDCode();
+				const auto inventoryKey = controls->GetMappedKey("Inventory", device);
+				const auto tweenKey = controls->GetMappedKey("Tween Menu", device);
+				if ((inventoryKey == RE::ControlMap::kInvalid || key != inventoryKey) &&
+					(tweenKey == RE::ControlMap::kInvalid || key != tweenKey)) continue;
+				std::scoped_lock lock(g_probe->perfMutex);
+				if (!g_probe->frameChain.active() || g_probe->inventoryMenuOpen) continue;
+				g_probe->inventoryKeyMs = now;
+				g_probe->preOpenMedian = g_probe->frames.summary().median;
+				g_probe->hasInventoryKey = true;
+			}
+		} catch (...) { Log("SkyCRPG_TestProbe: input timestamp failed\n"); }
+		return RE::BSEventNotifyControl::kContinue;
+	}
+};
+
 struct Handle {
 	HANDLE value{ INVALID_HANDLE_VALUE };
 	~Handle() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
@@ -377,7 +612,11 @@ bool PollRequest()
 		return false;
 	}
 	const auto tag = json::ParseRequest(std::string_view(buffer.data(), bytesRead));
-	if (!tag || !QueueSnapshot(true, *tag, true)) return false;
+	if (!tag) return false;
+	const auto perf = json::ParsePerfRequest(*tag);
+	if (perf.command == json::PerfCommand::checkpoint) {
+		if (!QueueSnapshot(true, *tag, true)) return false;
+	} else if (!QueueProbeTask([requestTag = *tag] { PerfRequest(requestTag); })) return false;
 	FILE_DISPOSITION_INFO disposition{};
 	disposition.DeleteFile = TRUE;
 	if (!SetFileInformationByHandle(file.value, FileDispositionInfo, &disposition, static_cast<DWORD>(sizeof(disposition))))
@@ -385,10 +624,23 @@ bool PollRequest()
 	return true;
 }
 
+void SampleMemory()
+{
+	PROCESS_MEMORY_COUNTERS_EX counters{};
+	counters.cb = static_cast<DWORD>(sizeof(counters));
+	if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), counters.cb)) {
+		Emit("process_memory", json::Object{}.Numeric("private_bytes", static_cast<std::uint64_t>(counters.PrivateUsage))
+			.Numeric("working_set_bytes", static_cast<std::uint64_t>(counters.WorkingSetSize)));
+	} else if (!g_probe->memoryFailureLogged.exchange(true)) {
+		Log("SkyCRPG_TestProbe: process memory sample unavailable\n");
+	}
+}
+
 void CALLBACK TimerTick(void*, BOOLEAN) noexcept
 {
 	if (g_probe->timerBusy.exchange(true)) return;
 	try {
+		if (g_probe->loaded.load()) SampleMemory();
 		if (!g_probe->timerPending.load() && !PollRequest() && g_probe->loaded.load())
 			QueueSnapshot(false, {}, true);
 	} catch (...) {
@@ -451,6 +703,8 @@ public:
 	{
 		try {
 			if (!event) { Log("SkyCRPG_TestProbe: null menu event\n"); return RE::BSEventNotifyControl::kContinue; }
+			// Capture the open endpoint before JSON/log I/O on this callback.
+			if (event->menuName == "InventoryMenu") InventoryMenuEvent(event->opening, PerfNow());
 			ThreadContext("menu");
 			Emit("menu", json::Object{}.String("name", event->menuName.c_str()).Boolean("opening", event->opening));
 			if (!event->opening) QueueSnapshot();
@@ -491,6 +745,15 @@ public:
 	}
 };
 
+void ResetPerformance()
+{
+	std::scoped_lock lock(g_probe->perfMutex);
+	g_probe->frameChain.stop();
+	g_probe->inventory = {};
+	g_probe->hasInventoryKey = false;
+	g_probe->inventoryMenuOpen = false;
+}
+
 void Messages(SKSE::MessagingInterface::Message* message) noexcept
 {
 	try {
@@ -501,9 +764,12 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 			ThreadContext("data_loaded");
 			Emit("data_loaded");
 			static auto* events = new Events();
+			static auto* inputs = new InputEvents();
 			static bool registered = false;
 			if (registered) return;
 			registered = true;
+			if (auto* input = RE::BSInputDeviceManager::GetSingleton()) input->AddEventSink(inputs);
+			else Log("SkyCRPG_TestProbe: input event source unavailable\n");
 			if (auto* ui = RE::UI::GetSingleton()) ui->AddEventSink<RE::MenuOpenCloseEvent>(events);
 			else Log("SkyCRPG_TestProbe: menu event source unavailable\n");
 			if (auto* source = RE::ScriptEventSourceHolder::GetSingleton()) {
@@ -518,6 +784,7 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 		case SKSE::MessagingInterface::kPreLoadGame: {
 			g_probe->loaded.store(false);
 			g_probe->generation.fetch_add(1);
+			ResetPerformance();
 			ThreadContext("pre_load_game");
 			std::scoped_lock lock(g_probe->lifecycleMutex);
 			g_probe->hasSaveName = message->data && message->dataLen <= json::kMaxRequestBytes;
@@ -549,6 +816,7 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 			break;
 		}
 		case SKSE::MessagingInterface::kNewGame: {
+			ResetPerformance();
 			ThreadContext("new_game");
 			g_probe->generation.fetch_add(1);
 			g_probe->loaded.store(true);
@@ -610,12 +878,13 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* sks
 		// starts no timer and writes no JSONL or log, even if installed by mistake.
 		if (!json::ProbeEnabled(ReadDigits(ini, L"bEnabled", L"").data())) return true;
 		g_probe = new Probe();
+		if (!QueryPerformanceFrequency(&g_probe->qpcFrequency) || g_probe->qpcFrequency.QuadPart <= 0) return false;
 		g_probe->directory = skycrpg::LogDirectory();
 		if (g_probe->directory.empty()) { Log("SkyCRPG_TestProbe: SKSE directory unavailable\n"); return false; }
 		g_probe->interval = json::ParseInterval(ReadDigits(ini, L"iStateIntervalMs", L"1000").data());
 		const auto fields = json::Object{}.String("runtime", Version(skseInterface->runtimeVersion))
 			.String("skse", Version(skseInterface->skseVersion)).String("probe_version", SKYCRPG_VERSION)
-			.String("snapshot_dispatch", "ui_task_drain_v3")
+			.String("snapshot_dispatch", "ui_task_drain_v3").Numeric("perf_protocol", 1)
 			.String("build_commit", SKYCRPG_SOURCE_COMMIT).Boolean("enabled", true).Numeric("state_interval_ms", g_probe->interval);
 		if (!PinnedAddressLibrary()) {
 			Log("SkyCRPG_TestProbe: pinned Address Library 13 missing/unreadable/mismatched; CommonLib Init skipped\n");

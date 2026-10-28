@@ -71,8 +71,8 @@ Write UTF-8 text to `<My Games>/Skyrim Special Edition/SKSE/SkyCRPG_TestProbe.re
 (an empty touched file is valid). Prefer a completed temporary file atomically
 renamed into place. The timer reads it at its configured cadence and queues a
 task-drain `player_state` with `requested:true` and **the exact file contents**
-in `tag`. Tags are raw text, not JSON; whitespace, newlines and NULs are
-preserved and JSON-escaped. The maximum tag is 65536 bytes. Oversized/unreadable
+in `tag`. Checkpoint tags are raw text, not JSON; whitespace, newlines and NULs are
+preserved and JSON-escaped, except the reserved `@perf ` command namespace below. The maximum tag is 65536 bytes. Oversized/unreadable
 requests are logged and left on disk; ordinary periodic samples continue.
 
 After enqueueing, the opened request file is marked for deletion by handle,
@@ -82,6 +82,21 @@ deletion acknowledges enqueueing, not completion. Send one request at a time
 and wait for the matching `tag` with `available:true` before asserting game
 state. An unavailable/world-changed response is explicit and must not count as
 a successful checkpoint. No request polling occurs with the timer disabled.
+
+Performance requests use the same atomic file writer and deletion acknowledgement:
+`@perf start <label>` and `@perf stop <label>`, with **no trailing newline**.
+Labels match `[A-Za-z0-9_.-]{1,40}`. Only one capture may run at a time;
+stop must name the active label. Wait for `perf_capture` with the exact `tag`,
+`phase`, and `available:true` before proceeding. Invalid, overlapping,
+not-loaded or mismatched requests produce `available:false`; they do not start
+another chain. The stop emits `frame_summary` before its acknowledgement.
+A stop/restart while a task is queued reuses that single chain. Loading or a new
+game cancels an active capture; the later stop then fails explicitly. Ordinary
+checkpoint requests retain their existing `player_state` contract.
+
+The runner never overwrites a still-pending request. Labels `standing`, `turn`,
+`inventory` and `resource` are used by the performance routes. `resource`
+start/stop also emit resource-window markers in probe time.
 
 ## JSONL schema
 
@@ -93,7 +108,7 @@ uppercase strings such as `"0x00000014"`; absent objects are `null`.
 
 | `ev` | Additional fields |
 | --- | --- |
-| `probe_loaded` | `runtime`, `skse` (four-part version strings), `probe_version`, `snapshot_dispatch` (`"ui_task_drain_v3"`), `build_commit` (`"unknown"` if not supplied), `enabled` (always `true`; a disabled probe writes nothing), `state_interval_ms` |
+| `probe_loaded` | `runtime`, `skse` (four-part version strings), `probe_version`, `snapshot_dispatch` (`"ui_task_drain_v3"`), `perf_protocol` (`1`), `build_commit` (`"unknown"` if not supplied), `enabled` (always `true`; a disabled probe writes nothing), `state_interval_ms` |
 | `data_loaded` | None; SKSE `kDataLoaded` |
 | `game_loaded` | `success` from SKSE `kPostLoadGame`'s pointer-encoded boolean; `save_name` copied from `kPreLoadGame`, or `null` |
 | `new_game` | None; SKSE `kNewGame` |
@@ -101,6 +116,11 @@ uppercase strings such as `"0x00000014"`; absent objects are `null`.
 | `menu` | `name`, `opening` |
 | `equip` | Player only: `form_id` (base object), `name`, `equipped`. Slot omitted because the event has no reliable slot field. |
 | `container` | Player in/out only: `form_id`, `name`, `player_in`, `player_out`, `old_container`, `new_container`, signed `count_delta`, `new_count`, `count_status` |
+| `perf_capture` | `tag` (exact command for requests; absent on abort), `label`, `phase` (`start`/`stop`/`abort`), `available`, `reason` on abort (`runaway`, `enqueue_failed`, `ui_task_failed`, `main_task_failed`) |
+| `frame_summary` | `label`, `count` (retained periods), `total_count`, `median`, `p95`, `p99`, `max` (ms), `over33` (>33.3 ms), `over50` (>50 ms), `duration_ms`, `engine_count`, `engine_total_count`, `engine_median`, `engine_p95` (ms from BSTimer realTimeDelta), `anchor_ratio` (probe median / engine median, null without data) |
+| `inventory_open` | `label`, `cold` (first inventory open in this process), `correlated`, `key_qpc_ms` (or null), `open_qpc_ms`, `pre_open_median_ms`, `t_event_ms`, `t_settled_ms` (each null if unavailable), `periods_ms` (up to the first 30 post-open UI-drain periods) |
+| `resource_check` | `phase` (`start`/`stop`); `t` defines the memory analysis window |
+| `process_memory` | `private_bytes`, `working_set_bytes`; sampled by the existing timer while loaded, at `iStateIntervalMs`, coalesced if a tick is busy. Failed queries omit the event and log once. |
 | `player_state` | `requested`, optional `tag`, `available`; when available: `position:{x,y,z}`, `cell:{form_id,editor_id,name}` or `null`, `health`, `magicka`, `stamina` (each `{current,max}`), `equipped:{right,left,ammo}`, `camera_state`, `paused`, `open_menus`, `item_card_submenu` |
 
 `container.count_delta` is positive into the player and negative out; a transfer
@@ -111,7 +131,7 @@ would not be the immediate post-event count.
 Missing forms produce `name:null`; observations queued across a load are
 discarded with a diagnostic.
 
-All snapshots execute through `SKSE::GetTaskInterface()->AddUITask`, drained
+Player-state snapshots execute through `SKSE::GetTaskInterface()->AddUITask`, drained
 after SKSE's native UI event processing. The timer only polls files and queues
 work; it never reads player/cell/UI/camera. SKSE drains these tasks on
 rotating engine worker threads (observed 424-444 on 1.7.104 under Proton), never
@@ -165,3 +185,86 @@ task drain, `item_card_submenu` tracked the quantity slider, and the runner
 verified the probe was removed after each run. The process-lifetime sinks/timer do not support hot
 unloading. C++ exceptions are caught at plugin/callback/task boundaries; native
 engine faults and disk/power-loss atomicity cannot be guaranteed by this probe.
+
+## Performance sampling
+
+`src/perf_policy.h` supplies two fixed 16384-double rings, nearest-rank p95/p99,
+median/max/tail counts, request parsing, six-frame settling, and the portable
+`FrameChain` state machine. During capture, a process-lifetime
+`SKSE::detail::UIDelegate_v1` samples QPC and `RE::BSTimer::realTimeDelta` (seconds,
+converted to ms) at the UI drain. It queues a persistent
+`SKSE::detail::TaskDelegate` on the main queue; that helper only queues the next
+UI delegate. Both `Dispose()` methods are no-ops. The pointer overloads in
+CommonLib 7.2.0 `SKSE/Interfaces.h:193,195` forward unchanged in
+`src/SKSE/Interfaces.cpp:184–196`; `Impl/Stubs.h:98–110` declares both Run/Dispose
+interfaces without a deleting destructor. No per-frame lambda/delegate allocation
+is needed. Only scalar samples cross callbacks; no engine pointer is retained.
+Sorting/JSON formatting occurs at input, stop or inventory-window completion.
+
+The earlier same-queue self-requeue design was unsafe: SKSE 2.3.1 drains until
+empty and would immediately run the requeued task forever. Its main drain has
+two hook sites, so it also cannot serve as a once-per-frame anchor. The UI drain
+has one hook site, but also drains to empty. Each hop now queues only the other
+queue. A single reservation spans both hops, including stop/restart and the gap
+before enqueue, so restarting reuses a pending hop. A stopped pending hop drains
+without sampling or continuing. Enqueueing happens outside the capture mutex to
+avoid inversion with SKSE's UI queue lock. The normal state/memory timer remains.
+If a ninth UI run occurs within any 1 ms QPC window, capture stops, logs once,
+and emits `perf_capture` with `phase:"abort"`, `available:false`, `reason:"runaway"`.
+The guard is a safety net, not the scheduling mechanism.
+
+This measures **UI-drain CPU period**, not GPU present or proof of a painted grid.
+One sample per frame depends on a main drain between consecutive UI drains;
+validate this hypothesis on the pinned host, including paused inventory. The
+second preallocated ring pairs each QPC period with the engine's real-time delta
+(the first UI run establishes the QPC baseline). `frame_summary` reports both
+medians/p95 and `anchor_ratio = median / engine_median`. `perf_compare.py` requires
+an anchor in **[0.9, 1.1] inclusive** for each standing, turn, inventory and resource
+capture. Outside that range, missing/invalid deltas, count mismatches or an abort
+make that capture's budget **NOT_RUN**, never a performance PASS/FAIL. The ratio
+is independently recomputed from medians. A missing anchor in either comparison
+capture leaves the combined frame budget NOT_RUN. Raw anchor values remain in
+the analysis table for diagnosis; passing the ratio alone does not prove cadence.
+BSTimer may clamp/smooth or retain its delta when paused; actual behavior remains
+NOT_RUN and is a reason to reject evidence, never to relax the anchor rule.
+
+Relative comparison uses the identical probe/settings/host in every profile.
+`total_count > count` exposes ring wrap; truncated standing/turn captures are
+refused. Resource ring wrap does not truncate the separately streamed memory data,
+but its retained anchor must still be valid before the resource budget is judged.
+
+The input sink resolves `Inventory` and `Tween Menu` through
+`RE::ControlMap::GetMappedKey(event, device)` and timestamps button-down on the
+same QPC clock as `MenuOpenCloseEvent` and the sampler. It consumes no input.
+The InventoryMenu endpoint is captured before diagnostic I/O. A key older than
+10 seconds, no observed key, or no pre-open periods yields unknown latency or
+settling. The pre-open median is the active capture's retained periods at
+key-down. The probe watches the 3 seconds after open, recording the first 30
+periods. Settling is the end of the **first** period ≤2× pre-open median that is
+followed by five more consecutive qualifying periods; the result is reported
+only after all six are observed. `t_event_ms` is key → menu-open event;
+`t_settled_ms` is key → that first qualifying frame end. Early close/stop flushes
+partial evidence; unavailable settling stays null. Cold is tracked across
+captures and loads for the process lifetime.
+
+The runner's `inventory_cycle` observes 3 seconds for settling, scrolls at 10
+wheel ticks/second for `scroll_s`, closes with TAB, then waits `wait_s`. It starts
+an inventory capture itself when used outside a `perf_capture`. The supplied
+keyboard/mouse routes require Inventory=I and Back=TAB; physical controller off.
+Controller/Tween behavior requires a separate manual runtime pass.
+
+Run **all four** portable contracts using the same glob as CI:
+
+```bash
+for source in tools/testprobe/tests/*_test.cpp; do
+  binary="/tmp/$(basename "$source" .cpp)"
+  g++ -std=c++20 -Wall -Wextra -Werror -pedantic "$source" -o "$binary" && "$binary" || exit
+done
+```
+
+The performance test covers ring wrap/clear, invalid values, percentiles/tail
+counts, six-frame threshold/reset, bounded raw periods, missing correlation and
+reserved requests, two-queue single-chain start/stop/restart, idle hops, enqueue failure,
+sliding runaway window and recovery. Windows `/W4 /WX /permissive-` build and the new performance
+adapter's runtime behavior are **NOT_RUN**. Earlier runtime passes above apply
+only to the earlier player-state observer, not these new measurements.
