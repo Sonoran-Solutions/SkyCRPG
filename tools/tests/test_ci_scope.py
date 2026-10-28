@@ -12,7 +12,8 @@ class ScopeTests(unittest.TestCase):
     def test_shared_build_and_packaging_changes_override_either_module(self):
         shared = ["CMakeLists.txt", "CMakePresets.json", "cmake/CommonLib.cmake",
                   "cmake/README.md", "vcpkg.json", "vcpkg-configuration.json",
-                  "tools/package.py", ".github/workflows/build.yml",
+                  "tools/package.py", ".github/workflows/build.yml", "tools/tests/test_package.py",
+                  "LICENSE", "docs/LICENSING.md", "docs/THIRD_PARTY.md", "docs/compatibility/dependency-lock.md",
                   "shared/include/skycrpg/skeleton.h", "LICENSES/CommonLibSSE-NG-COPYING",
                   "tools/ci_scope.py", "tools/tests/test_ci_scope.py", ".github/actions/build/action.yml"]
         for changed_module in ("camera", "ui", "testprobe"):
@@ -51,7 +52,8 @@ class ScopeTests(unittest.TestCase):
         self.assertIn("needs.scope.outputs.testprobe == 'true'", workflow)
         self.assertIn("needs.scope.outputs.modules != '[]'", workflow)
         self.assertIn("tools/testprobe/tests/", workflow)
-        for trigger in ("tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**"):
+        for trigger in ("tools/ci_scope.py", "tools/tests/test_ci_scope.py", "tools/tests/test_package*.py",
+                        "LICENSE", "docs/LICENSING.md", "docs/THIRD_PARTY.md", "docs/compatibility/dependency-lock.md", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**"):
             self.assertEqual(workflow.count('"' + trigger + '"'), 2)
 
 

@@ -278,6 +278,19 @@ bool Sample(std::uint32_t& selectedIndex)
         if (item == selected) { selectedIndex = index; foundSelection = true; }
     }
     if (!foundSelection) return false;
+    // Capture engine-authoritative carry weight alongside the successful sample.
+    // Bounded logging permits before/after route comparisons without a new UI.
+    static unsigned weightSamples = 0;
+    if (weightSamples < 256) {
+        ++weightSamples;
+        const auto path = skycrpg::LogDirectory() + L"SkyCRPG_UI.log";
+        FILE* log = nullptr;
+        if (_wfopen_s(&log, path.c_str(), L"a") == 0 && log) {
+            const float weight = player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kInventoryWeight);
+            std::fprintf(log, "Inventory weight sample=%.3f\n", static_cast<double>(weight));
+            std::fclose(log);
+        }
+    }
     g_snapshots.Publish(std::move(entries));
     return g_snapshots.Get().available;
 }

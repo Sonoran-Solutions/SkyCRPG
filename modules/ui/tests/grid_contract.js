@@ -188,7 +188,7 @@ assert.equal(list._selectedIndex,7);assert.equal(dispatches,0);
 const menu={inventoryLists:{itemList:list},shouldProcessItemsListInput(){return true;},confirmSelectedEntry(){return true;},checkBook(){}};
 for(const name of ['skycrpgInventoryBridge','skycrpgInventoryCapture','skycrpgInventoryAllow','skycrpgInventoryPresent','AttemptEquip']) menu[name]=method(menuSource,name);
 if(menuSource.includes('function skycrpgRepaintInventory(')) menu.skycrpgRepaintInventory=method(menuSource,'skycrpgRepaintInventory');
-global.skse={plugins:{SkyCRPGUI:{validateItemAction(){validations++;return true;},getInventorySnapshot(){return {token:3,selectedIndex:7};},inventoryInputEdge(){},cancelInventoryAction(){},inventoryViewChanged(){}}}};
+global.skse={plugins:{SkyCRPGUI:{hudEnabled:true,validateItemAction(){validations++;return true;},getInventorySnapshot(){return {token:3,selectedIndex:7};},inventoryInputEdge(){},cancelInventoryAction(){},inventoryViewChanged(){}}}};
 menu.AttemptEquip(1,false);assert.equal(validations,1);assert.equal(dispatches,1);
 skse.plugins.SkyCRPGUI.validateItemAction=()=>false;list.InvalidateListData=()=>{};menu.inventoryLists.InvalidateListData=()=>{};
 menu.AttemptEquip(1,false);assert.equal(dispatches,1);

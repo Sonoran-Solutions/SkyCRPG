@@ -1,24 +1,27 @@
 # Controls contract
 
-The normative ownership/precedence contract is in [ARCHITECTURE](ARCHITECTURE.md#input-and-menu-contract). Proven spike controls: SmoothCam F8/scan66 toggle; native POV precision fallback; controller grid adjacent/row movement and explicit category focus as recorded in [UI evidence](evidence/p1/ui-spike.md). DYL-156 now implements and owner-tests F6 native-view fallback/return and F7 recenter, documented in the candidate controls table below. Full reset/lifecycle and broader input mappings remain later-ticket obligations; the DYL-161 hotbar candidate is described below.
+The [input ownership contract](ARCHITECTURE.md#input-and-menu-contract) governs conflicts. The tables below describe candidate bindings; final-candidate device checks are **NOT_RUN**. Use native prompts if remapped. See [limitations](RELEASE_NOTES.md).
 
-The high-level action table includes future work. The DYL-156 candidate table below is authoritative for the implemented Camera defaults; the DYL-161 candidate describes current hotbar behavior and its validation limits.
+### Keyboard and mouse
 
-| Action | Intended behavior | Binding status |
-| --- | --- | --- |
-| Camera enable/normal view | Toggle elevated view and release to the safe underlying view. | Configurable key/controller route selected in P2. |
-| Emergency camera reset | Recover usable normal view without opening the custom UI. | Must be reachable independently of UI. |
-| Rotate/recenter | Yaw/snap as selected; recenter on character. | P2-01. |
-| Zoom | Bounded distance adjustment; never disable wall/floor collision. | P2-01. |
-| Precision aim | Native attack/aim input and selected closer-view behavior. | P2-03. |
-| Hotbar slots | Up to eight favorite bindings; equip/select/use through native behavior. | Native 1–8 where appropriate, plus tested controller path. |
-| Open inventory | Open player grid; retain access to other native menus. | Existing inventory action where feasible. |
-| Grid navigation | Pointer or keyboard/controller focus; inspect/equip/use/favorite/drop. | P3-06 must document every action. |
-| Cancel/back | Close current modal, then menu; never trigger world combat behind it. | Native convention preserved. |
-| Minimap toggle/zoom | Selected provider action; restore native navigation when replacement is disabled. | Resolve provider conflicts in P1/P3. |
-| UI scale/reset | Restore safe anchors and readable defaults. | P3-06. |
+| Action | Binding |
+| --- | --- |
+| Camera precision / return | F6, scan 64; native first person for aim |
+| Camera recenter / emergency provider toggle | F7, scan 65 / F8, scan 66 |
+| Camera yaw / pitch / zoom | Mouse horizontal yaw; vertical input is filtered to hold configured `fPitchDegrees`; native wheel zoom is bounded. Pitch is configured, not a live pitch key. |
+| Hotbar | Native 1–8; native numbered favorites take priority, unbound favorites fill spare slots. |
+| Player inventory grid | I opens; mouse or arrows navigate; E/Enter use, R drop, F favorite; native prompts and Tab back. |
+| Filter / layout reset | Space or click search and type; reset via `[HUD] bResetLayout=1` with restart, not a key. |
 
-An action bar that merely draws icons is incomplete. Input must be usable and reflect actual selected/equipped state. No new spell cooldown, autoplay rotation, party order or turn-control binding is planned.
+### Controller
+
+| Action | Binding |
+| --- | --- |
+| Camera yaw / pitch / zoom | Right-stick horizontal yaw; vertical filtered to hold configured pitch; native zoom gesture. Native POV reaches first person. |
+| Camera precision toggle / recenter | `iToggleGamepad=-1` / `iRecenterGamepad=-1` by default, unbound; configure eligible unmapped single-button masks. No default F8 controller binding is supplied. |
+| Hotbar | Native Favorites selection/use; no direct custom slot cycling. |
+| Player grid | Native Items menu; stick/D-pad navigate, A use, X drop, Y favorite, B back; native hand prompts apply. |
+| Filter / layout reset | R3 opens character pad, D-pad selects, A chooses, Done applies, B cancels; reset via `[HUD] bResetLayout=1` and restart. |
 
 The DYL-161 candidate maps keyboard hotkey events 1–8 to the slot shown. Native quick-key bindings take precedence: assign a favorite in Skyrim's Favorites menu and Skyrim handles that numbered slot. Magic overrides an item at the same native index. Unbound favorites marked `FAV` fill remaining positions in form ID order; pressing the corresponding hotkey requests one native equip/use action. Weapons and armor toggle; consumables are used; spells select the right hand, powers select the voice slot, and shouts are selected. Casting and attacks still use native controls. Controller selection through the native Favorites menu has owner-reported bounded PASS; direct controller slot cycling is not implemented.
 
@@ -53,7 +56,7 @@ Inventory selection and action gestures are invalidated across menu transitions 
 
 ## Input bindings and focus
 
-DYL-168 candidate; physical device passes and resolution captures remain **NOT_RUN** in [input/layout evidence](evidence/p3/input-and-layout.md). Use the current native prompts if bindings were remapped. On the pinned host turn the 8BitDo XInput controller OFF for the keyboard/mouse pass and ON for a separate controller pass; record which device performed each step.
+DYL-168 candidate; bounded prior device and resolution evidence is in [input/layout evidence](evidence/p3/input-and-layout.md); final-candidate checks remain **NOT_RUN**. Use the current native prompts if bindings were remapped. On the pinned host turn the 8BitDo XInput controller OFF for the keyboard/mouse pass and ON for a separate controller pass; record which device performed each step.
 
 | Action | Keyboard/mouse | Controller (XInput defaults) |
 | --- | --- | --- |

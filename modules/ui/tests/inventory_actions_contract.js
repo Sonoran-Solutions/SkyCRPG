@@ -31,6 +31,7 @@ let validations = 0, snapshots = 0, refreshes = 0, drops = 0, activates = 0, can
 let allowed = true;
 const entry = {enabled:true, count:8, itemIndex:0};
 global.skse = {plugins:{SkyCRPGUI:{
+  hudEnabled:true,
   getInventorySnapshot() { snapshots++; return {token:snapshots,selectedIndex:menu.inventoryLists.itemList.selectedEntry.itemIndex}; },
   validateItemAction(token, action, amount, phase) { validations++; assert.ok(token > 0); return allowed; },
   inventoryInputEdge(){}, cancelInventoryAction(){cancels++;}, inventoryViewChanged(){views++;},
@@ -65,13 +66,13 @@ menu.onQuantityMenuSelect({amount:3}); assert.equal(validations,6); assert.equal
 menu.skycrpgInventoryCancel(); assert.equal(cancels,1); assert.equal(menu._skycrpgInventoryQuantity,false);
 menu.skycrpgInventoryViewChanged(); assert.equal(views,1);
 // Missing and old bridge retain both native paths and native quantity handling.
-for (const bridge of [undefined,{}, {getInventorySnapshot(){}}, {getInventorySnapshot(){}, validateItemAction(){throw Error('partial bridge used');}}]) {
+for (const bridge of [undefined,{hudEnabled:false, validateItemAction(){throw Error("disabled bridge used");}}, {}, {getInventorySnapshot(){}}, {getInventorySnapshot(){}, validateItemAction(){throw Error('partial bridge used');}}]) {
   skse.plugins.SkyCRPGUI=bridge;
   native.AttemptEquip.call(menu,1,false);
   native.onItemSelect.call(menu,{entry,keyboardOrMouse:1});
   native.DropItem.call(menu); menu.onQuantityMenuSelect({amount:1});
 }
-assert.equal(validations,6); assert.equal(activates,10); assert.equal(drops,5);
+assert.equal(validations,6); assert.equal(activates,12); assert.equal(drops,6);
 assert.ok(fs.readFileSync(staged,'utf8').includes('event.canceled == true'));
 console.log('PASS: actual player native activation/drop bodies, one validator per dispatch, stale refusal, quantity token, absent/old bridge fallback');
 
@@ -111,6 +112,7 @@ function fixture() {
   });
   global._root = {Menu_mc:instance};
   skse.plugins.SkyCRPGUI = {
+    hudEnabled:true,
     getInventorySnapshot() {
       state.snapshotCalls++;
       if (state.updating) return undefined; // Native rebuild guard, not a list observation.

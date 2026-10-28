@@ -58,7 +58,7 @@ def hud_init_source():
 
 def transform(name, text):
     if name.endswith("InventoryMenu.as"):
-        text = replace_once(text, "_loc3_.layout = _loc5_;", "_loc3_.skycrpgGrid = true;\n      _loc3_.scrollDelta = 3;\n      _loc3_.layout = _loc5_;")
+        text = replace_once(text, "_loc3_.layout = _loc5_;", "_loc3_.skycrpgGrid = this.skycrpgInventoryBridge() != undefined;\n      if(_loc3_.skycrpgGrid) _loc3_.scrollDelta = 3;\n      _loc3_.layout = _loc5_;")
         # DYL-163: gate the existing player-only dispatch sites. No new native action.
         text = replace_once(text, "   function handleInput(details, pathToFocus)\n   {",
                             "   function handleInput(details, pathToFocus)\n   {\n      this.skycrpgInventoryInput(details);")
@@ -80,8 +80,8 @@ def transform(name, text):
                             "   function onItemHighlightChange(event)\n   {\n      this.skycrpgInventoryCapture();")
         # DYL-164: player-only presentation. Install row-aligned scrolling on
         # this instance; native shared-list bodies and other contexts are unchanged.
-        text = replace_once(text, "      _loc3_.skycrpgGrid = true;",
-                            "      _loc3_.skycrpgGrid = true;\n      _loc3_.updateScrollPosition = _loc3_.skycrpgUpdateScrollPosition;\n      _loc3_.calculateMaxScrollPosition = _loc3_.skycrpgCalculateMaxScrollPosition;")
+        text = replace_once(text, "      _loc3_.skycrpgGrid = this.skycrpgInventoryBridge() != undefined;",
+                            "      _loc3_.skycrpgGrid = this.skycrpgInventoryBridge() != undefined;\n      if(_loc3_.skycrpgGrid) {\n         _loc3_.updateScrollPosition = _loc3_.skycrpgUpdateScrollPosition;\n         _loc3_.calculateMaxScrollPosition = _loc3_.skycrpgCalculateMaxScrollPosition;\n      }")
         text = replace_once(text, "      _loc3_.layout = _loc5_;",
                             "      _loc3_.layout = _loc5_;\n      this.skycrpgLayout();\n      this.skycrpgRequestEquipment();")
         text = replace_once(text, "      this.skycrpgInventoryCancel();",
@@ -202,7 +202,14 @@ def main():
     for name, expected in base_hashes.items():
         if sha(base / name) != expected:
             parser.error(f"Provider SWF drift: {name}")
-    manifest = {"skyui_commit": commit, "status": "PREPARED", "source_sha256": SOURCES,
+    # Bind generated movies to the committed patch includes. A dirty tree still
+    # builds for local testing, but packaging refuses it as a candidate.
+    source_commit = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+    dirty = subprocess.check_output(
+        ["git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=all", "--",
+         "scaleform", "tools/build_scaleform.py"], text=True).strip()
+    manifest = {"source_commit": source_commit, "source_dirty": bool(dirty), "skyui_commit": commit, "status": "PREPARED", "source_sha256": SOURCES,
                 "base": "Nexus6.11 acquired BSA" if args.nexus_interface else "GitHub source-tree SWFs (compile probe)",
                 "patch_sha256": {p.name: sha(p) for p in (ROOT / "scaleform").glob("*.inc")},
                 "ffdec_cli_sha256": sha(provider / "tools/FFDec/ffdec-cli.jar"),

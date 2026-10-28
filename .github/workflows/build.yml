@@ -3,9 +3,9 @@ name: build
 on:
   push:
     branches: [main]
-    paths: ["modules/**", "shared/**", "tools/testprobe/**", "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
+    paths: ["modules/**", "shared/**", "tools/testprobe/**", "tools/package.py", "tools/tests/test_package*.py", "LICENSE", "docs/LICENSING.md", "docs/THIRD_PARTY.md", "docs/compatibility/dependency-lock.md", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
   pull_request:
-    paths: ["modules/**", "shared/**", "tools/testprobe/**", "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
+    paths: ["modules/**", "shared/**", "tools/testprobe/**", "tools/package.py", "tools/tests/test_package*.py", "LICENSE", "docs/LICENSING.md", "docs/THIRD_PARTY.md", "docs/compatibility/dependency-lock.md", "tools/ci_scope.py", "tools/tests/test_ci_scope.py", "LICENSES/**", "vcpkg-configuration.json", ".github/actions/**", "CMakeLists.txt", "CMakePresets.json", "cmake/**", "vcpkg.json", ".github/workflows/build.yml"]
   workflow_dispatch:
     inputs:
       module:
@@ -36,6 +36,9 @@ jobs:
         run: |
           python -m unittest discover -s tools/tests -p test_ci_scope.py -v
           python tools/ci_scope.py
+      # Packaging checks use synthetic PE/ZIP/SWF inputs, never game binaries.
+      - name: Package assembly policy tests
+        run: python -B -I -m unittest discover -s tools/tests -p "test_package*.py" -v
 
   windows-x64:
     needs: scope
@@ -89,7 +92,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build --preset windows-x64-release --target $target --parallel 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/package.py --build-dir build/windows-x64-release --commit $env:SOURCE_SHA --module '${{ matrix.module }}'
+          python tools/package.py native --build-dir build/windows-x64-release --commit $env:SOURCE_SHA --module '${{ matrix.module }}'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       # A plugin compile error must not discard a successful source dependency build.
       - name: Preserve dependency cache on a failed adapter build
@@ -100,6 +103,7 @@ jobs:
             build/windows-x64-release/_deps
             build/windows-x64-release/vcpkg_installed
           key: commonlib-static-ae-${{ runner.os }}-${{ env.ImageVersion }}-${{ hashFiles('cmake/CommonLib.cmake', 'vcpkg.json') }}
+      # Native-only payload + manifest + checksums. Full candidates assemble locally.
       - uses: actions/upload-artifact@v5
         with:
           name: skycrpg-${{ matrix.module }}-${{ env.SOURCE_SHA }}
