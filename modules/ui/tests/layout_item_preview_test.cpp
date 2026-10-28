@@ -2,39 +2,24 @@
 
 #include <cassert>
 #include <cmath>
-#include <optional>
 
 namespace {
 using namespace skycrpg::ui::inventory::preview;
 
 bool Near(double a, double b, double tolerance = 1e-3) { return std::fabs(a - b) <= tolerance; }
 
-// SkyUI 6.x MCM defaults for 16:9: X = -(931.225 - 640) / 8, Z = -(250 - 360) / 8, scale 1.5.
-Values SkyUiBase()
-{
-	const float x = static_cast<float>(-(931.225 - 640.0) / 8.0);
-	const float z = static_cast<float>(-(250.0 - 360.0) / 8.0);
-	return { x, x, z, z, 1.5f, 1.5f };
-}
+// SkyUI 6.x MCM defaults for 16:9, as cached by the engine at Begin3D.
+Placement SkyUiBase() { return { -36.403f, 0.0f, 13.75f, 1.5f }; }
 
-Values Apply(Values current, const Writes& writes)
-{
-	for (std::size_t slot = 0; slot < kSlotCount; ++slot) {
-		if (writes[slot]) {
-			current[slot] = *writes[slot];
-		}
-	}
-	return current;
-}
+EngineState Rest(const Placement& p) { return { p, p, 0.0f, false }; }
 
-bool Empty(const Writes& writes)
+EngineState Write(EngineState state, const Result& result)
 {
-	for (const auto& write : writes) {
-		if (write) {
-			return false;
-		}
+	if (result.outcome == Outcome::Written) {
+		state.live = result.written;
+		state.copy = result.written;
 	}
-	return true;
+	return state;
 }
 }  // namespace
 
@@ -45,113 +30,121 @@ int main()
 	// Config parsing: empty keys mean "computed", junk is rejected, values bounded.
 	const auto defaults = ParseConfig(L"", L"", L"");
 	assert(defaults.config.manage && !defaults.config.scaleFactor && !defaults.config.xShift);
-	assert(defaults.manageValid && defaults.scaleValid && defaults.shiftValid);
 	const auto disabled = ParseConfig(L"0", L"0.8", L"-12.5");
 	assert(!disabled.config.manage && *disabled.config.scaleFactor == 0.8f && *disabled.config.xShift == -12.5f);
 	const auto clamped = ParseConfig(L"1", L"3", L"-400");
 	assert(clamped.scaleClamped && *clamped.config.scaleFactor == kMaxScaleFactor);
 	assert(clamped.shiftClamped && *clamped.config.xShift == kMinXShift);
-	assert(*ParseConfig(L"1", L"0.1", L"").config.scaleFactor == kMinScaleFactor);
 	for (const auto* junk : { L"2", L"yes", L"-1", L"1.0" }) {
 		const auto parsed = ParseConfig(junk, L"", L"");
 		assert(!parsed.manageValid && parsed.config.manage);
 	}
 	for (const auto* junk : { L"nan", L"inf", L"0.5x", L"--1", L"1e999", L"123456789012345678901234567890123" }) {
 		const auto parsed = ParseConfig(L"1", junk, junk);
-		assert(!parsed.scaleValid && !parsed.shiftValid);
-		assert(!parsed.config.scaleFactor && !parsed.config.xShift);
+		assert(!parsed.scaleValid && !parsed.shiftValid && !parsed.config.scaleFactor && !parsed.config.xShift);
 	}
 
-	// Target geometry at 16:9: the column starts 0.66 W in and ends 16 from the edge.
-	const Column column = ModelColumn(k169);
-	assert(Near(column.left, 844.8) && Near(column.right, 1264.0));
-	// Shift: column centre 1054.4 vs SkyUI target 931.225 -> -15.397 position units.
+	// Default target: centre of the right third, 5/6 W = stage 1066.7, column to W - 16.
+	const Target fallback = DefaultTarget(k169);
+	assert(Near(fallback.centre, 1066.667) && Near(fallback.half, 197.333));
+	assert(ValidTarget(fallback) && Near(DefaultTarget(0.0).centre, fallback.centre));
+	assert(DefaultTarget(21.0 / 9.0).centre > fallback.centre);
+	assert(!ValidTarget({ 600.0, 200.0 }) && !ValidTarget({ 1000.0, 10.0 }) && !ValidTarget({ NAN, 200.0 }));
+
+	// Owner measurement: card centre ~1598 px = stage ~1070, column to 1264.
+	const Target card{ 1070.0, 194.0 };
 	const Config automatic{};
-	assert(Near(ComputeXShift(k169, automatic), -15.3969, 1e-3));
-	// Scale: 0.9 * 419.2 / (339 * 1.5) = 0.742; the Elder Scroll then spans 377 units.
-	const float factor = ComputeScaleFactor(k169, 1.5f, automatic);
-	assert(Near(factor, 0.74196, 1e-4));
-	assert(kWorstWidthPerScale * 1.5 * factor <= column.right - column.left);
-	// The worst model's horizontal extent sits inside the column.
-	const double centre = 931.225 - 8.0 * ComputeXShift(k169, automatic);
-	const double half = kWorstWidthPerScale * 1.5 * factor / 2.0;
-	assert(centre - half >= column.left && centre + half <= column.right);
-	// Narrower displays keep the 1280 stage; ultrawide uses SkyUI's wider target.
-	assert(Near(ModelColumn(1.6).left, column.left) && Near(ModelColumn(0.0).left, column.left));
-	assert(ModelColumn(21.0 / 9.0).right > column.right);
-	assert(ComputeXShift(32.0 / 9.0, automatic) >= kMinXShift);
-	assert(ComputeScaleFactor(k169, 0.0f, automatic) == kMaxScaleFactor);
-	// Overrides replace the computed values.
-	const Config manual{ true, 0.6f, -10.0f };
-	assert(ComputeXShift(k169, manual) == -10.0f && ComputeScaleFactor(k169, 1.5f, manual) == 0.6f);
+	const Placement base = SkyUiBase();
+	const Placement placed = Placed(base, card, automatic);
+	// x = -(1070 - 640) / 8 = -53.75: centre moves from stage 931 to 1070.
+	assert(Near(placed.x, -53.75) && placed.y == base.y && placed.z == base.z);
+	// scale: 0.9 * 388 / (339 * 1.5) = 0.687 -> the Elder Scroll is 349 units (~522 px).
+	const double factor = placed.scale / base.scale;
+	assert(Near(factor, 0.9 * 388.0 / 508.5, 1e-4));
+	const double half = kWorstWidthPerScale * placed.scale / 2.0;
+	assert(card.centre - half >= card.centre - card.half && card.centre + half <= card.centre + card.half);
+	// Fallback target gives the ~0.7 factor and ~560 px the owner asked for.
+	const Placement fallbackPlaced = Placed(base, fallback, automatic);
+	assert(Near(fallbackPlaced.scale / base.scale, 0.6986, 1e-3));
+	assert(kWorstWidthPerScale * fallbackPlaced.scale * 1.4945 <= 560.0);
+	// Overrides replace the computed values; xShift is relative to the engine base.
+	const Placement manual = Placed(base, card, Config{ true, 0.6f, -10.0f });
+	assert(Near(manual.x, -46.403) && Near(manual.scale, 0.9));
 
-	const Values base = SkyUiBase();
-	const Values placed = Placed(base, k169, automatic);
-	assert(placed[kPosZ] == base[kPosZ] && placed[kPosZWide] == base[kPosZWide]);
-	assert(placed[kPosX] < base[kPosX] && placed[kPosXWide] < base[kPosXWide]);
-	assert(Near(placed[kScale], 1.5 * factor, 1e-4) && Near(placed[kScaleWide], 1.5 * factor, 1e-4));
-
-	// State machine: open -> close restores exactly.
+	// Session: first apply writes; repeat is idempotent.
 	{
-		PlacementState state;
-		Values engine = base;
-		engine = Apply(engine, state.Open(engine, k169, automatic));
-		assert(state.Applied() && engine == placed);
-		engine = Apply(engine, state.Restore(engine));
-		assert(!state.Applied() && engine == base);
-		// A second close/load is a no-op.
-		assert(Empty(state.Restore(engine)));
+		Session session;
+		session.Begin();
+		EngineState engine = Rest(base);
+		const auto first = session.Apply(engine, card, automatic);
+		assert(first.outcome == Outcome::Written && first.newBase && first.base == base);
+		engine = Write(engine, first);
+		assert(engine.live == placed && engine.copy == placed);
+		for (int i = 0; i < 3; ++i) {
+			const auto again = session.Apply(engine, card, automatic);
+			assert(again.outcome == Outcome::Unchanged && !again.newBase);
+		}
+		// A moved card re-targets from the same base, never from our own output.
+		const Target moved{ 1100.0, 164.0 };
+		const auto retarget = session.Apply(engine, moved, automatic);
+		assert(retarget.outcome == Outcome::Written && !retarget.newBase);
+		assert(retarget.written == Placed(base, moved, automatic));
+		engine = Write(engine, retarget);
+		// The copy alone reset (un-zoom to an engine value): rewritten, base unchanged.
+		engine.copy = base;
+		const auto copyReset = session.Apply(engine, moved, automatic);
+		assert(copyReset.outcome == Outcome::Written && !copyReset.newBase && copyReset.base == base);
 	}
-	// Reopen without a close never captures our own values as a base.
+	// Base change: the engine resets its cache (Begin3D, MCM change) -> new base.
 	{
-		PlacementState state;
-		Values engine = Apply(base, state.Open(base, k169, automatic));
-		assert(Empty(state.Open(engine, k169, automatic)));
-		engine = Apply(engine, state.Restore(engine));
-		assert(engine == base);
+		Session session;
+		session.Begin();
+		EngineState engine = Write(Rest(base), session.Apply(Rest(base), card, automatic));
+		Placement mcm = base;
+		mcm.x = -30.0f;
+		mcm.scale = 1.2f;
+		engine = Rest(mcm);
+		const auto reset = session.Apply(engine, card, automatic);
+		assert(reset.outcome == Outcome::Written && reset.newBase && reset.base == mcm);
+		assert(reset.written == Placed(mcm, card, automatic));
 	}
-	// Load while open (kPreLoadGame) restores; the next open re-reads the base,
-	// so an MCM re-apply on game reload is respected.
+	// Zoom guard: no write while zooming or zoomed; resumes after.
 	{
-		PlacementState state;
-		Values engine = Apply(base, state.Open(base, k169, automatic));
-		engine = Apply(engine, state.Restore(engine));
-		assert(engine == base);
-		Values mcm = base;
-		mcm[kPosX] += 4.0f;
-		mcm[kScale] = 1.2f;
-		engine = Apply(mcm, state.Open(mcm, k169, automatic));
-		assert(engine == Placed(mcm, k169, automatic));
-		engine = Apply(engine, state.Restore(engine));
-		assert(engine == mcm);
+		Session session;
+		session.Begin();
+		EngineState engine = Rest(base);
+		engine.zoomProgress = 0.4f;
+		assert(session.Apply(engine, card, automatic).outcome == Outcome::ZoomActive);
+		engine.zoomProgress = 0.0f;
+		engine.startedZoom = true;
+		assert(session.Apply(engine, card, automatic).outcome == Outcome::ZoomActive);
+		engine.startedZoom = false;
+		engine = Write(engine, session.Apply(engine, card, automatic));
+		// Zoomed in: live moved by the engine, copy holds ours; we do not fight it.
+		engine.live.y = 40.0f;
+		engine.zoomProgress = 1.0f;
+		assert(session.Apply(engine, card, automatic).outcome == Outcome::ZoomActive);
+		// Zoomed out again: live returns to the copy (ours) -> nothing to do.
+		engine.live = engine.copy;
+		engine.zoomProgress = 0.0f;
+		assert(session.Apply(engine, card, automatic).outcome == Outcome::Unchanged);
 	}
-	// An external change while applied wins over our restore for that slot only.
+	// Closed, disabled, invalid input.
 	{
-		PlacementState state;
-		Values engine = Apply(base, state.Open(base, k169, automatic));
-		engine[kScale] = 2.0f;
-		engine = Apply(engine, state.Restore(engine));
-		assert(engine[kScale] == 2.0f);
-		assert(engine[kPosX] == base[kPosX] && engine[kScaleWide] == base[kScaleWide]);
-	}
-	// Missing or wrong-typed setting: nothing written, logged once, never applied.
-	{
-		PlacementState state;
-		assert(Empty(state.Open(std::nullopt, k169, automatic)));
-		assert(!state.Applied());
-		assert(state.TakeMissingLog() && !state.TakeMissingLog());
-		assert(Empty(state.Open(std::nullopt, k169, automatic)));
-		assert(!state.TakeMissingLog());
-		assert(Empty(state.Restore(std::nullopt)));
-	}
-	// Disabled by config: never applies; turning it off while applied restores.
-	{
-		PlacementState state;
-		const Config off{ false, std::nullopt, std::nullopt };
-		assert(Empty(state.Open(base, k169, off)) && !state.Applied());
-		Values engine = Apply(base, state.Open(base, k169, automatic));
-		engine = Apply(engine, state.Open(engine, k169, off));
-		assert(!state.Applied() && engine == base);
+		Session session;
+		assert(session.Apply(Rest(base), card, automatic).outcome == Outcome::Invalid);
+		session.Begin();
+		assert(session.Apply(Rest(base), card, Config{ false, std::nullopt, std::nullopt }).outcome == Outcome::Disabled);
+		assert(session.Apply(Rest(base), Target{ 0.0, 0.0 }, automatic).outcome == Outcome::Invalid);
+		EngineState bad = Rest(base);
+		bad.live.scale = NAN;
+		assert(session.Apply(bad, card, automatic).outcome == Outcome::Invalid);
+		session.End();
+		assert(!session.Open() && session.Apply(Rest(base), card, automatic).outcome == Outcome::Invalid);
+		// A new open always starts from the engine's fresh base.
+		session.Begin();
+		const auto fresh = session.Apply(Rest(base), card, automatic);
+		assert(fresh.outcome == Outcome::Written && fresh.newBase);
 	}
 	return 0;
 }

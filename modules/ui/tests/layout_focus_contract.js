@@ -70,11 +70,35 @@ function nineSlice(parent) {
     xMax:this._x+local.xMax*this.sx,yMax:this._y+local.yMax*this.sy},space);};
   return clip;
 }
-// Grid tiles as ScrollingList places them: 165x69 on 172 x 74 spacing.
+// Grid tiles as ScrollingList places them on 172 x 74 spacing. Their getBounds
+// is inflated like the native entry clip's hidden children (an equip icon at
+// x -30.5, a 527-unit background); the painted cell is 165x68.
 function tiles(list,count) {
-  const clips=Array.from({length:18},(_,i)=>Object.assign(box((i%3)*172,Math.floor(i/3)*74,165,69,list),{_visible:i<count}));
+  const clips=Array.from({length:18},(_,i)=>{
+    const clip=box((i%3)*172,Math.floor(i/3)*74,165,68,list);
+    const painted=clip.getBounds;
+    clip.getBounds=function(space){const b=painted.call(this,space);return {xMin:b.xMin-30.5,yMin:b.yMin,xMax:b.xMin+527,yMax:b.yMax};};
+    return Object.assign(clip,{_visible:i<count});
+  });
   list.getClipByIndex=i=>clips[i];
   return clips;
+}
+// Native header: labels plus a rule (`seperator`) that starts at x -4 and is
+// wider than the panel; getBounds is the union of both, like a GFx sprite.
+function headerStub(list) {
+  const header={_x:0,_y:-30,_parent:list};
+  header.labels=box(0,0,516,20,header); header.seperator=box(-4,20,563,2,header);
+  header.getBounds=function(space){const a=this.labels.getBounds(space),b=this.seperator.getBounds(space);
+    return {xMin:Math.min(a.xMin,b.xMin),yMin:Math.min(a.yMin,b.yMin),xMax:Math.max(a.xMax,b.xMax),yMax:Math.max(a.yMax,b.yMax)};};
+  return header;
+}
+// Inner edges of the native frame lines (3.05..5.1 inside each backdrop edge).
+function frameContent(panel) {
+  const b=panel.ListBackground.getBounds(panel);
+  return {left:b.xMin+5.1+8,right:b.xMax-5.1-8};
+}
+function inside(bounds,content,label) {
+  assert.ok(bounds.xMin>=content.left-1e-6 && bounds.xMax<=content.right+1e-6, label+' inside the frame padding '+JSON.stringify([bounds,content]));
 }
 function nearPoints(actual,expected) { actual.flat().forEach((v,i)=>assert.ok(Math.abs(v-expected.flat()[i])<1e-6,JSON.stringify([actual,expected]))); }
 function intersects(a,b) { return a.xMin < b.xMax && b.xMin < a.xMax && a.yMin < b.yMax && b.yMin < a.yMax; }
@@ -93,7 +117,7 @@ function listsFixture() {
   // scrollbar and header rule reach past the 542-unit backdrop.
   const panel=lists.panelContainer; Object.assign(panel,{_x:25,_y:0,_parent:lists});
   Object.assign(list,{_x:0,_y:0,_parent:panel});
-  list.header=box(-4,-30,551,20,list); list.background=box(0,0,516,444,list); list.scrollbar=box(534.5,35,20,444,list);
+  list.header=headerStub(list); list.background=box(0,0,516,444,list); list.scrollbar=box(534.5,35,14,444,list);
   Object.assign(lists,{categoryList:box(0,12,510,44,panel),categoryLabel:box(8,67,145,22,panel),
     searchWidget:box(0,0,140,20,panel),columnSelectButton:box(0,0,18,20,panel)});
   lists.categoryList.handleInput=()=>false;
@@ -115,10 +139,10 @@ for (const platform of [0,1]) {
   const lists = listsFixture(); lists._platform=platform;
   const key = (nav,value='keyDown',code=0) => lists.handleInput(event(nav,value,code),path());
   key('up'); assert.equal(lists.itemList.skycrpgCategoryFocus,true);
-  assert.ok(lists._skycrpgFocus.points.some(([x,y])=>x===0&&y===0));
+  assert.ok(lists._skycrpgFocus.points.some(([x,y])=>Math.abs(x-lists._skycrpgContent.left)<1e-9&&y===0));
   key('down'); assert.equal(lists.itemList.selectedIndex,10);
   assert.equal(lists.itemList.skycrpgCategoryFocus,false);
-  assert.ok(lists._skycrpgFocus.points.some(([x,y])=>x===0&&y===126));
+  assert.ok(lists._skycrpgFocus.points.some(([x,y])=>Math.abs(x-lists._skycrpgContent.left)<1e-9&&y===126));
   key('right'); assert.equal(lists.itemList.selectedIndex,40);
   // Empty categories consume only navigation; back reaches the native menu.
   lists.itemList.entries=[]; lists.itemList.selectedIndex=-1;
@@ -211,7 +235,7 @@ for (const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:1
   const list=lists.itemList, panel=lists.panelContainer;
   Object.assign(menu,{inventoryLists:lists,itemCard:{_parent:holder},mouseRotationRect:{Lock(){}},bottomBar:{getBounds(){return {yMin:rect.y+rect.height-50};}},skycrpgDrawEquipment(){}});
   lists._parent=menu;
-  for(const name of ['skycrpgLayout','skycrpgPositionCard','skycrpgModelColumn','skycrpgSyncStatus','skycrpgRefreshItemPreview','UpdateItemCardInfo']) menu[name]=method(menuSource,name);
+  for(const name of ['skycrpgLayout','skycrpgPositionCard','skycrpgModelColumn','skycrpgSyncStatus','skycrpgRefreshItemPreview','skycrpgPlaceItemPreview','UpdateItemCardInfo']) menu[name]=method(menuSource,name);
   menu.native_UpdateItemCardInfo=()=>{};
   const tileClips=tiles(list,18);
   menu.skycrpgLayout();
@@ -229,9 +253,9 @@ for (const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:1
   assert.ok(real.xMax<=model.left-16+0.001, 'panel real right edge clear of the model column');
   assert.ok(Math.abs(model.left-(rect.x+0.66*rect.width))<1e-9 && Math.abs(model.right-(rect.x+rect.width-16))<1e-9);
   assert.ok(menu._skycrpgPanel._x+264*scale<=lists._x);
-  assert.equal(menu.mouseRotationRect._x,model.left);
-  const preview={xMin:model.left,xMax:rect.x+rect.width,yMin:rect.y,yMax:rect.y+rect.height*0.55};
   const columnLeft=real.xMax+16, columnRight=rect.x+rect.width-16;
+  assert.ok(Math.abs(menu.mouseRotationRect._x-columnLeft)<1e-9);
+  const preview={xMin:columnLeft,xMax:rect.x+rect.width,yMin:rect.y,yMax:rect.y+rect.height*0.55};
   // C: the card lies in the fixed card column, below the band, above the bar.
   const cardBox=()=>({xMin:holder._x-15*holder._xscale/100,xMax:holder._x+485*holder._xscale/100,yMin:holder._y+50*holder._yscale/100,yMax:holder._y+650*holder._yscale/100});
   const card=cardBox();
@@ -264,23 +288,42 @@ for (const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:1
   list.selectedIndex=-1;menu.skycrpgSyncStatus();assert.equal(detail._visible,false);
   list.selectedIndex=10;const entries=list.entries;list.entries=[];menu.skycrpgSyncStatus();assert.equal(detail._visible,false);
   list.entries=entries;menu.skycrpgSyncStatus();assert.equal(detail._visible,true);
-  // Plugin refresh re-runs SkyUI's positionFloatingElements (its own
-  // UpdateItem3D call) only while a card is shown, never in a modal.
-  const delegated=[];menu.positionFloatingElements=()=>delegated.push('positionFloatingElements');
+  // A: the plugin is told to centre the preview over the card (stage units),
+  // then SkyUI's positionFloatingElements reloads the model while a card shows.
+  const delegated=[], placed=[];
+  global.skse={plugins:{SkyCRPGUI:{placeItemPreview(c,h){placed.push([c,h]);return true;}}}};
+  menu.positionFloatingElements=()=>delegated.push('positionFloatingElements');
   menu._bItemCardPositioned=true;menu.skycrpgRefreshItemPreview();
   assert.deepEqual(delegated,['positionFloatingElements']);
+  assert.equal(placed.length,1);
+  assert.ok(Math.abs(placed[0][0]-centre)<1e-9 && Math.abs(placed[0][1]-(columnRight-centre))<1e-9, 'preview centred over the card');
   menu._skycrpgModal=true;menu.skycrpgRefreshItemPreview();menu._skycrpgModal=false;
   list.selectedIndex=-1;menu.skycrpgRefreshItemPreview();
-  assert.equal(delegated.length,1);list.selectedIndex=10;
+  assert.equal(delegated.length,1);assert.equal(placed.length,2);list.selectedIndex=10;
+  delete global.skse.plugins.SkyCRPGUI.placeItemPreview;menu.skycrpgPlaceItemPreview();assert.equal(placed.length,2);
   // E: the backdrop and its frame cover the whole grid; the bracket hugs tiles.
   const backdrop=panel.ListBackground.getBounds(panel);
-  const lastTile=tileClips[17].getBounds(panel), firstTile=tileClips[0].getBounds(panel);
+  const content=frameContent(panel), L=list._x;
+  const firstTile={xMin:L,yMin:126,xMax:L+165,yMax:126+68}, lastTile={xMin:L+344,yMin:126+370,xMax:L+509,yMax:126+370+68};
+  assert.ok(Math.abs(L-content.left)<1e-9, 'tiles start at the frame padding');
   assert.ok(backdrop.yMax>=list._y+444 && backdrop.yMax>=lastTile.yMax, 'backdrop covers the six-row viewport');
+  // B (round 5): every panel child sits inside the frame lines with 8 units' padding.
+  for(const tile of tileClips) if(tile._visible) inside({xMin:L+tile._x,xMax:L+tile._x+165},content,'tile');
+  for(const [clip,label] of [[lists.categoryList,'category bar'],[lists.categoryList.background,'category rule'],[list.header,'header and rule'],
+    [list.scrollbar,'scrollbar'],[lists.searchWidget,'search'],[lists.columnSelectButton,'gear'],[lists.categoryLabel,'category caption']]) inside(clip.getBounds(panel),content,label);
+  assert.ok(Math.abs(list.header.getBounds(panel).xMax-content.right)<1e-6, 'header rule reaches the padding');
+  assert.ok(Math.abs(lists.categoryList.background.getBounds(panel).xMax-content.right)<1e-6, 'category rule reaches the padding');
+  assert.ok(Math.abs(lists.columnSelectButton.getBounds(panel).xMax-content.right)<1e-6, 'gear at the right padding');
   assert.ok(backdrop.yMin<0, 'native backdrop top retained');
   lists.skycrpgDrawFocus();
   let region=lists._skycrpgFocus.points;
   nearPoints([region[1],region[4]],[[firstTile.xMin,firstTile.yMin],[lastTile.xMax,lastTile.yMax]]);
+  inside({xMin:region[1][0],xMax:region[4][0]},content,'grid bracket');
   assert.ok(region[1][1]>=list.header.getBounds(panel).yMax);
+  // The category bracket uses the same padding.
+  list.skycrpgCategoryFocus=true;lists.skycrpgDrawFocus();region=lists._skycrpgFocus.points;
+  nearPoints([region[1],region[4]],[[content.left,0],[content.right,64]]);
+  list.skycrpgCategoryFocus=false;lists.skycrpgDrawFocus();region=lists._skycrpgFocus.points;
   // Layout runs on every positionFloatingElements; it must be idempotent.
   menu.skycrpgLayout();
   const again=panel.ListBackground.getBounds(panel);
@@ -289,7 +332,7 @@ for (const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:1
   tiles(list,1);lists.skycrpgDrawFocus();region=lists._skycrpgFocus.points;
   nearPoints([region[1],region[4]],[[firstTile.xMin,firstTile.yMin],[firstTile.xMax,firstTile.yMax]]);
   tiles(list,0);lists.skycrpgDrawFocus();region=lists._skycrpgFocus.points;
-  nearPoints([region[1],region[4]],[[0,126],[509,570]]);
+  nearPoints([region[1],region[4]],[[L,126],[L+509,126+370+68]]);
   tiles(list,18);
   assert.ok(lists.categoryList.background.getBounds(panel).xMax<=backdrop.xMax+0.001);
   for(const clip of [lists.categoryList.background,list.header,lists.categoryList,list.scrollbar]) assert.ok(clip.getBounds(menu).xMax<=model.left-16+0.001);

@@ -18,7 +18,7 @@ Do not claim universally safe mid-save uninstallation. If a selected provider or
 
 A missing optional minimap must not leave the standard compass permanently hidden. A disabled camera must not change UI-only behavior.
 
-The UI plugin's `[Inventory] bManageItemPreview` (default 1 in `Data/SKSE/Plugins/SkyCRPG_UI.ini`) moves the native 3D inventory preview at runtime only and restores it when the inventory closes or a game loads; it writes no user or game INI. To rule it out while troubleshooting the item preview, set it to 0 with the game closed and restart; see [Controls](CONTROLS.md).
+The UI plugin's `[Inventory] bManageItemPreview` (default 1 in `Data/SKSE/Plugins/SkyCRPG_UI.ini`) adjusts the native 3D inventory preview in memory while the player inventory is open; it writes no user or game INI setting or file, and every later menu starts from the game's own values. To rule it out while troubleshooting the item preview, set it to 0 with the game closed and restart; see [Controls](CONTROLS.md).
 
 ## Camera candidate disable and recovery
 

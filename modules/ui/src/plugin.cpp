@@ -666,6 +666,7 @@ bool RegisterSkyCRPGUI(RE::GFxMovieView* movie, RE::GFxValue* root)
 	if (!skycrpg::ui::follower::Register(movie, root)) return false;
 	if (!skycrpg::ui::inventory::Register(movie, root)) return false;
 	if (!skycrpg::ui::inventory::equipment::Register(movie, root)) return false;
+	if (!skycrpg::ui::inventory::preview::Register(movie, root)) return false;
 	RE::GFxValue value;
 	value.SetNumber(g_hudSettings.scalePercent);
 	if (!root->SetMember("hudScale", value)) return false;

@@ -254,7 +254,11 @@ for(const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:10
   assert.ok(real.xMax<=rect.x+0.66*rect.width-16+0.001);
   assert.ok(lists._y+(layoutList._y+444)*scale<=rect.y+rect.height);
   assert.ok(panel.ListBackground.getBounds(panel).yMax>=layoutList._y+444);
-  assert.ok(lists.searchWidget._x+lists.searchWidget._width<=520);
+  assert.ok(lists.searchWidget.getBounds(panel).xMax<=lists.columnSelectButton.getBounds(panel).xMin);
+  // Panel children stay inside the native frame lines (5.1 in) with 8 units' padding.
+  const frame=panel.ListBackground.getBounds(panel);
+  for(const clip of [layoutList.header,layoutList.scrollbar,lists.categoryList,lists.searchWidget,lists.columnSelectButton])
+    assert.ok(clip.getBounds(panel).xMin>=frame.xMin+13.1-1e-6 && clip.getBounds(panel).xMax<=frame.xMax-13.1+1e-6);
   assert.equal(layoutList.listHeight,444);assert.ok(layoutList.header.getBounds(panel).yMin>=lists.searchWidget.getBounds(panel).yMax);
   assert.ok(holder._x-15*holder._xscale/100>=real.xMax+16-0.001);
   assert.ok(holder._x+485*holder._xscale/100<=rect.x+rect.width);

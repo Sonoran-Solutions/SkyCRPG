@@ -88,6 +88,9 @@ def transform(name, text):
                             "      this.skycrpgInventoryCancel();\n      this.skycrpgPresentationClose();")
         text = replace_once(text, "      super.onItemCardSubMenuAction(event);",
                             "      super.onItemCardSubMenuAction(event);\n      this._skycrpgModal = event.opening == true;\n      this.skycrpgPositionCard();")
+        # DYL-168: re-apply the preview placement before SkyUI's UpdateItem3D.
+        text = replace_once(text, "   function onItemHighlightChange(event)\n   {\n      this.skycrpgInventoryCapture();",
+                            "   function onItemHighlightChange(event)\n   {\n      this.skycrpgInventoryCapture();\n      this.skycrpgPlaceItemPreview();")
         # DYL-168: the status line follows the card's fade on highlight changes.
         text = replace_once(text, "      super.onItemHighlightChange(event);\n      this.skycrpgInventoryCapture();",
                             "      super.onItemHighlightChange(event);\n      this.skycrpgInventoryCapture();\n      this.skycrpgSyncStatus();")

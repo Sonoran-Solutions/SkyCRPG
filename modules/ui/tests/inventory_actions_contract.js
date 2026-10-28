@@ -105,7 +105,7 @@ function fixture() {
       categoryList:{selectedEntry:{flag:1},entryList:[],UpdateList(){}},
       dispatchEvent(event){if (event.type === 'itemHighlightChange') native.onItemHighlightChange.call(instance,event);},
       InvalidateListData(){state.refreshes++; lists.InvalidateListData.call(this);}},
-    shouldProcessItemsListInput(){return true;}, updateBottomBar(){}, nativeHighlightChange(){}, skycrpgSyncStatus(){},
+    shouldProcessItemsListInput(){return true;}, updateBottomBar(){}, nativeHighlightChange(){}, skycrpgSyncStatus(){}, skycrpgPlaceItemPreview(){},
     confirmSelectedEntry(){return true;}, checkBook(){}, bFadedIn:true,
     itemCard:{ShowQuantityMenu(){}}, onQuantityMenuSelect:native.onQuantityMenuSelect,
   });

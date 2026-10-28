@@ -1,14 +1,13 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #pragma once
 // Portable policy for the player-inventory 3D item preview placement (DYL-168).
-// No engine types: the glue in item_preview_placement.cpp reads and writes the
-// in-memory `fInventory3DItemPos*:Interface` settings; nothing is persisted.
+// No engine types: item_preview_placement.cpp copies RE::Inventory3DManager's
+// cached itemPos/itemScale (and their copies) in and out of these structs.
+// No INI setting is read for placement or written at all.
 
 #include <algorithm>
-#include <array>
 #include <cerrno>
 #include <cmath>
-#include <cstddef>
 #include <cwchar>
 #include <optional>
 #include <string>
@@ -16,31 +15,19 @@
 
 namespace skycrpg::ui::inventory::preview {
 
-enum Slot : std::size_t { kPosX, kPosXWide, kPosZ, kPosZWide, kScale, kScaleWide, kSlotCount };
-
-// Only the inventory values. fMagic3DItemPos* is never touched.
-inline constexpr std::array<const char*, kSlotCount> kSettingNames{
-	"fInventory3DItemPosX:Interface", "fInventory3DItemPosXWide:Interface",
-	"fInventory3DItemPosZ:Interface", "fInventory3DItemPosZWide:Interface",
-	"fInventory3DItemPosScale:Interface", "fInventory3DItemPosScaleWide:Interface"
-};
-
-using Values = std::array<float, kSlotCount>;
-using Writes = std::array<std::optional<float>, kSlotCount>;
-
-// Geometry shared with inventory-presentation.as.inc (`skycrpgModelColumn`).
-// SkyUI SKI_ConfigMenu.ApplySettings: stage 1280x720, centre x 640, 1 position
-// unit = 8 stage units, negative X moves the model right; its 16:9 / 21:9 / 32:9
-// targets are 931.225 / 858 / 785.5. The owner's 1913x1080 captures put the
-// model centre at x ~1395 px = stage ~933, i.e. SkyUI's placement was active.
+// Stage geometry. SkyUI SKI_ConfigMenu.ApplySettings: stage 1280x720, centre
+// x 640, 1 position unit = 8 stage units, negative X moves the model right.
+// Round-4 evidence: fInventory3DItemPosX -36.403 put the model centre at stage
+// ~934 (640 + 8 * 36.403 = 931.2). Assumption: Inventory3DManager::itemPos.x
+// holds that same X (copied from the INI at Begin3D), itemPos.z the INI Z and
+// itemScale the INI scale; the owner run verifies it from the logged values.
 inline constexpr double kStageWidth = 1280.0;
 inline constexpr double kStageHeight = 720.0;
 inline constexpr double kStageCenterX = 640.0;
 inline constexpr double kStageUnitsPerPosition = 8.0;
-inline constexpr double kModelColumnFraction = 0.66;
 inline constexpr double kEdgeMargin = 16.0;
-// Worst observed model: the Elder Scroll, 760 px wide at 1.4945 px/unit and
-// SkyUI's default scale 1.5 = 508.5 stage units, i.e. 339 units per scale unit.
+// Worst observed model: the Elder Scroll, 760 px at 1.4945 px/unit and scale
+// 1.5 = 508.5 stage units, i.e. 339 units per scale unit.
 inline constexpr double kWorstWidthPerScale = 339.0;
 inline constexpr double kFitFraction = 0.9;
 inline constexpr float kMinScaleFactor = 0.4f;
@@ -112,138 +99,149 @@ inline ConfigParse ParseConfig(std::wstring_view manage, std::wstring_view scale
 	return result;
 }
 
-inline double SkyUiTargetX(double aspect)
+// Where the model goes, in stage units: the card's centre and the half-width
+// of its column (centre to the screen edge less 16).
+struct Target
 {
-	if (aspect > 3.0) {
-		return 785.5;
-	}
-	if (aspect > 2.0) {
-		return 858.0;
-	}
-	return 931.225;
-}
-
-struct Column
-{
-	double left{};
-	double right{};
+	double centre{};
+	double half{};
 };
 
-// Stage-space model column for a display aspect. Narrower than 16:9 keeps the
-// 1280-wide stage; wider displays reveal extra stage width around x 640.
-inline Column ModelColumn(double aspect)
+// Fallback when the menu has not reported its card column: the centre of the
+// right third (5/6 of the visible width), which matches the measured card.
+inline Target DefaultTarget(double aspect)
 {
 	if (!std::isfinite(aspect) || aspect <= 0.0) {
 		aspect = kStageWidth / kStageHeight;
 	}
 	const double width = std::max(kStageWidth, kStageHeight * aspect);
 	const double x = kStageCenterX - width / 2.0;
-	return { x + kModelColumnFraction * width, x + width - kEdgeMargin };
+	const double centre = x + width * 5.0 / 6.0;
+	return { centre, x + width - kEdgeMargin - centre };
 }
 
-inline float ComputeXShift(double aspect, const Config& config)
+// A reported target must lie right of the stage centre and fit a sane column.
+inline bool ValidTarget(const Target& target)
 {
+	return std::isfinite(target.centre) && std::isfinite(target.half) && target.centre > kStageCenterX &&
+	       target.centre < 4000.0 && target.half >= 40.0 && target.half <= 1000.0;
+}
+
+struct Placement
+{
+	float x{};
+	float y{};
+	float z{};
+	float scale{};
+
+	bool operator==(const Placement&) const = default;
+};
+
+inline bool Finite(const Placement& p)
+{
+	return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z) && std::isfinite(p.scale);
+}
+
+// Centre over the card and shrink to fit; y/z (depth and vertical) are kept.
+inline Placement Placed(const Placement& base, const Target& target, const Config& config)
+{
+	Placement result = base;
 	if (config.xShift) {
-		return *config.xShift;
+		result.x = base.x + *config.xShift;
+	} else {
+		result.x = static_cast<float>(-(target.centre - kStageCenterX) / kStageUnitsPerPosition);
 	}
-	const Column column = ModelColumn(aspect);
-	const double centre = (column.left + column.right) / 2.0;
-	const double shift = -(centre - SkyUiTargetX(aspect)) / kStageUnitsPerPosition;
-	return std::clamp(static_cast<float>(shift), kMinXShift, kMaxXShift);
-}
-
-inline float ComputeScaleFactor(double aspect, float baseScale, const Config& config)
-{
+	float factor = kMaxScaleFactor;
 	if (config.scaleFactor) {
-		return *config.scaleFactor;
+		factor = *config.scaleFactor;
+	} else if (std::isfinite(base.scale) && base.scale > 0.0f) {
+		const double fit = kFitFraction * 2.0 * target.half / (kWorstWidthPerScale * static_cast<double>(base.scale));
+		factor = std::clamp(static_cast<float>(fit), kMinScaleFactor, kMaxScaleFactor);
 	}
-	if (!std::isfinite(baseScale) || baseScale <= 0.0f) {
-		return kMaxScaleFactor;
-	}
-	const Column column = ModelColumn(aspect);
-	const double fit = kFitFraction * (column.right - column.left) / (kWorstWidthPerScale * static_cast<double>(baseScale));
-	return std::clamp(static_cast<float>(fit), kMinScaleFactor, kMaxScaleFactor);
-}
-
-// Shift right and scale down from the base values; the vertical position is kept.
-inline Values Placed(const Values& base, double aspect, const Config& config)
-{
-	Values result = base;
-	const float shift = ComputeXShift(aspect, config);
-	result[kPosX] = base[kPosX] + shift;
-	result[kPosXWide] = base[kPosXWide] + shift;
-	result[kScale] = base[kScale] * ComputeScaleFactor(aspect, base[kScale], config);
-	result[kScaleWide] = base[kScaleWide] * ComputeScaleFactor(aspect, base[kScaleWide], config);
+	result.scale = base.scale * factor;
 	return result;
 }
 
-// Restore state machine. The base is captured on the first open and never
-// re-captured while applied, so our own values are never mistaken for a base.
-class PlacementState
+struct EngineState
+{
+	Placement live{};  // itemPos / itemScale
+	Placement copy{};  // itemPosCopy / itemScaleCopy (un-zoomed placement)
+	float zoomProgress{};
+	bool startedZoom{};
+};
+
+enum class Outcome
+{
+	Written,
+	Unchanged,
+	ZoomActive,
+	Disabled,
+	Invalid
+};
+
+struct Result
+{
+	Outcome outcome{ Outcome::Unchanged };
+	Placement base{};
+	Placement written{};
+	bool newBase{ false };
+};
+
+// One player-inventory open. Idempotent: values equal to what we last wrote are
+// ours; any other live value is a new engine base (Begin3D or a reset), so our
+// own output is never shifted twice. Never writes while a zoom is in progress.
+class Session
 {
 public:
-	// `current` is empty when any setting is missing or not a float.
-	Writes Open(const std::optional<Values>& current, double aspect, const Config& config)
+	void Begin()
 	{
-		Writes writes{};
+		_hasWritten = false;
+		_open = true;
+	}
+	void End()
+	{
+		_hasWritten = false;
+		_open = false;
+	}
+	[[nodiscard]] bool Open() const { return _open; }
+
+	Result Apply(const EngineState& state, const Target& target, const Config& config)
+	{
+		Result result{};
 		if (!config.manage) {
-			return Restore(current);
+			result.outcome = Outcome::Disabled;
+			return result;
 		}
-		if (!current) {
-			_missing = true;
-			return writes;
+		if (!_open || !Finite(state.live) || !Finite(state.copy) || !ValidTarget(target)) {
+			result.outcome = Outcome::Invalid;
+			return result;
 		}
-		if (!_applied) {
-			_captured = *current;
-			_written = Placed(_captured, aspect, config);
-			_applied = true;
+		if (state.zoomProgress != 0.0f || state.startedZoom) {
+			result.outcome = Outcome::ZoomActive;
+			return result;
 		}
-		for (std::size_t slot = 0; slot < kSlotCount; ++slot) {
-			if ((*current)[slot] != _written[slot]) {
-				writes[slot] = _written[slot];
-			}
+		if (!_hasWritten || !(state.live == _written)) {
+			_base = state.live;
+			result.newBase = true;
 		}
-		return writes;
-	}
-
-	// Close, load, new game, or another item menu. A value changed by someone
-	// else since we wrote it (e.g. an MCM) is left alone.
-	Writes Restore(const std::optional<Values>& current)
-	{
-		Writes writes{};
-		if (!_applied) {
-			return writes;
+		const Placement target_placement = Placed(_base, target, config);
+		result.base = _base;
+		result.written = target_placement;
+		if (_hasWritten && state.live == target_placement && state.copy == target_placement) {
+			result.outcome = Outcome::Unchanged;
+			return result;
 		}
-		_applied = false;
-		if (!current) {
-			return writes;
-		}
-		for (std::size_t slot = 0; slot < kSlotCount; ++slot) {
-			if ((*current)[slot] == _written[slot] && _captured[slot] != _written[slot]) {
-				writes[slot] = _captured[slot];
-			}
-		}
-		return writes;
-	}
-
-	[[nodiscard]] bool Applied() const { return _applied; }
-
-	// True exactly once after a missing/wrong-typed setting was seen.
-	bool TakeMissingLog()
-	{
-		if (!_missing || _missingLogged) {
-			return false;
-		}
-		_missingLogged = true;
-		return true;
+		_written = target_placement;
+		_hasWritten = true;
+		result.outcome = Outcome::Written;
+		return result;
 	}
 
 private:
-	Values _captured{};
-	Values _written{};
-	bool _applied{ false };
-	bool _missing{ false };
-	bool _missingLogged{ false };
+	Placement _base{};
+	Placement _written{};
+	bool _hasWritten{ false };
+	bool _open{ false };
 };
 
 }  // namespace skycrpg::ui::inventory::preview

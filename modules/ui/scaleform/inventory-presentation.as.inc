@@ -23,8 +23,8 @@
       if(list._updateRequestID != undefined || list._invalidateRequestID != undefined) return;
       if(typeof list.UpdateList == "function") list.UpdateList();
    }
-   // Engine 3D preview column. The plugin's item_preview_policy.h targets the
-   // same stage rectangle (0.66 W to the edge less 16) while the menu is open.
+   // Layout limit: the panel's real right edge stays 16 units left of 0.66 W.
+   // The engine 3D preview is centred over the card column to its right.
    function skycrpgModelColumn()
    {
       var rect = Stage.visibleRect;
@@ -114,6 +114,10 @@
          var columnWidth = Math.max(0, rect.x + rect.width - 16 - columnX);
          var cardWidth = Math.min(408 * scale, columnWidth);
          var centre = columnX + columnWidth / 2;
+         // The plugin centres the engine 3D preview over the card.
+         this._skycrpgPreviewCentre = centre;
+         this._skycrpgPreviewHalf = rect.x + rect.width - 16 - centre;
+         this._skycrpgPreviewLeft = columnX;
          // SkyUI reserves the top 55% of the visible stage for model interaction.
          var cardTop = rect.y + 0.55 * rect.height + 8 * scale;
          // The full status line sits directly above the card, centred with it.
@@ -134,9 +138,10 @@
          holder._y = cardTop - bounds.yMin * fit;
       }
       var model = this.skycrpgModelColumn();
+      var modelLeft = this._skycrpgPreviewLeft == undefined ? model.left : this._skycrpgPreviewLeft;
       this.mouseRotationRect.Lock("T");
-      this.mouseRotationRect._x = model.left;
-      this.mouseRotationRect._width = rect.x + rect.width - model.left;
+      this.mouseRotationRect._x = modelLeft;
+      this.mouseRotationRect._width = rect.x + rect.width - modelLeft;
       this.mouseRotationRect._height = 0.55 * rect.height;
       if(this._skycrpgModalShade == undefined)
       {
@@ -168,12 +173,22 @@
          !list.skycrpgCategoryFocus && list.selectedIndex != -1 && list.selectedEntry != undefined &&
          list.getListEnumSize() > 0;
    }
-   // Called by the plugin after it applies the runtime preview placement.
-   // SkyUI's own positionFloatingElements re-requests the current model with
-   // its existing UpdateItem3D call; no new engine dispatch site is added.
+   // Ask the plugin to centre the engine preview over the card (stage units).
+   // It adjusts only Inventory3DManager's cached placement for this open.
+   function skycrpgPlaceItemPreview()
+   {
+      if(this._bMenuClosing || this._skycrpgPreviewCentre == undefined) return;
+      var bridge = skse == undefined || skse.plugins == undefined ? undefined : skse.plugins.SkyCRPGUI;
+      if(bridge != undefined && typeof bridge.placeItemPreview == "function")
+         bridge.placeItemPreview(this._skycrpgPreviewCentre,this._skycrpgPreviewHalf);
+   }
+   // Invoked by the plugin once per open from a UI task. SkyUI's own
+   // positionFloatingElements re-requests the current model with its existing
+   // UpdateItem3D call; no new engine dispatch site is added.
    function skycrpgRefreshItemPreview()
    {
       if(this._bMenuClosing || this._skycrpgModal) return;
+      this.skycrpgPlaceItemPreview();
       if(this._bItemCardFadedIn == true && this._bItemCardPositioned == true &&
          this.inventoryLists.itemList.selectedIndex != -1)
          this.positionFloatingElements();

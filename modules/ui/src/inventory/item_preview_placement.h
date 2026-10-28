@@ -5,6 +5,8 @@
 namespace skycrpg::ui::inventory::preview {
 // Reads [Inventory] from the plugin's own INI (read-only) and logs the result.
 void Configure(const std::wstring& iniPath);
-// Registers the menu sink on kDataLoaded; restores on load/new game.
+// Adds placeItemPreview(centre, half) to the SkyCRPGUI Scaleform object.
+bool Register(RE::GFxMovieView* movie, RE::GFxValue* root);
+// Registers the menu sink on kDataLoaded; ends the session on load/new game.
 void OnSkseMessage(SKSE::MessagingInterface::Message* message);
 }
