@@ -2,6 +2,7 @@
 // Test-only observer. No hooks, input emission, serialization or game-state mutations.
 #include <SKSE/SKSE.h>
 #include <RE/A/ActorValueOwner.h>
+#include <RE/A/AIProcess.h>
 #include <RE/B/BSInputDeviceManager.h>
 #include <RE/B/ButtonEvent.h>
 #include <RE/B/BSTimer.h>
@@ -20,6 +21,10 @@
 #include <RE/T/TESContainerChangedEvent.h>
 #include <RE/T/TESEquipEvent.h>
 #include <RE/T/TESObjectCELL.h>
+#include <RE/T/TESObjectREFR.h>
+#include <RE/T/TESObjectARMO.h>
+#include <RE/T/TESObjectWEAP.h>
+#include <RE/B/BGSBipedObjectForm.h>
 #include <RE/U/UI.h>
 
 // CommonLib/REX headers must precede the Windows headers in the skeleton.
@@ -27,6 +32,7 @@
 #include "json_line.h"
 #include "probe_config.h"
 #include "snapshot_policy.h"
+#include "observation_policy.h"
 #include "perf_policy.h"
 
 #include <bcrypt.h>
@@ -207,26 +213,113 @@ json::Object Resource(RE::PlayerCharacter* player, RE::ActorValue value)
 void ItemCardField(json::Object& fields, RE::UI* ui)
 {
 	constexpr const char* card = "_root.Menu_mc.itemCardFadeHolder.ItemCard_mc";
-	if (!ui || !ui->IsMenuOpen("InventoryMenu")) { fields.Null("item_card_submenu"); return; }
+	if (!ui || !ui->IsMenuOpen("InventoryMenu")) { fields.Null("item_card_submenu").Null("item_card_quantity"); return; }
 	const auto movie = ui->GetMovieView("InventoryMenu");
 	RE::GFxValue value;
 	if (!movie || !movie->GetVariable(&value, card) || value.IsUndefined()) {
 		Log("SkyCRPG_TestProbe: inventory item card unavailable\n");
-		fields.Null("item_card_submenu");
+		fields.Null("item_card_submenu").Null("item_card_quantity");
 		return;
 	}
 	RE::GFxValue handler;
 	const bool open = movie->GetVariable(&handler, (std::string(card) + ".InputHandler").c_str()) &&
 		!handler.IsUndefined() && !handler.IsNull();
 	fields.Boolean("item_card_submenu", open);
+	RE::GFxValue quantity;
+	if (open && movie->GetVariable(&quantity, (std::string(card) + ".QuantitySlider_mc.value").c_str()) && quantity.IsNumber())
+		fields.Numeric("item_card_quantity", quantity.GetNumber());
+	else fields.Null("item_card_quantity");
 }
 
-void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
+// All GFx values are task-local copies; no invocation or mutation of movies.
+bool Variable(RE::GFxMovieView* movie, const char* path, RE::GFxValue& value)
+{
+	return movie && movie->GetVariable(&value, path) && !value.IsUndefined() && !value.IsNull();
+}
+void BooleanVariable(json::Object& output, std::string_view name, RE::GFxMovieView* movie, const char* path)
+{
+	RE::GFxValue value;
+	if (Variable(movie, path, value) && value.IsBool()) output.Boolean(name, value.GetBool());
+	else output.Null(name);
+}
+void Clip(json::Object& output, std::string_view name, RE::GFxMovieView* movie, const char* path)
+{
+	json::Object clip;
+	RE::GFxValue value;
+	if (!movie) { output.Null(name); return; }
+	const bool present = Variable(movie, path, value) && value.IsDisplayObject();
+	clip.Boolean("present", present);
+	if (!present) { clip.Boolean("visible", false); output.Raw(name, clip.Json()); return; }
+	// _visible is local in AS2. Include every ancestor's visibility and alpha,
+	// with a hard bound and unknown if a chain/property cannot be resolved.
+	bool visible = true, complete = false;
+	for (unsigned depth = 0; depth < 16; ++depth) {
+		RE::GFxValue shown, alpha, parent;
+		if (!value.GetMember("_visible", &shown) || !shown.IsBool() ||
+			!value.GetMember("_alpha", &alpha) || !alpha.IsNumber()) break;
+		visible = visible && shown.GetBool() && alpha.GetNumber() > 0;
+		if (!visible) { complete = true; break; }
+		if (!value.GetMember("_parent", &parent) || parent.IsUndefined() || parent.IsNull()) { complete = true; break; }
+		if (!parent.IsDisplayObject()) break;
+		value = parent;
+	}
+	if (complete) clip.Boolean("visible", visible);
+	else clip.Null("visible");
+	output.Raw(name, clip.Json());
+}
+void UIFields(json::Object& fields, RE::UI* ui)
+{
+	const auto hud = ui ? ui->GetMovieView("HUD Menu") : nullptr;
+	json::Object state;
+	Clip(state, "compass", hud.get(), "_root.HUDMovieBaseInstance.CompassShoutMeterHolder.Compass");
+	Clip(state, "minimap", hud.get(), "_root.HUDMovieBaseInstance.Minimap");
+	Clip(state, "root", hud.get(), "_root.HUDMovieBaseInstance.SkyCRPGStatus");
+	// A present root can be hidden while data is stale. Expose readiness separately.
+	BooleanVariable(state, "data_ready", hud.get(), "_root.HUDMovieBaseInstance.SkyCRPGStatus._skycrpgDataReady");
+	std::string slots = "[";
+	for (unsigned i = 0; i < 8; ++i) {
+		if (i != 0) slots += ',';
+		json::Object slot;
+		const auto path = "_root.HUDMovieBaseInstance.SkyCRPGHotbar.slot" + std::to_string(i);
+		for (const auto* member : { "key", "kind", "name", "count" }) {
+			RE::GFxValue text;
+			if (Variable(hud.get(), (path + "." + member + ".text").c_str(), text) && text.IsString())
+				slot.String(member, text.GetString());
+			else slot.Null(member);
+		}
+		slots += slot.Json();
+	}
+	state.Raw("hotbar", slots + ']');
+	fields.Raw("hud", state.Json());
+	if (!ui || !ui->IsMenuOpen("InventoryMenu")) { fields.Null("inventory"); return; }
+	const auto movie = ui->GetMovieView("InventoryMenu");
+	constexpr const char* list = "_root.Menu_mc.inventoryLists.itemList";
+	json::Object inventory;
+	RE::GFxValue itemList, grid, selected, name, count;
+	if (!Variable(movie.get(), list, itemList)) { fields.Null("inventory"); return; }
+	// skycrpgGrid is absent from a stock movie and explicitly false on a generated fallback.
+	const bool hasGrid = itemList.GetMember("skycrpgGrid", &grid) && !grid.IsUndefined();
+	if (!hasGrid || grid.IsBool()) inventory.Boolean("grid_active", hasGrid && grid.GetBool());
+	else inventory.Null("grid_active");
+	if (itemList.GetMember("selectedEntry", &selected) && selected.IsObject()) {
+		if (selected.GetMember("text", &name) && name.IsString()) inventory.String("selected_name", name.GetString());
+		else inventory.Null("selected_name");
+		if (selected.GetMember("count", &count) && count.IsNumber()) inventory.Numeric("selected_count", count.GetNumber());
+		else inventory.Null("selected_count");
+	} else inventory.Null("selected_name").Null("selected_count");
+	fields.Raw("inventory", inventory.Json());
+}
+
+void Snapshot(bool requested, const std::string& tag, std::uint64_t generation, const json::StateRequest& request)
 {
 	json::Object fields;
-	fields.Boolean("requested", requested);
+	fields.Numeric("observation_protocol", json::kObservationProtocol).Boolean("requested", requested);
 	if (requested) fields.String("tag", tag);
 	ThreadFields(fields);
+	if (!request.valid) {
+		fields.Boolean("available", false).String("reason", "invalid_state_request");
+		Emit("player_state", fields); return;
+	}
 	const auto currentGeneration = g_probe->generation.load();
 	const bool loaded = g_probe->loaded.load();
 	fields.Numeric("queued_generation", generation).Numeric("current_generation", currentGeneration)
@@ -269,7 +362,43 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
 	FormField(equipped, "right", player->GetEquippedObject(false));
 	FormField(equipped, "left", player->GetEquippedObject(true));
 	FormField(equipped, "ammo", player->GetCurrentAmmo());
+	const auto* right = player->GetEquippedObject(false);
+	const auto* weapon = right ? right->As<RE::TESObjectWEAP>() : nullptr;
+	equipped.Boolean("two_handed", weapon && json::TwoHandedWeapon(static_cast<unsigned>(weapon->GetWeaponType())));
+	using Slot = RE::BGSBipedObjectForm::BipedObjectSlot;
+	if (requested) {
+		FormField(equipped, "body", player->GetWornArmor(Slot::kBody, true));
+		FormField(equipped, "ring", player->GetWornArmor(Slot::kRing, true));
+		FormField(equipped, "amulet", player->GetWornArmor(Slot::kAmulet, true));
+	} else equipped.Null("body").Null("ring").Null("amulet");
 	fields.Raw("equipped", equipped.Json());
+	FormField(fields, "selected_power", player->GetActorRuntimeData().selectedPower);
+	const auto* process = player->GetActorRuntimeData().currentProcess;
+	if (process && process->high) fields.Numeric("voice_recovery", player->GetVoiceRecoveryTime());
+	else fields.Null("voice_recovery");
+	fields.Boolean("weapon_drawn", player->IsWeaponDrawn());
+	fields.Numeric("carry_weight", player->GetActorValue(RE::ActorValue::kInventoryWeight));
+	json::Object counts, weights;
+	if (request.count > 0) {
+		// One filtered no-init scan per explicit request, never on the periodic path.
+		const bool inventoryAvailable = player->GetInventoryChanges(true) != nullptr;
+		const auto inventory = inventoryAvailable ? player->GetInventoryCounts([&request](RE::TESBoundObject& object) {
+			for (std::size_t i = 0; i < request.count; ++i) if (object.GetFormID() == request.forms[i]) return true;
+			return false;
+		}, true) : RE::TESObjectREFR::InventoryCountMap{};
+		for (std::size_t i = 0; i < request.count; ++i) {
+			const auto formID = request.forms[i];
+			const auto* form = RE::TESForm::LookupByID<RE::TESBoundObject>(formID);
+			if (!form) { counts.Null(json::FormID(formID)); weights.Null(json::FormID(formID)); continue; }
+			weights.Numeric(json::FormID(formID), form->GetWeight());
+			if (!inventoryAvailable) { counts.Null(json::FormID(formID)); continue; }
+			std::int32_t count = 0;
+			for (const auto& [object, quantity] : inventory) if (object && object->GetFormID() == formID) count = quantity;
+			counts.Numeric(json::FormID(formID), count);
+		}
+	}
+	fields.Raw("item_counts", counts.Json()).Raw("item_weights", weights.Json());
+	UIFields(fields, ui);
 	const auto* camera = RE::PlayerCamera::GetSingleton();
 	if (camera && camera->currentState) fields.Numeric("camera_state", static_cast<std::uint32_t>(camera->currentState->id));
 	else {
@@ -289,7 +418,7 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
 		ItemCardField(fields, ui);
 	} else {
 		Log("SkyCRPG_TestProbe: UI unavailable\n");
-		fields.Null("paused").Null("open_menus").Null("item_card_submenu");
+		fields.Null("paused").Null("open_menus").Null("item_card_submenu").Null("item_card_quantity");
 	}
 	Emit("player_state", fields);
 }
@@ -303,8 +432,9 @@ bool QueueSnapshot(bool requested = false, std::string tag = {}, bool timer = fa
 	try {
 		if (timer && g_probe->timerPending.exchange(true)) return false;
 		const auto generation = g_probe->generation.load();
-		const bool queued = QueueProbeTask([requested, tag = std::move(tag), generation, timer] {
-			try { Snapshot(requested, tag, generation); }
+		const auto request = json::ParseStateRequest(tag);
+		const bool queued = QueueProbeTask([requested, request, generation, timer] {
+			try { Snapshot(requested, request.tag, generation, request); }
 			catch (...) { Log("SkyCRPG_TestProbe: snapshot failed; skipped\n"); }
 			if (timer) g_probe->timerPending.store(false);
 		});
@@ -884,7 +1014,7 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* sks
 		g_probe->interval = json::ParseInterval(ReadDigits(ini, L"iStateIntervalMs", L"1000").data());
 		const auto fields = json::Object{}.String("runtime", Version(skseInterface->runtimeVersion))
 			.String("skse", Version(skseInterface->skseVersion)).String("probe_version", SKYCRPG_VERSION)
-			.String("snapshot_dispatch", "ui_task_drain_v3").Numeric("perf_protocol", 1)
+			.String("snapshot_dispatch", "ui_task_drain_v3").Numeric("perf_protocol", 1).Numeric("observation_protocol", json::kObservationProtocol)
 			.String("build_commit", SKYCRPG_SOURCE_COMMIT).Boolean("enabled", true).Numeric("state_interval_ms", g_probe->interval);
 		if (!PinnedAddressLibrary()) {
 			Log("SkyCRPG_TestProbe: pinned Address Library 13 missing/unreadable/mismatched; CommonLib Init skipped\n");

@@ -72,7 +72,7 @@ Write UTF-8 text to `<My Games>/Skyrim Special Edition/SKSE/SkyCRPG_TestProbe.re
 renamed into place. The timer reads it at its configured cadence and queues a
 task-drain `player_state` with `requested:true` and **the exact file contents**
 in `tag`. Checkpoint tags are raw text, not JSON; whitespace, newlines and NULs are
-preserved and JSON-escaped, except the reserved `@perf ` command namespace below. The maximum tag is 65536 bytes. Oversized/unreadable
+preserved and JSON-escaped, except the reserved `@perf ` and `@state ` command namespaces below. The maximum tag is 65536 bytes. Oversized/unreadable
 requests are logged and left on disk; ordinary periodic samples continue.
 
 After enqueueing, the opened request file is marked for deletion by handle,
@@ -108,7 +108,7 @@ uppercase strings such as `"0x00000014"`; absent objects are `null`.
 
 | `ev` | Additional fields |
 | --- | --- |
-| `probe_loaded` | `runtime`, `skse` (four-part version strings), `probe_version`, `snapshot_dispatch` (`"ui_task_drain_v3"`), `perf_protocol` (`1`), `build_commit` (`"unknown"` if not supplied), `enabled` (always `true`; a disabled probe writes nothing), `state_interval_ms` |
+| `probe_loaded` | `runtime`, `skse` (four-part version strings), `probe_version`, `snapshot_dispatch` (`"ui_task_drain_v3"`), `perf_protocol` (`1`), `observation_protocol` (`2`), `build_commit` (`"unknown"` if not supplied), `enabled` (always `true`; a disabled probe writes nothing), `state_interval_ms` |
 | `data_loaded` | None; SKSE `kDataLoaded` |
 | `game_loaded` | `success` from SKSE `kPostLoadGame`'s pointer-encoded boolean; `save_name` copied from `kPreLoadGame`, or `null` |
 | `new_game` | None; SKSE `kNewGame` |
@@ -121,7 +121,7 @@ uppercase strings such as `"0x00000014"`; absent objects are `null`.
 | `inventory_open` | `label`, `cold` (first inventory open in this process), `correlated`, `key_qpc_ms` (or null), `open_qpc_ms`, `pre_open_median_ms`, `t_event_ms`, `t_settled_ms` (each null if unavailable), `periods_ms` (up to the first 30 post-open UI-drain periods) |
 | `resource_check` | `phase` (`start`/`stop`); `t` defines the memory analysis window |
 | `process_memory` | `private_bytes`, `working_set_bytes`; sampled by the existing timer while loaded, at `iStateIntervalMs`, coalesced if a tick is busy. Failed queries omit the event and log once. |
-| `player_state` | `requested`, optional `tag`, `available`; when available: `position:{x,y,z}`, `cell:{form_id,editor_id,name}` or `null`, `health`, `magicka`, `stamina` (each `{current,max}`), `equipped:{right,left,ammo}`, `camera_state`, `paused`, `open_menus`, `item_card_submenu` |
+| `player_state` | `requested`, optional `tag`, `available`; when available: `position:{x,y,z}`, `cell:{form_id,editor_id,name}` or `null`, `health`, `magicka`, `stamina` (each `{current,max}`), `equipped:{right,left,ammo,two_handed,body,ring,amulet}`, `camera_state`, `paused`, `open_menus`, `item_card_submenu`; protocol 2 adds carry/count/weight/voice/HUD/inventory fields documented below |
 
 `container.count_delta` is positive into the player and negative out; a transfer
 from the player to itself is zero. `new_count` is currently always `null`
@@ -158,8 +158,8 @@ raises no menu event, so routes use this field to see it. `open_menus` lists
 registered menus whose `IMenu::OnStack()` flag is set; ordering is unspecified.
 `camera_state` is the native numeric camera state ID, not a claim about which
 mod owns the camera. Resources use live current values and permanent plus
-temporary maximums; this is base-form telemetry, not instance identity or
-ownership/weight evidence.
+temporary maximums; resources are base-form telemetry, not instance identity or ownership evidence.
+Protocol 2 adds numeric carried-weight samples and aggregate requested counts below.
 
 ## Portable check
 
@@ -253,7 +253,7 @@ an inventory capture itself when used outside a `perf_capture`. The supplied
 keyboard/mouse routes require Inventory=I and Back=TAB; physical controller off.
 Controller/Tween behavior requires a separate manual runtime pass.
 
-Run **all four** portable contracts using the same glob as CI:
+Run **all five** portable contracts using the same glob as CI:
 
 ```bash
 for source in tools/testprobe/tests/*_test.cpp; do
@@ -268,3 +268,99 @@ reserved requests, two-queue single-chain start/stop/restart, idle hops, enqueue
 sliding runaway window and recovery. Windows `/W4 /WX /permissive-` build and the new performance
 adapter's runtime behavior are **NOT_RUN**. Earlier runtime passes above apply
 only to the earlier player-state observer, not these new measurements.
+
+## DYL-170 observations (protocol 2; runtime NOT_RUN)
+
+`probe_loaded.observation_protocol` and every `player_state.observation_protocol`
+are **2**. The frame timing/performance protocol remains **1**; its request
+namespace, queue chain and portable tests are preserved. Rebuild the Windows
+probe before running DYL-170; an earlier DLL cannot provide these observations.
+
+The existing raw checkpoint request is unchanged. A second reserved namespace
+requests counts for at most 16 distinct nonzero base FormIDs:
+
+```text
+@state drop-before 0x000139BD,0x00012EB7
+```
+
+No trailing newline. The tag matches `[A-Za-z0-9_.-]{1,40}`. Forms use `0x` plus
+eight hex digits; duplicates, zero, malformed IDs, an empty list and more than
+16 IDs are rejected. The response `tag` is `drop-before`, not the entire wire
+command. Invalid structured requests return `available:false` with
+`reason:invalid_state_request`. Ordinary raw tags still preserve their exact
+bytes. `@perf ` keeps its existing meaning. All requests share the existing
+atomic file, enqueue acknowledgement and generation/task-drain gates.
+
+Additional available `player_state` fields:
+
+- `carry_weight`: live `ActorValue::kInventoryWeight`, the current carried
+  inventory weight, not the maximum carry capacity.
+- `item_counts` and `item_weights`: objects keyed by canonical uppercase
+  FormIDs. A valid known base object absent from inventory has count zero;
+  an unresolved/non-bound form has null count/weight. An uninitialized native
+  inventory has null counts rather than fabricated zeroes. Weight is the native
+  base-form weight, not an invented quantity or per-instance/perk weight.
+  Counts aggregate same-base items and do not prove ownership/instance identity.
+  The filtered `GetInventoryCounts(filter, true)` scan runs only for an explicit
+  request with IDs, once per request, never per frame or periodic snapshot.
+- `equipped`: existing `right`, `left`, `ammo`, plus `two_handed` (right-hand
+  weapon type: two-handed sword/axe, bow or crossbow), and `body`, `ring`,
+  `amulet` (worn armor FormID or null). Armor reads use `GetWornArmor(slot,true)`
+  only on explicit requested snapshots; those three fields are null on periodic
+  snapshots to avoid adding periodic inventory scans.
+- `selected_power`, `voice_recovery` (null without a current high process),
+  `weapon_drawn`: native shout/power, remaining global voice recovery seconds
+  and native drawn state. These do not implement a cooldown or combat policy.
+- `hud.compass`, `hud.minimap`, `hud.root`: each `{present,visible}`, or null
+  without a HUD movie. `root` observes the active SkyCRPG status clip;
+  `hud.data_ready` separately reports its `_skycrpgDataReady` flag. Visibility
+  includes ancestor `_visible` and `_alpha`, bounded at 16 ancestors; malformed
+  or unresolved chains produce null visibility. A missing clip in an available
+  movie reports present=false and visible=false.
+- `hud.hotbar`: eight copied display cells, each `{key,kind,name,count}` from
+  their text fields (null when unavailable). Names may be visually abbreviated;
+  these are presentation observations, not an authoritative assignment API.
+  The runner correlates decision logs with native equip/container events and
+  requests authoritative counts separately.
+- `inventory`: null when InventoryMenu is closed or its list cannot resolve;
+  otherwise `{grid_active,selected_name,selected_count}`. Missing `skycrpgGrid`
+  on a stock list means false; an unexpected property type means null. A missing
+  selection has null name/count.
+
+The exact read-only movie paths were checked against SkyUI 6.11's source:
+`source/actionscript/Vanilla/HUDMenu.as`, `HUDWidgets/WidgetLoader.as` and
+`source/swf/hudmenu.xml` establish `_root.HUDMovieBaseInstance`;
+`CompassShoutMeterHolder.Compass` is the native compass. Our
+`modules/ui/scaleform/compass-policy.as.inc` observes `HUDMovieBaseInstance.Minimap`;
+`modules/ui/src/minimap/pins.h` pins InfinityUI's
+`Interface/InfinityUI/HUDMenu/HUDMovieBaseInstance/Minimap.swf` and the three
+provider DLLs. `SkyCRPGStatus` and `SkyCRPGHotbar.slot0` through `slot7` come
+from `hud-init.as.inc`. Inventory uses `_root.Menu_mc.inventoryLists.itemList`
+with `skycrpgGrid`, `selectedEntry.text` and `selectedEntry.count`, matching
+SkyUI's InventoryMenu/InventoryLists and our inventory presentation include.
+No GFx function is invoked; no movie, player, inventory entry or form pointer
+is retained across tasks.
+
+CommonLib 7.2.0 signatures were verified in the supplied local headers:
+`UI::GetMovieView(string_view) -> GPtr<GFxMovieView>`, `GFxValue` getters,
+`TESForm::GetWeight() const`, `TESObjectREFR::GetInventoryCounts(filter,bool)`,
+`Actor::GetWornArmor(BipedObjectSlot,bool)`, `GetEquippedObject(bool)`,
+`GetActorRuntimeData().selectedPower/currentProcess`, `GetVoiceRecoveryTime()`,
+`IsWeaponDrawn()` and `ActorValue::kInventoryWeight`. All three biped slot
+constants and weapon type numbers are present in that pin. Windows MSVC
+compilation and live GFx behavior remain NOT_RUN; portable checks do not prove
+these engine adapters.
+
+`observation_policy_test.cpp` covers the new parser (including raw-tag
+compatibility, duplicates, invalid digits and exact 16-ID boundary) and weapon
+classification. Run the existing `tools/testprobe/tests/*_test.cpp` glob to
+include it alongside all four earlier suites. The observer remains opt-in and
+never ships in either module package.
+
+DYL-170 also reads `item_card_quantity` from the same task-local ItemCard's
+`QuantitySlider_mc.value` while a submenu is open (otherwise null). SkyUI's
+ItemCard.as sets this slider's maximum/current value in ShowQuantityMenu and
+reads that exact value in HandleQuantityMenuInput before native quantitySelect.
+The route adjusts with LEFT and requires a requested numeric value of exactly
+one **before** sending confirmation, preventing a bad adjustment from dropping
+an unintended quantity. Windows/runtime validation remains NOT_RUN.
