@@ -1,6 +1,6 @@
 # Runtime, dependency and evidence baseline
 
-DYL-154 baseline, updated with DYL-155 evidence on 2026-10-26. **One tested feasibility environment**, with scoped working behaviors and explicit failures below. This is not a finished MVP support certification. Other runtimes, operating systems, Proton builds and untested mod combinations are unsupported by Phase 1 evidence. [Acceptance matrix](acceptance-matrix.md) owns requirement status; [dependency lock](dependency-lock.md) owns exact upstream files, source commits and permissions.
+DYL-154 baseline, updated with DYL-155 evidence on 2026-10-26. The [Phase 3 candidate](#dyl-169-phase-3-candidate) section was added on 2026-10-28; the host and provider pins are unchanged. **One tested feasibility environment**, with scoped working behaviors and explicit failures below. This is not a finished MVP support certification. Other runtimes, operating systems, Proton builds and untested mod combinations are unsupported by Phase 1 evidence. [Acceptance matrix](acceptance-matrix.md) owns requirement status; [dependency lock](dependency-lock.md) owns exact upstream files, source commits and permissions.
 
 ## Host and runtime
 
@@ -77,3 +77,22 @@ The [gate](../evidence/p1/gate.md) reuses the provider-present profiles and adds
 ## DYL-157 read-only compression source candidate
 
 The [P2-02 candidate](../evidence/p2/obstruction.md) adds opt-in rendered-root/current-SmoothCam-goal compression and portable hysteresis without changing dependency/runtime pins. Automatic framing is opt-in only (default `bEnabled=0`). Separately scoped integration `155a3e3` owner route **PASS** (run `6456672598ca49c684ce42b5cd5a90d0`); `3ec6730` regression **PASS** (run `fd4aee259c8943c49ec764f8e576f523`, Windows build [40446402141](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40446402141)). The subsequent zoom-tracker fix has Linux tests **PASS**, but its Windows build and owner check are **NOT_RUN**. Active-obstruction F8 return and comprehensive clearance/oscillation remain **NOT_RUN**; full C2/P2-02 remains open. Beam-triggered tightening and overhead-object pop remain limitations.
+
+## DYL-169 Phase 3 candidate
+
+Recorded at the [Phase 3 gate](../evidence/p3/gate.md) on 2026-10-28. The host, runtime, compatibility layer, GPU and the external provider packages above are **unchanged**; no provider was upgraded or replaced during Phase 3. Input on this host is an 8BitDo controller in XInput mode plus keyboard/mouse. Skyrim ignores keyboard/mouse while the controller is on, so keyboard/mouse routes run with it off. Deskflow's virtual pointer breaks mouse look.
+
+| Material | Exact identity |
+| --- | --- |
+| UI internal candidate | Source `9a8692e4b5592edd26ecf8e82733a067862f3b13`, CI 40638507073. ZIP `79b79809fcc744b58792192551114c908a4d436c8fff7381f90f22e81029a91c`, DLL `c3ef6c3a1fef2e0df1d70a6c2ad864252b6ed1df90ac9cec3a5202819c71ed53`, INI `c7222ebd3f694d074cb6e37dee551f16c6df31ac099742169f0b1410a5a1ba27` |
+| UI generated movies | `inventorymenu.swf` `2302b306cd3beb6e69a1962a76030f57f1c85a2fcea43ec9938c818e8fb1b3ba`; `skyui/inventorylists.swf` `34e32f04521a28acf16b00e263a479ca233a0814e986a8e0d91bcc46b4024518`; `hudmenu.swf` `54937d9d48d9a5de4c757ca2ce874fff4a41ed72b39048ad2eabd98292a31628` |
+| Camera candidate | Source `28aae27`, ZIP `b97997f62df7c914959938938229384a1d7b3b558d6a1c75681270ec4db156dc`, DLL `2ae4d51326604eeaa1ef2dd2b021be41ee53652602ab865b144b84d01ba1fa0d` |
+| Main | `c10cd80`; module sources equal the two candidates above (only the test-probe CMake option, default OFF, differs). Main-built DLLs are not byte-identical and are **NOT_RUN** in game. |
+| Test probe (never shipped) | `tools/testprobe`, merged `aaba0c3`, DLL `8f579cfe94250c137807ae4e526269872ec8b5f8a4e9e25459f13c6b9d2af5d2`. Opt-in (`bEnabled=1`); installed only into disposable profiles for automated routes; not part of any profile below. |
+
+| Profile, host above | Phase 3 status and exact scope |
+| --- | --- |
+| UI-only | **PASS (owner-reported, bounded)** on the leaf candidates: inventory integrity, grid (500 entries at 1280×720), follower, minimap with both fallbacks, and the final layout at 720p and at 1080p/115%. The **final-candidate (`9a8692e`) UI-only smoke is NOT_RUN** (owner-waived). |
+| Combined | **PASS** on the final candidate `9a8692e` with Camera `28aae27`: automated keyboard/mouse route (supervised, unattended and a merged-probe smoke, 9/9 each), owner manual lifecycle session on both devices, and the malformed-INI session. Earlier combined leaf runs cover inventory, grid and minimap. The 15–20 minute outdoor-to-dungeon route is **NOT_RUN** (owner-waived). |
+| Camera-only | No Phase 3 run; the Camera tree is unchanged since the Phase 2 evidence. |
+| Other hosts, runtimes, GPUs and mod combinations | **NOT_RUN**; no support claim, as above. |
