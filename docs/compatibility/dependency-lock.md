@@ -119,3 +119,47 @@ DYL-166 loose-file preflight checks pinned Line-17 DLL and DEM Common SWF SHA-25
 ## DYL-165 Party Sheet capability check
 
 Party Sheet 3.7's DLL exports only `SKSEPlugin_Load`, `SKSEPlugin_Query` and `SKSEPlugin_Version`. Its binary strings suggest an internal HUD-visibility interface, but the extracted distribution has no public actor-data or portrait API header or contract. Its whitelist/allies/blacklist settings drive its own selection. It stays optional and is not a SkyCRPG follower dependency; its portraits are not copied or bundled. SkyCRPG UI uses its own bounded native observer instead. See [follower evidence](../evidence/p3/follower-hud.md).
+
+## Phase 4 internal candidate assembly — DYL-171
+
+The selected versions above are unchanged. `tools/package.py` has one candidate
+`VERSION`, currently `0.1.0-rc.1`. CI continues to emit native DLL/INI/notices only;
+local `assemble` adds the generated UI movies or Camera provider configuration.
+Each module has its own Data-relative archive, manifest and `SHA256SUMS`;
+`distribution` is `internal-candidate`. This designation does not authorize
+public distribution or settle third-party rights.
+
+Both manifests require Steam Skyrim SE 1.7.104.0, SKSE64 2.3.1, Address Library 13
+and SkyUI Community 6.11. Camera additionally requires SmoothCam 1.8.1, TDM 2.3.1
+and MCM Helper 1.6.3. UI's minimap-capable recipe additionally requires Infinity UI
+NG 2.1.3, LMU settings fork 1.3.4 and Dragon's Eye settings fork 1.7.5, using Common
+assets plus Line-17 DLLs. Whole-provider absence remains a separate fallback;
+Party Sheet and optional menu frameworks are not candidate requirements.
+
+Assembly checks the CI archive/file hashes, the DLL's embedded source SHA, and
+(for UI) `build.json`'s SkyUI source/base pins, evidence owner, full compiled movie
+set, movie hashes, committed patch-include hashes and SkyCRPG source SHA. Final
+UI builds need the packaging lane's proposed builder provenance integration
+patch; historical SWF manifests lack the SkyCRPG source SHA. The explicit
+`--allow-mismatch-for-dry-run` option records those mismatches, adds `DRY-RUN` to
+the archive name and always sets `candidate_eligible=false`. It does not waive
+hash, provider-base, owner, junk or collision checks. Never use it for candidates.
+
+Provider path inventories come from the acquired extracted archives, including
+BSA105 name tables (SkyUI's movies are BSA members). Only the six named path
+rules in `tools/package.py:OVERRIDES` may override a named provider; see the
+[packaging evidence](../evidence/p4/packaging.md) for reasons and load order.
+Provider DLLs, art and complete archives stay external. Camera's TDM settings
+are a deterministic merge of the selected provider defaults and the committed
+Camera fragment; manifests record both input hashes. Existing user settings
+still require a key-level merge and compare-and-restore, not blanket replacement.
+The committed fragment sets `bHeadtrackSpine=0`; the historical combined stage
+left it at 1. That discrepancy needs an explicit runtime recheck, not a claim
+that the assembled settings are byte-identical to the tested stage.
+
+`verify-repro` compares two independent assemblies, including ZIP, manifest and
+checksum bytes. It does not rebuild native DLLs or recompile SWFs. Synthetic
+checks and real historical dry assemblies passed this limited comparison; final
+same-commit candidates, Windows CI and fresh-profile runtime acceptance remain
+open. Exact commands, hashes, install/update/removal drafts and NOT_RUN routes
+are in the [DYL-171 evidence](../evidence/p4/packaging.md).
