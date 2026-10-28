@@ -88,6 +88,14 @@ def transform(name, text):
                             "      this.skycrpgInventoryCancel();\n      this.skycrpgPresentationClose();")
         text = replace_once(text, "      super.onItemCardSubMenuAction(event);",
                             "      super.onItemCardSubMenuAction(event);\n      this._skycrpgModal = event.opening == true;\n      this.skycrpgPositionCard();")
+        # DYL-168: the status line follows the card's fade on highlight changes.
+        text = replace_once(text, "      super.onItemHighlightChange(event);\n      this.skycrpgInventoryCapture();",
+                            "      super.onItemHighlightChange(event);\n      this.skycrpgInventoryCapture();\n      this.skycrpgSyncStatus();")
+        text = replace_once(text, "      super.onHideItemsList(event);",
+                            "      super.onHideItemsList(event);\n      if(this._skycrpgDetailPanel != undefined) this._skycrpgDetailPanel._visible = false;")
+        # DYL-168: the player grid's gamepad search is R3 (SKSE 273), not Space.
+        text = replace_once(text, "   function updateBottomBar(a_bSelected)\n   {",
+                            "   function updateBottomBar(a_bSelected)\n   {\n      if(this._platform != 0 && this.inventoryLists.itemList.skycrpgGrid) this._searchControls = {keyCode:273};")
         pos = text.rfind("}")
         text = text[:pos] + (ROOT / "scaleform/inventory-actions.as.inc").read_text() + (ROOT / "scaleform/inventory-presentation.as.inc").read_text() + text[pos:]
     elif name.endswith("InventoryLists.as"):

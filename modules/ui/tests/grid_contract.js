@@ -220,27 +220,43 @@ console.log('PASS: native paint/fallbacks; 0/1/17/18/19/20/21/499/500 rows, 18-c
 
 // Layout executes the player-list helper and menu fitting against representative
 // native art bounds. Pixels/fonts/timeline behavior still need game captures.
-const panelLayout=method(staged['ItemMenus/InventoryLists.as'],'skycrpgLayout');
+const listsStaged=staged['ItemMenus/InventoryLists.as'];
+const panelLayout=method(listsStaged,'skycrpgLayout');
+// Bounds stubs map through parents' _x/_y/_xscale so getBounds(space) matches GFx.
+function toGlobal(clip,x,y){for(let c=clip;c;c=c._parent){x=(c._x||0)+x*(c._xscale??100)/100;y=(c._y||0)+y*(c._yscale??100)/100;}return [x,y];}
+function fromGlobal(space,x,y){const chain=[];for(let c=space;c;c=c._parent)chain.unshift(c);for(const c of chain){x=(x-(c._x||0))*100/(c._xscale??100);y=(y-(c._y||0))*100/(c._yscale??100);}return [x,y];}
+function box(x,y,w,h,parent) { return {_x:x,_y:y,_width:w,_height:h,_parent:parent,getBounds(space) {
+  const [ax,ay]=fromGlobal(space,...toGlobal(parent,this._x,this._y)),[bx,by]=fromGlobal(space,...toGlobal(parent,this._x+this._width,this._y+this._height));
+  return {xMin:ax,yMin:ay,xMax:bx,yMax:by};}}; }
 for(const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:1080},
   {x:50,y:30,width:1024,height:600}]) {
   global.Stage={visibleRect:rect};
-  function box(x,y,w,h,parent) { return {_x:x,_y:y,_width:w,_height:h,getBounds() {return {xMin:(parent?parent._x:0)+this._x,yMin:(parent?parent._y:0)+this._y,xMax:(parent?parent._x:0)+this._x+this._width,yMax:(parent?parent._y:0)+this._y+this._height};}}; }
-  const layoutList={skycrpgGrid:true,scrollbar:{}};
-  layoutList.header=box(0,-30,516,20,layoutList); layoutList.background=box(0,0,516,444,layoutList);
-  const lists={_x:0,_y:0,itemList:layoutList,panelContainer:{ListBackground:{}},categoryList:box(0,12,510,44),
-    categoryLabel:box(8,67,145,22),searchWidget:box(0,0,140,20),columnSelectButton:box(0,0,18,20),skycrpgLayout:panelLayout};
-  const holder=new MovieClip();
   const layoutMenu=new MovieClip();
+  const lists={_x:0,_y:0,_parent:layoutMenu,skycrpgLayout:panelLayout};
+  const panel={_x:25,_y:0,_parent:lists,createEmptyMovieClip(key){return this[key]=new MovieClip();},getNextHighestDepth(){return 1;}};
+  // A 9-slice-like backdrop whose native top sits above the stage, shorter than six rows.
+  panel.ListBackground=box(0,-142,542,570,panel);
+  const layoutList={skycrpgGrid:true,_x:0,_y:0,_parent:panel,getClipByIndex(){return undefined;}};
+  layoutList.header=box(-4,-30,551,20,layoutList); layoutList.background=box(0,0,516,444,layoutList);
+  layoutList.scrollbar=box(534,35,20,444,layoutList);
+  Object.assign(lists,{itemList:layoutList,panelContainer:panel,categoryList:box(0,12,510,44,panel),
+    categoryLabel:box(8,67,145,22,panel),searchWidget:box(0,0,140,20,panel),columnSelectButton:box(0,0,18,20,panel)});
+  for(const name of ['skycrpgPanelExtent','skycrpgGridBounds','skycrpgDrawFocus']) lists[name]=method(listsStaged,name);
+  const holder=new MovieClip();
   Object.assign(layoutMenu,{inventoryLists:lists,itemCard:{_parent:holder},mouseRotationRect:{Lock(){}},bottomBar:{getBounds(){return {yMin:rect.y+rect.height-50};}},
-    skycrpgDrawEquipment(){},skycrpgPositionCard:method(menuSource,'skycrpgPositionCard'),skycrpgLayout:method(menuSource,'skycrpgLayout')});
+    skycrpgDrawEquipment(){}});
+  for(const name of ['skycrpgPositionCard','skycrpgLayout','skycrpgModelColumn','skycrpgSyncStatus']) layoutMenu[name]=method(menuSource,name);
   layoutMenu.skycrpgLayout();
   const scale=layoutMenu._skycrpgScale;
+  const real=lists.skycrpgPanelExtent(layoutMenu);
   assert.ok(layoutMenu._skycrpgPanel._x+264*scale<=lists._x);
-  assert.ok(lists._x+542*scale<=layoutMenu._skycrpgDetailPanel._x);
+  assert.ok(real.xMax+16<=layoutMenu._skycrpgDetailPanel._x+0.001);
+  assert.ok(real.xMax<=rect.x+0.66*rect.width-16+0.001);
   assert.ok(lists._y+(layoutList._y+444)*scale<=rect.y+rect.height);
+  assert.ok(panel.ListBackground.getBounds(panel).yMax>=layoutList._y+444);
   assert.ok(lists.searchWidget._x+lists.searchWidget._width<=520);
-  assert.equal(layoutList.listHeight,444);assert.ok(layoutList.header.getBounds().yMin>=lists.searchWidget.getBounds().yMax);
-  assert.ok(holder._x-15*holder._xscale/100>=layoutMenu._skycrpgDetailPanel._x-0.001);
+  assert.equal(layoutList.listHeight,444);assert.ok(layoutList.header.getBounds(panel).yMin>=lists.searchWidget.getBounds(panel).yMax);
+  assert.ok(holder._x-15*holder._xscale/100>=real.xMax+16-0.001);
   assert.ok(holder._x+485*holder._xscale/100<=rect.x+rect.width);
   layoutMenu._skycrpgModal=true;layoutMenu.skycrpgPositionCard();
   assert.equal(layoutMenu._skycrpgModalShade._visible,true);

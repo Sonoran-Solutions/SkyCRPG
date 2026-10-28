@@ -31,6 +31,7 @@
 #include "follower/adapter.h"
 #include "inventory/inventory_bridge.h"
 #include "inventory/equipment_bridge.h"
+#include "inventory/item_preview_placement.h"
 
 #include <array>
 #include <atomic>
@@ -526,6 +527,7 @@ struct ResourceCache {
 void ResourceLifecycle(SKSE::MessagingInterface::Message* message)
 {
 	skycrpg::ui::inventory::OnSkseMessage(message);
+	skycrpg::ui::inventory::preview::OnSkseMessage(message);
 	if (!message) return;
 	skycrpg::ui::minimap::OnMessage(message);
 	skycrpg::ui::follower::OnMessage(message);
@@ -737,6 +739,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* skseInterface)
 	g_hudSettings = parsed.settings;
 	skycrpg::ui::minimap::Initialize(g_hudSettings.replaceCompass, [] { return g_menuBlocked.load(std::memory_order_acquire); });
 	LogHudSettings(iniPath, parsed);
+	skycrpg::ui::inventory::preview::Configure(iniPath);
 	if (parsed.resetLayoutApplied) {
 		AppendModuleLog("HUD reset-layout: startup defaults applied (100%, 0, 0); INI unchanged\n");
 	}

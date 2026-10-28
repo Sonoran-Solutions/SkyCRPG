@@ -45,9 +45,61 @@
       this._columnSelectDialogX = gear.xMax + 4;
       list.scrollbar._x = 526;
       list.scrollbar.height = 444;
+      // The 9-slice backdrop and its frame cover the whole six-row viewport.
+      // Reset first so repeated layouts are idempotent; keep the native top.
+      var backdrop = panel.ListBackground;
+      backdrop._y = 0; backdrop._height = 570;
+      var cover = backdrop.getBounds(panel);
+      var gridBottom = list._y + 444 + 8;
+      if(cover.yMax < gridBottom)
+      {
+         backdrop._height += gridBottom - cover.yMax;
+         backdrop._y += cover.yMin - backdrop.getBounds(panel).yMin;
+      }
       list.skycrpgFocusOwner = this;
       if(typeof this.skycrpgDrawFocus == "function") this.skycrpgDrawFocus();
       if(this._platform != 0 && typeof this.skycrpgSearchLabel == "function") this.skycrpgSearchLabel(this._nameFilter.filterText);
+   }
+   // Union of the native clips that draw the panel, in `space` coordinates:
+   // backdrop/frame, scrollbar, header rule, category bar, search and gear.
+   function skycrpgPanelExtent(space)
+   {
+      var list = this.itemList;
+      var clips = [this.panelContainer.ListBackground, list.scrollbar, list.header, this.categoryList,
+         this.categoryList.background, this.searchWidget, this.columnSelectButton];
+      var extent;
+      for(var i = 0; i < clips.length; i++)
+      {
+         if(clips[i] == undefined || typeof clips[i].getBounds != "function") continue;
+         var b = clips[i].getBounds(space);
+         if(extent == undefined) extent = {xMin:b.xMin,yMin:b.yMin,xMax:b.xMax,yMax:b.yMax};
+         else
+         {
+            extent.xMin = Math.min(extent.xMin,b.xMin); extent.yMin = Math.min(extent.yMin,b.yMin);
+            extent.xMax = Math.max(extent.xMax,b.xMax); extent.yMax = Math.max(extent.yMax,b.yMax);
+         }
+      }
+      return extent;
+   }
+   // Visible tiles, or the six-row viewport when no tile is shown.
+   function skycrpgGridBounds()
+   {
+      var list = this.itemList;
+      var grid;
+      for(var i = 0; i < 18; i++)
+      {
+         var clip = list.getClipByIndex(i);
+         if(clip == undefined || !clip._visible) continue;
+         var b = clip.getBounds(this.panelContainer);
+         if(grid == undefined) grid = {xMin:b.xMin,yMin:b.yMin,xMax:b.xMax,yMax:b.yMax};
+         else
+         {
+            grid.xMin = Math.min(grid.xMin,b.xMin); grid.yMin = Math.min(grid.yMin,b.yMin);
+            grid.xMax = Math.max(grid.xMax,b.xMax); grid.yMax = Math.max(grid.yMax,b.yMax);
+         }
+      }
+      if(grid == undefined) grid = {xMin:list._x,yMin:list._y,xMax:list._x + 2 * 172 + 165,yMax:list._y + 444};
+      return grid;
    }
    function skycrpgDrawFocus()
    {
@@ -57,19 +109,17 @@
       var focus = this._skycrpgFocus;
       focus.clear();
       focus._visible = !this.itemList.disableInput && !this.itemList.disableSelection;
-      var panelBounds = this.panelContainer.ListBackground.getBounds(this.panelContainer);
-      var listBounds = this.itemList.background.getBounds(this.panelContainer);
-      var headerBounds = this.itemList.header.getBounds(this.panelContainer);
-      var first = this.itemList.getClipByIndex(0);
-      var firstBounds = first != undefined && first._visible ? first.getBounds(this.panelContainer) : listBounds;
-      var top = this.itemList.skycrpgCategoryFocus ? 0 : Math.max(panelBounds.yMin, headerBounds.yMax, firstBounds.yMin);
-      var bottom = this.itemList.skycrpgCategoryFocus ? 64 : Math.min(panelBounds.yMax, listBounds.yMax);
-      top = Math.min(top, bottom);
-      var xMin = this.itemList.skycrpgCategoryFocus ? 0 : panelBounds.xMin;
-      var xMax = this.itemList.skycrpgCategoryFocus ? 528 : panelBounds.xMax;
+      // The grid region hugs the visible tiles, never the backdrop.
+      var grid = this.skycrpgGridBounds();
+      var top = this.itemList.skycrpgCategoryFocus ? 0 : grid.yMin;
+      var bottom = this.itemList.skycrpgCategoryFocus ? 64 : grid.yMax;
+      var xMin = this.itemList.skycrpgCategoryFocus ? 0 : grid.xMin;
+      var xMax = this.itemList.skycrpgCategoryFocus ? 528 : grid.xMax;
       focus.lineStyle(2,0xF0E8D8,100);
       focus.moveTo(xMin,top + 14); focus.lineTo(xMin,top); focus.lineTo(xMin + 14,top);
       focus.moveTo(xMax,bottom - 14); focus.lineTo(xMax,bottom); focus.lineTo(xMax - 14,bottom);
+      // Focus changes (category bar, search, empty list) also gate the status line.
+      if(this._skycrpgMenu != undefined && typeof this._skycrpgMenu.skycrpgSyncStatus == "function") this._skycrpgMenu.skycrpgSyncStatus();
    }
    // A bounded controller character pad uses the existing native name filter.
    // No pointer emulation, text-entry engine hook or item dispatch is involved.
