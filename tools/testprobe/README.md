@@ -150,7 +150,11 @@ This tests escaping, UTF-8 preservation, numeric formatting (including a decimal
 comma locale), envelope formatting, raw request parsing/bounds and interval
 parsing. It does not compile the Windows adapter or prove engine behavior.
 The policy test covers all eight drain/generation/load combinations and checkpoint tag preservation in failures.
-Windows MSVC and the first orchestrator-launched, owner-supervised runtime
-check remain required. The process-lifetime sinks/timer do not support hot
+Windows MSVC builds in CI (job `testprobe`). Runtime: the DYL-167 combined
+route passed with this probe on `1b4e4c5`, both supervised
+(`auto-dyl167-combined-20261028T181647Z`) and unattended
+(`auto-dyl167-combined-20261028T181916Z`). Snapshots were available on the
+task drain, `item_card_submenu` tracked the quantity slider, and the runner
+verified the probe was removed after each run. The process-lifetime sinks/timer do not support hot
 unloading. C++ exceptions are caught at plugin/callback/task boundaries; native
 engine faults and disk/power-loss atomicity cannot be guaranteed by this probe.

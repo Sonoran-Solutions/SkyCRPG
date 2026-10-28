@@ -146,8 +146,9 @@ void ThreadContext(std::string_view source) noexcept
 
 void CaptureMainThread()
 {
-	// kDataLoaded is a known main-thread callback. Never learn affinity from
-	// a task delegate, and never silently rebind it to a conflicting callback.
+	// Diagnostic only: engine reads are gated on InTaskDrain(), not this id.
+	// Captured once at kDataLoaded and never rebound, so JSONL thread fields
+	// stay comparable across a run.
 	std::uint32_t unset = 0;
 	g_probe->mainThreadID.compare_exchange_strong(unset, GetCurrentThreadId());
 }
