@@ -17,6 +17,8 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cmath>
+#include <type_traits>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -48,9 +50,11 @@ SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
 bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
 bool precisionTraceEnabled = false, lifecycleTraceEnabled = false;
+bool badSettings = false, prerequisiteFailed = false, failureNotified = false, requestedEnabled = true;
 unsigned lifecycleLogCount = 0;
 LifecycleTraceDebounce lifecycleTrace;
 PrecisionTraceBudget precisionTraceBudget;
+FailureDebounce failureDebounce;
 std::array<FreshPress,4> keys;
 using Look = void(*)(RE::ThirdPersonState*, const RE::NiPoint2&);
 Look previousLook = nullptr;
@@ -95,10 +99,16 @@ std::string read(const char* section, const char* key, const char* fallback) {
     return value;
 }
 template<class T> T number(const char* section,const char* key,T fallback) {
-    const auto value = read(section,key,"");
+    const auto value = read(section,key,"<missing>");
+    if (value == "<missing>") return fallback;
     T result{};
     const auto parsed = std::from_chars(value.data(),value.data()+value.size(),result);
-    return parsed.ec == std::errc{} && parsed.ptr == value.data()+value.size() ? result : fallback;
+    bool finite = true;
+    if constexpr (std::is_floating_point_v<T>) finite = std::isfinite(result);
+    if (parsed.ec != std::errc{} || parsed.ptr != value.data()+value.size() || !finite) {
+        badSettings = true; return fallback;
+    }
+    return result;
 }
 bool checkMovementConfig() {
     // Match TDM Settings::ReadSettings precedence: provider config, then user MCM.
@@ -119,11 +129,17 @@ bool checkMovementConfig() {
     }
     return yaw == 0;
 }
+bool flag(const char* section, const char* key, int fallback) {
+    const int value = number(section,key,fallback);
+    if (value != 0 && value != 1) { badSettings = true; return fallback == 1; }
+    return value == 1;
+}
 void loadSettings() {
     iniPath = std::filesystem::path(skycrpg::ThisModuleDirectory())/L"SkyCRPG_Camera.ini";
     Settings s;
     s.schema = number("Camera","iSchemaVersion",1);
-    s.enabled = number("Camera","bEnabled",1) == 1;
+    s.enabled = flag("Camera","bEnabled",1);
+    requestedEnabled = s.enabled;
     s.pitch = number("Camera","fPitchDegrees",55.0f);
     s.pitchSpeed = number("Camera","fPitchSpeedDegrees",90.0f);
     s.recenterSpeed = number("Camera","fRecenterSpeedDegrees",180.0f);
@@ -134,12 +150,12 @@ void loadSettings() {
     s.recenterKey = number("Controls","iRecenterKey",65);
     s.toggleGamepad = number("Controls","iToggleGamepad",-1);
     s.recenterGamepad = number("Controls","iRecenterGamepad",-1);
-    precisionTraceEnabled = number("Debug","iPrecisionTrace",0) == 1;
-    lifecycleTraceEnabled = number("Debug","iLifecycleTrace",0) == 1;
+    precisionTraceEnabled = flag("Debug","iPrecisionTrace",0);
+    lifecycleTraceEnabled = flag("Debug","iLifecycleTrace",0);
     compatibleSettings = s.schema == 1;
     settings = validate(s);
     ObstructionSettings o;
-    o.enabled = number("Obstruction","bEnabled",0) == 1;
+    o.enabled = flag("Obstruction","bEnabled",0);
     o.enterRatio = number("Obstruction","fEnterRatio",o.enterRatio);
     o.exitRatio = number("Obstruction","fExitRatio",o.exitRatio);
     o.enterSeconds = number("Obstruction","fEnterSeconds",o.enterSeconds);
@@ -150,6 +166,17 @@ void loadSettings() {
     o.tightenRate = number("Obstruction","fTightenRate",o.tightenRate);
     o.recoverRate = number("Obstruction","fRecoverRate",o.recoverRate);
     obstructionSettings = validateObstruction(o,settings);
+    const auto& v = obstructionSettings;
+    if (!compatibleSettings || s.pitch != settings.pitch || s.pitchSpeed != settings.pitchSpeed ||
+        s.recenterSpeed != settings.recenterSpeed || s.zoom != settings.zoom || s.minZoom != settings.minZoom ||
+        s.maxZoom != settings.maxZoom || s.toggleKey != settings.toggleKey || s.recenterKey != settings.recenterKey ||
+        s.toggleGamepad != settings.toggleGamepad || s.recenterGamepad != settings.recenterGamepad ||
+        o.enterRatio != v.enterRatio || o.exitRatio != v.exitRatio || o.enterSeconds != v.enterSeconds ||
+        o.exitSeconds != v.exitSeconds || o.warmupSeconds != v.warmupSeconds || o.tightPitch != v.tightPitch ||
+        o.tightZoom != v.tightZoom || o.tightenRate != v.tightenRate || o.recoverRate != v.recoverRate) badSettings = true;
+    if (badSettings) log("Invalid Camera INI values: defaults or safe bounds applied; unsupported schema disables policy.");
+    if (!s.enabled) log("Camera disabled in INI; native camera controls remain available.");
+    if (!compatibleSettings) prerequisiteFailed = true;
 }
 void savePreferences() {
     if (!compatibleSettings) return;
@@ -159,6 +186,20 @@ void savePreferences() {
     if (!WritePrivateProfileStringA("Camera","iSchemaVersion","1",path.c_str()) ||
         !WritePrivateProfileStringA("Camera","bEnabled",settings.enabled?"1":"0",path.c_str()) ||
         !WritePrivateProfileStringA("Camera","fZoom",zoom.c_str(),path.c_str())) log("Preferences write failed; session remains usable, disk settings unchanged or partial.");
+}
+bool acquireMovementLease() {
+    if (!movement) return false;
+    const auto lease = movement->RequestDisableTargetLock(SKSE::GetPluginHandle());
+    movementLease = lease == TDM_API::APIResult::OK || lease == TDM_API::APIResult::AlreadyGiven;
+    if (!movementLease) { prerequisiteFailed = true; log("TDM target-lock-disable lease refused; controller suspended."); }
+    else log("TDM target-lock-disable lease acquired.");
+    return movementLease;
+}
+void notifyFailure() {
+    if (!failureNotified && prerequisiteFailed && requestedEnabled) {
+        RE::SendHUDMessage::ShowHUDMessage("SkyCRPG Camera inactive: check SkyCRPG_Camera.log");
+        failureNotified = true;
+    }
 }
 void resetObstruction() {
     obstructionPolicy.reset(); obstructionFrame = {};
@@ -184,11 +225,17 @@ bool providerChainReady() {
     }
     return module != nullptr;
 }
-Context context(bool* hardSpecial = nullptr) {
+Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, bool* failure = nullptr) {
     Context c;
     if (hardSpecial) *hardSpecial = true;
     c.enabled = settings.enabled;
-    c.prerequisites = compatibleSettings && movementConfigSafe && ready && movement && movementLease && !movement->GetTargetLockState() && provider && provider->IsCameraEnabled() && provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
+    const bool providerEnabled = provider && provider->IsCameraEnabled();
+    const bool baseReady = compatibleSettings && movementConfigSafe && ready && movement && providerEnabled &&
+        provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
+    const bool leaseReady = movement && movementLease && !movement->GetTargetLockState();
+    c.prerequisites = baseReady && (leaseReady || (allowLeaseRequest && !movementLease));
+    // An intentionally disabled SmoothCam (F8) is not a failure.
+    if (failure) *failure = !c.prerequisites && (!provider || providerEnabled || !ready || !compatibleSettings || !movementConfigSafe || !movement);
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto camera = RE::PlayerCamera::GetSingleton();
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
@@ -216,6 +263,28 @@ Context context(bool* hardSpecial = nullptr) {
     // DYL-158 supplies precision/targeting intervention; select() reserves their priority.
     c.obstruction = obstructionFrame.obstructed;
     return c;
+}
+bool noActiveMenus() {
+    const auto ui = RE::UI::GetSingleton();
+    if (!ui) return false;
+    const auto hud = ui->GetMenu("HUD Menu");
+    const auto cursor = ui->GetMenu("Cursor Menu");
+    const auto fader = ui->GetMenu("Fader Menu");
+    const auto mist = ui->GetMenu("Mist Menu");
+    for (const auto& menu : ui->menuStack) {
+        if (!menu || (menu.get() != hud.get() && menu.get() != cursor.get() &&
+            menu.get() != fader.get() && menu.get() != mist.get())) return false;
+    }
+    return true;
+}
+void observePrerequisiteFailure(Context c, bool failure) {
+    if (failureNotified) return;
+    const auto now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (failureDebounce.observe(requestedEnabled && c.world && !c.menu && !loading && failure && noActiveMenus(),now)) {
+        if (!prerequisiteFailed) log("Camera prerequisite or third-person ownership unavailable; policy suspended.");
+        prerequisiteFailed = true;
+        notifyFailure();
+    }
 }
 PrecisionTraceState traceState(Context c, bool hard, std::size_t key) {
     PrecisionTraceState result{c,hard,ownFirstPerson,keys[key].armed,keys[key].down};
@@ -278,7 +347,7 @@ void sampleObstruction(RE::ThirdPersonState* state) {
     const auto player = RE::PlayerCharacter::GetSingleton();
     // No combat-mode classification is assumed on this branch. Conservatively
     // release automatic framing for ALL drawn weapons/spells pending DYL-158.
-    if (player && player->IsWeaponDrawn()) c.precision = true;
+    if (player && precisionSuppressesObstruction(player->IsWeaponDrawn())) c.precision = true;
     if (!obstructionSettings.enabled || !obstructionFramingAllowed(c) || !camera || !player ||
         camera->currentState.get() != state || !state->freeRotationEnabled || !camera->cameraRoot ||
         camera->cameraTarget.get().get() != player) {
@@ -340,8 +409,10 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
     else sampleObstruction(state);
     previousUpdate(state,next); // native first; outer SmoothCam wrapper performs transforms AFTER us
     bool hard = true;
-    const auto c = context(&hard);
+    bool failure = false;
+    const auto c = context(&hard,false,&failure);
     observeLifecycle(c,hard);
+    observePrerequisiteFailure(c,failure);
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (!obstructionFramingAllowed(c) || !camera || camera->currentState.get() != state || (next && next.get() != state)) {
         resetObstruction(); return;
@@ -375,6 +446,7 @@ public:
         const auto c = precisionTraceEnabled ? context(&hard) : Context{};
         const auto before = traceState(c,hard,0);
         movementConfigSafe = checkMovementConfig();
+        failureDebounce.observe(false,0);
         suspend();
         if (precisionTraceEnabled && event && (c.world || ownFirstPerson)) {
             bool afterHard = true;
@@ -387,7 +459,9 @@ public:
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
         if (!events) return RE::BSEventNotifyControl::kContinue;
         bool hardSpecial = true;
-        const auto c = context(&hardSpecial);
+        bool failure = false;
+        const auto c = context(&hardSpecial,!settings.enabled && !movementLease,&failure);
+        observePrerequisiteFailure(c,failure);
         const bool ownedBefore = ownFirstPerson;
         ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hardSpecial);
         if (precisionTraceEnabled && ownedBefore != ownFirstPerson) {
@@ -452,11 +526,19 @@ public:
                         }
                         savePreferences();
                     } else if (request == ToggleRequest::enableOnly) {
+                        if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
+                        if (!enableAfterLease(movementLease)) continue;
                         settings.enabled = true; ownFirstPerson = false; applyZoom = true; suspend(); savePreferences();
                     } else if (request == ToggleRequest::thirdPerson) {
+                        if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
+                        if (!enableAfterLease(movementLease)) continue;
                         settings.enabled = true; ownFirstPerson = false; suspend(); applyZoom = true; static_cast<void>(camera->ForceThirdPerson()); savePreferences();
                     }
-                } else if (obstructionFramingAllowed(c)) recenter = true;
+                } else if (obstructionFramingAllowed(c)) {
+                    recenter = true;
+                    if (const auto* camera = RE::PlayerCamera::GetSingleton(); camera && camera->currentState)
+                        lifecycleLog("recenter",c,static_cast<unsigned>(camera->currentState->id));
+                }
             }
         }
         return RE::BSEventNotifyControl::kContinue;
@@ -474,33 +556,35 @@ void messages(SKSE::MessagingInterface::Message* message) {
         if (!SmoothCamAPI::RequestInterface(SKSE::GetMessagingInterface())) log("SmoothCam API unavailable; controller suspended.");
         break;
     case SKSE::MessagingInterface::kDataLoaded: {
-        if (previousLook) break; // no duplicate hook/sinks on repeated notifications
+        static bool dataLoaded = false;
+        if (dataLoaded) break; // no duplicate hook/sinks on repeated notifications
+        dataLoaded = true;
+        RE::BSInputDeviceManager::GetSingleton()->AddEventSink(static_cast<RE::BSTEventSink<RE::InputEvent*>*>(&events));
+        RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(&events);
         ready = hashMatches(nullptr,"846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f") &&
             hashMatches(L"SmoothCam.dll","b20bf8a276bf76fbe35277dd9b25c64c57d17bfdcc20daa74a5f941c90f563da") &&
             hashMatches(L"TrueDirectionalMovement.dll","5ba3abd82fe070e2a6e9af7f07eca82b9ddb1a53dcd47bc34af571efab01899f") &&
             hashMatches(L"MCMHelper.dll","d58f433bef7690614d42aaac69cc35f60d179a85429a385e21858a1f276aef38");
-        if (!ready) { log("Exact executable/provider prerequisite hash mismatch; controller disabled."); break; }
+        if (!ready) { prerequisiteFailed = true; log("Exact executable/provider prerequisite hash mismatch; controller disabled."); break; }
         movementConfigSafe = checkMovementConfig();
-        if (!movementConfigSafe) log("TDM camera-yaw config absent/unsafe; custom policy suspended until corrected and a menu closes.");
+        if (!movementConfigSafe) { prerequisiteFailed = true; log("TDM camera-yaw config absent/unsafe; custom policy suspended until corrected and a menu closes."); }
         movement = static_cast<TDM_API::IVTDM5*>(TDM_API::RequestPluginAPI());
-        if (!movement) { ready = false; log("TDM V5 API absent; controller suspended."); break; }
-        const auto lease = movement->RequestDisableTargetLock(SKSE::GetPluginHandle());
-        movementLease = lease == TDM_API::APIResult::OK || lease == TDM_API::APIResult::AlreadyGiven;
-        if (!movementLease) { ready = false; log("TDM target-lock-disable lease refused; controller suspended."); break; }
+        if (!movement) { prerequisiteFailed = true; ready = false; log("TDM V5 API absent; controller suspended."); break; }
+        if (leaseWanted(settings.enabled,false,movementLease)) {
+            if (!acquireMovementLease()) { ready = false; break; }
+        } else if (!settings.enabled) log("TDM target-lock-disable lease not requested because Camera is disabled.");
         REL::Relocation<std::uintptr_t> table{RE::VTABLE_ThirdPersonState[0]};
         const auto slots = reinterpret_cast<const std::uintptr_t*>(table.address());
         const REL::Relocation<std::uintptr_t> nativeUpdate{REL::ID(50896)};
         const REL::Relocation<std::uintptr_t> nativeLook{REL::ID(50914)};
         if (slots[3] != nativeUpdate.address() || slots[15] != nativeLook.address()) {
-            static_cast<void>(movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle()));
-            movementLease = false; ready = false;
+            if (movementLease) static_cast<void>(movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle()));
+            movementLease = false; ready = false; prerequisiteFailed = true;
             log("Unexpected camera hook order/owner before SmoothCam deferred attach; policy left inert.");
             return;
         }
         previousLook = reinterpret_cast<Look>(table.write_vfunc(0xF,look));
         previousUpdate = reinterpret_cast<Update>(table.write_vfunc(3,update));
-        RE::BSInputDeviceManager::GetSingleton()->AddEventSink(static_cast<RE::BSTEventSink<RE::InputEvent*>*>(&events));
-        RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(&events);
         if (const auto source = RE::ScriptEventSourceHolder::GetSingleton()) {
             source->AddEventSink<RE::TESLoadGameEvent>(&events);
             source->AddEventSink<RE::TESCellAttachDetachEvent>(&events);
@@ -508,7 +592,7 @@ void messages(SKSE::MessagingInterface::Message* message) {
         log("Camera input policy installed: one chained native look call; SmoothCam sole transform writer.");
         break;
     }
-    case SKSE::MessagingInterface::kPreLoadGame: loading = true; resetLifecycle("pre-load"); break;
+    case SKSE::MessagingInterface::kPreLoadGame: loading = true; failureDebounce.observe(false,0); resetLifecycle("pre-load"); break;
     case SKSE::MessagingInterface::kNewGame:
     case SKSE::MessagingInterface::kPostLoadGame: loading = false; resetLifecycle("post-load-or-new-game"); break;
     case SKSE::MessagingInterface::kSaveGame: savePreferences(); break;
