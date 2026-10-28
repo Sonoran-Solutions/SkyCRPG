@@ -45,6 +45,12 @@ Native controller POV can request first person without an F6-owned session; retu
 
 Native menus, dialogue, loading/death, first person and unsupported special states take precedence. Held controls are discarded through focus changes and require fresh input; no gameplay event is replayed. F8 and map K/L are reserved against custom bindings, and keys already mapped to native gameplay are refused. Full obstruction, targeting and lifecycle recovery remain DYL-157/158/159.
 
+## Menu and lifecycle behavior
+
+Inventory uses Skyrim's normal paused menu behavior. Cancel a quantity dialog before closing the inventory; the native menu owns its controls. Container, barter, crafting, Magic, map and journal remain native/SkyUI screens. Console, dialogue, Favorites, loading and other focus-taking menus suppress SkyCRPG's auto-favorite dispatch; a queued press from before a focus transition is discarded. Native quick-key bindings remain Skyrim's responsibility. Release and press again after returning to gameplay. SkyCRPG does not request a global pause or change time scale; action combat stays real time outside native menu behavior.
+
+Inventory selection and action gestures are invalidated across menu transitions and load/new game; snapshots are reacquired from Skyrim. The minimap releases its compass lease on menu, load, cell change, hide and teardown, then may reacquire it in gameplay. These are candidate behaviors; the [lifecycle audit](evidence/p3/menu-lifecycle.md) separates prior bounded gameplay evidence from remaining checks.
+
 ## Input bindings and focus
 
 DYL-168 candidate; physical device passes and resolution captures remain **NOT_RUN** in [input/layout evidence](evidence/p3/input-and-layout.md). Use the current native prompts if bindings were remapped. On the pinned host turn the 8BitDo XInput controller OFF for the keyboard/mouse pass and ON for a separate controller pass; record which device performed each step.

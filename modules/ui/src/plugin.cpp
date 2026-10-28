@@ -26,6 +26,7 @@
 #include "skse_version_pin.h"
 #include "resource_snapshot.h"
 #include "menu_focus.h"
+#include "lifecycle/dispatch_epoch.h"
 #include "favorite_slots.h"
 #include "minimap/adapter.h"
 #include "follower/adapter.h"
@@ -175,6 +176,7 @@ void LogHudSettings(const std::wstring& iniPath, const skycrpg::ui::ParseResult&
 // Menu events gate visibility immediately. The GFx thread reads only the atomic;
 // the game task queue resamples the actual UI after the transition completes.
 std::atomic_bool g_menuBlocked{ true };
+skycrpg::ui::lifecycle::DispatchEpoch g_focusEpoch;
 void RefreshMenuFocus()
 {
 	auto* ui = RE::UI::GetSingleton();
@@ -182,7 +184,7 @@ void RefreshMenuFocus()
 	if (ui) {
 		const bool uiFocus = ui->GameIsPaused() || ui->IsApplicationMenuOpen() || ui->IsModalMenuOpen();
 		const bool namedFocus = ui->IsMenuOpen("FavoritesMenu") || ui->IsMenuOpen("Dialogue Menu") ||
-			ui->IsMenuOpen("Console") || ui->IsMenuOpen("Loading Menu");
+			ui->IsMenuOpen("Console") || ui->IsMenuOpen("Loading Menu") || ui->IsMenuOpen("Main Menu");
 		bool stackFocus = false;
 		for (const auto& menu : ui->menuStack) {
 			if (!menu || menu->menuFlags.any(RE::UI_MENU_FLAGS::kPausesGame, RE::UI_MENU_FLAGS::kApplicationMenu,
@@ -198,14 +200,15 @@ class MenuFocusEvents final : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
 public:
 	RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,
 		RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
-		if (!event) { g_menuBlocked.store(true, std::memory_order_release); return RE::BSEventNotifyControl::kContinue; }
+		if (!event) { g_focusEpoch.Invalidate(); g_menuBlocked.store(true, std::memory_order_release); return RE::BSEventNotifyControl::kContinue; }
 		auto* ui = RE::UI::GetSingleton();
-		if (!ui) { g_menuBlocked.store(true, std::memory_order_release); return RE::BSEventNotifyControl::kContinue; }
+		if (!ui) { g_focusEpoch.Invalidate(); g_menuBlocked.store(true, std::memory_order_release); return RE::BSEventNotifyControl::kContinue; }
 		const std::string_view name = event->menuName.c_str();
 		const auto menu = ui->GetMenu(name);
 		const bool focusFlags = menu && menu->menuFlags.any(RE::UI_MENU_FLAGS::kPausesGame, RE::UI_MENU_FLAGS::kApplicationMenu,
 			RE::UI_MENU_FLAGS::kUsesCursor, RE::UI_MENU_FLAGS::kUsesMenuContext, RE::UI_MENU_FLAGS::kModal);
 		if (skycrpg::ui::MenuBlocks(name, static_cast<bool>(menu), focusFlags)) {
+			g_focusEpoch.Invalidate();
 			g_menuBlocked.store(true, std::memory_order_release);
 			// No menu or actor pointer survives the callback. Re-read the current
 			// stack after the event rather than trusting pre-transition flags.
@@ -375,10 +378,10 @@ const char* ActionName(HotbarAction action)
     }
 }
 std::atomic_uint g_hotkeyLogCount{};
-void DispatchHotbar(unsigned index, HotbarSlot pressed, std::uint64_t generation, bool available, bool blockedAtPress)
+void DispatchHotbar(unsigned index, HotbarSlot pressed, std::uint64_t generation, bool available, bool blockedAtPress, std::uint64_t focusEpoch)
 {
     RefreshMenuFocus();
-    bool blocked = blockedAtPress || g_menuBlocked.load(std::memory_order_acquire);
+    bool blocked = blockedAtPress || !g_focusEpoch.Current(focusEpoch) || g_menuBlocked.load(std::memory_order_acquire);
     // Refresh bindings before dispatch so a newly assigned native key cannot
     // race the snapshot and cause a second action.
     SampleHotbar(generation);
@@ -395,7 +398,7 @@ void DispatchHotbar(unsigned index, HotbarSlot pressed, std::uint64_t generation
     bool equipped = false;
     RE::ExtraDataList* extra = nullptr;
     RE::TESBoundObject* boundObject = nullptr; // From GetInventory; avoids RTTI casts.
-    if (!available || !player || !player->Is3DLoaded() || !manager) blocked = true;
+    if (!available || !player || player->IsDead() || !player->Is3DLoaded() || !manager) blocked = true;
     if (!blocked && form && (kind == ActionKind::Spell || kind == ActionKind::Power)) {
         count = player->HasSpell(static_cast<RE::SpellItem*>(form)) ? 1 : 0;
     } else if (!blocked && form && kind == ActionKind::Shout) {
@@ -460,8 +463,9 @@ public:
                 slot = g_hotbar.slots[index];
                 generation = g_hotbar.generation;
             }
+            const auto focusEpoch = g_focusEpoch.Capture();
             const bool blockedAtPress = g_menuBlocked.load(std::memory_order_acquire);
-            if (auto* tasks = SKSE::GetTaskInterface()) tasks->AddTask([index, slot, generation, available, blockedAtPress] { DispatchHotbar(index, slot, generation, available, blockedAtPress); });
+            if (auto* tasks = SKSE::GetTaskInterface()) tasks->AddTask([index, slot, generation, available, blockedAtPress, focusEpoch] { DispatchHotbar(index, slot, generation, available, blockedAtPress, focusEpoch); });
         }
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -551,6 +555,7 @@ void ResourceLifecycle(SKSE::MessagingInterface::Message* message)
 	if (message->type != SKSE::MessagingInterface::kPreLoadGame &&
 		message->type != SKSE::MessagingInterface::kPostLoadGame &&
 		message->type != SKSE::MessagingInterface::kNewGame) return;
+	g_focusEpoch.Invalidate();
 	{
 		std::scoped_lock hotbarLock(g_hotbar.mutex);
 		++g_hotbar.generation;
