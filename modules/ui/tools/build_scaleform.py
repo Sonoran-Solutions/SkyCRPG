@@ -202,7 +202,14 @@ def main():
     for name, expected in base_hashes.items():
         if sha(base / name) != expected:
             parser.error(f"Provider SWF drift: {name}")
-    manifest = {"skyui_commit": commit, "status": "PREPARED", "source_sha256": SOURCES,
+    # Bind generated movies to the committed patch includes. A dirty tree still
+    # builds for local testing, but packaging refuses it as a candidate.
+    source_commit = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+    dirty = subprocess.check_output(
+        ["git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=all", "--",
+         "scaleform", "tools/build_scaleform.py"], text=True).strip()
+    manifest = {"source_commit": source_commit, "source_dirty": bool(dirty), "skyui_commit": commit, "status": "PREPARED", "source_sha256": SOURCES,
                 "base": "Nexus6.11 acquired BSA" if args.nexus_interface else "GitHub source-tree SWFs (compile probe)",
                 "patch_sha256": {p.name: sha(p) for p in (ROOT / "scaleform").glob("*.inc")},
                 "ffdec_cli_sha256": sha(provider / "tools/FFDec/ffdec-cli.jar"),
