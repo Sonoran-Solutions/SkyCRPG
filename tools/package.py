@@ -76,6 +76,7 @@ def package_files(name: str, module_dir: str, build_dir: Path) -> dict[str, Path
         f"SKSE/Plugins/{name}.dll": dll,
         f"SKSE/Plugins/{name}.ini": ROOT / module_dir / "config" / f"{name}.ini",
         f"Docs/{name}/CommonLibSSE-NG-COPYING": ROOT / "LICENSES/CommonLibSSE-NG-COPYING",
+        f"Docs/{name}/CommonLibSSE-legacy-MIT": ROOT / "LICENSES/CommonLibSSE-legacy-MIT",
         f"Docs/{name}/CommonLibSSE-NG-EXCEPTIONS.md": ROOT / "LICENSES/CommonLibSSE-NG-EXCEPTIONS.md",
         f"Docs/{name}/build-inputs.md": ROOT / "cmake/README.md",
     }
@@ -159,7 +160,7 @@ def hashes(files):
 
 def native_paths(name):
     return {f"SKSE/Plugins/{name}.dll", f"SKSE/Plugins/{name}.ini",
-            *[f"Docs/{name}/{p}" for p in ("CommonLibSSE-NG-COPYING", "CommonLibSSE-NG-EXCEPTIONS.md", "build-inputs.md")]}
+            *[f"Docs/{name}/{p}" for p in ("CommonLibSSE-NG-COPYING", "CommonLibSSE-legacy-MIT", "CommonLibSSE-NG-EXCEPTIONS.md", "build-inputs.md")]}
 
 
 def expected_paths(name, full=False):

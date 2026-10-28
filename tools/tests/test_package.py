@@ -46,6 +46,18 @@ def bsa():
 
 
 class PackageTests(unittest.TestCase):
+    def test_legacy_notice_in_both_packages(self):
+        for name, module in pkg.PACKAGES.items():
+            with tempfile.TemporaryDirectory() as directory:
+                build = Path(directory)
+                dll = build / module / (name + ".dll")
+                dll.parent.mkdir(parents=True)
+                dll.write_bytes(b"fixture")
+                path = f"Docs/{name}/CommonLibSSE-legacy-MIT"
+                self.assertIn(path, pkg.expected_paths(name, full=True))
+                self.assertEqual(pkg.package_files(name, module, build)[path].read_bytes(),
+                                 (pkg.ROOT / "LICENSES/CommonLibSSE-legacy-MIT").read_bytes())
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -263,7 +275,13 @@ class PackageTests(unittest.TestCase):
             path.parent.mkdir(parents=True)
             path.write_bytes(pe())
         args = argparse.Namespace(build_dir=build, module=None, commit=COMMIT, out=self.root / "native")
-        pkg.native(args)
+        original_git_bytes = pkg.git_bytes
+        def fixture_git_bytes(commit, path):
+            if path == "LICENSES/CommonLibSSE-legacy-MIT":
+                return (pkg.ROOT / path).read_bytes()
+            return original_git_bytes(commit, path)
+        with patch.object(pkg, "git_bytes", side_effect=fixture_git_bytes):
+            pkg.native(args)
         sums = (args.out / "SHA256SUMS").read_text()
         for name in pkg.PACKAGES:
             manifest = json.loads((args.out / f"{name}.manifest.json").read_bytes())

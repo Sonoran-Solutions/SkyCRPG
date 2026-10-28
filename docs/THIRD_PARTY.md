@@ -1,11 +1,19 @@
-# Third-party components and attribution
+# Third-party credits and notices
 
-The repository contains original prototype code/configuration, contracts and game evidence. External provider archives and generated derivative SWFs remain outside Git; screenshots include game/provider material and are not relicensed as original artwork.
+Internal candidates only. See [dependency lock](compatibility/dependency-lock.md) for exact providers and [licensing scope](LICENSING.md) for original grants and exclusions. Provider archives are external; the UI candidate contains modified SkyUI movies and Camera contains configuration overrides. Neither candidate contains full provider archives.
 
-Before adopting a component, record its exact source/release, source license, asset/archive permissions, attribution text, modifications, redistribution plan and required source availability. Keep original notices where required. A Nexus permission field and a repository license can apply to different material; inspect the actual selected files.
+| Component | Credit and use |
+| --- | --- |
+| SkyUI Community 6.11 | SkyUI Team, including snakster and Mardoxx, and SkyUI 6.x Community contributors including doodlum and zndxcvbn. The three patched SWFs derive from hash-checked SkyUI movies; base assets and embedded fonts/art are not relicensed. Public distribution and HUD asset provenance remain for owner review. |
+| SmoothCam 1.8.1 | mwilsnd; external camera provider; candidate includes framing config and preset. |
+| True Directional Movement 2.3.1 | Ersh; external movement provider; candidate includes merged MCM settings. |
+| MCM Helper 1.6.3 | Parapets; external prerequisite. |
+| Address Library 13 | meh321 and contributors; external prerequisite. |
+| SKSE64 2.3.1 | Skyrim Script Extender team; external prerequisite. |
+| Infinity UI NG 2.1.3, Local Map Upgrade settings fork 1.3.4, Dragon's Eye Minimap settings fork 1.7.5 | Respective authors and contributors; optional external minimap stack, see dependency lock for provenance. |
+| CommonLibSSE-NG 7.2.0 | CommonLibSSE-NG contributors and legacy CommonLibSSE author Ryan-rsm-McKenzie. GPL text, exceptions and legacy MIT notice accompany each candidate. |
+| spdlog, fmt, DirectXTK, rapidcsv | Their respective authors and contributors; build dependency notices are missing locally, and linkage of fmt per DLL needs verification. See [docs review](evidence/p4/docs-review.md). |
 
-Current candidates and their primary references are in [REUSE_RESEARCH.md](REUSE_RESEARCH.md). The implementation lock belongs in [compatibility/dependency-lock.md](compatibility/dependency-lock.md).
+## Draft corresponding-source statement — owner review required
 
-Use external downloads/configuration where that meets the requirement. Do not redistribute a full mod archive merely to spare an installation step. Do not assume portrait packs, icons, fonts or game assets inherit a plugin source license.
-
-D015 is resolved by the owner: original code/config/docs use MIT and original artwork uses CC BY4.0, with devils_17 attribution. See [LICENSING](LICENSING.md) for exact scope and exclusions. This does not change third-party permissions.
+Each DLL is a combined work containing statically linked CommonLibSSE-NG, conveyed under GPL-3.0-or-later terms subject to its exceptions. Original SkyCRPG source remains MIT. For a candidate, provide the exact SkyCRPG source at `<candidate source URL and full SHA>` together with [CommonLibSSE-NG at its pinned commit](https://github.com/alandtse/CommonLibSSE-NG/tree/7a60f4de794095d7b0f8928d1b930a52e9a7da83), build instructions and the pinned vcpkg baseline in [build inputs](../cmake/README.md), plus any other required corresponding source. Make this material available with the candidate and verify completeness before distribution. This draft is not a legal determination or public distribution approval. CommonLib notices are in [LICENSES](../LICENSES/); missing static dependency notices remain a distribution gap.
