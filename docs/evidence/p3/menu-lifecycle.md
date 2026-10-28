@@ -44,10 +44,10 @@ Logs and job specifications: `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-
 
 | Criterion | Status |
 | --- | --- |
-| 1. Native controls/no unintended action | Keyboard/mouse hotbar suppression behind console, Favorites and inventory, plus a key held across inventory close: automated PASS [R]. Dialogue: owner-reported controller PASS [O]. Keyboard/mouse dialogue and the remaining contexts: N. |
-| 2. Save/load/new game and configuration recovery | Console save/load with the same equipped item, HUD and minimap: automated PASS [R]. Quit to main menu then load, new game, and death then reload: owner-reported controller PASS [O]. Malformed-INI runtime: N. |
+| 1. Native controls/no unintended action | Keyboard/mouse hotbar suppression behind console, Favorites and inventory, plus a key held across inventory close: automated PASS [R]. Dialogue: owner-reported PASS on controller and keyboard/mouse [O]. Remaining contexts: N. |
+| 2. Save/load/new game and configuration recovery | Console save/load with the same equipped item, HUD and minimap: automated PASS [R]. Quit to main menu then load, new game, and death then reload: owner-reported PASS on controller and keyboard/mouse [O]. Malformed-INI runtime: N. |
 | 3. Native menu coexistence without loss/trap | P [G] bounded menu route, [A] bounded item/quantity actions; inventory quantity cancel with no drop: automated PASS [R]. Complete transition matrix: N. |
-| 4. No global pause in combat | Source audit supports no UI pause/time-scale setter; real-time combat with hotbar use: owner-reported controller PASS [O]. Keyboard/mouse combat: N. |
+| 4. No global pause in combat | Source audit supports no UI pause/time-scale setter; real-time combat with hotbar use: owner-reported PASS on controller and keyboard/mouse [O]. |
 
 ## Route results (2026-10-28)
 
@@ -67,7 +67,7 @@ Both runs checked:
 - quantity slider open and cancelled with no drop;
 - console save/load with the same right-hand item, HUD present, and HUD and minimap readiness logged.
 
-**[O] Owner manual session** `p3-manual-167`, 18:24–18:30Z, controller (owner-stated), all five items owner-reported PASS:
+**[O] Owner manual session** `p3-manual-167`, 18:24–18:30Z. The owner stated they ran all five items on both the controller and keyboard/mouse, and reported all of them PASS:
 
 1. NPC dialogue;
 2. quit to main menu, then load;
@@ -75,11 +75,10 @@ Both runs checked:
 4. death (`player.kill`), then reload;
 5. real-time combat with hotbar use.
 
-Log notes from that session: `SkyCRPG_UI.log` has 4 slot-1 dispatches (equip, unequip, equip, equip). Controller hotbar use goes through native Favorites, which logs no `Hotkey` lines. `skse64.log` shows 4 pre-load and 3 post-load dispatches, and no new-game dispatch.
+Log notes from that session: `SkyCRPG_UI.log` has 4 slot-1 keyboard dispatches (equip, unequip, equip, equip) and no `decision=none` lines. Controller hotbar use goes through native Favorites, which logs no `Hotkey` lines. `skse64.log` shows 4 pre-load and 3 post-load dispatches, and no new-game dispatch.
 
 **Still N:**
 
-- the five manual items on keyboard/mouse;
 - the malformed/out-of-range INI step with the game closed;
 - UI-only disable/restart;
 - the rest of the transition matrix.
