@@ -72,13 +72,15 @@ skycrpg::ui::ParseResult ReadHudSettings(const std::wstring& iniPath)
 	std::array<wchar_t, 32> offsetX{};
 	std::array<wchar_t, 32> offsetY{};
 	std::array<wchar_t, 32> replaceCompass{};
+	std::array<wchar_t, 32> resetLayout{};
 	GetPrivateProfileStringW(L"Settings", L"iVersion", L"", version.data(), static_cast<DWORD>(version.size()), iniPath.c_str());
 	GetPrivateProfileStringW(L"HUD", L"bEnabled", L"", enabled.data(), static_cast<DWORD>(enabled.size()), iniPath.c_str());
 	GetPrivateProfileStringW(L"HUD", L"iScalePercent", L"", scale.data(), static_cast<DWORD>(scale.size()), iniPath.c_str());
 	GetPrivateProfileStringW(L"HUD", L"iOffsetX", L"", offsetX.data(), static_cast<DWORD>(offsetX.size()), iniPath.c_str());
 	GetPrivateProfileStringW(L"HUD", L"iOffsetY", L"", offsetY.data(), static_cast<DWORD>(offsetY.size()), iniPath.c_str());
 	GetPrivateProfileStringW(L"Minimap", L"bReplaceCompass", L"", replaceCompass.data(), static_cast<DWORD>(replaceCompass.size()), iniPath.c_str());
-	return skycrpg::ui::ParseHudSettings(version.data(), enabled.data(), scale.data(), offsetX.data(), offsetY.data(), replaceCompass.data());
+	GetPrivateProfileStringW(L"HUD", L"bResetLayout", L"0", resetLayout.data(), static_cast<DWORD>(resetLayout.size()), iniPath.c_str());
+	return skycrpg::ui::ParseHudSettings(version.data(), enabled.data(), scale.data(), offsetX.data(), offsetY.data(), replaceCompass.data(), resetLayout.data());
 }
 
 AddressLibraryResult VerifyPinnedAddressLibrary()
@@ -735,6 +737,9 @@ __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* skseInterface)
 	g_hudSettings = parsed.settings;
 	skycrpg::ui::minimap::Initialize(g_hudSettings.replaceCompass, [] { return g_menuBlocked.load(std::memory_order_acquire); });
 	LogHudSettings(iniPath, parsed);
+	if (parsed.resetLayoutApplied) {
+		AppendModuleLog("HUD reset-layout: startup defaults applied (100%, 0, 0); INI unchanged\n");
+	}
 
 	// The UI bridge and hotbar input use the pinned CommonLib runtime.
 	SKSE::Init(reinterpret_cast<const SKSE::LoadInterface*>(skseInterface), false);
