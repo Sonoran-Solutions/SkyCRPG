@@ -265,3 +265,11 @@ Logs under `session-p3/logs/dyl-168/fix-5/`. No Skyrim launch, commit or push; n
 SWF SHA-256 (`swf-fix-5/Data/Interface/`): `inventorymenu.swf` `2302b306cd3beb6e69a1962a76030f57f1c85a2fcea43ec9938c818e8fb1b3ba`, `skyui/inventorylists.swf` `34e32f04521a28acf16b00e263a479ca233a0814e986a8e0d91bcc46b4024518`, `hudmenu.swf` `54937d9d48d9a5de4c757ca2ce874fff4a41ed72b39048ad2eabd98292a31628` (unchanged).
 
 Round-5 in-game verification **NOT_RUN**.
+
+### Owner recheck `87823c897a1a4b9288e7dcc66af77070` on `46a7809`
+
+UI-only profile, 1920×1080, package `SkyCRPG_UI-0.0.1-46a7809.zip` (`17d7a838…`), DLL `e638dbdf…`, movies inventorymenu `2302b306…`, inventorylists `34e32f04…`, hudmenu `54937d9d…`. The owner reports the inventory layout "looks good now" and approves it: **PASS** for the round-5 preview placement, frame padding and grid bracket. Device not stated for this run (pending owner confirmation).
+
+`SkyCRPG_UI.log` confirms the engine-cache approach took effect and that `itemPos.x` uses the same units as `fInventory3DItemPosX`. The menu reported a card column with centre 1011.8 and half-width 252.2 stage units. Before: `itemPos=(-36.403, -500.000, 13.750) itemScale=1.500`. After: `itemPos=(-46.471, -500.000, 13.750) itemScale=1.339`. No INI setting was written.
+
+Still **NOT_RUN** on this build: the 720p and 115% owned-HUD-scale captures, and the DEM/active-effect overlap measurement. No owner screenshots were supplied for this run.
