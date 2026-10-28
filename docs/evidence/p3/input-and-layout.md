@@ -276,7 +276,7 @@ No owner screenshots were supplied for this run.
 
 ### Owner display-size captures on `46a7809`
 
-Both runs used the UI-only profile, the same package and a controller only (owner-confirmed). Each setting was changed only inside the run's profile: `SkyrimPrefs.ini` and the plugin INI are restored by `runtime_profile.py` (restore **PASS** both times).
+Both runs used the UI-only profile and the same package. Device: controller only for the 1080p/115% run (owner-confirmed); not stated for the 720p run. Each setting was changed only inside the run's profile: `SkyrimPrefs.ini` and the plugin INI are restored by `runtime_profile.py` (restore **PASS** both times).
 
 | Run | Display / HUD scale | Owner result | Notes |
 | --- | --- | --- | --- |
