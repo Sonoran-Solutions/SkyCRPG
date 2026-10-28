@@ -58,7 +58,7 @@ def hud_init_source():
 
 def transform(name, text):
     if name.endswith("InventoryMenu.as"):
-        text = replace_once(text, "_loc3_.layout = _loc5_;", "_loc3_.skycrpgGrid = true;\n      _loc3_.scrollDelta = 3;\n      _loc3_.layout = _loc5_;")
+        text = replace_once(text, "_loc3_.layout = _loc5_;", "_loc3_.skycrpgGrid = this.skycrpgInventoryBridge() != undefined;\n      if(_loc3_.skycrpgGrid) _loc3_.scrollDelta = 3;\n      _loc3_.layout = _loc5_;")
         # DYL-163: gate the existing player-only dispatch sites. No new native action.
         text = replace_once(text, "   function handleInput(details, pathToFocus)\n   {",
                             "   function handleInput(details, pathToFocus)\n   {\n      this.skycrpgInventoryInput(details);")
@@ -80,8 +80,8 @@ def transform(name, text):
                             "   function onItemHighlightChange(event)\n   {\n      this.skycrpgInventoryCapture();")
         # DYL-164: player-only presentation. Install row-aligned scrolling on
         # this instance; native shared-list bodies and other contexts are unchanged.
-        text = replace_once(text, "      _loc3_.skycrpgGrid = true;",
-                            "      _loc3_.skycrpgGrid = true;\n      _loc3_.updateScrollPosition = _loc3_.skycrpgUpdateScrollPosition;\n      _loc3_.calculateMaxScrollPosition = _loc3_.skycrpgCalculateMaxScrollPosition;")
+        text = replace_once(text, "      _loc3_.skycrpgGrid = this.skycrpgInventoryBridge() != undefined;",
+                            "      _loc3_.skycrpgGrid = this.skycrpgInventoryBridge() != undefined;\n      if(_loc3_.skycrpgGrid) {\n         _loc3_.updateScrollPosition = _loc3_.skycrpgUpdateScrollPosition;\n         _loc3_.calculateMaxScrollPosition = _loc3_.skycrpgCalculateMaxScrollPosition;\n      }")
         text = replace_once(text, "      _loc3_.layout = _loc5_;",
                             "      _loc3_.layout = _loc5_;\n      this.skycrpgLayout();\n      this.skycrpgRequestEquipment();")
         text = replace_once(text, "      this.skycrpgInventoryCancel();",
