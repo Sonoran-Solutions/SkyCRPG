@@ -29,6 +29,8 @@ struct ParseResult
 	bool scaleWasClamped{ false };
 	bool offsetXWasClamped{ false };
 	bool offsetYWasClamped{ false };
+	bool resetLayoutWasValid{ true };
+	bool resetLayoutApplied{ false };
 };
 
 inline bool ParseInteger(std::wstring_view text, int& value)
@@ -49,7 +51,7 @@ inline bool ParseInteger(std::wstring_view text, int& value)
 
 inline ParseResult ParseHudSettings(std::wstring_view version, std::wstring_view enabled,
 	std::wstring_view scale, std::wstring_view offsetX, std::wstring_view offsetY,
-	std::wstring_view replaceCompass = L"")
+	std::wstring_view replaceCompass = L"", std::wstring_view resetLayout = L"0")
 {
 	ParseResult result{};
 	int parsedVersion = 0;
@@ -88,6 +90,14 @@ inline ParseResult ParseHudSettings(std::wstring_view version, std::wstring_view
 		const int bounded = std::clamp(parsed, -60, 60);
 		result.offsetYWasClamped = bounded != parsed;
 		result.settings.offsetY = bounded;
+	}
+	result.resetLayoutWasValid = ParseInteger(resetLayout, parsed) && (parsed == 0 || parsed == 1);
+	result.resetLayoutApplied = result.resetLayoutWasValid && parsed == 1;
+	if (result.resetLayoutApplied) {
+		// Startup override only: preserve enable/provider policy and the INI.
+		result.settings.scalePercent = 100;
+		result.settings.offsetX = 0;
+		result.settings.offsetY = 0;
 	}
 	return result;
 }

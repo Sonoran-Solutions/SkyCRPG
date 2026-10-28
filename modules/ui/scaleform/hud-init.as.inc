@@ -47,11 +47,18 @@
             this._xscale = (extent.x - origin.x) * scalePercent / 100;
             this._yscale = (extent.y - origin.y) * scalePercent / 100;
          };
+         var skycrpgRect = Stage.visibleRect;
+         if (skycrpgRect == undefined) skycrpgRect = {x:0, y:0, width:Stage.width, height:Stage.height};
+         var skycrpgScale = skycrpgSettings.hudScale / 100;
+         // Keep the 77-unit hotbar/voice row and 52-unit status panel in one
+         // bottom stack with a 12-unit gap, including at 115% scale.
+         var skycrpgBottomY = Math.max(skycrpgRect.y + 16,
+            Math.min(skycrpgRect.y + skycrpgRect.height - 12 - 141 * skycrpgScale,
+               skycrpgRect.y + skycrpgRect.height - 12 - 141 * skycrpgScale + skycrpgSettings.hudOffsetY));
          skycrpg.placeAtStage(
-            Math.max(16, Math.min(Stage.width - 16 - 420 * skycrpgSettings.hudScale / 100,
-               Stage.width / 2 - 210 * skycrpgSettings.hudScale / 100 + skycrpgSettings.hudOffsetX)),
-            Math.max(16, Math.min(Stage.height - 12 - 52 * skycrpgSettings.hudScale / 100,
-               Stage.height - 64 + skycrpgSettings.hudOffsetY)), skycrpgSettings.hudScale);
+            Math.max(skycrpgRect.x + 16, Math.min(skycrpgRect.x + skycrpgRect.width - 16 - 420 * skycrpgScale,
+               skycrpgRect.x + skycrpgRect.width / 2 - 210 * skycrpgScale + skycrpgSettings.hudOffsetX)),
+            skycrpgBottomY + 89 * skycrpgScale, skycrpgSettings.hudScale);
          skycrpg._visible = false;
          skycrpg._skycrpgDataReady = false;
          skycrpg._skycrpgNextSample = 0;
@@ -104,10 +111,9 @@
          var bar = this.createEmptyMovieClip("SkyCRPGHotbar", 18002);
          bar.All = true;
          bar.placeAtStage = skycrpg.placeAtStage;
-         bar.placeAtStage(Math.max(16, Math.min(Stage.width - 16 - 536 * skycrpgSettings.hudScale / 100,
-            Stage.width / 2 - 268 * skycrpgSettings.hudScale / 100 + skycrpgSettings.hudOffsetX)),
-            Math.max(16, Math.min(Stage.height - 16 - 116 * skycrpgSettings.hudScale / 100,
-            Stage.height - 122 + skycrpgSettings.hudOffsetY)), skycrpgSettings.hudScale);
+         bar.placeAtStage(Math.max(skycrpgRect.x + 16, Math.min(skycrpgRect.x + skycrpgRect.width - 16 - 536 * skycrpgScale,
+            skycrpgRect.x + skycrpgRect.width / 2 - 268 * skycrpgScale + skycrpgSettings.hudOffsetX)),
+            skycrpgBottomY, skycrpgSettings.hudScale);
          bar._visible = false;
          bar.dataReady = false;
          bar.nextSample = 0;
@@ -180,6 +186,11 @@
             slot.key.selectable = slot.kind.selectable = slot.name.selectable = slot.count.selectable = false;
             slotIndex++;
          }
+         bar.shortName = function(value, limit) {
+            var name = value == undefined ? "" : String(value);
+            return name.length > limit ? name.substr(0, limit - 3) + "..." : name;
+         };
+         bar.voice.textAutoSize = "shrink";
          bar.onEnterFrame = function() {
             // Menu transitions must hide immediately even between 2Hz snapshots.
             this.syncVisibility();
@@ -193,7 +204,7 @@
             }
             this.dataReady = true;
             this.syncVisibility();
-            this.voice.text = slots.voiceName ? "VOICE: " + slots.voiceName + "  " + this.formatRecovery(slots.voiceRecovery) : "";
+            this.voice.text = slots.voiceName ? "VOICE: " + this.shortName(slots.voiceName, 60) + "  " + this.formatRecovery(slots.voiceRecovery) : "";
             var i = 0;
             while (i < 8) {
                var cell = this["slot" + i];
@@ -207,8 +218,10 @@
                cell.moveTo(0, 0); cell.lineTo(64, 0); cell.lineTo(64, 59);
                cell.lineTo(0, 59); cell.lineTo(0, 0); cell.endFill();
                cell.icon.drawKind(value.kind);
-               cell.kind.text = value.kind == "" ? "EMPTY" : value.kind;
-               cell.name.text = value.name;
+               cell.kind.text = value.kind == "" ? "EMPTY" : (value.equipped ? "E " : "") + value.kind;
+               cell.kind.textAutoSize = "shrink";
+               cell.name.text = this.shortName(value.name, 12);
+               cell.name.textAutoSize = "shrink";
                // Native voice recovery is global to the player, not a spell timer.
                if (value.kind == "SHOUT") {
                   cell.count.text = this.formatRecovery(value.voiceRecovery);

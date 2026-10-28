@@ -6,6 +6,7 @@
       {
          var skycrpgNav = details.navEquivalent;
          if(skycrpgList.getListEnumSize() == 0) skycrpgList.skycrpgCategoryFocus = true;
+         if(typeof this.skycrpgDrawFocus == "function") this.skycrpgDrawFocus();
          if(skycrpgList.skycrpgCategoryFocus)
          {
             if(skycrpgNav == gfx.ui.NavigationCode.DOWN || skycrpgNav == gfx.ui.NavigationCode.ENTER)
@@ -14,6 +15,7 @@
                {
                   skycrpgList.skycrpgCategoryFocus = false;
                   skycrpgList.selectDefaultIndex(true);
+                  if(typeof this.skycrpgDrawFocus == "function") this.skycrpgDrawFocus();
                }
                return true;
             }
@@ -27,6 +29,7 @@
             {
                skycrpgList.selectedIndex = -1;
                skycrpgList.skycrpgCategoryFocus = true;
+               if(typeof this.skycrpgDrawFocus == "function") this.skycrpgDrawFocus();
                return true;
             }
             if(skycrpgList.skycrpgMove(details)) return true;
