@@ -192,6 +192,7 @@ bool acquireMovementLease() {
     const auto lease = movement->RequestDisableTargetLock(SKSE::GetPluginHandle());
     movementLease = lease == TDM_API::APIResult::OK || lease == TDM_API::APIResult::AlreadyGiven;
     if (!movementLease) { prerequisiteFailed = true; log("TDM target-lock-disable lease refused; controller suspended."); }
+    else log("TDM target-lock-disable lease acquired.");
     return movementLease;
 }
 void notifyFailure() {
@@ -533,7 +534,11 @@ public:
                         if (!enableAfterLease(movementLease)) continue;
                         settings.enabled = true; ownFirstPerson = false; suspend(); applyZoom = true; static_cast<void>(camera->ForceThirdPerson()); savePreferences();
                     }
-                } else if (obstructionFramingAllowed(c)) recenter = true;
+                } else if (obstructionFramingAllowed(c)) {
+                    recenter = true;
+                    if (const auto* camera = RE::PlayerCamera::GetSingleton(); camera && camera->currentState)
+                        lifecycleLog("recenter",c,static_cast<unsigned>(camera->currentState->id));
+                }
             }
         }
         return RE::BSEventNotifyControl::kContinue;
