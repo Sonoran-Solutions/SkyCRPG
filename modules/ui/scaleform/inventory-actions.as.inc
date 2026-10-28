@@ -8,7 +8,7 @@
    {
       if(skse == undefined || skse.plugins == undefined) return undefined;
       var bridge = skse.plugins.SkyCRPGUI;
-      if(bridge == undefined || typeof bridge.validateItemAction != "function" ||
+      if(bridge == undefined || bridge.hudEnabled != true || typeof bridge.validateItemAction != "function" ||
          typeof bridge.getInventorySnapshot != "function" ||
          typeof bridge.inventoryInputEdge != "function" ||
          typeof bridge.cancelInventoryAction != "function" ||
