@@ -6,7 +6,7 @@ Base `c7333c7`, worktree base `8f1dc119b6abc648205c8f0714a3217dfaf41631`; head `
 | --- | --- |
 | Install, controls, limitations | [Installation](../../INSTALLATION.md), [controls](../../CONTROLS.md), [notes](../../RELEASE_NOTES.md): package paths, overrides, defaults and exact module messages cross-checked against source. Final manager installs, update, disable and removal **NOT_RUN**. |
 | Evidence images | Inventory below identifies images in existing evidence; no concept image is presented as shipped. Historical evidence files are outside this lane's write ownership, so labels are indexed here. |
-| Rights and attribution | [Credits and draft source statement](../../THIRD_PARTY.md); legacy CommonLib MIT text copied from pinned local source and added to both package inventories. **BLOCKED:** local searches found no spdlog, fmt, DirectXTK or rapidcsv license text; link composition per DLL is unverified. Supply the applicable original notices before distribution; do not treat the notice set as complete. Public SWF distribution and HUD asset provenance await owner review. |
+| Rights and attribution | [Credits and draft source statement](../../THIRD_PARTY.md); legacy CommonLib MIT text copied from pinned local source and added to both package inventories. The vcpkg notice gap is resolved in packaging; verification is pending on the next CI build. Both package inventories require the five copyright files from the configured static triplet. Public SWF distribution and HUD asset provenance await owner review. |
 | Release flow and route | [Checklist](../../RELEASE_CHECKLIST.md) and [playtest](../../PLAYTEST.md); owner acceptance **NOT_RUN**. |
 | Links and package/config cross-check | See results below. |
 
@@ -22,7 +22,7 @@ All listed are **real game evidence**, not concept art; stills do not prove acti
 
 ## Package and configuration audit
 
-`expected_paths(full=True)` and `OVERRIDES` were compared with the explicit file inventory in [installation](../../INSTALLATION.md): each module DLL and INI, three UI movies, three Camera provider overrides and all eight per-module notice/build files are named there. Camera and UI have disjoint install paths. Documented INI keys were checked against their respective shipped module INIs; the generic `bEnabled` in the release checklist refers to the respective module sections in installation. The package manifest additionally carries external requirements and optional minimap providers; those are documented. The missing license notices above are not yet in `expected_paths` and remain a blocker.
+`expected_paths(full=True)` and `OVERRIDES` were compared with the explicit file inventory in [installation](../../INSTALLATION.md): each module DLL and INI, three UI movies, three Camera provider overrides and all eight per-module notice/build files and five vcpkg notices are named there. Camera and UI have disjoint install paths. Documented INI keys were checked against their respective shipped module INIs; the generic `bEnabled` in the release checklist refers to the respective module sections in installation. The package manifest additionally carries external requirements and optional minimap providers; those are documented. The vcpkg notice paths are required by `expected_paths`; verification on the next CI build is pending.
 
 ## Validation and runtime route
 

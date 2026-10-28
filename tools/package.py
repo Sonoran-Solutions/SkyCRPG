@@ -23,6 +23,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = "0.1.0-rc.1"
 RUNTIME = "SkyrimSE.exe 1.7.104.0 (Steam)"
+VCPKG_PORTS = ("spdlog", "fmt", "rapidcsv", "directxtk", "directxmath")
+VCPKG_TRIPLET = "x64-windows-static"
 
 PACKAGES = {
     "SkyCRPG_Camera": "modules/camera",
@@ -72,6 +74,16 @@ def package_files(name: str, module_dir: str, build_dir: Path) -> dict[str, Path
     dlls = sorted(build_dir.glob(f"{module_dir}/**/{name}.dll"))
     require(len(dlls) == 1, f"expected one {name}.dll under {build_dir / module_dir}, found {len(dlls)}")
     dll = dlls[0]
+    cache = build_dir / "CMakeCache.txt"
+    require(cache.is_file(), f"missing CMake cache: {cache}")
+    triplets = re.findall(r"^VCPKG_TARGET_TRIPLET:[^=\r\n]+=(.*)$", cache.read_text(encoding="utf-8"), re.MULTILINE)
+    require(len(triplets) == 1 and triplets[0].strip() == VCPKG_TRIPLET,
+            f"expected VCPKG_TARGET_TRIPLET={VCPKG_TRIPLET} in {cache}, found {triplets}")
+    notices = {}
+    for port in VCPKG_PORTS:
+        notice = build_dir / "vcpkg_installed" / triplets[0].strip() / "share" / port / "copyright"
+        require(notice.is_file(), f"missing vcpkg copyright notice for {port}: {notice}")
+        notices[f"Docs/{name}/third-party/{port}-copyright"] = notice
     return {
         f"SKSE/Plugins/{name}.dll": dll,
         f"SKSE/Plugins/{name}.ini": ROOT / module_dir / "config" / f"{name}.ini",
@@ -79,6 +91,7 @@ def package_files(name: str, module_dir: str, build_dir: Path) -> dict[str, Path
         f"Docs/{name}/CommonLibSSE-legacy-MIT": ROOT / "LICENSES/CommonLibSSE-legacy-MIT",
         f"Docs/{name}/CommonLibSSE-NG-EXCEPTIONS.md": ROOT / "LICENSES/CommonLibSSE-NG-EXCEPTIONS.md",
         f"Docs/{name}/build-inputs.md": ROOT / "cmake/README.md",
+        **notices,
     }
 
 
@@ -160,7 +173,8 @@ def hashes(files):
 
 def native_paths(name):
     return {f"SKSE/Plugins/{name}.dll", f"SKSE/Plugins/{name}.ini",
-            *[f"Docs/{name}/{p}" for p in ("CommonLibSSE-NG-COPYING", "CommonLibSSE-legacy-MIT", "CommonLibSSE-NG-EXCEPTIONS.md", "build-inputs.md")]}
+            *[f"Docs/{name}/{p}" for p in ("CommonLibSSE-NG-COPYING", "CommonLibSSE-legacy-MIT", "CommonLibSSE-NG-EXCEPTIONS.md", "build-inputs.md")],
+            *[f"Docs/{name}/third-party/{port}-copyright" for port in VCPKG_PORTS]}
 
 
 def expected_paths(name, full=False):
@@ -466,7 +480,7 @@ def native(args):
         files = {arc: path.read_bytes() for arc, path in package_files(name, module_dir, args.build_dir).items()}
         # Use committed inputs, not potentially dirty configuration/notices.
         for arc, path in package_files(name, module_dir, args.build_dir).items():
-            if path.is_relative_to(ROOT) and not arc.endswith(".dll"):
+            if path.is_relative_to(ROOT) and not arc.endswith(".dll") and "/third-party/" not in arc:
                 files[arc] = git_bytes(commit, path.relative_to(ROOT).as_posix())
         require(dll_has_commit(files[f"SKSE/Plugins/{name}.dll"], commit), "DLL source commit differs from --commit")
         packages[name] = files

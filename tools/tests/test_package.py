@@ -45,11 +45,21 @@ def bsa():
     return header + record + bytes([len(folder)]) + folder + bytes(16) + filename
 
 
+def vcpkg_fixture(build):
+    build.mkdir(parents=True, exist_ok=True)
+    (build / "CMakeCache.txt").write_text("VCPKG_TARGET_TRIPLET:STRING=x64-windows-static\n")
+    for port in pkg.VCPKG_PORTS:
+        notice = build / "vcpkg_installed" / pkg.VCPKG_TRIPLET / "share" / port / "copyright"
+        notice.parent.mkdir(parents=True, exist_ok=True)
+        notice.write_text(f"{port} notice\n")
+
+
 class PackageTests(unittest.TestCase):
     def test_legacy_notice_in_both_packages(self):
         for name, module in pkg.PACKAGES.items():
             with tempfile.TemporaryDirectory() as directory:
                 build = Path(directory)
+                vcpkg_fixture(build)
                 dll = build / module / (name + ".dll")
                 dll.parent.mkdir(parents=True)
                 dll.write_bytes(b"fixture")
@@ -270,6 +280,7 @@ class PackageTests(unittest.TestCase):
 
     def test_native_packages_keep_independent_payloads_and_checksum_both(self):
         build = self.root / "build"
+        vcpkg_fixture(build)
         for name, module in pkg.PACKAGES.items():
             path = build / module / "Release" / f"{name}.dll"
             path.parent.mkdir(parents=True)
@@ -290,11 +301,30 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(set(manifest["files"]), pkg.native_paths(name))
             self.assertIn(manifest["archive"], sums)
             self.assertIn(manifest["archive_sha256"], sums)
+            with zipfile.ZipFile(args.out / manifest["archive"]) as archive:
+                for port in pkg.VCPKG_PORTS:
+                    self.assertEqual(archive.read(f"Docs/{name}/third-party/{port}-copyright"),
+                                     f"{port} notice\n".encode())
         duplicate = build / "modules/ui/Other/SkyCRPG_UI.dll"
         duplicate.parent.mkdir()
         duplicate.write_bytes(pe())
         args.module = "ui"
         with self.assertRaisesRegex(ValueError, "expected one"):
+            pkg.native(args)
+
+    def test_missing_vcpkg_notice_and_wrong_triplet_fail(self):
+        build = self.root / "build"
+        vcpkg_fixture(build)
+        dll = build / "modules/ui/Release/SkyCRPG_UI.dll"
+        dll.parent.mkdir(parents=True)
+        dll.write_bytes(pe())
+        args = argparse.Namespace(build_dir=build, module="ui", commit=COMMIT, out=self.root / "native")
+        notice = build / "vcpkg_installed" / pkg.VCPKG_TRIPLET / "share/fmt/copyright"
+        notice.unlink()
+        with self.assertRaisesRegex(ValueError, "missing vcpkg copyright notice for fmt"):
+            pkg.native(args)
+        (build / "CMakeCache.txt").write_text("VCPKG_TARGET_TRIPLET:STRING=x64-windows\n")
+        with self.assertRaisesRegex(ValueError, "expected VCPKG_TARGET_TRIPLET=x64-windows-static"):
             pkg.native(args)
 
     def test_verify_repro_compares_all_output_bytes_and_cleans_temporary_dirs(self):
