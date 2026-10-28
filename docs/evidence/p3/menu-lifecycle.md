@@ -44,12 +44,47 @@ Logs and job specifications: `/srv/storage/Projects/SkyCRPG/session-p3/logs/dyl-
 
 | Criterion | Status |
 | --- | --- |
-| 1. Native controls/no unintended action | Prior bounded menu controls P [G]; new queued-action guard I; full physical input and all covered contexts N. |
-| 2. Save/load/new game and configuration recovery | Prior save/load P [M]; resets and parser tested in isolation; full stale-state/new-game and malformed INI runtime N. |
-| 3. Native menu coexistence without loss/trap | P [G] bounded menu route, [A] bounded item/quantity actions; complete transition matrix N. |
-| 4. No global pause in combat | Source audit supports no UI pause/time-scale setter; runtime combat across transitions N. |
+| 1. Native controls/no unintended action | Keyboard/mouse hotbar suppression behind console, Favorites and inventory, plus a key held across inventory close: automated PASS [R]. Dialogue: owner-reported controller PASS [O]. Keyboard/mouse dialogue and the remaining contexts: N. |
+| 2. Save/load/new game and configuration recovery | Console save/load with the same equipped item, HUD and minimap: automated PASS [R]. Quit to main menu then load, new game, and death then reload: owner-reported controller PASS [O]. Malformed-INI runtime: N. |
+| 3. Native menu coexistence without loss/trap | P [G] bounded menu route, [A] bounded item/quantity actions; inventory quantity cancel with no drop: automated PASS [R]. Complete transition matrix: N. |
+| 4. No global pause in combat | Source audit supports no UI pause/time-scale setter; real-time combat with hotbar use: owner-reported controller PASS [O]. Keyboard/mouse combat: N. |
 
-## Owner route — NOT_RUN, maximum 20 minutes
+## Route results (2026-10-28)
+
+All runs use the combined profile (`stage-combined-167b` + `dist-combined-167b`): UI `9a8692e` (ZIP `79b79809…`, DLL `c3ef6c3a…`) and Camera `28aae27` (ZIP `b97997f6…`, DLL `2ae4d513…`). The save is a disposable copy of `SkyCRPG_Test_DYL167`, never a fixture. Every run restored with PASS.
+
+**[R] Automated route** `session-p3/autotest/routes/dyl167-combined.json`, keyboard/mouse through virtual uinput devices, controller off, with the never-shipped test probe (PR #23, `1b4e4c5`) installed only for the run:
+
+- Supervised run `auto-dyl167-combined-20261028T181647Z`: PASS.
+- Unattended run `auto-dyl167-combined-20261028T181916Z`: PASS. No prompt; the owner confirmed nobody touched the machine.
+
+Both runs checked:
+
+- baseline state;
+- auto-FAV slot 1 equips Auriel's Bow;
+- no dispatch with the console, Favorites or inventory open;
+- no dispatch from a key held across inventory close;
+- quantity slider open and cancelled with no drop;
+- console save/load with the same right-hand item, HUD present, and HUD and minimap readiness logged.
+
+**[O] Owner manual session** `p3-manual-167`, 18:24–18:30Z, controller (owner-stated), all five items owner-reported PASS:
+
+1. NPC dialogue;
+2. quit to main menu, then load;
+3. new game;
+4. death (`player.kill`), then reload;
+5. real-time combat with hotbar use.
+
+Log notes from that session: `SkyCRPG_UI.log` has 4 slot-1 dispatches (equip, unequip, equip, equip). Controller hotbar use goes through native Favorites, which logs no `Hotkey` lines. `skse64.log` shows 4 pre-load and 3 post-load dispatches, and no new-game dispatch.
+
+**Still N:**
+
+- the five manual items on keyboard/mouse;
+- the malformed/out-of-range INI step with the game closed;
+- UI-only disable/restart;
+- the rest of the transition matrix.
+
+## Owner route — original plan, maximum 20 minutes
 
 Use a disposable copy of `SkyCRPG_Fixture_CombinedAcceptance` in the combined profile; never overwrite the fixture. Record purpose, command/profile, run ID/PID, logs, 20-minute deadline, completion and cleanup before launch. Record executable, runtime/dependency versions, host, source and DLL/SWF/package hashes. Do separate controller and keyboard/mouse passes and state the actual device; switch the controller off for the keyboard/mouse pass on this host. Stop and preserve evidence on item loss, lock or unintended action.
 
