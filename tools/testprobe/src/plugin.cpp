@@ -2,6 +2,8 @@
 // Test-only observer. No hooks, input, serialization or game-state mutations.
 #include <SKSE/SKSE.h>
 #include <RE/A/ActorValueOwner.h>
+#include <RE/G/GFxMovieView.h>
+#include <RE/G/GFxValue.h>
 #include <RE/M/Main.h>
 #include <RE/M/MenuOpenCloseEvent.h>
 #include <RE/P/PlayerCamera.h>
@@ -180,6 +182,27 @@ json::Object Resource(RE::PlayerCharacter* player, RE::ActorValue value)
 	return result;
 }
 
+// SkyUI's inventory quantity slider is an ItemCard submenu, not a menu, so no
+// MenuOpenCloseEvent marks it. ItemCard sets InputHandler while any submenu
+// (quantity/list/message/editName) is up and clears it on hide. Read-only GFx
+// access, only from the UI task drain; null when the card cannot be resolved.
+void ItemCardField(json::Object& fields, RE::UI* ui)
+{
+	constexpr const char* card = "_root.Menu_mc.itemCardFadeHolder.ItemCard_mc";
+	if (!ui || !ui->IsMenuOpen("InventoryMenu")) { fields.Null("item_card_submenu"); return; }
+	const auto movie = ui->GetMovieView("InventoryMenu");
+	RE::GFxValue value;
+	if (!movie || !movie->GetVariable(&value, card) || value.IsUndefined()) {
+		Log("SkyCRPG_TestProbe: inventory item card unavailable\n");
+		fields.Null("item_card_submenu");
+		return;
+	}
+	RE::GFxValue handler;
+	const bool open = movie->GetVariable(&handler, (std::string(card) + ".InputHandler").c_str()) &&
+		!handler.IsUndefined() && !handler.IsNull();
+	fields.Boolean("item_card_submenu", open);
+}
+
 void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
 {
 	json::Object fields;
@@ -245,9 +268,10 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
 			menus += json::Quote(name.c_str());
 		}
 		fields.Raw("open_menus", menus + ']');
+		ItemCardField(fields, ui);
 	} else {
 		Log("SkyCRPG_TestProbe: UI unavailable\n");
-		fields.Null("paused").Null("open_menus");
+		fields.Null("paused").Null("open_menus").Null("item_card_submenu");
 	}
 	Emit("player_state", fields);
 }
@@ -579,7 +603,7 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* sks
 		g_probe->interval = json::ParseInterval(interval.data());
 		const auto fields = json::Object{}.String("runtime", Version(skseInterface->runtimeVersion))
 			.String("skse", Version(skseInterface->skseVersion)).String("probe_version", SKYCRPG_VERSION)
-			.String("snapshot_dispatch", "ui_task_drain_v2")
+			.String("snapshot_dispatch", "ui_task_drain_v3")
 			.String("build_commit", SKYCRPG_SOURCE_COMMIT).Boolean("enabled", enabled).Numeric("state_interval_ms", g_probe->interval);
 		if (!enabled) { Emit("probe_loaded", fields); return true; }
 		if (!PinnedAddressLibrary()) {
