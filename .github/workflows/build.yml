@@ -11,7 +11,7 @@ on:
       module:
         description: Independent target
         type: choice
-        options: [ui, camera, both]
+        options: [ui, camera, both, testprobe, all]
         default: ui
 
 permissions:
@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 3
     outputs:
       modules: ${{ steps.scope.outputs.modules }}
+      testprobe: ${{ steps.scope.outputs.testprobe }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -38,6 +39,8 @@ jobs:
 
   windows-x64:
     needs: scope
+    # A probe-only change selects no production module; skip the empty matrix.
+    if: needs.scope.outputs.modules != '[]'
     strategy:
       fail-fast: false
       matrix:
@@ -116,6 +119,8 @@ jobs:
   # Owner: Package C; purpose: MSVC /W4 /WX build + SHA-256; completion: artifact
   # upload/exit 0. Deadline/cleanup: 30-minute job timeout, hosted runner disposal.
   testprobe:
+    needs: scope
+    if: needs.scope.outputs.testprobe == 'true'
     runs-on: windows-2022
     timeout-minutes: 30
     env:
@@ -159,3 +164,24 @@ jobs:
           name: skycrpg-testprobe-${{ env.SOURCE_SHA }}
           path: testprobe-artifact/
           if-no-files-found: error
+
+  # Portable probe policy tests (JSON lines, snapshot gate, opt-in config).
+  # No Windows or engine headers; they run wherever the probe is selected.
+  testprobe-portable:
+    needs: scope
+    if: needs.scope.outputs.testprobe == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build and run portable probe tests
+        run: |
+          set -euo pipefail
+          for test in tools/testprobe/tests/*_test.cpp; do
+            name=$(basename "$test" .cpp)
+            g++ -std=c++20 -Wall -Wextra -Werror -pedantic "$test" -o "$RUNNER_TEMP/$name"
+            "$RUNNER_TEMP/$name"
+            echo "$name PASS"
+          done

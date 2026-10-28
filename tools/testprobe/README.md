@@ -41,8 +41,12 @@ bEnabled=1
 iStateIntervalMs=1000
 ```
 
-Settings are read once at startup; a missing INI uses these defaults.
-`bEnabled=0` writes only `probe_loaded` with `enabled:false`, then stays inert.
+Settings are read once at startup. The probe is **opt-in**: only an explicit
+`bEnabled=1` enables it. A missing INI, a missing key, `bEnabled=0` or any
+other value leaves the DLL fully inert. It registers no sinks, starts no timer
+and writes no JSONL or log, so an accidental install without the runner's INI
+does nothing. The runner always installs this INI and refuses to start unless
+it says `bEnabled=1`.
 `iStateIntervalMs=0` disables both the timer and request polling; load/new-game
 and menu-close snapshots still run while enabled. Intervals from 1 through
 2147483647 ms are accepted; invalid values fall back to 1000 ms.
@@ -89,7 +93,7 @@ uppercase strings such as `"0x00000014"`; absent objects are `null`.
 
 | `ev` | Additional fields |
 | --- | --- |
-| `probe_loaded` | `runtime`, `skse` (four-part version strings), `probe_version`, `snapshot_dispatch` (`"ui_task_drain_v3"`), `build_commit` (`"unknown"` if not supplied), `enabled`, `state_interval_ms` |
+| `probe_loaded` | `runtime`, `skse` (four-part version strings), `probe_version`, `snapshot_dispatch` (`"ui_task_drain_v3"`), `build_commit` (`"unknown"` if not supplied), `enabled` (always `true`; a disabled probe writes nothing), `state_interval_ms` |
 | `data_loaded` | None; SKSE `kDataLoaded` |
 | `game_loaded` | `success` from SKSE `kPostLoadGame`'s pointer-encoded boolean; `save_name` copied from `kPreLoadGame`, or `null` |
 | `new_game` | None; SKSE `kNewGame` |
@@ -150,6 +154,9 @@ This tests escaping, UTF-8 preservation, numeric formatting (including a decimal
 comma locale), envelope formatting, raw request parsing/bounds and interval
 parsing. It does not compile the Windows adapter or prove engine behavior.
 The policy test covers all eight drain/generation/load combinations and checkpoint tag preservation in failures.
+The config test covers missing, explicitly enabled, explicitly disabled and
+malformed `bEnabled` values. CI builds and runs all three portable tests on
+Linux (job `testprobe-portable`).
 Windows MSVC builds in CI (job `testprobe`). Runtime: the DYL-167 combined
 route passed with this probe on `1b4e4c5`, both supervised
 (`auto-dyl167-combined-20261028T181647Z`) and unattended

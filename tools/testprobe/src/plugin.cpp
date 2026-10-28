@@ -20,6 +20,7 @@
 // CommonLib/REX headers must precede the Windows headers in the skeleton.
 #include <skycrpg/skeleton.h>
 #include "json_line.h"
+#include "probe_config.h"
 #include "snapshot_policy.h"
 
 #include <bcrypt.h>
@@ -565,6 +566,21 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 	} catch (...) { Log("SkyCRPG_TestProbe: SKSE message failed; skipped\n"); }
 }
 
+// INI value narrowed to ASCII digits; any other character becomes '?' so the
+// strict parsers reject it instead of reading a partial number.
+std::array<char, 32> ReadDigits(const std::wstring& ini, const wchar_t* key, const wchar_t* fallback)
+{
+	std::array<wchar_t, 32> wide{};
+	std::array<char, 32> narrow{};
+	GetPrivateProfileStringW(L"Probe", key, fallback, wide.data(), static_cast<DWORD>(wide.size()), ini.c_str());
+	for (std::size_t index = 0; index + 1 < narrow.size(); ++index) {
+		const auto character = wide[index];
+		if (character == 0) break;
+		narrow[index] = character >= L'0' && character <= L'9' ? static_cast<char>(character) : '?';
+	}
+	return narrow;
+}
+
 std::string Version(std::uint32_t version)
 {
 	return json::Number(version >> 24) + '.' + json::Number((version >> 16) & 0xFF) + '.' +
@@ -589,24 +605,18 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* sks
 	try {
 		if (!skseInterface || skseInterface->isEditor || skseInterface->runtimeVersion != skse::kRuntime_1_7_104 ||
 			skseInterface->skseVersion != skse::kSKSE_2_3_1) return false;
+		const auto ini = skycrpg::ThisModuleDirectory() + L"SkyCRPG_TestProbe.ini";
+		// Opt-in only: without an explicit bEnabled=1 the probe registers nothing,
+		// starts no timer and writes no JSONL or log, even if installed by mistake.
+		if (!json::ProbeEnabled(ReadDigits(ini, L"bEnabled", L"").data())) return true;
 		g_probe = new Probe();
 		g_probe->directory = skycrpg::LogDirectory();
 		if (g_probe->directory.empty()) { Log("SkyCRPG_TestProbe: SKSE directory unavailable\n"); return false; }
-		const auto ini = skycrpg::ThisModuleDirectory() + L"SkyCRPG_TestProbe.ini";
-		const bool enabled = GetPrivateProfileIntW(L"Probe", L"bEnabled", 1, ini.c_str()) != 0;
-		std::array<char, 32> interval{};
-		std::array<wchar_t, 32> wideInterval{};
-		GetPrivateProfileStringW(L"Probe", L"iStateIntervalMs", L"1000", wideInterval.data(), static_cast<DWORD>(wideInterval.size()), ini.c_str());
-		for (std::size_t index = 0; index < interval.size(); ++index) {
-			const auto character = wideInterval[index];
-			interval[index] = character >= L'0' && character <= L'9' ? static_cast<char>(character) : (character == 0 ? '\0' : '?');
-		}
-		g_probe->interval = json::ParseInterval(interval.data());
+		g_probe->interval = json::ParseInterval(ReadDigits(ini, L"iStateIntervalMs", L"1000").data());
 		const auto fields = json::Object{}.String("runtime", Version(skseInterface->runtimeVersion))
 			.String("skse", Version(skseInterface->skseVersion)).String("probe_version", SKYCRPG_VERSION)
 			.String("snapshot_dispatch", "ui_task_drain_v3")
-			.String("build_commit", SKYCRPG_SOURCE_COMMIT).Boolean("enabled", enabled).Numeric("state_interval_ms", g_probe->interval);
-		if (!enabled) { Emit("probe_loaded", fields); return true; }
+			.String("build_commit", SKYCRPG_SOURCE_COMMIT).Boolean("enabled", true).Numeric("state_interval_ms", g_probe->interval);
 		if (!PinnedAddressLibrary()) {
 			Log("SkyCRPG_TestProbe: pinned Address Library 13 missing/unreadable/mismatched; CommonLib Init skipped\n");
 			return false;
