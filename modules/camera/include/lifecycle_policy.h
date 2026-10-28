@@ -11,6 +11,19 @@ struct Hazards {
 constexpr bool specialHazard(Hazards h) {
     return h.mount || h.killmove || h.swimming || h.furniture || h.bleedout || h.beast || h.scripted;
 }
+constexpr bool leaseWanted(bool startEnabled, bool runtimeEnableRequested, bool haveLease) {
+    return (startEnabled || runtimeEnableRequested) && !haveLease;
+}
+constexpr bool enableAfterLease(bool haveLease) { return haveLease; }
+struct FailureDebounce {
+    bool pending = false;
+    double since = 0;
+    bool observe(bool eligible, double now) {
+        if (!eligible) { pending = false; return false; }
+        if (!pending) { pending = true; since = now; return false; }
+        return now - since >= 1.0;
+    }
+};
 // Slides pause correction without changing the selected lifecycle state.
 constexpr bool pauseCorrection(Context c) { return c.slide; }
 struct LifecycleTraceDebounce {

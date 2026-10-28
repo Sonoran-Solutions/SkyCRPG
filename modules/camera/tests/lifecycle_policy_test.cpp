@@ -4,6 +4,18 @@
 #include <cassert>
 using namespace skycrpg::camera;
 int main() {
+    assert(!leaseWanted(false,false,false)); // disabled at startup
+    assert(leaseWanted(true,false,false)); // enabled at startup
+    assert(leaseWanted(false,true,false)); // runtime enable
+    assert(!enableAfterLease(false)); // refusal keeps Camera disabled
+    assert(enableAfterLease(true));
+    assert(!leaseWanted(false,true,true)); // F6 precision retains its lease
+    FailureDebounce failure;
+    assert(!failure.observe(true,10.0));
+    assert(!failure.observe(true,10.9));
+    assert(!failure.observe(false,11.0)); // menu, load, recovery or no world resets
+    assert(!failure.observe(true,12.0));
+    assert(failure.observe(true,13.0));
     bool owned = true, recenter = true, pending = false;
     std::array<FreshPress,4> keys{};
     keys[1].down = true; // held across the reset
