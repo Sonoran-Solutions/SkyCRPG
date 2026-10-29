@@ -309,7 +309,10 @@ Additional available `player_state` fields:
   only on explicit requested snapshots; those four fields are null on periodic
   snapshots to avoid adding periodic inventory scans.
   `head` is additive protocol 2 for the audited Iron Helmet hotbar equip/unequip
-  check; rebuild the probe DLL in Windows CI before using the revised routes.
+  check. It reports the first worn armor in the Head, Hair or Circlet slot,
+  because vanilla helmets often skip Head (Iron Helmet BOD2 = slots 31 and 42;
+  live run auto-dyl170-ui-main-20261029T004643Z saw the equip event with `head`
+  null under a Head-only read).
 - `selected_power`, `voice_recovery` (null without a current high process),
   `weapon_drawn`: native shout/power, remaining global voice recovery seconds
   and native drawn state. These do not implement a cooldown or combat policy.

@@ -373,7 +373,11 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation, 
 	equipped.Boolean("two_handed", weapon && json::TwoHandedWeapon(static_cast<unsigned>(weapon->GetWeaponType())));
 	using Slot = RE::BGSBipedObjectForm::BipedObjectSlot;
 	if (requested) {
-		FormField(equipped, "head", player->GetWornArmor(Slot::kHead, true));
+		// Vanilla helmets often use Hair/Circlet, not Head (Iron Helmet BOD2 = slots 31 and 42).
+		auto* head = player->GetWornArmor(Slot::kHead, true);
+		if (!head) head = player->GetWornArmor(Slot::kHair, true);
+		if (!head) head = player->GetWornArmor(Slot::kCirclet, true);
+		FormField(equipped, "head", head);
 		FormField(equipped, "body", player->GetWornArmor(Slot::kBody, true));
 		FormField(equipped, "ring", player->GetWornArmor(Slot::kRing, true));
 		FormField(equipped, "amulet", player->GetWornArmor(Slot::kAmulet, true));
