@@ -64,7 +64,19 @@ void LogRefusal(std::uint64_t token, const char* reason)
     const auto path = skycrpg::LogDirectory() + L"SkyCRPG_UI.log";
     FILE* log = nullptr;
     if (_wfopen_s(&log, path.c_str(), L"a") == 0 && log) {
-        std::fprintf(log, "Inventory refusal token=%llu reason=%s\n", static_cast<unsigned long long>(token), reason);
+        std::fprintf(log, "Inventory refusal token=%llu reason=%s", static_cast<unsigned long long>(token), reason);
+        if (std::string_view(reason) == "duplicate-input") {
+            std::fprintf(log, " consumed=%d same-token=%d held-count=%zu held-keys=",
+                static_cast<int>(g_intents.DuplicateConsumed()), static_cast<int>(g_intents.DuplicateSameToken()),
+                g_intents.Held().size());
+            const char* separator = "";
+            for (const auto key : g_intents.Held()) {
+                std::fprintf(log, "%s%u", separator, key);
+                separator = ",";
+            }
+            std::fprintf(log, " last-token=%llu", static_cast<unsigned long long>(g_intents.LastToken()));
+        }
+        std::fprintf(log, "\n");
         std::fclose(log);
     }
 }
@@ -374,8 +386,10 @@ public:
             const auto* entry = snapshot.Find(index);
             if (!entry) return;
             if (!g_intents.Pending() || !g_intents.Pending()->quantity) {
-                g_intents.Observe();
-                g_selection = Selection{snapshot.stamp, *entry, ++g_nextToken};
+                if (!g_selection || !SameSelection(*g_selection, snapshot, *entry)) {
+                    g_intents.Observe();
+                    g_selection = Selection{snapshot.stamp, *entry, ++g_nextToken};
+                }
             }
             if (!g_selection) return;
             params.movie->CreateObject(params.retVal);
