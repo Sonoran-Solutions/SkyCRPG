@@ -538,10 +538,10 @@ void ResourceLifecycle(SKSE::MessagingInterface::Message* message)
 	if (message->type == SKSE::MessagingInterface::kDataLoaded) {
 		static bool registered = false;
         static bool inputRegistered = false;
-        if (auto* input = RE::BSInputDeviceManager::GetSingleton(); input && !inputRegistered) {
+        if (auto* input = RE::BSInputDeviceManager::GetSingleton(); g_hudSettings.enabled && input && !inputRegistered) {
             input->AddEventSink(&g_hotbarInput);
             inputRegistered = true;
-        } else if (!inputRegistered) {
+        } else if (g_hudSettings.enabled && !inputRegistered) {
             AppendModuleLog("Hotbar input event source unavailable; dispatch disabled\n");
         }
 		if (auto* ui = RE::UI::GetSingleton()) {
@@ -743,8 +743,9 @@ __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* skseInterface)
 	const auto iniPath = skycrpg::ThisModuleDirectory() + kModule.fileStem + L".ini";
 	const auto parsed = ReadHudSettings(iniPath);
 	g_hudSettings = parsed.settings;
-	skycrpg::ui::minimap::Initialize(g_hudSettings.replaceCompass, [] { return g_menuBlocked.load(std::memory_order_acquire); });
+	skycrpg::ui::minimap::Initialize(g_hudSettings.enabled && g_hudSettings.replaceCompass, [] { return g_menuBlocked.load(std::memory_order_acquire); });
 	LogHudSettings(iniPath, parsed);
+	if (!g_hudSettings.enabled) AppendModuleLog("UI disabled by configuration; native UI and compass retained\n");
 	skycrpg::ui::inventory::preview::Configure(iniPath);
 	if (parsed.resetLayoutApplied) {
 		AppendModuleLog("HUD reset-layout: startup defaults applied (100%, 0, 0); INI unchanged\n");

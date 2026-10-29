@@ -15,6 +15,18 @@ Entry Plain(std::uint32_t index = 0, std::uint32_t count = 1) {
 Selection Select(const Snapshot& snapshot, std::uint64_t token = 1) {
     return {snapshot.stamp, snapshot.entries.front(), token};
 }
+void SelectionIdentity() {
+    Snapshot snapshot; snapshot.available = true; snapshot.entries.push_back(Plain());
+    const Selection selected{snapshot.stamp, snapshot.entries.front(), 1};
+    assert(SameSelection(selected, snapshot, snapshot.entries.front()));
+    auto changed = snapshot.entries.front();
+    changed.identity.traits.base.runtime += 1;
+    assert(!SameSelection(selected, snapshot, changed)); // same index, different form
+    changed = snapshot.entries.front(); changed.identity.traits.stolen = true;
+    assert(!SameSelection(selected, snapshot, changed)); // same form, different instance traits
+    ++snapshot.stamp.view;
+    assert(!SameSelection(selected, snapshot, snapshot.entries.front()));
+}
 void RowMatching() {
     auto row = Plain();
     const auto plain = row.identity.traits;
@@ -293,6 +305,7 @@ void GestureOrdering() {
     std::cout << "PASS: engine callback/down ordering, mouse gestures, repeats, no retry and one-shot quantity confirm\n";
 }
 int main() {
+    SelectionIdentity();
     ReentrantListUpdate();
     GestureOrdering();
     RowMatching();
