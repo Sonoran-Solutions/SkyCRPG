@@ -384,3 +384,5 @@ missing or nonboolean hit-test results are null, not false. An unavailable clip
 is null. `getClipByIndex`, `getBounds` and `hitTest` are invoked only on local
 snapshot values; no GFx object is retained. `cursor` is present whenever
 `inventory` is not null. Live behavior is NOT_RUN.
+
+For an active grid, `inventory.cursor.selected_cell` gives the painted 165×68 cell mapped into root coordinates; it is null if the grid, selected clip, mapping or finite coordinates are unavailable. `selected_clip` remains the native `getBounds` evidence and can be inflated by hidden children. The mapping is a snapshot and retains no GFx values.

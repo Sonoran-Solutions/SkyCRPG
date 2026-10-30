@@ -268,7 +268,7 @@ void Clip(json::Object& output, std::string_view name, RE::GFxMovieView* movie, 
 	else clip.Null("visible");
 	output.Raw(name, clip.Json());
 }
-void CursorFields(json::Object& inventory, RE::GFxMovieView* movie, RE::GFxValue& itemList, RE::GFxValue& selected)
+void CursorFields(json::Object& inventory, RE::GFxMovieView* movie, RE::GFxValue& itemList, RE::GFxValue& selected, bool gridActive)
 {
 	json::Object cursor;
 	RE::GFxValue root, x, y, index, clip, bounds, visible, result;
@@ -300,6 +300,28 @@ void CursorFields(json::Object& inventory, RE::GFxMovieView* movie, RE::GFxValue
 		if (hasVisible) box.Boolean("visible", visible.GetBool()); else box.Null("visible");
 		cursor.Raw("selected_clip", box.Json());
 	} else cursor.Null("selected_clip");
+	// Local painted rectangle, from skycrpgPaintCell; skycrpgGridBounds explains inflated native children.
+	constexpr double cellWidth = 165.0, cellHeight = 68.0;
+	double coords[4]{};
+	bool mapped = hasRoot && hasClip && gridActive;
+	for (int i = 0; i < 2 && mapped; ++i) {
+		RE::GFxValue point, px, py;
+		movie->CreateObject(&point);
+		px.SetNumber(i == 0 ? 0.0 : cellWidth);
+		py.SetNumber(i == 0 ? 0.0 : cellHeight);
+		std::array<RE::GFxValue, 1> pointArg;
+		pointArg[0] = point;
+		mapped = point.IsObject() && point.SetMember("x", px) && point.SetMember("y", py) &&
+			clip.Invoke("localToGlobal", nullptr, pointArg) && root.Invoke("globalToLocal", nullptr, pointArg) &&
+			point.GetMember("x", &px) && px.IsNumber() && point.GetMember("y", &py) && py.IsNumber();
+		if (mapped) { coords[i * 2] = px.GetNumber(); coords[i * 2 + 1] = py.GetNumber(); }
+	}
+	const auto cell = json::SelectedCell(gridActive, hasClip, mapped, coords[0], coords[1], coords[2], coords[3]);
+	if (cell) {
+		json::Object box;
+		box.Numeric("x_min", cell->x_min).Numeric("x_max", cell->x_max).Numeric("y_min", cell->y_min).Numeric("y_max", cell->y_max);
+		cursor.Raw("selected_cell", box.Json());
+	} else cursor.Null("selected_cell");
 	const bool hitResult = hasClip && completeBounds && hasVisible && hasX && hasY && clip.Invoke("hitTest", &result, hitArgs) && result.IsBool();
 	if (json::CursorHitKnown(hasX && hasY, hasClip, hitResult)) cursor.Boolean("hit", result.GetBool()); else cursor.Null("hit");
 	inventory.Raw("cursor", cursor.Json());
@@ -348,7 +370,7 @@ void UIFields(json::Object& fields, RE::UI* ui)
 		if (selected.GetMember("favorite", &favorite) && favorite.IsBool()) inventory.Boolean("selected_favorite", favorite.GetBool());
 		else inventory.Null("selected_favorite");
 	} else inventory.Null("selected_name").Null("selected_count").Null("selected_favorite");
-	CursorFields(inventory, movie.get(), itemList, selected);
+	CursorFields(inventory, movie.get(), itemList, selected, hasGrid && grid.IsBool() && grid.GetBool());
 	fields.Raw("inventory", inventory.Json());
 }
 
