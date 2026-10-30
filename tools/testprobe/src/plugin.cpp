@@ -350,6 +350,20 @@ void UIFields(json::Object& fields, RE::UI* ui)
 	}
 	state.Raw("hotbar", slots + ']');
 	fields.Raw("hud", state.Json());
+	if (!ui || !ui->IsMenuOpen("MagicMenu")) fields.Null("magic");
+	else {
+		const auto magicMovie = ui->GetMovieView("MagicMenu");
+		RE::GFxValue magicList, magicSelected, magicName, magicFavorite;
+		json::Object magic;
+		if (Variable(magicMovie.get(), "_root.Menu_mc.inventoryLists.itemList", magicList) &&
+			magicList.GetMember("selectedEntry", &magicSelected) && magicSelected.IsObject()) {
+			if (magicSelected.GetMember("text", &magicName) && magicName.IsString()) magic.String("selected_name", magicName.GetString());
+			else magic.Null("selected_name");
+			if (magicSelected.GetMember("favorite", &magicFavorite) && magicFavorite.IsBool()) magic.Boolean("selected_favorite", magicFavorite.GetBool());
+			else magic.Null("selected_favorite");
+		} else magic.Null("selected_name").Null("selected_favorite");
+		fields.Raw("magic", magic.Json());
+	}
 	if (!ui || !ui->IsMenuOpen("InventoryMenu")) { fields.Null("inventory"); return; }
 	const auto movie = ui->GetMovieView("InventoryMenu");
 	constexpr const char* list = "_root.Menu_mc.inventoryLists.itemList";
