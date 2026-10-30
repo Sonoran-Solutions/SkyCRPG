@@ -34,6 +34,7 @@
 #include "snapshot_policy.h"
 #include "observation_policy.h"
 #include "perf_policy.h"
+#include "cursor_policy.h"
 
 #include <bcrypt.h>
 #include <psapi.h>
@@ -231,7 +232,7 @@ void ItemCardField(json::Object& fields, RE::UI* ui)
 	else fields.Null("item_card_quantity");
 }
 
-// All GFx values are task-local copies; no invocation or mutation of movies.
+// All GFx values are task-local copies; observation calls do not mutate movies.
 bool Variable(RE::GFxMovieView* movie, const char* path, RE::GFxValue& value)
 {
 	return movie && movie->GetVariable(&value, path) && !value.IsUndefined() && !value.IsNull();
@@ -266,6 +267,42 @@ void Clip(json::Object& output, std::string_view name, RE::GFxMovieView* movie, 
 	if (complete) clip.Boolean("visible", visible);
 	else clip.Null("visible");
 	output.Raw(name, clip.Json());
+}
+void CursorFields(json::Object& inventory, RE::GFxMovieView* movie, RE::GFxValue& itemList, RE::GFxValue& selected)
+{
+	json::Object cursor;
+	RE::GFxValue root, x, y, index, clip, bounds, visible, result;
+	const bool hasRoot = Variable(movie, "_root", root) && root.IsDisplayObject();
+	const bool hasX = hasRoot && root.GetMember("_xmouse", &x) && x.IsNumber() && json::CursorNumber(true, x.GetNumber());
+	const bool hasY = hasRoot && root.GetMember("_ymouse", &y) && y.IsNumber() && json::CursorNumber(true, y.GetNumber());
+	if (hasX) cursor.Numeric("x", x.GetNumber()); else cursor.Null("x");
+	if (hasY) cursor.Numeric("y", y.GetNumber()); else cursor.Null("y");
+	std::array<RE::GFxValue, 3> hitArgs;
+	if (hasX && hasY) { hitArgs[0].SetNumber(x.GetNumber()); hitArgs[1].SetNumber(y.GetNumber()); hitArgs[2].SetBoolean(true); }
+	if (hasX && hasY && itemList.IsDisplayObject() && itemList.Invoke("hitTest", &result, hitArgs) && result.IsBool()) cursor.Boolean("over_list", result.GetBool());
+	else cursor.Null("over_list");
+	const bool hasIndex = selected.IsObject() && selected.GetMember("clipIndex", &index) && index.IsNumber() && json::CursorNumber(true, index.GetNumber());
+	std::array<RE::GFxValue, 1> args;
+	if (hasIndex) args[0] = index;
+	const bool hasClip = hasIndex && itemList.IsDisplayObject() && itemList.Invoke("getClipByIndex", &clip, args) && clip.IsDisplayObject();
+	bool completeBounds = false, hasVisible = false;
+	if (hasClip) {
+		json::Object box;
+		args[0] = root;
+		const bool hasBounds = hasRoot && clip.Invoke("getBounds", &bounds, args) && bounds.IsObject();
+		completeBounds = hasBounds;
+		for (const auto& pair : { std::pair{ "x_min", "xMin" }, std::pair{ "x_max", "xMax" }, std::pair{ "y_min", "yMin" }, std::pair{ "y_max", "yMax" } }) {
+			RE::GFxValue value;
+			if (hasBounds && bounds.GetMember(pair.second, &value) && value.IsNumber() && json::CursorNumber(true, value.GetNumber())) box.Numeric(pair.first, value.GetNumber());
+			else { box.Null(pair.first); completeBounds = false; }
+		}
+		hasVisible = clip.GetMember("_visible", &visible) && visible.IsBool();
+		if (hasVisible) box.Boolean("visible", visible.GetBool()); else box.Null("visible");
+		cursor.Raw("selected_clip", box.Json());
+	} else cursor.Null("selected_clip");
+	const bool hitResult = hasClip && completeBounds && hasVisible && hasX && hasY && clip.Invoke("hitTest", &result, hitArgs) && result.IsBool();
+	if (json::CursorHitKnown(hasX && hasY, hasClip, hitResult)) cursor.Boolean("hit", result.GetBool()); else cursor.Null("hit");
+	inventory.Raw("cursor", cursor.Json());
 }
 void UIFields(json::Object& fields, RE::UI* ui)
 {
@@ -311,6 +348,7 @@ void UIFields(json::Object& fields, RE::UI* ui)
 		if (selected.GetMember("favorite", &favorite) && favorite.IsBool()) inventory.Boolean("selected_favorite", favorite.GetBool());
 		else inventory.Null("selected_favorite");
 	} else inventory.Null("selected_name").Null("selected_count").Null("selected_favorite");
+	CursorFields(inventory, movie.get(), itemList, selected);
 	fields.Raw("inventory", inventory.Json());
 }
 

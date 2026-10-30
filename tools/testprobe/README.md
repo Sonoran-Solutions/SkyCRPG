@@ -348,8 +348,8 @@ provider DLLs. `SkyCRPGStatus` and `SkyCRPGHotbar.slot0` through `slot7` come
 from `hud-init.as.inc`. Inventory uses `_root.Menu_mc.inventoryLists.itemList`
 with `skycrpgGrid`, `selectedEntry.text` and `selectedEntry.count`, matching
 SkyUI's InventoryMenu/InventoryLists and our inventory presentation include.
-No GFx function is invoked; no movie, player, inventory entry or form pointer
-is retained across tasks.
+Only the read-only cursor methods described below are invoked; no movie,
+player, inventory entry or form pointer is retained across tasks.
 
 CommonLib 7.2.0 signatures were verified in the supplied local headers:
 `UI::GetMovieView(string_view) -> GPtr<GFxMovieView>`, `GFxValue` getters,
@@ -374,3 +374,13 @@ reads that exact value in HandleQuantityMenuInput before native quantitySelect.
 The route adjusts with LEFT and requires a requested numeric value of exactly
 one **before** sending confirmation, preventing a bad adjustment from dropping
 an unintended quantity. Windows/runtime validation remains NOT_RUN.
+
+`inventory.cursor` is an additive protocol-2 observation while InventoryMenu is
+open. `x` and `y` are root stage coordinates; `over_list` and `hit` are the
+read-only SkyUI list and selected-clip hit tests. `selected_clip` contains
+`x_min`, `x_max`, `y_min`, `y_max` from `getBounds(_root)` and `visible` from
+`_visible`. Missing, nonnumeric or nonfinite coordinates and bounds are null;
+missing or nonboolean hit-test results are null, not false. An unavailable clip
+is null. `getClipByIndex`, `getBounds` and `hitTest` are invoked only on local
+snapshot values; no GFx object is retained. `cursor` is present whenever
+`inventory` is not null. Live behavior is NOT_RUN.
