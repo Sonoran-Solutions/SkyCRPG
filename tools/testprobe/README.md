@@ -387,4 +387,4 @@ snapshot values; no GFx object is retained. `cursor` is present whenever
 
 For an active grid, `inventory.cursor.selected_cell` gives the painted 165×68 cell mapped into root coordinates; it is null if the grid, selected clip, mapping or finite coordinates are unavailable. `selected_clip` remains the native `getBounds` evidence and can be inflated by hidden children. The mapping is a snapshot and retains no GFx values.
 
-`magic` is null when MagicMenu is closed; when open it contains `selected_name` and `selected_favorite`, each null if unavailable. It reads `_root.Menu_mc.inventoryLists.itemList.selectedEntry` without mutation; this is additive protocol 2. Runtime NOT_RUN.
+`magic` is null when MagicMenu is closed. When open, it contains `selected_name`, `selected_filter_flag` (the raw numeric `filterFlag`) and `selected_favorite` (derived from `filterFlag` bit 1, mask `1`); unavailable or invalid values are null. It reads `_root.Menu_mc.inventoryLists.itemList.selectedEntry` without mutation. `selected_filter_flag` is additive under protocol 2. Runtime NOT_RUN.
