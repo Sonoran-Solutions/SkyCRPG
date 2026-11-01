@@ -109,7 +109,7 @@ The merged foundation's SKSE2.3.1 load-only evidence is real, and the rewritten 
 
 ## Tested scope and exact local artifacts
 
-Camera-only, UI-only and combined provider load checks passed on Steam1.7.104.0, SKSE2.3.1, Address Library13, Ubuntu26.04.1/Proton `experimental-11.0-20261014-x86_64`. Owner gameplay results and failures are in session evidence; this is not a wider runtime/platform certification. SKSE2.3.1 archive SHA-256 `7bad616ed360823a027f8828801d91e3a4aa2eacd952023af7f3e31adb2ae250`. [Canonical installed-file hashes](../evidence/p1/tested-artifacts.json) distinguish each tested artifact; [native build manifests](../evidence/p1/native-package-inputs.json) pin skeleton DLL source/archive hashes. Party Sheet3.7 was inspected only and never installed. No provider stack was silently upgraded.
+Camera-only, UI-only and combined provider load checks passed on Steam1.7.104.0, SKSE2.3.1, Address Library13, Ubuntu26.04.1/Proton `experimental-11.0-20261014-x86_64`. Owner gameplay results and failures are in session evidence; this is not a wider runtime/platform certification. SKSE2.3.1 archive SHA-256 `7bad616ed360823a027f8828801d91e3a4aa2eacd952023af7f3e31adb2ae250`. [Canonical installed-file hashes](../evidence/p1/tested-artifacts.json) distinguish each tested artifact; [native build manifests](../evidence/p1/native-package-inputs.json) pin skeleton DLL source/archive hashes. Party Sheet3.7 was inspected only and never installed. No provider stack was silently upgraded. Phase 4 DYL-170 runtime routes ran on Proton `experimental-11.0-20261027b-x86_64` after the owner accepted Steam's Proton Experimental update on 2026-10-31; providers and game files are unchanged.
 
 ## Phase 2 adapter build activation
 

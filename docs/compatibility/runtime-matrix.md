@@ -1,6 +1,6 @@
 # Runtime, dependency and evidence baseline
 
-DYL-154 baseline, updated with DYL-155 evidence on 2026-10-26. The [Phase 3 candidate](#dyl-169-phase-3-candidate) section was added on 2026-10-28; the host and provider pins are unchanged. **One tested feasibility environment**, with scoped working behaviors and explicit failures below. This is not a finished MVP support certification. Other runtimes, operating systems, Proton builds and untested mod combinations are unsupported by Phase 1 evidence. [Acceptance matrix](acceptance-matrix.md) owns requirement status; [dependency lock](dependency-lock.md) owns exact upstream files, source commits and permissions.
+DYL-154 baseline, updated with DYL-155 evidence on 2026-10-26. The [Phase 3 candidate](#dyl-169-phase-3-candidate) section was added on 2026-10-28; the host and provider pins are unchanged. On 2026-10-31 Steam updated Proton Experimental and the owner accepted the new build as the Phase 4 test host; Phase 1–3 evidence remains on the earlier build. **One tested feasibility environment**, with scoped working behaviors and explicit failures below. This is not a finished MVP support certification. Other runtimes, operating systems, Proton builds and untested mod combinations are unsupported by Phase 1 evidence. [Acceptance matrix](acceptance-matrix.md) owns requirement status; [dependency lock](dependency-lock.md) owns exact upstream files, source commits and permissions.
 
 ## Host and runtime
 
@@ -10,7 +10,7 @@ DYL-154 baseline, updated with DYL-155 evidence on 2026-10-26. The [Phase 3 cand
 | SKSE | 2.3.1 Steam; archive SHA-256 `7bad616ed360823a027f8828801d91e3a4aa2eacd952023af7f3e31adb2ae250`; runtime DLL `d5158f8c61a2257138692940ed27048c40d6ff62676e64791bdc83d4549fb94e` |
 | Address Library | 13; installed `versionlib-1-7-104-0.bin`; required by feature providers, not the plain skeletons |
 | Host | Ubuntu26.04.1, kernel7.0.0-38, Wayland/XWayland |
-| Compatibility layer | Proton Experimental11 `experimental-11.0-20261014-x86_64`; DXVKv3.1.1-97, Steam Linux Runtime4 |
+| Compatibility layer | Proton Experimental11 `experimental-11.0-20261027b-x86_64` (Steam build1793301796) for Phase 4 DYL-170 runtime routes, owner-accepted 2026-10-31; Phase 1–3 evidence ran on `experimental-11.0-20261014-x86_64`. DXVKv3.1.1-97 and Steam Linux Runtime4 on both. |
 | Graphics | RTX3080 10GB, NVIDIA595.99.02; recorded1920x1080 windowed/default game preset. No720p/scaled-text acceptance inferred. |
 | Input | Keyboard/mouse available; controller present and owner-tested for corrected grid/navigation/action route. Hardware model and complete controller/baseline matrix not recorded/verified. |
 | Fixture | Copied vanilla1.7.104 Helgen cave/exterior saves; exact source/archive/ESS hashes in [session](../evidence/p1/session-2026-10-26.md#replacement-fixtures). No original personal save modifications. |
