@@ -12,7 +12,7 @@ Source `6b4c0fc` (merge #29), [CI 41376680950](https://github.com/Sonoran-Soluti
 | --- | --- |
 | DYL-170 | Scoped automated **PASS**, 22/22; owner approved 40 screenshots. [UI](evidence/p4/blocker-resolution-ui.md), [Camera](evidence/p4/blocker-resolution-camera.md). |
 | DYL-171 | Strict assembly/repro and bounded MO2 automated fresh, controlled update and removal **PASS** (5/5); controller, Vortex, edited-settings migration and person-followed instructions **NOT_RUN**. [Packaging](evidence/p4/packaging.md). |
-| DYL-172 | Frame cost **PASS** (combined p95 +0.58% standing, +0.72% turn) and warm inventory latency **PASS** (max 203 ms); memory **FAIL** with the optional minimap stack, also in the baseline without SkyCRPG modules and not flagged with the stack omitted. Owner decision pending. [Performance](evidence/p4/performance.md). |
+| DYL-172 | Frame cost **PASS** (combined p95 +0.58% standing, +0.72% turn) and warm inventory latency **PASS** (max 203 ms); memory **FAIL** with the optional minimap stack, also in the baseline without SkyCRPG modules and not flagged with the stack omitted. Accepted as an external-provider limitation by owner decision 2026-11-02 ([D024](DECISIONS.md)); not a pass. [Performance](evidence/p4/performance.md). |
 | DYL-173 | Packaged keyboard/mouse automated **PASS** (22/22); controller and broader coverage **NOT_RUN**. [Regression](evidence/p4/regression.md). |
 | DYL-174 | Final documentation in review; package identities cross-checked; public rights clearance deferred. [Review](evidence/p4/docs-review.md). |
 | DYL-175 | **OWNER_PLAYTEST_PENDING**. [Handoff](evidence/p4/acceptance.md) and [route](PLAYTEST.md). |
