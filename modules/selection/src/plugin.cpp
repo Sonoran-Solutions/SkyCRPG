@@ -41,6 +41,8 @@ std::filesystem::path iniPath;
 AccessGate accessGate;
 std::atomic<bool> installed{false}, loading{true}, invalidated{true};
 bool badSettings = false, diagnostics = false;
+EventLog eventLog;
+EventSource latchSource = EventSource::nearest;
 // Only the engine's main thread may touch policy, handles, keys or counters.
 // Other callbacks merely invalidate; reentrant engine/API calls stay native.
 struct StateAccess {
@@ -138,11 +140,15 @@ void loadSettings() {
 }
 double seconds() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 Point point(RE::NiPoint3 p) { return {p.x,p.y,p.z}; }
+void selectionEvent(EventKind kind, std::uint32_t id, EventSource source, std::string_view reason,
+    RE::TESObjectREFR* ref = nullptr);
+EventSource selectionSource() { return policy.latched() ? latchSource : EventSource::nearest; }
 void reset() {
     policy.reset(); handles.clear(); cellID = 0; gate.reset();
     counters.target = 0; counters.candidateCount = 0; counters.latched = 0;
     counters.passthrough = static_cast<std::uint32_t>(Pass::invalidWorld);
     for (auto& key : keys) key.suspend();
+    if (diagnostics) selectionEvent(EventKind::choose,0,EventSource::nearest,passName(Pass::invalidWorld));
 }
 bool menus(RE::UI* ui) {
     if (!ui || ui->GameIsPaused() || ui->IsApplicationMenuOpen() || ui->IsModalMenuOpen()) return true;
@@ -210,7 +216,7 @@ bool visibleNode(RE::NiAVObject* node) {
         if (node->GetAppCulled()) return false;
     return node == nullptr;
 }
-Bounds bounds(RE::TESObjectREFR* ref) {
+Bounds bounds(RE::TESObjectREFR* ref, bool report = true) {
     Bounds b;
     const auto root = ref->Get3D();
     if (!root) return b;
@@ -223,7 +229,7 @@ Bounds bounds(RE::TESObjectREFR* ref) {
     b.available = std::isfinite(scale) && scale > 0;
     if (!validBounds(b)) {
         b.available = false;
-        if (boundsLogs < 8) { ++boundsLogs; log("Bound box unavailable/invalid: using reference origin for distance."); }
+        if (report && boundsLogs < 8) { ++boundsLogs; log("Bound box unavailable/invalid: using reference origin for distance."); }
     }
     return b;
 }
@@ -337,10 +343,40 @@ bool collect(RE::PlayerCharacter* player, double radius, ScanBudget& budget, Sca
     if (ws && budget.complete && visits.complete) scan(ws->GetSkyCell());
     return budget.complete && visits.complete;
 }
+void selectionEvent(EventKind kind, std::uint32_t id, EventSource source, std::string_view reason,
+    RE::TESObjectREFR* ref) {
+    if (!diagnostics) return;
+    const auto emission = eventLog.observe(kind,id,source,reason);
+    if (emission == EventEmission::none) return;
+    const auto now = std::chrono::steady_clock::now();
+    static const auto start = now;
+    const auto ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count());
+    SelectionEvent event;
+    if (emission == EventEmission::row) {
+        event.kind = kind; event.id = id; event.source = source; event.reason = reason;
+        const auto native = nativeTarget.get();
+        event.nativeID = native ? native->GetFormID() : 0;
+        const auto selected = ref ? RE::NiPointer<RE::TESObjectREFR>{} : reference(id);
+        if (!ref) ref = selected.get();
+        const auto player = RE::PlayerCharacter::GetSingleton();
+        if (ref && player) {
+            Candidate value;
+            value.position = point(ref->GetPosition()); value.bounds = bounds(ref,false);
+            event.bounds = validBounds(value.bounds);
+            event.distance = std::sqrt(surfaceDistanceSquared(value,point(player->GetPosition())));
+        }
+        const auto order = policy.order();
+        event.cycleCount = order.size();
+        const auto it = std::find(order.begin(),order.end(),id);
+        if (it != order.end()) event.cycleIndex = static_cast<std::int64_t>(it-order.begin());
+    }
+    log(formatEvent(event,emission,eventLog.sequence(),ms).c_str());
+}
 void publish() {
     counters.target = policy.current(); counters.latched = policy.latched() ? 1u : 0u;
     counters.candidateCount = static_cast<std::uint32_t>(policy.order().size());
     counters.passthrough = static_cast<std::uint32_t>(policy.reason());
+    if (diagnostics) selectionEvent(EventKind::choose,policy.current(),selectionSource(),passName(policy.reason()));
 }
 void diagnostic(double now) {
     if (!diagnostics || diagnosticCount >= diagnosticLimit || now-diagnosticTime < 5) return;
@@ -414,11 +450,21 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
     } cost;
     nativeTarget = data->target;
     const auto nativeRef = nativeTarget.get();
-    if (!refresh(seconds())) return;
+    const auto nativeDecision = [&](std::string_view reason) {
+        if (diagnostics) selectionEvent(EventKind::pick,nativeRef ? nativeRef->GetFormID() : 0,
+            EventSource::native,reason,nativeRef.get());
+    };
+    if (!refresh(seconds())) {
+        if (diagnostics) nativeDecision(passName(static_cast<Pass>(counters.passthrough)));
+        return;
+    }
     // A changed native pick between scans must not disappear from selection.
     if (nativeRef) {
         const auto order = policy.order();
-        if (std::find(order.begin(),order.end(),nativeRef->GetFormID()) == order.end()) return;
+        if (std::find(order.begin(),order.end(),nativeRef->GetFormID()) == order.end()) {
+            if (diagnostics) nativeDecision("native_not_in_scan");
+            return;
+        }
     }
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto target = reference(policy.current());
@@ -427,14 +473,26 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
     // moving obstruction cannot permit activation using a stale scan's LOS.
     if (!target || !eligible(candidate(target.get(),player),point(player->GetPosition()),nativeRadius()) ||
         !bodyLOS(target.get(),player,rays)) {
-        reset(); return;
+        reset();
+        if (diagnostics) nativeDecision("target_validation");
+        return;
     }
     const auto handle = target->CreateRefHandle();
-    if (!handle) { reset(); return; }
+    if (!handle) {
+        reset();
+        if (diagnostics) nativeDecision("invalid_handle");
+        return;
+    }
     using CanGrab = bool(*)(RE::TESObjectREFR*);
     static REL::Relocation<CanGrab> canGrab{REL::ID(34614)};
     const bool grabbable = canGrab(target.get());
-    if (invalidated.load() || passthrough(context()) != Pass::none) { reset(); return; }
+    const bool stale = invalidated.load();
+    const auto state = stale ? Pass::invalidWorld : passthrough(context());
+    if (stale || state != Pass::none) {
+        reset();
+        if (diagnostics) nativeDecision(stale ? "invalidated" : passName(state));
+        return;
+    }
     const auto change = pickChanges(data->target != handle,grabbable);
     if (change.target) {
         data->target = handle;
@@ -442,6 +500,7 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
     }
     if (change.clearCollider) data->targetCollider = nullptr;
     // targetActor and collisionPoint remain native (aim magnetism / SmoothCam).
+    if (diagnostics) selectionEvent(EventKind::pick,target->GetFormID(),selectionSource(),"none",target.get());
 }
 api::Result apiReady() {
     if (!installed.load() || !accessGate.thread()) return api::Result::unavailable;
@@ -488,6 +547,7 @@ api::Result setTarget(std::uint32_t id) {
         !bodyLOS(ref.get(),player,rays)) return api::Result::invalidTarget;
     if (invalidated.load() || passthrough(context()) != Pass::none) { reset(); return api::Result::unavailable; }
     if (!policy.push(id,point(player->GetPosition()),now,true)) return api::Result::invalidTarget;
+    if (diagnostics) latchSource = EventSource::external;
     publish(); return api::Result::ok;
 }
 api::Result clearTarget() {
@@ -522,7 +582,11 @@ public:
                 if (mapped && button->IsDown() && conflictLogs < 8) { ++conflictLogs; log("Cycle binding refused: mapped native event or unreadable ControlMap."); }
                 if (keys[(pad ? 2u : 0u)+i].update(button->IsPressed(),button->IsDown(),safe && !mapped)) {
                     const auto player = RE::PlayerCharacter::GetSingleton();
-                    policy.cycle(i == 0 ? 1 : -1,point(player->GetPosition()),now); publish();
+                    const bool accepted = policy.cycle(i == 0 ? 1 : -1,point(player->GetPosition()),now);
+                    if (diagnostics && accepted) latchSource = EventSource::cycle;
+                    publish();
+                    if (diagnostics && accepted) selectionEvent(EventKind::cycle,policy.current(),selectionSource(),
+                        i == 0 ? "next" : "previous");
                 }
             }
         }

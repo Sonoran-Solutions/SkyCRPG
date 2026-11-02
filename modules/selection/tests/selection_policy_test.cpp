@@ -243,7 +243,81 @@ void nativeSafety() {
     policy.refresh(active(),candidates,{},180,.01,{});
     assert(policy.latched() && policy.current() == 20);
 }
+void eventDiagnostics() {
+    EventLog events;
+    assert(events.observe(EventKind::choose,0,EventSource::nearest,"none") == EventEmission::none);
+    assert(events.observe(EventKind::choose,10,EventSource::nearest,"none") == EventEmission::row);
+    // Choice rows track identity, while accepted cycles always get a row, even
+    // with one candidate. Pick rows independently track identity/source/reason.
+    assert(events.observe(EventKind::choose,10,EventSource::external,"none") == EventEmission::none);
+    assert(events.observe(EventKind::cycle,10,EventSource::cycle,"next") == EventEmission::row);
+    assert(events.observe(EventKind::cycle,10,EventSource::cycle,"next") == EventEmission::row);
+    assert(events.observe(EventKind::pick,10,EventSource::nearest,"none") == EventEmission::row);
+    for (unsigned i = 0; i < 10000; ++i)
+        assert(events.observe(EventKind::pick,10,EventSource::nearest,"none") == EventEmission::none);
+    assert(events.sequence() == 4);
+    assert(events.observe(EventKind::pick,10,EventSource::cycle,"none") == EventEmission::row);
+    assert(events.observe(EventKind::pick,10,EventSource::external,"none") == EventEmission::row);
+    assert(events.observe(EventKind::pick,10,EventSource::native,"none") == EventEmission::row);
+    assert(events.observe(EventKind::pick,10,EventSource::native,"menu") == EventEmission::row);
+    assert(events.observe(EventKind::pick,20,EventSource::native,"menu") == EventEmission::row);
+    assert(events.observe(EventKind::choose,0,EventSource::nearest,"menu") == EventEmission::row);
+    assert(events.observe(EventKind::choose,0,EventSource::nearest,"loading") == EventEmission::none);
+    assert(events.observe(EventKind::pick,0,EventSource::native,"loading") == EventEmission::row);
+    assert(events.sequence() == 11);
+    EventLog emptyPick;
+    assert(emptyPick.observe(EventKind::pick,0,EventSource::native,"no_candidate") == EventEmission::row);
+    assert(emptyPick.observe(EventKind::pick,0,EventSource::native,"no_candidate") == EventEmission::none);
+
+    EventLog budget;
+    for (std::uint32_t i = 1; i <= EventLog::limit; ++i) {
+        assert(budget.observe(EventKind::pick,i,EventSource::nearest,"none") == EventEmission::row);
+        assert(budget.sequence() == i);
+    }
+    assert(budget.observe(EventKind::pick,EventLog::limit,EventSource::nearest,"none") == EventEmission::none);
+    assert(budget.observe(EventKind::choose,7,EventSource::nearest,"none") == EventEmission::dropped);
+    assert(budget.sequence() == EventLog::limit+1);
+    for (unsigned i = 0; i < 10000; ++i) {
+        assert(budget.observe(EventKind::cycle,7,EventSource::cycle,"next") == EventEmission::none);
+        assert(budget.observe(EventKind::choose,0,EventSource::nearest,"loading") == EventEmission::none);
+        assert(budget.observe(EventKind::pick,i,EventSource::native,"menu") == EventEmission::none);
+    }
+    assert(budget.sequence() == EventLog::limit+1);
+
+    const std::array names{"none","disabled","unsupported","read_failure","conflict","loading","invalid_world",
+        "dead","menu","dialogue","first_person","special","incomplete_scan","no_candidate","armed","combat",
+        "telekinesis","native_sneak_actor"};
+    for (std::size_t i = 0; i < names.size(); ++i) assert(passName(static_cast<Pass>(i)) == names[i]);
+    SelectionEvent event;
+    event.kind = EventKind::pick; event.id = 0xFE001ABC; event.nativeID = 0x123;
+    event.distance = 12.5; event.bounds = true; event.cycleIndex = 1; event.cycleCount = 3;
+    assert(formatEvent(event,EventEmission::row,4,12345) ==
+        "selection event=pick seq=4 ms=12345 form_id=FE001ABC distance_units=12.50 distance_source=bounds"
+        " source=nearest native_form_id=00000123 reason=none cycle_index=1 cycle_count=3");
+    // Formatting must stay machine-readable under a host's non-C locale.
+    struct CommaDecimal : std::numpunct<char> { char do_decimal_point() const override { return ','; } };
+    const auto previous = std::locale::global(std::locale(std::locale::classic(),new CommaDecimal));
+    event.kind = EventKind::cycle; event.source = EventSource::cycle; event.reason = "previous";
+    event.bounds = false; event.distance = 0;
+    const auto cycle = formatEvent(event,EventEmission::row,5,12346);
+    std::locale::global(previous);
+    assert(cycle.find("event=cycle") != std::string::npos && cycle.find("distance_units=0.00 distance_source=origin") != std::string::npos);
+    assert(cycle.find("source=cycle") != std::string::npos && cycle.find("reason=previous") != std::string::npos);
+    event = {}; event.source = EventSource::native; event.reason = passName(Pass::incompleteScan);
+    assert(formatEvent(event,EventEmission::row,6,12347) ==
+        "selection event=choose seq=6 ms=12347 form_id=00000000 distance_units=unavailable distance_source=origin"
+        " source=native native_form_id=00000000 reason=incomplete_scan cycle_index=-1 cycle_count=0");
+    for (const auto distance : {-1.0,std::numeric_limits<double>::quiet_NaN(),std::numeric_limits<double>::infinity()}) {
+        event.distance = distance;
+        assert(formatEvent(event,EventEmission::row,7,12348).find("distance_units=unavailable") != std::string::npos);
+    }
+    event.source = EventSource::external;
+    assert(formatEvent(event,EventEmission::row,8,12349).find("source=external") != std::string::npos);
+    assert(formatEvent(event,EventEmission::none,0,0).empty());
+    assert(formatEvent(event,EventEmission::dropped,2001,13000) ==
+        "selection event=dropped seq=2001 ms=13000 reason=budget limit=2000");
+}
 int main() {
-    ranking(); latches(); passthroughTable(); inputEdges(); configurationAndBudget(); accessGate(); nativeSafety();
-    std::cout << "PASS selection: surface rank/ties/long rotated bench, latch/wrap/invalidation, passthrough, edges, config/budget/API layout, thread/reentrancy gate, sneak/combat/telekinesis/collider safety\n";
+    ranking(); latches(); passthroughTable(); inputEdges(); configurationAndBudget(); accessGate(); nativeSafety(); eventDiagnostics();
+    std::cout << "PASS selection: surface rank/ties/long rotated bench, latch/wrap/invalidation, passthrough, edges, config/budget/API layout, thread/reentrancy gate, sneak/combat/telekinesis/collider safety, event changes/budget/format\n";
 }

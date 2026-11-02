@@ -5,7 +5,12 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <iomanip>
+#include <locale>
 #include <span>
+#include <sstream>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace skycrpg::selection {
@@ -252,4 +257,95 @@ private:
     std::atomic<std::uint32_t> thread_{0};
     std::atomic_flag active_ = ATOMIC_FLAG_INIT;
 };
+constexpr std::string_view passName(Pass reason) {
+    switch (reason) {
+    case Pass::none: return "none";
+    case Pass::disabled: return "disabled";
+    case Pass::unsupported: return "unsupported";
+    case Pass::readFailure: return "read_failure";
+    case Pass::conflict: return "conflict";
+    case Pass::loading: return "loading";
+    case Pass::invalidWorld: return "invalid_world";
+    case Pass::dead: return "dead";
+    case Pass::menu: return "menu";
+    case Pass::dialogue: return "dialogue";
+    case Pass::firstPerson: return "first_person";
+    case Pass::special: return "special";
+    case Pass::incompleteScan: return "incomplete_scan";
+    case Pass::noCandidate: return "no_candidate";
+    case Pass::armed: return "armed";
+    case Pass::combat: return "combat";
+    case Pass::telekinesis: return "telekinesis";
+    case Pass::nativeSneakActor: return "native_sneak_actor";
+    }
+    return "unknown";
+}
+enum class EventKind { choose, cycle, pick };
+enum class EventSource { nearest, cycle, native, external };
+enum class EventEmission { none, row, dropped };
+constexpr std::string_view sourceName(EventSource source) {
+    switch (source) {
+    case EventSource::nearest: return "nearest";
+    case EventSource::cycle: return "cycle";
+    case EventSource::native: return "native";
+    case EventSource::external: return "external";
+    }
+    return "unknown";
+}
+struct SelectionEvent {
+    EventKind kind = EventKind::choose;
+    EventSource source = EventSource::nearest;
+    std::uint32_t id = 0, nativeID = 0;
+    double distance = -1;
+    bool bounds = false;
+    std::string_view reason = "none";
+    std::int64_t cycleIndex = -1;
+    std::size_t cycleCount = 0;
+};
+// Process-wide budget; world/latch resets must not replenish it. Reasons are
+// static literals, so remembering a pick decision never allocates or owns text.
+class EventLog {
+public:
+    static constexpr std::uint32_t limit = 2000;
+    EventEmission observe(EventKind kind, std::uint32_t id, EventSource source, std::string_view reason) {
+        if (dropped_) return EventEmission::none;
+        if (kind == EventKind::choose) {
+            if (chosen_ == id) return EventEmission::none;
+            chosen_ = id;
+        } else if (kind == EventKind::pick) {
+            if (hasPick_ && pick_ == id && source_ == source && reason_ == reason) return EventEmission::none;
+            hasPick_ = true; pick_ = id; source_ = source; reason_ = reason;
+        }
+        if (sequence_ == limit) { dropped_ = true; ++sequence_; return EventEmission::dropped; }
+        ++sequence_; return EventEmission::row;
+    }
+    [[nodiscard]] std::uint32_t sequence() const { return sequence_; }
+private:
+    std::uint32_t sequence_ = 0, chosen_ = 0, pick_ = 0;
+    EventSource source_ = EventSource::native;
+    std::string_view reason_;
+    bool hasPick_ = false, dropped_ = false;
+};
+inline std::string formatEvent(const SelectionEvent& event, EventEmission emission,
+    std::uint32_t sequence, std::uint64_t milliseconds) {
+    if (emission == EventEmission::none) return {};
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    if (emission == EventEmission::dropped) {
+        out << "selection event=dropped seq=" << sequence << " ms=" << milliseconds
+            << " reason=budget limit=" << EventLog::limit;
+        return out.str();
+    }
+    const auto kind = event.kind == EventKind::choose ? "choose" : event.kind == EventKind::cycle ? "cycle" : "pick";
+    out << "selection event=" << kind << " seq=" << sequence << " ms=" << milliseconds
+        << " form_id=" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << event.id
+        << std::dec << " distance_units=";
+    if (std::isfinite(event.distance) && event.distance >= 0) out << std::fixed << std::setprecision(2) << event.distance;
+    else out << "unavailable";
+    out << " distance_source=" << (event.bounds ? "bounds" : "origin")
+        << " source=" << sourceName(event.source) << " native_form_id="
+        << std::hex << std::setw(8) << event.nativeID << std::dec << " reason=" << event.reason
+        << " cycle_index=" << event.cycleIndex << " cycle_count=" << event.cycleCount;
+    return out.str();
+}
 } // namespace skycrpg::selection
