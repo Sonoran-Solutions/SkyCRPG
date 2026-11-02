@@ -431,10 +431,27 @@ void QueueHit(const Hit& record)
 		g->queue[g->pending++] = record; ++g->records;
 	} else { Miss(); Inconclusive("hit_queue_or_observe_record_cap"); }
 }
+void Tick();
+// SKSE tasks rarely land on the main thread (run e-p5: 74 s between ticks), but
+// the camera caster runs there every frame, so it drives the tick. The task chain
+// remains as the fallback where there are no casts, such as first person.
+void TickFromCaster()
+{
+	static thread_local bool ticking{};
+	static double last{};
+	if (ticking || !g->enabled || !OnMain()) return;
+	const double now = Now();
+	if (now - last < 8) return;
+	last = now;
+	ticking = true;
+	try { Tick(); } catch (...) { g->enabled = false; g->killed = true; Restore("caster_tick_exception"); }
+	ticking = false;
+}
 bool HookCaster(void* physics, RE::bhkWorld* world, float* start, float* end,
 	RE::hkpRootCdPoint* result, RE::TESObjectREFR** character, float hull)
 {
 	const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+	TickFromCaster();
 	if (!g->enabled || !policy::CasterMode(g->config.mode)) return originalCaster(physics, world, start, end, result, character, hull);
 	static thread_local bool inCaster{};
 	if (inCaster) return originalCaster(physics, world, start, end, result, character, hull);
@@ -563,7 +580,9 @@ std::array<std::uint8_t, 14> AbsoluteJump(std::uintptr_t destination)
 bool InstallMechanism()
 {
 	const auto base = REL::Module::get().base();
-	if (policy::CasterMode(g->config.mode)) {
+	// Every mode installs the caster hook, as a pass-through outside observe and
+	// filter, because it drives the main-thread tick.
+	{
 		const auto target = REL::ID(33007).address();
 		if (target != base + 0x5574f0 || std::memcmp(reinterpret_cast<const void*>(target), casterPrologue.data(), casterPrologue.size()) != 0) {
 			Emit("refused", json::Object{}.String("reason", "caster_address_or_prologue_mismatch")); return false;
@@ -581,7 +600,8 @@ bool InstallMechanism()
 		REL::safe_write(target, jump.data(), jump.size());
 		FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<void*>(target), jump.size());
 		Emit("installed", json::Object{}.Numeric("id", 33007).Numeric("rva", 0x5574f0));
-	} else if (policy::SeedMode(g->config.mode)) {
+	}
+	if (policy::SeedMode(g->config.mode)) {
 		REL::Relocation<std::uintptr_t> table{ RE::VTABLE_BSMultiBoundRoom[0] };
 		const auto target = reinterpret_cast<const std::uintptr_t*>(table.address())[0x3f];
 		if (table.address() != base + 0x1a69ac8 || target != base + 0xfce0c0 ||
@@ -885,7 +905,7 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const SKSE::LoadInterface*
 	if (!QueryPerformanceFrequency(&g->frequency) || g->frequency.QuadPart <= 0) return false;
 	g->origin = Now();
 	const auto log = skycrpg::LogDirectory() + L"SkyCRPG_OcclusionSpike.jsonl";
-	if (_wfopen_s(&g->output, log.c_str(), L"ab") != 0 || !g->output) return false;
+	if (_wfopen_s(&g->output, log.c_str(), L"wb") != 0 || !g->output) return false;
 	std::setvbuf(g->output, nullptr, _IOFBF, 65536);
 
 	if (!LoadConfig()) { Emit("refused", json::Object{}.String("reason", "invalid_ini")); std::fflush(g->output); return true; }

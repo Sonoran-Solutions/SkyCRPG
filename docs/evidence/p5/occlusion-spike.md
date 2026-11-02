@@ -196,3 +196,11 @@ Proposed for the orchestrator only (not edited): `docs/STATUS.md` and DYL-199 sh
 Routes `p5-spike-baseline`, `-baseline-turning`, `-observe` and `-observe-turning` on `b401929` reported runner PASS, but **they are not evidence**. The plugin stopped itself about 20 s into each run with `main_task_wrong_thread`, because an SKSE task landed on a worker thread, and it recorded zero hits and zero captures. The analyzer's verdict is INCONCLUSIVE. Only the last run's log survives, because the plugin truncates its log and the batch runner doesn't collect it.
 
 Fix: an off-main tick now skips and retries. Each route must run on its own, with `session-p5/routes/collect_logs.py` between runs, and a run counts only if the analyzer shows real captures.
+
+## In-game run e-p5 — 2026-11-02
+
+Routes `p5-spike-baseline`, `-baseline-turning`, `-observe` and `-observe-turning` on `a7eb731`, camera-only, keyboard/mouse. The plugin stayed alive with no crash, and restore passed. **No capture started, so there is no timing, filter or fade evidence yet.**
+
+**PASS, observation only:** in the turning observe run, the caster ran on the main thread for all 569 recorded calls: 361 from SmoothCam and 208 from the engine caller `0x1408FA963`. 109 of those calls hit `WRIntBeam768.nif`, reference `0x000E7A7B`, base `0x000602A6`, in cell `0x0001605E`, layer 1, with normal z = -1 where a normal was logged. The diagnostic classifier flagged 96 of the 109 as overhead candidates. Other contacts included `WRIntRoofCorL01`, `WRIntCeilMid01` and `WRIntCeilChimney01`, which must stay as enclosure.
+
+**FAIL:** the arm key reached the sink, but `MayArm` was never true. SKSE tasks rarely landed on the main thread, with about 74 s between effective ticks, so requests merged with menu and POV flags. The same starvation overflowed the hit queue. The tick now runs from the caster hook on the main thread, at most every 8 ms, in all modes. The task chain stays as the fallback. The log now starts fresh each run, because appending mixed earlier sessions into the analyzer's verdict.
