@@ -1,12 +1,25 @@
 # Current status
 
-Updated for the Phase 4 internal candidate handoff; Phase 3 gate recorded 2026-10-28. **Phase 3 is GO by owner decision with documented deferrals**; see the [Phase 3 gate](evidence/p3/gate.md). Phase 4 is in progress. This GO does not turn untested or failed requirements into passes, and it is not an MVP release.
+Updated 2026-11-02 for the Phase 4 owner ACCEPT and the Phase 5 start; Phase 3 gate recorded 2026-10-28. **Phase 3 is GO by owner decision with documented deferrals**; see the [Phase 3 gate](evidence/p3/gate.md). **Phase 4 is accepted by the owner** ([D025](DECISIONS.md)); Phase 5 is in progress. This GO does not turn untested or failed requirements into passes, and it is not an MVP release.
 
 Main `c10cd80` contains every Phase 3 merge (#15–#23). Main CI on `8eef712` [run 40753002080](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40753002080) **PASS**; on `c10cd80`, [run 40759295249](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40759295249). Main's module sources equal the tested internal candidate: UI `9a8692e` and Camera `28aae27`.
 
+## Phase 5 — in progress
+
+Starting main `20e215d41a57d83f5e9f517aec8bca1fb33e1c8b`. Owner rulings D5-1 to D5-6 and D026 are recorded in [DECISIONS](DECISIONS.md). Nothing below has in-game evidence yet.
+
+| Ticket | Plan ID | State |
+| --- | --- | --- |
+| DYL-197 | P5-01 target lock | Wave 1. |
+| DYL-198 | P5-02 selection plugin | Wave 1; original plugin replacing BTPS ([D026](DECISIONS.md)). |
+| DYL-199 | P5-04 occlusion spike | Recommendation accepted under [D028](DECISIONS.md); [evidence](evidence/p5/occlusion-spike.md) on its branch. |
+| DYL-200 | P5-03 cursor mode | Waiting on P5-02, whose plugin provides the target-injection path ([D026](DECISIONS.md)). |
+| DYL-201 | P5-05 fixed height | Started under [D028](DECISIONS.md): Stage 1, curated base-form list. |
+| DYL-202 | P5-06 gate | Waiting on the feature outcomes. |
+
 ## Phase 4 — internal candidates
 
-Source `6b4c0fc` (merge #29), [CI 41376680950](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41376680950). Exact archives and hashes: [acceptance handoff](evidence/p4/acceptance.md). Automated evidence does not establish owner acceptance. Public redistribution is deferred by [D023](DECISIONS.md).
+Source `6b4c0fc` (merge #29), [CI 41376680950](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41376680950). Exact archives and hashes: [acceptance handoff](evidence/p4/acceptance.md). The owner accepted these candidates on 2026-11-02; that acceptance does not turn FAIL, BLOCKED or NOT_RUN rows into passes. Public redistribution is deferred by [D023](DECISIONS.md).
 
 | Ticket | Current evidence and remaining obligation |
 | --- | --- |
@@ -14,8 +27,8 @@ Source `6b4c0fc` (merge #29), [CI 41376680950](https://github.com/Sonoran-Soluti
 | DYL-171 | Strict assembly/repro and bounded MO2 automated fresh, controlled update and removal **PASS** (5/5); controller, Vortex, edited-settings migration and person-followed instructions **NOT_RUN**. [Packaging](evidence/p4/packaging.md). |
 | DYL-172 | Frame cost **PASS** (combined p95 +0.58% standing, +0.72% turn) and warm inventory latency **PASS** (max 203 ms); memory **FAIL** with the optional minimap stack, also in the baseline without SkyCRPG modules and not flagged with the stack omitted. Accepted as an external-provider limitation by owner decision 2026-11-02 ([D024](DECISIONS.md)); not a pass. [Performance](evidence/p4/performance.md). |
 | DYL-173 | Packaged keyboard/mouse automated **PASS** (22/22); controller and broader coverage **NOT_RUN**. [Regression](evidence/p4/regression.md). |
-| DYL-174 | Final documentation in review; package identities cross-checked; public rights clearance deferred. [Review](evidence/p4/docs-review.md). |
-| DYL-175 | **OWNER_PLAYTEST_PENDING**. [Handoff](evidence/p4/acceptance.md) and [route](PLAYTEST.md). |
+| DYL-174 | Final documentation merged in #32; package identities cross-checked; public rights clearance deferred. [Review](evidence/p4/docs-review.md). |
+| DYL-175 | **ACCEPT, owner decision 2026-11-02** ([D025](DECISIONS.md)). [Record](evidence/p4/acceptance.md) and [route](PLAYTEST.md). |
 
 ## Phase 3
 

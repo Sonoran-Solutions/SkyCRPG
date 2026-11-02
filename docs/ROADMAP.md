@@ -41,7 +41,7 @@ P4 acceptance requires no fifth feature phase. If a required feature has slipped
 
 After acceptance, prioritize actual player feedback: additional runtimes/providers, richer portraits, grid container/barter screens, character sheet polish, event-log display, themes and optional advanced occlusion. Click-to-move, party commands and a Tetris inventory are separate product decisions. Turn-based combat is excluded from the current direction.
 
-A post-MVP **Phase 5 proposal** for the owner's targeting and camera requests (proximity activation and cycling, pointer/stick cursor mode, TDM-based lock-on, fixed-height camera with see-through overhead occluders) is drafted in [Phase 5](phases/PHASE_5.md) with its [research and feasibility record](planning/phase5-targeting-camera-research.md). It has no tickets and no evidence yet and does not alter the four-phase MVP exit.
+The post-MVP **Phase 5** work for the owner's targeting and camera requests (proximity activation and cycling, pointer/stick cursor mode, TDM-based lock-on, fixed-height camera with see-through overhead occluders) is planned in [Phase 5](phases/PHASE_5.md) with its [research and feasibility record](planning/phase5-targeting-camera-research.md). It started on 2026-11-02 after the owner accepted Phase 4, is tracked as DYL-197 to DYL-202, has no in-game evidence yet and does not alter the four-phase MVP exit.
 
 ## Ticket index
 
