@@ -1,10 +1,17 @@
 # DYL-172 — performance measurement tooling
 
-**Offline implementation complete; runtime acceptance NOT_RUN.** Base
+**Runtime result (2026-11-02, probe `5a38199`): frame cost PASS, warm inventory
+latency PASS, memory FAIL with the optional minimap stack installed.** The memory
+growth also occurs in the baseline without SkyCRPG modules and disappears when the
+minimap stack is omitted; see [Final rerun](#final-rerun-dyl172-proton-01). The
+owner accepted it as an external-provider limitation on 2026-11-02 (D024 in
+[DECISIONS](../../DECISIONS.md)); it remains a FAIL, not a pass. Owner
+acceptance is DYL-175. Base
 `c7333c7c13284ad9d228e6f15213bc8465bd6e19`; merged probe head `ac28d3c` (#30);
 Windows CI [run 41211742722](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41211742722);
 probe DLL `4f993c30b020cf6f8f61b2b0222758a3085adf8f47941c3cb240e8de76dbf997`. The
-same probe drove the DYL-170 automated routes; no performance capture has run yet.
+same probe drove the DYL-170 automated routes. The later rc1 captures and this
+Proton correction are recorded below; the new adapter has not run in game.
 The comparison runner (`perf_compare.py`) lives in the session autotest tree outside
 Git; record its exact version and outputs with the final captures.
 
@@ -15,7 +22,250 @@ executable/dependency/source/package/probe/fixture hashes and durations must be
 attached to each game result. Portable tests and simulations do not compile the
 Windows adapter or establish game behavior.
 
-## Audit and acceptance ledger
+## DYL-172 Proton evidence correction — 2026-11-02
+
+Branch `phase4/dyl-172-probe-proton` from main `6b4c0fc`. This section
+supersedes earlier statements about missing captures. Linear DYL-172 had closed
+automatically when #30 merged; it was reopened, because the latency and memory
+measurements were still missing.
+
+**Live diagnostic** (`c900b66`, [CI 41400377165](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41400377165),
+probe DLL `ffc047d80db70c7301a41a3deadd680b1751493b5e77e0250277e20521c418d0`;
+route `perf-probe-diag`, run `session-p4/autotest/runs/dyl172-proton-diag-01`, PASS, restore PASS):
+
+- **Input root cause found.** The prepended observer was first (`probe_index` 0
+  of 8; MenuControls 2, PlayerControls 3) and saw every key edge: 24 button
+  events, 6 downs. The keyboard `I` (idCode 23) arrived with user event
+  **Quick Inventory**, and the gameplay keyboard mapping for **Inventory** was
+  unbound (`kInvalid` 255). The old lookup accepted only Inventory and Tween
+  Menu, so no edge matched. Sink order was not the cause, and neither was IsDown:
+  the down edge had value 1 and heldDownSecs 0.
+- **Fix:** accept the gameplay mappings for Inventory, Quick Inventory and Tween
+  Menu (`proton_policy.h` `AcceptInventoryKey`, with a test of the live map).
+  `input_diag` adds `quick_inventory_key`. The prepend is kept; it does no harm.
+- **Memory:** `private_bytes` stayed 0 on every sample, while
+  `private_commit_bytes` was complete on all 87 samples: 1,410–1,472 MiB,
+  990 regions, walk 474–897 µs (median 524 µs) on the timer thread.
+
+The corrected probe and the four-profile rerun are recorded below.
+
+### Final rerun `dyl172-proton-01`
+
+Probe `5a38199`, [CI 41402535451](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41402535451),
+DLL `613e3c7a73fe68d828b1a54ea2ad52848ab3f76a8140531638a1ee94419546bd`, INI
+`ecb5da66d9c9b2b4df215f160afd2893f9483c4d619ce6ab7ae385bb562e57bf`; rc1 archives
+UI `f508a0e1…d940cb`, Camera `e3f6d61e…c86838` from `6b4c0fc`. Host: Proton Experimental
+`experimental-11.0-20261027b-x86_64`, Skyrim SE 1.7.104.0, SKSE 2.3.1, i9-11900K,
+RTX 3080 (595.99.02), 1920×1080 windowed, keyboard/mouse, controller off.
+
+- **Gate:** diagnostic `session-p4/autotest/runs/dyl172-proton-diag-02` PASS:
+  three correlated opens, t_settled 181/181/183 ms; 88 complete commit samples.
+- **Batch:** `session-p4/logs/perf/dyl172-proton-01/summary.md`, runs
+  `autotest/runs/batch-dyl172-proton-01-0{0,1,2,3}` (baseline, camera-only,
+  ui-only, combined): 4/4 routes PASS, every restore PASS. The baseline's
+  SmoothCam-generated `Data/SKSE/Plugins/SmoothCam.json` (sha256 `68a8d3ff…`)
+  was moved to that run's evidence by the leftover rule.
+- **Comparison:** `session-p4/logs/perf/dyl172-proton-01/comparison.md` (sha256
+  `9d3cf263…217745`), `perf_compare.py` sha256 `45b3a4b9…a58365`. All sixteen
+  anchors VALID, ratios 1.00–1.01.
+
+| Profile | Standing p95 ms (Δ) | Turn p95 ms (Δ) | Warm t_settled max ms | Cold event / settled ms | Memory MiB/min (private commit) |
+| --- | --- | --- | --- | --- | --- |
+| Baseline | 16.65 | 16.84 | 61.02 | 53.65 / 57.55 | 43.37, FAIL |
+| Camera-only | 16.64 (−0.07%) | 16.76 (−0.48%) | 173.69 | 267.14 / 356.80 | 1.30, PASS |
+| UI-only | 16.76 (+0.63%) | 16.88 (+0.22%) | 203.11 | 80.47 / 177.84 | 43.01, FAIL |
+| Combined | 16.75 (+0.58%) | 16.96 (+0.72%) | 188.03 | 80.30 / 178.56 | 42.58, FAIL |
+
+| Budget | Result |
+| --- | --- |
+| Combined p95 ≤1.10× baseline, standing and turn | **PASS** (+0.58%, +0.72%) |
+| Warm opens 2–10 t_settled ≤250 ms, 500 rows | **PASS** in all four profiles (max 203.11 ms) |
+| Memory: latter-half slope >1 MiB/min and last quartile >105% of first | **FAIL** for combined (also baseline and UI-only); camera-only PASS |
+
+Every inventory capture saw 20 downs and accepted 10 edges; each resource
+capture accepted 30. The commit walk covered 803–1,014 regions, median
+497–526 µs, max 5.68 ms on the timer thread. Over the window, baseline, UI-only
+and combined grew from about 1,400 to 2,010 MiB of private commit; camera-only
+stayed at 1,396–1,431 MiB.
+
+**Attribution diagnostic.** The three growing profiles all load the optional
+external minimap stack (Dragon's Eye 1.7.5, Infinity UI NG 2.1.3, LMU 1.3.4);
+the baseline loads it without any SkyCRPG module. Camera-only does not load it.
+Route `perf-combined-no-minimap` (perf-combined with the `dyl173-ui-minimap-absent`
+omit list), run `session-p4/autotest/runs/dyl172-proton-nomap-01` (report sha256
+`a8a05bd0…dc55fb0`): PASS, restore PASS, installed DLLs SkyCRPG Camera/UI, probe,
+SmoothCam, TDM and MCM Helper only. Memory 1.35 MiB/min, not flagged (about
+1,403→1,438 MiB); standing/turn p95 16.60/16.62 ms; anchors VALID; warm t_settled
+max 193.81 ms. This is a diagnostic, not a fifth budget profile.
+
+The growth therefore follows the external minimap stack under this route's
+alternating `coc` cell loads, independent of SkyCRPG modules. The bounded window
+cannot say whether it plateaus, and the stack's own retention was not
+investigated. The combined memory budget stays **FAIL**; no budget was relaxed.
+On 2026-11-02 the owner accepted it as an external-provider limitation (D024 in
+[DECISIONS](../../DECISIONS.md)); the FAIL stays recorded.
+
+| Requirement / existing evidence | Change / offline disposition | New runtime |
+| --- | --- | --- |
+| rc1 baseline `batch-dyl172-rc1-00`, camera/UI/combined `batch-dyl172-rc1b-00/01/02`; sixteen anchors 1.00–1.01 | Old frame table reproduced unchanged: combined standing p95 16.81 vs 16.86 ms; turn 16.93 vs 17.03 ms, both PASS | PASS: fresh four-profile rerun `dyl172-proton-01` |
+| Forty inventory opens lack a correlated edge; old private bytes always zero | Old latency and memory remain NOT_RUN in all four profiles; no invented replacement for old samples | Superseded by the rerun: latency PASS, memory FAIL (combined) |
+| Late appended observer, no input diagnostics | Verified prepend API; bounded scalar input buffer, timer emission and stop counters; portable PASS | PASS: probe index 0; 10 of 10 edges accepted per profile |
+| PrivateUsage and working set only | Timer-thread private-commit walk with cost/completeness fields; whole-window comparer fallback; portable/unit PASS | PASS: complete on every sample; median walk ≤526 µs |
+| SmoothCam creates an undeployed config in a newly deployed directory | Runner journals pre-prepare names, moves generated leftovers into evidence after restore, hashes them, removes empty new directories; fake baseline/MO2 tests PASS | PASS: baseline SmoothCam.json moved; all restores PASS |
+| Full route is too long for initial diagnosis | Combined rc1 `perf-probe-diag`: same copied save/500-form fixture, 3 opens, 15-second resource capture, 360-second watchdog | PASS: `dyl172-proton-diag-02` gate |
+
+### Input diagnosis, supported correction and limits
+
+Source root for every CommonLib citation below:
+`session-p2-20261026/commonlib-7.2.0/`.
+
+- `include/RE/B/BSTEvent.h:34–49` appends sinks; `:131–150` dispatches in
+  array order and **breaks on kStop**. `:64–104` actually provides
+  `PrependEventSink(Sink*)`; when not notifying it inserts at the front. During
+  notification it only prepends to pending registrations, which later append.
+- `include/RE/M/MenuControls.h:25–28,59–60,92` declares MenuControls as an
+  InputEvent sink and owns MenuOpenHandler. `include/RE/P/PlayerControls.h:32–37`
+  declares the other native input sink. The engine bodies/registration order
+  and MenuControls' actual return on I are **not implemented in CommonLib**:
+  `src/RE/M/MenuControls.cpp` supplies singleton/handler wrappers, and
+  `include/RE/M/MenuOpenHandler.h:7–23` only declares the handler. Therefore
+  source does **not** prove that MenuControls returned kStop in these runs.
+  MenuOpenHandler is a nested handler, not a separately registered source sink.
+  An earlier sink can stop the chain, edit the event, or open the menu before
+  the old observer sees the edge. The latter would make the old menu-open gate
+  reject a perfectly valid down even if dispatch continued.
+- `include/RE/B/ButtonEvent.h:29–35` defines down as `value > 0 &&
+  heldDownSecs == 0`. A 50 ms tap can include a down followed by held/up;
+  short duration alone does not justify accepting held/up as a new key-down.
+  The actual delivered values were not recorded, so that alternative remains
+  testable rather than excluded. Keep the exact IsDown rule.
+- `include/RE/C/ControlMap.h:89` defaults GetMappedKey to gameplay;
+  `src/RE/C/ControlMap.cpp:28–46` searches that context's device mapping and
+  returns kInvalid if absent. Inventory/Tween Menu are resolved separately for
+  the event's actual device. Invalid devices are now rejected before indexing. The new observer mirrors
+  that first-match lookup over the declared controlMap/deviceMappings arrays
+  (`ControlMap.h:45–64,138`) with string views, avoiding GetMappedKey's temporary
+  BSFixedString interning on the hot path.
+- Old `plugin.cpp` at base: `:740` rejects inactive captures;
+  `:755` rejects an already-open InventoryMenu; `:715–728` sets/clears that
+  flag. The runner starts capture and waits for acknowledgement before I,
+  then waits three seconds for pre-open samples (`runner/executor.py`,
+  inventory_cycle). That supports active-at-down, but cannot prove it for the
+  old event without diagnostics. A reentrant native open before a late sink is
+  a plausible explanation for menuOpen-at-down.
+
+**The exact engine root cause remains unproven.** The proven design defect is
+that a late appended observer cannot promise observation before native handlers.
+The supported correction uses the existing **PrependEventSink** at kDataLoaded,
+returns kContinue, and leaves every event untouched. No assumption that
+kInputLoaded alone precedes MenuControls, no hook and no raw sink-array mutation.
+The one-time `input_registration` records probe/MenuControls/PlayerControls
+indices, sink count and notifying state. Require probe index 0 and inspect the
+native indices on the next run; later plugins can still prepend themselves.
+
+For precedent, inspected SKSE's own observer
+[PapyrusEvents.cpp, lines 182–233](https://github.com/ianpatt/skse64/blob/master/skse64/PapyrusEvents.cpp#L182-L233):
+it observes button-down/control names and updates the last-control cache in an
+input sink. [Hooks_Event.cpp, lines 27–35](https://github.com/ianpatt/skse64/blob/master/skse64/Hooks_Event.cpp#L27-L35)
+registers that sink before broadcasting InputLoaded. The observer does not need
+an additional plugin hook, but its last-control cache has no QPC edge timestamp;
+no verified hook-free menu-latency helper was found to substitute for our sink.
+No third-party implementation was copied.
+
+Each active capture counts all observed buttons, downs and accepted mapped
+edges. The first **32** button records copy only scalars and up to 63 userEvent
+bytes into a fixed buffer (truncation flagged). The timer drains that buffer
+while capture is active; stop flushes remaining records outside perfMutex.
+There is no JSON formatting, file I/O, retained event/string pointer or new
+probe allocation in the input callback. Mapping and QPC happen outside
+perfMutex; the existing fixed-array pre-open median runs only on accepted edges.
+Each `input_diag` includes device, idCode, value, heldDownSecs, userEvent,
+Inventory/Quick Inventory/Tween mappings, QPC, down/mapped/menu-open gates and accepted. The
+successful stop record adds `input_buttons_seen`, `input_downs_seen`,
+`input_accepted` and `input_diag_count`. Counters continue after the 32-record cap;
+missing counters in old evidence stay unknown in the comparer.
+
+Timing semantics are unchanged: key-down → native InventoryMenu open event,
+first process open cold, input older than **10 s** uncorrelated, pre-open median,
+six consecutive periods ≤2× median with the first qualifying period's endpoint
+as settled time, 3-second observation and first 30 periods. No painted-grid or
+runner-injection time is substituted. Zero accepted edges with no buttons,
+buttons with no downs, mismatched keys, or menuOpen=true identify different next
+hypotheses; these diagnostics must decide rather than assert a runtime fix.
+
+### Wine memory finding and bounded commit source
+
+The brief's swap-only hypothesis is **not confirmed** by the inspected Wine
+source. Wine 11.0's Linux VM counters read `/proc/self/status` or `/proc/<pid>/status`,
+add **RssAnon plus VmSwap** into PagefileUsage, and assign PrivateUsage from that
+value. [Wine process.c, lines 949–977 and 1117–1138](https://github.com/wine-mirror/wine/blob/wine-11.0/dlls/ntdll/unix/process.c#L949-L977).
+The same code appears in
+[Valve experimental_11.0, lines 970–997 and 1182–1203](https://github.com/ValveSoftware/wine/blob/experimental_11.0/dlls/ntdll/unix/process.c#L970-L997).
+Thus zero swap alone does not explain the old zeros. Exact bundled-Proton source
+identity and the old host's proc counters were not recovered here; do not claim
+that upstream source proves the deployed binary's behavior. The observed zeros
+still make PrivateUsage unusable as acceptance evidence.
+
+The original `private_bytes` and `working_set_bytes` remain raw. The added
+`private_commit_bytes` sums RegionSize only where VirtualQuery reports
+`State == MEM_COMMIT && Type == MEM_PRIVATE`, excluding reserved, mapped and image
+regions. This is private committed virtual address space, not RSS or proven
+physical/private resident usage. The existing timer thread does the entire walk;
+frame/UI/input callbacks never query virtual memory. Its streamed fields are
+`private_commit_regions` (all queried regions),
+`private_commit_matching_regions`, `private_commit_walk_us`, and
+`private_commit_complete`. Partial/error walks emit null bytes and log once.
+
+The portable walk checks zero sizes, nonprogress, base/range and byte-sum overflow,
+ends at GetSystemInfo's maximum application address, and caps work at one million
+queries or a **100 ms** elapsed deadline checked before each query. One OS query
+cannot be preempted; observed cost is emitted, not claimed ≤100 ms. Normal cost on
+Proton is **NOT_RUN** and must be reviewed in the diagnostic run. Walks are
+coalesced by the existing timerBusy guard. VirtualQuery is a moving snapshot,
+not an atomic heap census; no allocator or leak-free inference is made.
+
+Comparer choice is per profile and whole 600-second window: use private_bytes
+only if **every** sample is finite/positive; otherwise use private_commit_bytes
+only if every sample is finite/positive; otherwise NOT_RUN. Never mix sources.
+The output reports the selected source and input counters. The 1 MiB/min **and**
+105% quartile growth rule, coverage/gap checks, anchors, frame and ≤250 ms warm
+budgets are unchanged. The short diagnostic route cannot produce acceptance.
+
+### Restoration and verification
+
+The runner snapshots game-relative file names before vanilla prepare and reads
+`active-at-deploy.json`'s `dirs` plus preservation/planned files. After successful
+restore, an undeployed new regular file under a deployment-created directory is
+**moved**, with its relative path, to the run's
+`evidence/leftover-after-restore/`. restoration.json journals destination, SHA-256
+and pending/moved state. Reconciliation cannot claim PASS until complete. New
+files elsewhere are hashed/reported and retained; symlinks are reported without
+following them. Empty directories in those wholly new subtrees are pruned deepest
+first; pre-existing directories are not removed. Occupied evidence destinations
+fail without overwriting either file. MO2 bypasses this path entirely and retains
+its own Data-byte-identity/restoration contract. No runtime_profile.py or game
+installation was edited by this work.
+
+Final offline logs and per-job purpose/command/deadline/PID/cleanup records:
+`session-p4/logs/perf/proton-*.{log,job.json}`. Exact commands and changed-file
+hashes: `session-p4/logs/perf/final-probe-proton.md`.
+
+| Check | Result |
+| --- | --- |
+| Strict portable C++20 probe contracts | PASS, 8 executables |
+| Full runner suite (`timeout 600 python3 -m unittest discover -s autotest/runner/tests`) | PASS, 254 tests including 17 comparer tests |
+| Focused comparer tests | PASS, 17 tests |
+| Diagnostic simulation / full batch simulation | PASS / 4 PASS, fake control flow and clean restoration only |
+| Diagnostic / four batch dry runs | BLOCKED: Steam not running in the sandbox-visible process table; schema/plans valid, no launch attempted |
+| Four old reports re-compared | PASS: frame table byte-identical; sixteen VALID anchors; combined p95 PASS both; latency/memory NOT_RUN all four |
+| New Windows /W4 /WX /permissive- build (CI 41402535451), actual sink order/key delivery, commit-walk cost, live diag/batch | PASS; budgets as in [Final rerun](#final-rerun-dyl172-proton-01) |
+
+Initial offline failures remain in logs: diagnostic wait_s=1 violated the existing
+minimum (fixed to 3); relative simulation roots duplicated fixture paths (rerun
+with absolute roots, no product/backend change). No unchanged failing retry loop.
+No integration patch, owner decision, SWF build or budget relaxation is needed.
+
+## Audit and acceptance ledger (historical rounds 1–4)
 
 | Checklist / blocker 9 item | Existing coverage | Implemented through round 4 / offline status | Runtime |
 | --- | --- | --- | --- |
@@ -241,13 +491,13 @@ made to hide encumbrance.
 
 | Runtime route / required observation | Keyboard/mouse | Controller |
 | --- | --- | --- |
-| Final hashes, host/settings/load order, disposable copy and native row count | NOT_RUN | NOT_RUN |
-| UI/main cadence standing/turn and pause/menu; probe/engine medians/p95 and anchor_ratio in [0.9,1.1]; invalid capture NOT_RUN | NOT_RUN | NOT_RUN |
+| Final hashes, host/settings/load order, disposable copy and native row count | PASS, except native row count (owner check, NOT_RUN) | NOT_RUN |
+| UI/main cadence standing/turn and pause/menu; probe/engine medians/p95 and anchor_ratio in [0.9,1.1]; invalid capture NOT_RUN | PASS, sixteen anchors VALID (`dyl172-proton-01`) | NOT_RUN |
 | Stop/restart during either pending hop: one chain only; stopped hop drains and ends; no runaway log in ordinary captures | NOT_RUN | NOT_RUN |
-| Bound input, cold open, warm opens 2–10, raw periods and grid-scroll behavior | NOT_RUN | NOT_RUN |
-| Cell destinations and full 10-minute memory window | NOT_RUN | NOT_RUN |
-| Normal console quit, no save and verified restoration | NOT_RUN | NOT_RUN |
-| Baseline/camera-only/UI-only/combined budget comparison and acceptance | NOT_RUN | NOT_RUN |
+| Bound input, cold open, warm opens 2–10, raw periods and grid-scroll behavior | PASS for input, cold/warm opens and periods; grid-scroll visuals not reviewed | NOT_RUN |
+| Cell destinations and full 10-minute memory window | PASS: complete window in all four profiles (memory budget result below) | NOT_RUN |
+| Normal console quit, no save and verified restoration | PASS in every live run | NOT_RUN |
+| Baseline/camera-only/UI-only/combined budget comparison and acceptance | Comparison: frame PASS, warm latency PASS, memory FAIL ([Final rerun](#final-rerun-dyl172-proton-01)); acceptance is DYL-175 | NOT_RUN |
 
 Automated routes currently target keyboard/mouse with Inventory=I/Back=TAB and
 physical controller off. The input adapter supports mapped devices; the separate
@@ -327,11 +577,13 @@ unchanged failing retry loop was used.
 
 ## Remaining gates and decisions
 
-No owner decision or module integration patch is needed for this implementation.
-The selected UI-drain CPU period, engine anchor and settle design are implemented
-without a new painted-grid dependency. Re-audit changed module sources after
-DYL-170, build the probe in Windows CI, stage the final artifacts, and let the orchestrator run the routes.
-Owner runtime acceptance and any explicit budget tradeoff remain pending; no
-performance acceptance is claimed here. No SWFs were built. Post-MVP candidates:
+The probe was built in Windows CI and the routes ran on the rc1 archives
+(see [Final rerun](#final-rerun-dyl172-proton-01)). The combined memory budget
+FAILs with the optional external minimap stack and passes without it; the owner
+accepted this as an external-provider limitation on 2026-11-02 (D024 in
+[DECISIONS](../../DECISIONS.md)). Whether the growth plateaus in longer play is
+NOT_RUN. Owner runtime acceptance is DYL-175;
+no performance acceptance is claimed here. The stop/restart-during-hop route and
+the controller column remain NOT_RUN. No SWFs were built. Post-MVP candidates:
 broader hardware/settings coverage, a separately bounded multi-hour soak and an
 optional native painted-grid endpoint.

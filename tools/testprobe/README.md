@@ -388,3 +388,23 @@ snapshot values; no GFx object is retained. `cursor` is present whenever
 For an active grid, `inventory.cursor.selected_cell` gives the painted 165×68 cell mapped into root coordinates; it is null if the grid, selected clip, mapping or finite coordinates are unavailable. `selected_clip` remains the native `getBounds` evidence and can be inflated by hidden children. The mapping is a snapshot and retains no GFx values.
 
 `magic` is null when MagicMenu is closed. When open, it contains `selected_name`, `selected_filter_flag` (the raw numeric `filterFlag`) and `selected_favorite` (derived from `filterFlag` bit 1, mask `1`); unavailable or invalid values are null. It reads `_root.Menu_mc.inventoryLists.itemList.selectedEntry` without mutation. `selected_filter_flag` is additive under protocol 2. Runtime NOT_RUN.
+
+## Proton performance diagnostics (DYL-172)
+
+The opt-in observer now uses CommonLib 7.2.0's PrependEventSink, with a one-time
+input_registration record of the probe and native sink indices. It never stops
+or modifies an input event. During each capture it retains at most 32 input_diag
+records in fixed storage; the timer emits them and stop flushes the remainder,
+outside perfMutex. Stop counters include input_buttons_seen, input_downs_seen,
+input_accepted and input_diag_count. No input callback formats JSON or writes files.
+
+process_memory retains PrivateUsage/working set and adds private_commit_bytes
+from a timer-thread VirtualQuery walk of MEM_COMMIT/MEM_PRIVATE regions, its total
+and matching region counts, duration in microseconds and completeness. Failed
+or bounded-out walks emit null bytes and one diagnostic log. The walk ends at
+the maximum application address, rejects zero/nonprogress/overflow and caps at
+one million queries or a 100ms deadline checked between queries.
+
+See [performance evidence](../../docs/evidence/p4/performance.md#dyl-172-proton-evidence-correction--2026-11-02)
+for source citations, timing semantics, source selection and remaining live gates.
+Use the existing portable test glob; it includes proton_policy_test.cpp.
