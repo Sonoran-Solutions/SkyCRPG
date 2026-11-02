@@ -726,6 +726,7 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     }
     previousLook(state,filtered); // exactly once, retaining provider input lock + native update
 }
+void traceLockFrame(Context c);
 void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>& next) {
     if (next && next.get() != state) { interruptTargetLock(); resetObstruction(); }
     else sampleObstruction(state);
