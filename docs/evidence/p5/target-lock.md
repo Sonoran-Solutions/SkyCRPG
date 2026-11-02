@@ -168,3 +168,15 @@ Actual commands/results:
 - `git diff --check`: **PASS**. All jobs exited; no timeout or child job remains. One shell-script preparation delimiter typo was corrected before execution; it launched no test. There was no failing build/test retry.
 
 Unverified: corrected Windows build/link and hosted CI; all in-game indicator/save/retarget/menu/input/thread/hook/notice/aim/independence behavior; owner acceptance. Prior Windows CI remains **FAIL**, not replaced by portable PASS. No native package hash invented. Decisions and owner questions appear above. No commit, push, PR, game process or packaging change made by this pass.
+
+## In-game run p5-b — 2026-11-02
+
+Camera DLL `3b6ff9cf…` from `6b42f35`, camera-only, keyboard/mouse, unattended.
+
+| Route | Result | Note |
+| --- | --- | --- |
+| `p5-cam-off-main`, bEnabled=0, no overlay | **PASS** | Same steps as `dyl173-cam-main`. |
+| `p5-cam-off-disabled`, bEnabled=0, no overlay | **PASS** | Same steps as `dyl173-cam-disabled`. |
+| `p5-lock-main`, bEnabled=1 | **FAIL** | The lease was never released, so no lock happened. It failed closed. |
+
+Cause: the log shows `current=620 Main=368 TDM=620`. `GetTDMThreadId` returns the thread that first requested TDM's API (data load), while TDM logs its updates on 368, the main thread. Requiring all three IDs to match could never pass. The gate now requires only `Main::threadID`. Runs `batch-p5-a-00` and `-01` failed because of a stage builder bug that deployed JSON as the DLL; they tested no plugin code.

@@ -262,12 +262,14 @@ bool onTargetLockThread() {
     if (!movement) return false;
     const auto main = RE::Main::GetSingleton();
     const auto thread = GetCurrentThreadId();
+    // TDM reports the thread that first requested its API (data load), not its
+    // update thread, which is the main thread; only the main thread is checked.
     const auto tdmThread = movement->GetTDMThreadId();
-    const bool matches = main && main->threadID == thread && tdmThread == thread;
+    const bool matches = main && main->threadID == thread;
     static std::atomic_flag reported = ATOMIC_FLAG_INIT;
     if (!matches && !reported.test_and_set()) {
         char line[160]{};
-        std::snprintf(line,sizeof(line),"Target lock thread mismatch: current=%lu Main=%lu TDM=%lu; lock policy suspended.",
+        std::snprintf(line,sizeof(line),"Target lock waiting for the main thread: current=%lu Main=%lu TDM-reported=%lu; lock policy suspended on this thread.",
             static_cast<unsigned long>(thread),static_cast<unsigned long>(main ? main->threadID : 0),tdmThread);
         log(line);
     }
