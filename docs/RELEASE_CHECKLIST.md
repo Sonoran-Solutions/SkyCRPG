@@ -1,14 +1,14 @@
 # Phase 4 internal candidate checklist
 
-This is not public-release authorization. Final candidate source, CI run and archive hashes: **pending DYL-171 final-package generation**. Final candidate gameplay is **NOT_RUN**.
+This is not public-release authorization. Final candidate: source `6b4c0fc6a6da4effd9faeafc9a2c59874a612271`, [main CI run 41376680950](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41376680950); UI SHA-256 `f508a0e1343e2f15ea825e284f57fafed1108f62eb38acbef4b72582d2d940cb`, Camera SHA-256 `e3f6d61e2d2075a10d8a31c07ccfbe9c78e324230f5c399cadbc2c3c39c86838`. Packaged automated gameplay is bounded **PASS**; owner acceptance is pending.
 
 | Ticket | Current state | Evidence / remaining work |
 | --- | --- | --- |
 | [DYL-170](phases/PHASE_4.md) | Scoped runtime **PASS**: 22/22 automated routes on Proton Experimental `experimental-11.0-20261027b-x86_64`, Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, test probe `ac28d3c` (#30), UI `2d39d30` and Camera `1d95915`; the owner approved all 40 review screenshots on 2026-11-01. Camera `1daf2aa` adds the notice-intent fix after the runs (portable tests and Windows CI only). | [UI](evidence/p4/blocker-resolution-ui.md), [Camera](evidence/p4/blocker-resolution-camera.md). Controller play, follower lifecycle, the CC missing-icon fixture and marker travel accuracy remain **NOT_RUN**. Aim FAIL and lock BLOCKED stay accepted MVP limitations, not passes. |
-| DYL-171 | In progress; assembly tooling and offline audit; final packages and manager routes NOT_RUN | [Packaging](evidence/p4/packaging.md); produce strict candidates with hashes, provenance and rights notices. |
-| DYL-172 | NOT_RUN | Measure frame time, inventory latency and resource stability against recorded budgets. |
-| DYL-173 | Final packaged regression **NOT_RUN** | Run final Camera-only, UI-only and combined regression, integrity, update and recovery on exact packages. |
-| DYL-174 | Documentation review in progress | [Docs review](evidence/p4/docs-review.md). CommonLib legacy MIT and vcpkg static-library notices ship in both archives; the corresponding-source and third-party redistribution review is a separate owner decision. |
-| DYL-175 | Owner release playtest **PENDING** | [Owner route](PLAYTEST.md); record ACCEPT or specific revision request after technical gates. |
+| DYL-171 | **PASS** for strict assembly/reproduction and bounded MO2 automated routes (5/5); manual written-instruction install, controller and Vortex **NOT_RUN** | [Packaging](evidence/p4/packaging.md). |
+| DYL-172 | In progress | Frame-time captures valid; combined p95 within budget on the first capture set. Inventory latency and memory evidence invalid under Proton; probe fix and full rerun in progress. [Performance](evidence/p4/performance.md). |
+| DYL-173 | Bounded automated packaged regression **PASS** (22/22); controller **NOT_RUN** | [Regression](evidence/p4/regression.md); broader acceptance remains open. |
+| DYL-174 | Final documentation in review; package identities cross-checked; public rights clearance deferred | [Docs review](evidence/p4/docs-review.md), [D023](DECISIONS.md). |
+| DYL-175 | **OWNER_PLAYTEST_PENDING** | [Handoff](evidence/p4/acceptance.md), [owner route](PLAYTEST.md); record ACCEPT or a revision request after technical gates. |
 
-Do not claim C1–C5, U1–U6, M1–M3 or Q1–Q3 pass for the final candidate without recorded evidence. Record source, package and dependency hashes, exact host, device and outcome. No unresolved critical crash, item loss, control lock or navigation loss may be silently waived. Public distribution, including rights to third-party assets, requires a later owner decision.
+Do not claim C1–C5, U1–U6, M1–M3 or Q1–Q3 pass for the final candidate without recorded evidence. Record source, package and dependency hashes, exact host, device and outcome. No unresolved critical crash, item loss, control lock or navigation loss may be silently waived. Public redistribution and associated rights clearance are deferred until at least Phase 5 completion by [D023](DECISIONS.md).

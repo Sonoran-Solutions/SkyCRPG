@@ -96,3 +96,16 @@ Recorded at the [Phase 3 gate](../evidence/p3/gate.md) on 2026-10-28. The host, 
 | Combined | **PASS** on the final candidate `9a8692e` with Camera `28aae27`: automated keyboard/mouse route (supervised, unattended and a merged-probe smoke, 9/9 each), owner manual lifecycle session on both devices, and the malformed-INI session. Earlier combined leaf runs cover inventory, grid and minimap. The 15–20 minute outdoor-to-dungeon route is **NOT_RUN** (owner-waived). |
 | Camera-only | No Phase 3 run; the Camera tree is unchanged since the Phase 2 evidence. |
 | Other hosts, runtimes, GPUs and mod combinations | **NOT_RUN**; no support claim, as above. |
+
+## Phase 4 rc1 status
+
+On the recorded Proton host, source `6b4c0fc`, CI `41376680950`, the rc1 archives and bounded automated results are identified in [acceptance](../evidence/p4/acceptance.md).
+
+| Ticket | Status |
+| --- | --- |
+| DYL-170 | Scoped automated **PASS**; owner approved screenshots. |
+| DYL-171 | Strict package/repro and MO2 2.5.2 automated fresh, controlled combined update/removal **PASS**; Vortex, other managers and human written-instruction install **NOT_RUN**. [Packaging](../evidence/p4/packaging.md). |
+| DYL-172 | In progress: valid frame-time captures, combined p95 within budget on first capture set; inventory latency and memory invalid under Proton, probe fix and full rerun in progress. [Performance](../evidence/p4/performance.md). |
+| DYL-173 | 22/22 bounded keyboard/mouse automated routes **PASS**; automated controller **NOT_RUN** by host policy. [Regression](../evidence/p4/regression.md). |
+| DYL-174 | Final documentation in review; redistribution clearance deferred. [Review](../evidence/p4/docs-review.md). |
+| DYL-175 | **OWNER_PLAYTEST_PENDING**; no owner acceptance claimed. [Handoff](../evidence/p4/acceptance.md). |

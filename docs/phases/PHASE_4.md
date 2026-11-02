@@ -58,7 +58,7 @@ Deliver two installable archives, not just a development folder that happens to 
 
 **Evidence/deliverables:** `docs/evidence/p4/packaging.md`, `docs/INSTALLATION.md`, `docs/compatibility/dependency-lock.md`.
 
-**Out of scope:** No public Nexus/GitHub release publication without a separate release instruction.
+**Out of scope:** Public redistribution and its third-party rights clearance are deferred until at least Phase 5 completion; see [D023](../DECISIONS.md).
 
 ### P4-03 — Measure frame cost, inventory latency and resource stability
 
