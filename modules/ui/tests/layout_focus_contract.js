@@ -229,7 +229,7 @@ for (const device of ['keyboard','controller']) {
 // and header rule past 542, a 9-slice backdrop shorter than the six-row grid.
 let minTile=Infinity;
 for (const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:1080},
-  {x:-320,y:0,width:2560,height:1080},{x:50,y:30,width:1024,height:600}]) {
+  {x:-320,y:0,width:2560,height:1080},{x:0,y:0,width:3440,height:1440},{x:0,y:0,width:5120,height:1440},{x:0,y:0,width:1920,height:1200},{x:0,y:0,width:1024,height:768},{x:50,y:30,width:1024,height:600}]) {
   global.Stage={visibleRect:rect};
   const lists=listsFixture(), holder=new Clip(), menu=new Clip();
   const list=lists.itemList, panel=lists.panelContainer;
@@ -376,7 +376,7 @@ hudFixture=hudFixture.replace('Stage: {width, height}', 'Stage: {width, height, 
 const hudContext={require,process,console};
 vm.runInNewContext(hudFixture+'\nthis.fixture={makeMenu,globalBounds,settings};',hudContext);
 const {makeMenu,globalBounds,settings}=hudContext.fixture;
-for(const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:1080},{x:-320,y:20,width:2560,height:1080}])
+for(const rect of [{x:0,y:0,width:1280,height:720},{x:0,y:0,width:1920,height:1080},{x:-320,y:20,width:2560,height:1080},{x:0,y:0,width:3440,height:1440},{x:0,y:0,width:5120,height:1440},{x:0,y:0,width:1920,height:1200},{x:0,y:0,width:1024,height:768}])
   for(const scale of [85,100,115]) for(const offsetX of [-120,0,120]) for(const offsetY of [-60,0,60]) {
     const menu=makeMenu(rect.width,rect.height,settings(scale,offsetX,offsetY),
       {rect,menu:{_x:616.65,_y:475.45,_xscale:80,_yscale:125},ancestor:{_x:20,_y:-30,_xscale:150,_yscale:75}});

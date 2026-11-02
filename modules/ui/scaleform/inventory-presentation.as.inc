@@ -32,6 +32,7 @@
    }
    function skycrpgLayout()
    {
+      if(!this.inventoryLists.itemList.skycrpgGrid) return;
       var rect = Stage.visibleRect;
       var lists = this.inventoryLists;
       lists._skycrpgMenu = this;
@@ -87,6 +88,7 @@
    }
    function skycrpgPositionCard()
    {
+      if(!this.inventoryLists.itemList.skycrpgGrid) return;
       var holder = this.itemCard._parent;
       var rect = Stage.visibleRect;
       var scale = this._skycrpgModal ? Math.min(1, (rect.width - 32) / 1280, (rect.height - 32) / 720) : this._skycrpgScale;
@@ -195,6 +197,7 @@
    }
    function skycrpgRequestEquipment()
    {
+      if(!this.inventoryLists.itemList.skycrpgGrid) return;
       if(this._bMenuClosing) return;
       // Clear stale values at the invalidation boundary; coalesce callback bursts.
       if(this._skycrpgEquipmentTimer == undefined)

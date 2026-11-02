@@ -26,6 +26,9 @@ inline const char* Reason(Refusal reason) {
 }
 struct Selection { Stamp stamp; Entry entry; std::uint64_t token{}; };
 struct Intent { Selection selection; Action action{}; bool quantity{}, nativeQuestFeedback{}; };
+inline bool SameSelection(const Selection& selection, const Snapshot& snapshot, const Entry& entry) {
+    return selection.stamp == snapshot.stamp && selection.entry == entry;
+}
 inline Refusal Validate(const Selection& selected, const Snapshot& live, bool focused, Action action,
     std::uint32_t amount, bool nativePermits = true, bool nativeQuestFeedback = false)
 {
@@ -62,7 +65,9 @@ public:
     }
     Refusal Begin(const Selection& selected, const Snapshot& live, bool focused, Action action,
         std::uint32_t amount, bool quantity = false, bool nativePermits = true, bool nativeQuestFeedback = false) {
-        const bool duplicate = _consumed || selected.token == _lastToken;
+        _duplicateConsumed = _consumed;
+        _duplicateSameToken = selected.token == _lastToken;
+        const bool duplicate = _duplicateConsumed || _duplicateSameToken;
         _consumed = true; // even duplicate/pending refusals spend this gesture
         if (duplicate) return Refusal::Duplicate;
         if (_pending) return Refusal::Pending;
@@ -89,10 +94,14 @@ public:
     // callback fires without a press inside the menu, so re-arming is safe.
     void ResetSession() { Cancel(); _held.clear(); _consumed = false; }
     const std::optional<Intent>& Pending() const { return _pending; }
+    bool DuplicateConsumed() const { return _duplicateConsumed; }
+    bool DuplicateSameToken() const { return _duplicateSameToken; }
+    std::uint64_t LastToken() const { return _lastToken; }
+    const std::set<unsigned>& Held() const { return _held; }
 private:
     std::optional<Intent> _pending;
     std::set<unsigned> _held;
     std::uint64_t _lastToken{};
-    bool _consumed{};
+    bool _consumed{}, _duplicateConsumed{}, _duplicateSameToken{};
 };
 }
