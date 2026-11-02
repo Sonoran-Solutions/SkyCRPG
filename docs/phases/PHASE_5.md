@@ -2,7 +2,7 @@
 
 [Roadmap](../ROADMAP.md) · [MVP scope](../MVP_SCOPE.md) · [Research and feasibility](../planning/phase5-targeting-camera-research.md) · [Linear project](https://linear.app/devils17/project/skycrpg-3bba43f5930f)
 
-**Status: proposal, 2026-10-28, revised after the senior review of PR #24.** This phase starts only after the Phase 4 gate (DYL-175) records owner ACCEPT; it does not change the four-phase MVP commitment in [ROADMAP](../ROADMAP.md). No Linear tickets exist yet; IDs below are plan IDs. Items marked **owner decision** need a ruling before the corresponding ticket is ready. All feasibility statements come from the research document; nothing in this phase has in-game evidence.
+**Status: started 2026-11-02 after the Phase 4 owner ACCEPT ([D025](../DECISIONS.md)); proposal dated 2026-10-28, revised after the senior review of PR #24.** It does not change the four-phase MVP commitment in [ROADMAP](../ROADMAP.md). Linear tickets: P5-01 DYL-197, P5-02 DYL-198, P5-03 DYL-200, P5-04 DYL-199, P5-05 DYL-201, P5-06 DYL-202. The owner rulings are recorded in [DECISIONS](../DECISIONS.md); the table below keeps the original engineering proposals. All feasibility statements come from the research document; nothing in this phase has in-game evidence.
 
 ## Outcome
 
