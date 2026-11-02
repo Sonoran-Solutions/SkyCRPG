@@ -2,6 +2,8 @@
 // Disposable instrumentation. SmoothCam owns all normal camera transforms.
 #define NOMINMAX // before CommonLib's Windows headers; matches skycrpg/skeleton.h
 #include <RE/Skyrim.h>
+#include <RE/H/hkpCdPoint.h>
+#include <RE/H/hkpLinearCastInput.h>
 #include <SKSE/SKSE.h>
 #include <skycrpg/skeleton.h>
 #include "classifier.h"
@@ -38,6 +40,8 @@ constexpr std::array<std::uint8_t, 14> casterPrologue{ 0x48,0x8b,0xc4,0x4c,0x89,
 constexpr std::array<std::uint8_t, 16> roomPrologue{ 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0x48,0x8b,0xfa };
 static_assert(sizeof(RE::hkpRootCdPoint) == 64);
 static_assert(offsetof(RE::hkpRootCdPoint, rootCollidableB) == 0x30);
+static_assert(offsetof(RE::BSShaderProperty, material) == 0x78);
+static_assert(offsetof(RE::hkpWorldObject, collidable) == 0x20);
 static_assert(offsetof(RE::NiAlphaProperty, alphaFlags) == 0x30);
 
 struct Config {
@@ -56,13 +60,36 @@ struct Hit {
 	std::array<float, 4> start{}, goal{}, end{};
 	char model[260]{}, node[128]{};
 };
+// Material-manager references must be released through its cache-aware path.
+// BSTSmartPointer's final delete would leave a cached material entry dangling.
+void ReleaseMaterial(RE::BSLightingShaderMaterialBase* material)
+{
+	using Release = void(*)(void*, RE::BSShaderMaterial*);
+	const REL::Relocation<Release> release{ REL::ID(107720) };
+	const REL::Relocation<void**> manager{ REL::ID(403555) };
+	release(*manager, material);
+}
+auto RetainMaterial(RE::BSLightingShaderMaterialBase* material)
+{
+	static_cast<void>(material->IncRef());
+	return std::shared_ptr<RE::BSLightingShaderMaterialBase>(material, ReleaseMaterial);
+}
+void AttachMaterial(RE::BSShaderProperty* shader, RE::BSShaderMaterial* material)
+{
+	// ID 105545 attaches the exact allocation, increments it, then releases the
+	// old one through the manager. SetMaterial(false) may still clone a named property.
+	using Attach = void(*)(RE::BSShaderProperty*, RE::BSShaderMaterial*);
+	const REL::Relocation<Attach> attach{ REL::ID(105545) };
+	attach(shader, material);
+}
 struct FadePart {
 	RE::NiPointer<RE::BSGeometry> geometry;
 	RE::NiPointer<RE::BSShaderProperty> shader;
 	RE::NiPointer<RE::NiAlphaProperty> alphaProperty, installedAlpha;
 	float materialAlpha{};
-	RE::BSTSmartPointer<RE::BSLightingShaderMaterialBase> material;
-	std::uint32_t sharedGeometries{};
+	std::shared_ptr<RE::BSLightingShaderMaterialBase> material, installedMaterial;
+	std::uint32_t sharedGeometries{}, sharedShaders{};
+	bool local{};
 	std::uint16_t flags{}, appliedFlags{};
 	std::uint8_t threshold{};
 };
@@ -71,6 +98,12 @@ struct Fade {
 	RE::ObjectRefHandle handle;
 	std::vector<FadePart> parts;
 	bool culled{}, applied{};
+};
+struct ContactCount { std::uint32_t ref{}; std::uint64_t hits{}, smoothHits{}; };
+struct ContactCounts {
+	std::array<ContactCount, 64> refs{};
+	std::uint64_t calls{}, misses{}, unresolved{}, overflow{};
+	double since{};
 };
 struct RoomSnapshot { policy::Point eye{}; };
 struct State {
@@ -96,6 +129,8 @@ struct State {
 	json::FrameChain chain;
 	std::atomic<std::shared_ptr<const RoomSnapshot>> room;
 	Fade fade;
+	ContactCounts contacts;
+	std::atomic_uint64_t contactOffThread{};
 	SmoothCamAPI::IVSmoothCam3* provider{};
 	HMODULE smooth{};
 };
@@ -191,6 +226,7 @@ bool LoadConfig()
 	policy::IDs selected{};
 	if (!policy::ParseIDs(Setting("sSelectedReference", ""), selected) || selected[1]) return false;
 	c.selected = selected[0];
+	if (!policy::CombinedTarget(c.mode, c.selected, c.refs, c.bases)) return false;
 	auto number = [](const std::string& text, float& value) {
 		const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
 		return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size() && std::isfinite(value);
@@ -227,11 +263,13 @@ bool Eligible()
 		!controls->data.povBeastMode && !controls->data.fovSlideMode &&
 		!static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive;
 }
+void ReportContacts(std::string_view reason);
 void Drain();
 void Summary(std::string_view reason);
 void Restore(std::string_view reason)
 {
 	if (!OnMain()) { Request(policy::stopRequest); return; }
+	ReportContacts(g->fade.applied || g->capturing || g->armed ? reason : "periodic");
 	if (g->capturing.exchange(false)) { Drain(); Summary(reason); }
 	g->armed = false;
 	g->roomActive = false;
@@ -248,19 +286,20 @@ void Restore(std::string_view reason)
 			.Boolean("restored_culled", f.root->GetAppCulled()).String("result", ok ? "PASS" : "FAIL"));
 	} else for (auto& part : f.parts) {
 		auto& data = part.geometry->GetGeometryRuntimeData();
-		bool partOK = data.shaderProperty.get() == part.shader.get() && part.shader->material == part.material.get();
-		// The retained material remains alive even if the shader swaps it. Restore
-		// only our alpha value on that original allocation; never write the replacement.
-		const bool alphaOK = policy::RestoreValue(part.material->materialAlpha, part.materialAlpha, g->config.alpha);
-		partOK = partOK && alphaOK;
-		if (g->config.mode == Mode::alphaProperty) {
+		const auto written = part.installedMaterial ? part.installedMaterial : part.material;
+		bool partOK = data.shaderProperty.get() == part.shader.get() && part.shader->material == written.get();
+		const bool alphaOK = policy::RestoreValue(written->materialAlpha, part.materialAlpha, g->config.alpha);
+		if (part.installedMaterial && part.shader->material == written.get())
+			AttachMaterial(part.shader.get(), part.material.get());
+		partOK = partOK && alphaOK && part.shader->material == part.material.get();
+		if (policy::AlphaPropertyMode(g->config.mode)) {
 			const bool restored = policy::RestoreValue(data.alphaProperty, part.alphaProperty, part.installedAlpha);
 			partOK = partOK && restored;
 		}
 		ok = ok && partOK;
 		Emit("restore_part", json::Object{}.Numeric("geometry", reinterpret_cast<std::uintptr_t>(part.geometry.get()))
-			.Numeric("original_alpha", part.materialAlpha).Raw("current_alpha", data.shaderProperty.get() == part.shader.get() && part.shader->material == part.material.get() ? json::Number(part.material->materialAlpha) : "null")
-			.Numeric("current_alpha_property", reinterpret_cast<std::uintptr_t>(data.alphaProperty.get())).Boolean("identity_match", data.shaderProperty.get() == part.shader.get())
+			.Numeric("original_alpha", part.materialAlpha).Numeric("restored_material", reinterpret_cast<std::uintptr_t>(part.shader->material))
+			.Boolean("local_write", part.local).Boolean("identity_match", data.shaderProperty.get() == part.shader.get())
 			.String("result", partOK ? "PASS" : "FAIL"));
 	}
 	Emit("restore", json::Object{}.String("reason", reason).String("result", ok ? "PASS" : "FAIL"));
@@ -288,13 +327,13 @@ void ApplyFade()
 				valid = false; return RE::BSVisit::BSVisitControl::kStop;
 			}
 			FadePart part;
-			part.geometry.reset(geometry); part.shader.reset(shader); part.material.reset(static_cast<RE::BSLightingShaderMaterialBase*>(shader->material));
+			part.geometry.reset(geometry); part.shader.reset(shader); part.material = RetainMaterial(static_cast<RE::BSLightingShaderMaterialBase*>(shader->material));
 			part.materialAlpha = part.material->materialAlpha; part.alphaProperty = data.alphaProperty;
 			if (!std::isfinite(part.materialAlpha)) valid = false;
 			if (part.alphaProperty) {
 				part.flags = part.alphaProperty->alphaFlags; part.threshold = part.alphaProperty->alphaThreshold;
 			}
-			if (g->config.mode == Mode::alphaProperty) {
+			if (policy::AlphaPropertyMode(g->config.mode)) {
 				// Audited native no-argument factory, ID 70687. A private property
 				// also supports opaque meshes whose original property is null.
 				using Factory = RE::NiAlphaProperty*(*)();
@@ -325,13 +364,15 @@ void ApplyFade()
 			if (scanned == 16384) { capped = true; return RE::BSVisit::BSVisitControl::kStop; }
 			++scanned;
 			const auto shader = geometry->lightingShaderProp_cast();
-			for (auto& part : f.parts)
-				if (geometry != part.geometry.get() && shader && shader->material == part.material.get()) ++part.sharedGeometries;
+			for (auto& part : f.parts) if (geometry != part.geometry.get() && shader) {
+				if (shader->material == part.material.get()) ++part.sharedGeometries;
+				if (shader == part.shader.get()) ++part.sharedShaders;
+			}
 			return RE::BSVisit::BSVisitControl::kContinue;
 		});
 		for (const auto& part : f.parts) Emit("material_sharing", json::Object{}
 			.Numeric("material", reinterpret_cast<std::uintptr_t>(part.material.get())).Numeric("geometry", reinterpret_cast<std::uintptr_t>(part.geometry.get()))
-			.Numeric("other_live_geometries", part.sharedGeometries).Numeric("scanned_geometries", scanned).Numeric("visited_objects", visited).Boolean("scan_capped", capped)
+			.Numeric("other_live_geometries", part.sharedGeometries).Numeric("other_live_shader_users", part.sharedShaders).Numeric("scanned_geometries", scanned).Numeric("visited_objects", visited).Boolean("scan_capped", capped)
 			.String("scope", "Main_WorldRootNode_attached_geometry_only"));
 		if (capped) { Inconclusive("material_sharing_scan_cap"); f = {}; return; }
 	}
@@ -344,12 +385,29 @@ void ApplyFade()
 	f.applied = true;
 	if (g->config.mode == Mode::appCulled) f.root->SetAppCulled(true);
 	else {
+		for (auto& part : f.parts) {
+			if (!part.sharedShaders) {
+				// The native manager uses Create/CopyMembers and a unique cache key.
+				part.shader->SetMaterial(part.material.get(), true);
+				const auto cloned = part.shader->material;
+				if (cloned && cloned != part.material.get() && cloned->GetType() == RE::BSShaderMaterial::Type::kLighting) {
+					part.installedMaterial = RetainMaterial(static_cast<RE::BSLightingShaderMaterialBase*>(cloned));
+					part.local = true;
+				} else AttachMaterial(part.shader.get(), part.material.get());
+			}
+			Emit("material_write_scope", json::Object{}.Numeric("geometry", reinterpret_cast<std::uintptr_t>(part.geometry.get()))
+				.Boolean("local_write", part.local).String("scope", part.local ? "private_clone_attached_shader_scan" : "shared_material")
+				.String("reason", part.local ? "native_unique_material" : part.sharedShaders ? "shader_property_shared" : "native_clone_unavailable")
+				.Numeric("original_material", reinterpret_cast<std::uintptr_t>(part.material.get()))
+				.Numeric("installed_material", reinterpret_cast<std::uintptr_t>(part.shader->material)));
+		}
+		if (!Flush()) { Restore("clone_journal_failure"); return; }
 		f.root->UpdateMaterialAlpha(g->config.alpha, false);
-		if (g->config.mode == Mode::alphaProperty)
+		if (policy::AlphaPropertyMode(g->config.mode))
 			for (auto& part : f.parts) part.geometry->GetGeometryRuntimeData().alphaProperty = part.installedAlpha;
 	}
 	for (const auto& part : f.parts) Emit("apply_part", json::Object{}.Numeric("geometry", reinterpret_cast<std::uintptr_t>(part.geometry.get()))
-		.Numeric("material_alpha", part.material->materialAlpha).Numeric("alpha_property", reinterpret_cast<std::uintptr_t>(part.geometry->GetGeometryRuntimeData().alphaProperty.get()))
+		.Boolean("local_write", part.local).Numeric("material_alpha", (part.installedMaterial ? part.installedMaterial : part.material)->materialAlpha).Numeric("alpha_property", reinterpret_cast<std::uintptr_t>(part.geometry->GetGeometryRuntimeData().alphaProperty.get()))
 		.Numeric("alpha_flags", part.installedAlpha ? part.installedAlpha->alphaFlags : part.flags));
 	Emit("apply", json::Object{}.String("reference", json::FormID(g->config.selected)).Numeric("alpha", g->config.alpha)
 		.String("state", "captured_before_write").Boolean("sharing_scan_bounded", true));
@@ -365,10 +423,11 @@ void CheckFade()
 	bool reset = g->config.mode == Mode::appCulled && !f.root->GetAppCulled();
 	for (const auto& part : f.parts) {
 		const auto& data = part.geometry->GetGeometryRuntimeData();
-		reset = reset || data.shaderProperty.get() != part.shader.get() || part.shader->material != part.material.get();
-		if (data.shaderProperty.get() == part.shader.get() && part.shader->material == part.material.get())
-			reset = reset || part.material->materialAlpha != g->config.alpha;
-		if (g->config.mode == Mode::alphaProperty) reset = reset || data.alphaProperty != part.installedAlpha ||
+		const auto written = part.installedMaterial ? part.installedMaterial : part.material;
+		reset = reset || data.shaderProperty.get() != part.shader.get() || part.shader->material != written.get();
+		if (data.shaderProperty.get() == part.shader.get() && part.shader->material == written.get())
+			reset = reset || written->materialAlpha != g->config.alpha;
+		if (policy::AlphaPropertyMode(g->config.mode)) reset = reset || data.alphaProperty != part.installedAlpha ||
 			part.installedAlpha->alphaFlags != part.appliedFlags || part.installedAlpha->alphaThreshold != part.threshold;
 	}
 	if (reset) { Emit("engine_reset", json::Object{}.String("attribution", "engine_or_other_writer")); Restore("engine_reset"); }
@@ -424,6 +483,118 @@ bool Metadata(Hit& record, const RE::hkpRootCdPoint* result)
 	record.candidate = policy::OverheadCandidate({ record.normal[2], record.layer, isStatic });
 	return isStatic;
 }
+// Original fixed-capacity ABI adapter. CommonLib declares the collector's
+// virtual destructor but does not define it; do not introduce an unresolved base
+// destructor dependency. Slots and +08 early-out match native 1.7.104.
+struct GapCollector;
+struct GapVTable {
+	void* (*destroy)(GapCollector*, unsigned);
+	void (*add)(GapCollector*, const RE::hkpCdPoint&);
+	void (*reset)(GapCollector*);
+};
+struct GapCollector {
+	const GapVTable* vtable{};
+	float earlyOutDistance{ std::numeric_limits<float>::max() };
+	std::uint32_t padding{};
+	std::array<const RE::hkpCollidable*, policy::maxGuardContacts> roots{};
+	unsigned count{};
+	bool invalid{};
+	static void* Destroy(GapCollector* self, unsigned) { self->invalid = true; return self; }
+	static void Add(GapCollector* self, const RE::hkpCdPoint& point) {
+		if (self->count == self->roots.size()) { self->invalid = true; self->earlyOutDistance = -1; return; }
+		auto body = point.cdBodyB;
+		unsigned depth{};
+		while (body && body->parent && depth < 32) { body = body->parent; ++depth; }
+		if (!body || body->parent) { self->invalid = true; return; }
+		self->roots[self->count++] = static_cast<const RE::hkpCollidable*>(body);
+	}
+	static void Reset(GapCollector* self) { self->invalid = true; }
+};
+static_assert(offsetof(GapCollector, earlyOutDistance) == 8);
+static_assert(offsetof(GapCollector, roots) == 16);
+static_assert(offsetof(RE::hkpCdPoint, cdBodyB) == 0x38);
+const GapVTable gapVTable{ GapCollector::Destroy, GapCollector::Add, GapCollector::Reset };
+bool CheckGap(void* physics, RE::bhkWorld* world, policy::Point next, const Hit& record, double& nativeTime)
+{
+	if (!physics || !world || !OnMain()) { Inconclusive("gap_context_unavailable"); return false; }
+	// Independently audited caster loads [context], then [wrapper+10h], then
+	// uses phantom+20h as the collidable. Read only; the gateway positioned it.
+	void* wrapper{}; RE::hkpWorldObject* phantom{};
+	std::memcpy(&wrapper, physics, sizeof(wrapper));
+	if (wrapper) std::memcpy(&phantom, static_cast<const std::byte*>(wrapper) + 0x10, sizeof(phantom));
+	const auto havok = world->GetWorld1();
+	if (!phantom || !havok || phantom->world != havok) { Inconclusive("gap_phantom_world_mismatch"); return false; }
+	GapCollector collector; collector.vtable = &gapVTable;
+	RE::hkpLinearCastInput input{};
+	const float scale = RE::bhkWorld::GetWorldScale();
+	input.to = { next.x*scale, next.y*scale, next.z*scale, 0 };
+	input.maxExtraPenetration = input.startPointTolerance = 0x1p-23f;
+	using Sweep = void(*)(const RE::hkpWorld*, const RE::hkpCollidable*, const RE::hkpLinearCastInput&, GapCollector&, GapCollector*);
+	const REL::Relocation<Sweep> sweep{ REL::ID(61402) };
+	const double begin = Now();
+	{
+		RE::BSReadLockGuard lock(world->worldLock);
+		// Same hull, filter and start-overlap collector as the engine's caster.
+		// All contacts are visited: an allowed beam cannot mask a wall in the gap.
+		sweep(havok, &phantom->collidable, input, collector, &collector);
+	}
+	nativeTime += Now() - begin;
+	policy::GapGuard guard;
+	if (collector.invalid) guard.invalid();
+	unsigned nativeIgnored{};
+	bool originalSeen = false;
+	for (unsigned i = 0; i < collector.count; ++i) {
+		originalSeen = originalSeen || reinterpret_cast<std::uintptr_t>(collector.roots[i]) == record.collision;
+		const auto ref = RE::TESHavokUtilities::FindCollidableRef(*collector.roots[i]);
+		const auto base = ref ? ref->GetBaseObject() : nullptr;
+		const auto object = RE::TESHavokUtilities::FindCollidableObject(*collector.roots[i]);
+		const auto layer = static_cast<unsigned>(collector.roots[i]->GetCollisionLayer());
+		if (policy::NativeIgnoredContact(layer, object && object->GetAppCulled(), ref && ref == RE::PlayerCharacter::GetSingleton())) { ++nativeIgnored; continue; }
+		guard.contact(StaticReference(ref), ref && base && policy::Allowlisted(ref->GetFormID(), base->GetFormID(), g->config.refs, g->config.bases));
+	}
+	if (!originalSeen) guard.invalid();
+	Emit("recast_gap", json::Object{}.Numeric("sequence", record.sequence).Numeric("depth", record.depth)
+		.Numeric("contacts", collector.count).Numeric("native_ignored", nativeIgnored).Boolean("original_contact_seen", originalSeen).Boolean("complete", !collector.invalid).Boolean("safe", guard.safe())
+		.Raw("next", Vector({ next.x, next.y, next.z, 0 }).Json()).String("method", "all_contacts_same_hull_including_start_overlaps"));
+	if (!guard.safe()) Inconclusive("recast_gap_contains_enclosure_unknown_or_cap");
+	return guard.safe();
+}
+void CountContact(bool hit, const RE::hkpRootCdPoint* result, bool smooth)
+{
+	if (!policy::FadeMode(g->config.mode)) return;
+	if (!OnMain()) { ++g->contactOffThread; return; }
+	auto& counts = g->contacts;
+	++counts.calls;
+	if (!hit) { ++counts.misses; return; }
+	const auto ref = result && result->rootCollidableB ? RE::TESHavokUtilities::FindCollidableRef(*result->rootCollidableB) : nullptr;
+	if (!ref) { ++counts.unresolved; return; }
+	for (auto& item : counts.refs) if (!item.ref || item.ref == ref->GetFormID()) {
+		item.ref = ref->GetFormID(); ++item.hits; item.smoothHits += smooth; return;
+	}
+	++counts.overflow;
+}
+void ReportContacts(std::string_view reason)
+{
+	if (!policy::FadeMode(g->config.mode) || !OnMain()) return;
+	auto& counts = g->contacts;
+	const double now = Now();
+	if (reason == "periodic" && now - counts.since < 500) return;
+	if (!counts.calls && !g->contactOffThread) { counts.since = now; return; }
+	const auto offThread = g->contactOffThread.exchange(0);
+	bool selectedSeen = false;
+	auto emit = [&](const ContactCount& item) {
+		Emit("caster_counts", json::Object{}.String("reference", json::FormID(item.ref)).Numeric("hits", item.hits)
+			.Numeric("smoothcam_hits", item.smoothHits).Numeric("calls", counts.calls).Numeric("misses", counts.misses)
+			.Numeric("unresolved", counts.unresolved).Numeric("off_thread", offThread).Numeric("overflow", counts.overflow)
+			.Numeric("window_ms", now-counts.since).String("reason", reason).Boolean("fade_applied", g->fade.applied)
+			.Boolean("app_culled", g->fade.applied && g->config.mode == Mode::appCulled)
+			.String("scope", "original_entry_results_before_filter_no_sampling"));
+	};
+	for (const auto& item : counts.refs) if (item.ref) { emit(item); selectedSeen = selectedSeen || item.ref == g->config.selected; }
+	// Explicit zero is necessary to distinguish disappearance from omitted logging.
+	if (!selectedSeen && g->config.selected) emit({ g->config.selected, 0, 0 });
+	counts = {}; counts.since = now;
+}
 void QueueHit(const Hit& record)
 {
 	std::unique_lock lock(g->queueMutex, std::try_to_lock);
@@ -471,9 +642,10 @@ bool HookCaster(void* physics, RE::bhkWorld* world, float* start, float* end,
 	std::memcpy(record.end.data(), end, 16);
 	MEMORY_BASIC_INFORMATION memory{};
 	record.smooth = VirtualQuery(reinterpret_cast<void*>(caller), &memory, sizeof(memory)) && memory.AllocationBase == g->smooth;
+	CountContact(firstHit, result, record.smooth);
 	// Observe sampling happens before resolving scene names/models; no Eligible()
 	// or BSFixedString menu work on the observe hot path.
-	const bool filtering = g->config.mode == Mode::filter && g->armed && g->eligible && OnMain() && record.smooth && Eligible();
+	const bool filtering = policy::FilterMode(g->config.mode) && g->armed && g->eligible && OnMain() && record.smooth && Eligible();
 	if (!filtering && (calls & 15) != 0) {
 		++g->sampledOut; RecordTime(begin, beforeOriginal, beforeOriginal + originalTime, Now()); return firstHit;
 	}
@@ -494,12 +666,14 @@ bool HookCaster(void* physics, RE::bhkWorld* world, float* start, float* end,
 			policy::Point next;
 			const auto step = continuation.advance(
 				{record.start[0],record.start[1],record.start[2]}, {record.goal[0],record.goal[1],record.goal[2]},
-				{record.end[0],record.end[1],record.end[2]}, next);
+				{record.end[0],record.end[1],record.end[2]}, hull, next);
 			if (step != policy::Continuation::Step::cast) {
 				Inconclusive(step == policy::Continuation::Step::depthLimit ? "recast_depth_cap" : "recast_no_forward_progress"); valid = false; break;
 			}
 			LogHit(record, "recast_step");
 			if (!Flush()) { valid = false; break; }
+			const bool gapSafe = CheckGap(physics, world, next, record, originalTime);
+			if (!gapSafe || !Flush()) { valid = false; break; }
 			removed[count++] = record;
 			alignas(16) std::array<float, 4> from{ next.x, next.y, next.z, record.start[3] };
 			alignas(16) auto to = record.goal;
@@ -513,15 +687,15 @@ bool HookCaster(void* physics, RE::bhkWorld* world, float* start, float* end,
 			nextRecord.sequence = record.sequence; nextRecord.frame = record.frame; nextRecord.capture = record.capture;
 			nextRecord.caller = caller; nextRecord.smooth = record.smooth; nextRecord.hull = hull;
 			nextRecord.callingThread = record.callingThread; nextRecord.mainThread = record.mainThread; nextRecord.depth = count;
-			nextRecord.start = from; nextRecord.goal = record.goal; nextRecord.end = to; nextRecord.hit = hit;
+			nextRecord.start = from; nextRecord.goal = record.goal; nextRecord.end = hit ? to : record.goal; nextRecord.hit = hit;
 			record = nextRecord; isStatic = Metadata(record, &contact);
 			if (record.matched) ++g->matched;
 			LogHit(record, "recast_result");
 			if (!Flush()) { valid = false; break; }
 			std::memcpy(end, to.data(), 16);
 			if (hit) *result = contact;
-			else *result = RE::hkpRootCdPoint{};
-			*character = actor;
+			else { *result = RE::hkpRootCdPoint{}; std::memcpy(end, record.goal.data(), 16); }
+			*character = hit ? actor : nullptr;
 		}
 		if (count) {
 			alignas(16) auto resetStart = removed[0].start;
@@ -537,7 +711,7 @@ bool HookCaster(void* physics, RE::bhkWorld* world, float* start, float* end,
 			valid = valid && g->enabled && g->armed && !g->requests.pending() && !g->inconclusive;
 			if (valid) {
 				for (unsigned i = 0; i < count; ++i) { LogHit(removed[i], "discard"); if (!Flush()) { valid = false; break; } }
-				if (valid) Emit("filter_complete", json::Object{}.Numeric("sequence", record.sequence).Numeric("steps", count)
+				if (valid) Emit("filter_complete", json::Object{}.Numeric("sequence", record.sequence).Numeric("steps", count).Numeric("gateway_calls", count + 2).Numeric("gap_sweeps", count)
 					.Boolean("returned_hit", hit).Boolean("kept_behind", hit && record.metadata && record.ref && !record.matched)
 					.Boolean("returned_allowlist_match", record.matched).String("returned_reference", json::FormID(record.ref)));
 				valid = Flush() && valid;
@@ -546,7 +720,10 @@ bool HookCaster(void* physics, RE::bhkWorld* world, float* start, float* end,
 				std::memcpy(end, firstEnd.data(), 16); *result = firstContact; *character = firstCharacter; hit = firstHit;
 				Emit("filter_rollback", json::Object{}.Numeric("sequence", record.sequence)); Flush();
 			} else { g->discarded += count; if (hit && record.metadata && record.ref && !record.matched) ++g->keptBehind; }
-		} else LogHit(record, "caster");
+		} else {
+			LogHit(record, "caster");
+			if (!valid) { Emit("filter_rollback", json::Object{}.Numeric("sequence", record.sequence)); Flush(); }
+		}
 	} else QueueHit(record);
 	RecordTime(begin, beforeOriginal, beforeOriginal + originalTime, Now());
 	return hit;
@@ -580,8 +757,27 @@ std::array<std::uint8_t, 14> AbsoluteJump(std::uintptr_t destination)
 bool InstallMechanism()
 {
 	const auto base = REL::Module::get().base();
-	// Every mode installs the caster hook, as a pass-through outside observe and
-	// filter, because it drives the main-thread tick.
+	if (policy::FilterMode(g->config.mode)) {
+		const auto sweep = REL::ID(61402).address();
+		constexpr std::array<std::uint8_t, 15> expected{ 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18 };
+		if (sweep != base + 0xb59d80 || std::memcmp(reinterpret_cast<const void*>(sweep), expected.data(), expected.size()) != 0) {
+			Emit("refused", json::Object{}.String("reason", "gap_sweep_address_or_prologue_mismatch")); return false;
+		}
+	}
+	if (policy::FadeMode(g->config.mode) && g->config.mode != Mode::appCulled) {
+		constexpr std::array<std::uint8_t, 14> setter{ 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0x79,0x78 };
+		constexpr std::array<std::uint8_t, 14> attach{ 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0xda,0x48 };
+		constexpr std::array<std::uint8_t, 12> release{ 0x40,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x30 };
+		if (REL::ID(105544).address() != base + 0x14e8000 || REL::ID(105545).address() != base + 0x14e8080 ||
+			REL::ID(107720).address() != base + 0x1563fc0 || REL::ID(403555).address() != base + 0x32309d8 ||
+			std::memcmp(reinterpret_cast<const void*>(base + 0x14e8000), setter.data(), setter.size()) != 0 ||
+			std::memcmp(reinterpret_cast<const void*>(base + 0x14e8080), attach.data(), attach.size()) != 0 ||
+			std::memcmp(reinterpret_cast<const void*>(base + 0x1563fc0), release.data(), release.size()) != 0) {
+			Emit("refused", json::Object{}.String("reason", "material_clone_or_restore_abi_mismatch")); return false;
+		}
+	}
+	// Every mode installs the caster hook to drive the main-thread tick. Fade
+	// modes also count original contacts; baseline and room modes pass through.
 	{
 		const auto target = REL::ID(33007).address();
 		if (target != base + 0x5574f0 || std::memcmp(reinterpret_cast<const void*>(target), casterPrologue.data(), casterPrologue.size()) != 0) {
@@ -610,7 +806,7 @@ bool InstallMechanism()
 		}
 		originalRoom = reinterpret_cast<RoomTest>(table.write_vfunc(0x3f, HookRoom));
 		Emit("installed", json::Object{}.Numeric("vtable_rva", 0x1a69ac8).Numeric("slot", 0x3f).Numeric("target_rva", 0xfce0c0));
-	} else if (g->config.mode == Mode::alphaProperty) {
+	} else if (policy::AlphaPropertyMode(g->config.mode)) {
 		const auto factory = REL::ID(70687).address();
 		constexpr std::array<std::uint8_t, 15> expected{ 0x40,0x57,0x48,0x83,0xec,0x30,0x48,0xc7,0x44,0x24,0x20,0xfe,0xff,0xff,0xff };
 		if (factory != base + 0xef2be0 || std::memcmp(reinterpret_cast<const void*>(factory), expected.data(), expected.size()) != 0) {
@@ -712,6 +908,7 @@ void ConsumeRequests()
 	}
 	if (g->killed || g->inconclusive || !Eligible()) { Emit("refused", json::Object{}.String("reason", "KP0_ineligible_or_killed")); return; }
 	Drain();
+	ReportContacts("before_apply");
 	++g->capture;
 	g->captureLabel = Setting("sCaptureLabel", "unlabeled");
 	{
@@ -719,7 +916,10 @@ void ConsumeRequests()
 		g->frames.clear(); g->intervals.clear(); g->hooks.clear(); g->originals.clear(); g->adapters.clear(); g->lastFrame = 0; g->captureMissed = 0;
 		g->matched = 0; g->discarded = 0; g->keptBehind = 0;
 	}
-	if (policy::FadeMode(g->config.mode)) ApplyFade();
+	if (policy::FadeMode(g->config.mode)) {
+		ApplyFade();
+		g->armed = policy::CombinedMode(g->config.mode) && g->fade.applied && g->enabled && !g->requests.pending();
+	}
 	else { g->armed = true; Emit("armed", json::Object{}.String("reason", "fresh_KP0")); }
 	g->capturing = g->fade.applied || g->armed;
 	Emit("capture", json::Object{}.Boolean("active", g->capturing).String("label", g->captureLabel));
@@ -756,6 +956,7 @@ void Tick()
 			Restore("ini_kill_or_mode_change"); g->enabled = false; g->killed = true;
 		}
 		Drain();
+		ReportContacts("periodic");
 	}
 	const auto main = RE::Main::GetSingleton();
 	if ((main && main->GetRuntimeData().quitGame) || now - g->origin >= 1200000) {
@@ -909,7 +1110,7 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const SKSE::LoadInterface*
 	std::setvbuf(g->output, nullptr, _IOFBF, 65536);
 
 	if (!LoadConfig()) { Emit("refused", json::Object{}.String("reason", "invalid_ini")); std::fflush(g->output); return true; }
-	Emit("session", json::Object{}.String("source_commit", SKYCRPG_SOURCE_COMMIT).String("runtime", "1.7.104.0")
+	Emit("session", json::Object{}.String("source_commit", SKYCRPG_SOURCE_COMMIT).String("filter_policy", "hull_step_guard_v1").String("runtime", "1.7.104.0")
 		.String("expected_exe_sha256", exeHash).String("expected_library_sha256", libraryHash).String("expected_smoothcam_sha256", smoothHash).String("status", "NOT_RUN_until_game_evidence_review"));
 	if (!HashModule(GetModuleHandleW(nullptr), exeHash) || !HashFile(std::filesystem::path(skycrpg::ThisModuleDirectory()) / L"versionlib-1-7-104-0.bin", libraryHash)) {
 		Emit("refused", json::Object{}.String("reason", "executable_or_address_library_hash_mismatch")); std::fflush(g->output); return true;

@@ -6,6 +6,10 @@ import math
 from pathlib import Path
 
 
+FILTER_MODES = {"filter", "filter_material_alpha", "filter_alpha_property"}
+COMBINED_MODES = FILTER_MODES - {"filter"}
+
+
 def inspect(rows):
     problems, incomplete = [], []
     if not rows or rows[0].get("event") != "session":
@@ -13,6 +17,9 @@ def inspect(rows):
     original = applied = False
     discards = resets = kept = 0
     captures, chains = {}, {}
+    scopes, contact_windows = [], []
+    selected = None
+    guarded = bool(rows and rows[0].get("filter_policy") == "hull_step_guard_v1")
     for row in rows:
         event = row.get("event")
         capture_id = str(row.get("contact_capture_id", row.get("capture_id", 0)))
@@ -25,19 +32,34 @@ def inspect(rows):
             if not original:
                 problems.append("apply without preceding original")
             applied = True
+            selected = row.get("reference")
         elif event == "restore":
             if row.get("result") != "PASS":
                 problems.append("restoration conflict/failure")
             applied = original = False
         elif event == "discard":
             discards += 1
-            if not (row.get("mode") == "filter" and row.get("allowlist_match") and row.get("smoothcam_caller") and
+            if not (row.get("mode") in FILTER_MODES and row.get("allowlist_match") and row.get("smoothcam_caller") and
                     row.get("calling_thread_id") and row.get("calling_thread_id") == row.get("main_thread_id")):
                 problems.append("discard without filter/allowlist/SmoothCam/main-thread authority")
+            if row.get("mode") in COMBINED_MODES and (not applied or row.get("reference") != selected):
+                problems.append("combined discard without fade on the same reference")
             chain = chains.setdefault(row.get("sequence"), {})
             chain["discard"] = chain.get("discard", 0) + 1
         elif event == "recast_step":
             chains.setdefault(row.get("sequence"), {})["started"] = True
+        elif event == "recast_gap":
+            chain = chains.setdefault(row.get("sequence"), {})
+            chain["gaps"] = chain.get("gaps", 0) + 1
+            chain["unsafe_gap"] = chain.get("unsafe_gap", False) or not row.get("safe") or not row.get("complete") or not row.get("original_contact_seen")
+        elif event == "material_write_scope":
+            scopes.append(row)
+            if row.get("local_write") and (row.get("original_material") == row.get("installed_material") or not row.get("installed_material")):
+                problems.append("local material claim without a distinct clone")
+        elif event == "caster_counts":
+            contact_windows.append(row)
+            if row.get("overflow") or row.get("off_thread") or row.get("unresolved"):
+                incomplete.append("caster counts include unresolved/off-thread/overflow contacts")
         elif event == "recast_result":
             chains.setdefault(row.get("sequence"), {})["result"] = row
         elif event == "recast_context_reset":
@@ -48,6 +70,10 @@ def inspect(rows):
             result = chain.get("result", {})
             if not chain.get("context_reset") or not chain.get("discard") or chain.get("discard") != row.get("steps"):
                 problems.append("filter completion without context reset/complete discard journal")
+            if guarded and (chain.get("unsafe_gap") or chain.get("gaps") != row.get("steps") or not 1 <= row.get("steps", 0) <= 8 or row.get("gateway_calls") != row.get("steps", 0) + 2):
+                problems.append("filter completion without bounded safe gap sweeps")
+            if not row.get("returned_hit") and (not result or result.get("hit") is not False):
+                problems.append("filter miss without native continuation miss")
             if row.get("kept_behind"):
                 if not row.get("returned_hit") or not result.get("hit") or result.get("allowlist_match") or not result.get("contact_metadata_available") or result.get("reference") in (None, "0x00000000") or row.get("returned_reference") != result.get("reference"):
                     problems.append("kept-behind claim without resolved non-allowlisted hit")
@@ -79,17 +105,20 @@ def inspect(rows):
         capture["anchor"] = anchor(capture)
         if not capture["closed"]:
             incomplete.append("capture without final summary")
-        if rows and rows[0].get("mode") == "filter":
+        if rows and rows[0].get("mode") in FILTER_MODES:
             timing = capture["timings"].get("engine_frame", {})
             if not timing.get("matched_hits") or not timing.get("discards"):
                 incomplete.append("filter capture had zero matched hits or zero committed discards")
             capture["filter_exercised"] = bool(timing.get("matched_hits") and timing.get("discards"))
-    if rows and rows[0].get("mode") == "filter" and not committed_discards:
+    if rows and rows[0].get("mode") in FILTER_MODES and not committed_discards:
         incomplete.append("filter run had zero discards; SmoothCam stability is inconclusive")
     return {"journal": "FAIL" if problems else "PASS", "problems": problems,
             "conclusion": "INCONCLUSIVE" if incomplete or problems else "journal_complete_only",
             "inconclusive_reasons": sorted(set(incomplete)), "discard_records": discards, "discards": committed_discards, "resets": resets,
             "kept_hits_behind_beam": kept, "enclosure_preservation": "NOT_RUN: verify returned reference is fixture enclosure" if kept else "INCONCLUSIVE: no kept hit behind beam measured",
+            "material_write_scopes": scopes,
+            "caster_count_windows": contact_windows,
+            "contact_telemetry": "PASS: counters recorded only" if contact_windows else "NOT_RUN",
             "captures": captures, "smoothcam_stability": "NOT_RUN", "visual_behavior": "NOT_RUN", "p5_outcome": "pending"}
 
 

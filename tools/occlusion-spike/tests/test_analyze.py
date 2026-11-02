@@ -100,6 +100,59 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(analyze.inspect([{"event": "session"}, {"event": "capture", "capture_id": 1,
                                           "label": "standing"}])["conclusion"], "INCONCLUSIVE")
 
+    def guarded_rows(self, mode="filter"):
+        return [{"event": "session", "mode": mode, "filter_policy": "hull_step_guard_v1"},
+                {"event": "original"}, {"event": "apply", "reference": "0x000E7A7B"},
+                {"event": "recast_step", "sequence": 1},
+                {"event": "recast_gap", "sequence": 1, "safe": True, "complete": True, "original_contact_seen": True},
+                {"event": "recast_result", "sequence": 1, "hit": False},
+                {"event": "recast_context_reset", "sequence": 1},
+                {"event": "discard", "sequence": 1, "mode": mode, "reference": "0x000E7A7B",
+                 "allowlist_match": True, "smoothcam_caller": True, "calling_thread_id": 1, "main_thread_id": 1},
+                {"event": "filter_complete", "sequence": 1, "returned_hit": False, "steps": 1, "gateway_calls": 3},
+                {"event": "restore", "result": "PASS"}]
+
+    def test_combined_requires_same_reference_and_active_fade(self):
+        for mode in analyze.COMBINED_MODES:
+            rows = self.guarded_rows(mode)
+            self.assertEqual(analyze.inspect(rows)["journal"], "PASS")
+            rows[7]["reference"] = "0x12345678"
+            self.assertEqual(analyze.inspect(rows)["journal"], "FAIL")
+            rows = self.guarded_rows(mode)
+            del rows[2]
+            self.assertEqual(analyze.inspect(rows)["journal"], "FAIL")
+            self.assertEqual(analyze.inspect([{"event": "session", "mode": mode}])["conclusion"], "INCONCLUSIVE")
+
+    def test_guarded_filter_cannot_commit_unsafe_or_missing_gap(self):
+        for change in ({"safe": False}, {"complete": False}, {"original_contact_seen": False}):
+            rows = self.guarded_rows(); rows[4].update(change)
+            self.assertEqual(analyze.inspect(rows)["journal"], "FAIL")
+        rows = self.guarded_rows(); del rows[4]
+        self.assertEqual(analyze.inspect(rows)["journal"], "FAIL")
+        rows = self.guarded_rows(); rows[8]["gateway_calls"] = 11
+        self.assertEqual(analyze.inspect(rows)["journal"], "FAIL")
+        rows = self.guarded_rows(); del rows[5]
+        self.assertEqual(analyze.inspect(rows)["journal"], "FAIL")
+
+    def test_local_material_claim_needs_distinct_allocation(self):
+        rows = [{"event": "session"}, {"event": "material_write_scope", "local_write": True,
+                "original_material": 123, "installed_material": 456}]
+        self.assertEqual(analyze.inspect(rows)["journal"], "PASS")
+        rows[1]["installed_material"] = 123
+        self.assertEqual(analyze.inspect(rows)["journal"], "FAIL")
+        rows[1]["local_write"] = False
+        self.assertEqual(analyze.inspect(rows)["journal"], "PASS")
+
+    def test_culled_zero_counts_are_recorded_without_visual_claim(self):
+        rows = [{"event": "session", "mode": "app_culled"},
+                {"event": "caster_counts", "reference": "0x000E7A7B", "hits": 0, "calls": 50, "fade_applied": True}]
+        report = analyze.inspect(rows)
+        self.assertEqual(report["caster_count_windows"][0]["hits"], 0)
+        self.assertEqual(report["visual_behavior"], "NOT_RUN")
+        for key in ("overflow", "off_thread", "unresolved"):
+            rows[1][key] = 1
+            self.assertEqual(analyze.inspect(rows)["conclusion"], "INCONCLUSIVE")
+
 
 if __name__ == "__main__":
     unittest.main()

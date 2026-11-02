@@ -7,10 +7,10 @@
 #include <string_view>
 
 namespace skycrpg::occlusion {
-enum class Mode { baseline, observe, filter, materialAlpha, alphaProperty, appCulled, roomSeed1, roomSeed2, roomSeed3, nearClip, invalid };
+enum class Mode { baseline, observe, filter, materialAlpha, alphaProperty, appCulled, roomSeed1, roomSeed2, roomSeed3, nearClip, filterMaterialAlpha, filterAlphaProperty, invalid };
 inline Mode ParseMode(std::string_view s)
 {
-	constexpr std::array names{ "baseline", "observe", "filter", "material_alpha", "alpha_property", "app_culled", "room_seed_1", "room_seed_2", "room_seed_3", "near_clip" };
+	constexpr std::array names{ "baseline", "observe", "filter", "material_alpha", "alpha_property", "app_culled", "room_seed_1", "room_seed_2", "room_seed_3", "near_clip", "filter_material_alpha", "filter_alpha_property" };
 	for (std::size_t i = 0; i < names.size(); ++i) if (s == names[i]) return static_cast<Mode>(i);
 	return Mode::invalid;
 }
@@ -18,6 +18,7 @@ using IDs = std::array<std::uint32_t, 64>;
 inline bool ParseIDs(std::string_view s, IDs& out)
 {
 	out = {};
+	if (s == "none") return true;
 	std::size_t count{};
 	while (!s.empty()) {
 		const auto end = s.find(',');
@@ -36,15 +37,26 @@ inline bool ParseIDs(std::string_view s, IDs& out)
 	}
 	return true;
 }
-inline bool FadeMode(Mode m) { return m == Mode::materialAlpha || m == Mode::alphaProperty || m == Mode::appCulled; }
+inline bool FilterMode(Mode m) { return m == Mode::filter || m == Mode::filterMaterialAlpha || m == Mode::filterAlphaProperty; }
+inline bool AlphaPropertyMode(Mode m) { return m == Mode::alphaProperty || m == Mode::filterAlphaProperty; }
+inline bool CombinedMode(Mode m) { return m == Mode::filterMaterialAlpha || m == Mode::filterAlphaProperty; }
+inline bool CombinedTarget(Mode m, std::uint32_t selected, const IDs& refs, const IDs& bases)
+{
+	if (!CombinedMode(m)) return true;
+	if (!selected || refs[0] != selected) return false;
+	for (std::size_t i = 1; i < refs.size(); ++i) if (refs[i]) return false;
+	for (auto id : bases) if (id) return false;
+	return true;
+}
+inline bool FadeMode(Mode m) { return m == Mode::materialAlpha || m == Mode::alphaProperty || m == Mode::appCulled || CombinedMode(m); }
 inline bool SeedMode(Mode m) { return m >= Mode::roomSeed1 && m <= Mode::roomSeed3; }
-inline bool CasterMode(Mode m) { return m == Mode::observe || m == Mode::filter; }
+inline bool CasterMode(Mode m) { return m == Mode::observe || FilterMode(m) || FadeMode(m); }
 // Six short endpoint rays measure clearance, not solid occupancy or thickness.
 inline bool ValidAlpha(float a) { return std::isfinite(a) && a >= .1f && a < 1; }
 inline bool CanDiscard(Mode m, bool armed, bool eligible, bool smoothCamCaller,
 	bool resolvedStatic, bool explicitMatch, bool journalAvailable)
 {
-	return m == Mode::filter && armed && eligible && smoothCamCaller && resolvedStatic && explicitMatch && journalAvailable;
+	return FilterMode(m) && armed && eligible && smoothCamCaller && resolvedStatic && explicitMatch && journalAvailable;
 }
 struct Point { float x{}, y{}, z{}; };
 inline bool Finite(Point p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); }

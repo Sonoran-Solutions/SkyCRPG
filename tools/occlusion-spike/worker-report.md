@@ -1,37 +1,53 @@
-# DYL-199 Windows compile fix and arm keys — worker report
+# DYL-199 first-game-result fixes — worker handoff
 
-Source base `4341298`, branch `phase5/dyl-199-occlusion-spike`. Changes are uncommitted. No commit, push, PR, game/Proton launch, input injection, third-party contact, download, runner/input edit or shared-file edit.
+Base `32933770d074ffb0f5e05cb86455f9f043bbce95`. Changes are uncommitted. No commit, push, PR, Skyrim/Proton launch, third-party contact or binary/archive/mod download. Outcome remains **pending**. No shared build/config or production Camera/UI source edited.
 
-Both discarded SmoothCam `[[nodiscard]]` results are fixed with `static_cast<void>`: `RegisterInterfaceLoaderCallback` and `RequestInterface`. Reviewed the whole plugin against the pinned SmoothCam/CommonLib headers for additional nodiscard calls, unused parameters/variables, signedness, narrowing and shadowing; no further issue identified. No TDM calls exist in this file. Corrected native compilation is NOT_RUN, not proven by the portable tests.
+## Files changed
 
-**Concrete blocker:** requested KP7 (DIK `0x47`) is mapped to native Hotkey7: line 43, `Hotkey7 0x08,0x47`, in the exact installed `Skyrim - Interface.bsa` controlmap. Member SHA-256 `54886af6a32c18fa5a8b5805ab3070b6af1b9ddc92f777206494099d4e3353ee`. The claim that neither requested key is mapped is FAIL. KP9 (`0x49`) and proposed KP0 (`0x52`) are unmapped in all stock keyboard contexts; all three are already supported by the runner. Runtime native mapping refusal is retained. Source/routes currently use the explicitly requested KP7/KP9; missing-F13/F14 blocks were removed and replaced by the confirmed native-mapping blocker. The owner was asked about KP0/KP9; no answer received during this pass.
+Within `p5-spike`:
 
-Files changed:
+- `tools/occlusion-spike/src/runtime_policy.h`: hull-diameter progress, bounded all-contact gap policy, exact native contact exclusions.
+- `tools/occlusion-spike/src/config.h`: combined modes, same-reference constraint, explicit `none` empty-ID token.
+- `tools/occlusion-spike/src/plugin.cpp`: guarded recasts, combined arm/restore, native per-geometry clone attempt and cache-aware lifetime, bounded fade contact counters.
+- `tools/occlusion-spike/SkyCRPG_OcclusionSpike.ini`: mode/config/logging contract.
+- `tools/occlusion-spike/analyze.py`: combined authority, safe-gap completion, clone scope and counter reporting.
+- `tools/occlusion-spike/tests/classifier_test.cpp`: progress/limit/enclosure/inside-solid fixtures and mode/config tests.
+- `tools/occlusion-spike/tests/test_analyze.py`: combined, gap, clone and counter journal tests.
+- `docs/evidence/p5/occlusion-spike.md`: actual batch-k/j results, identities, new offline ABI findings, current tests and remaining gates, proposed shared-file text.
+- `tools/occlusion-spike/worker-report.md`: this handoff.
 
-- `p5-spike/tools/occlusion-spike/src/plugin.cpp`
-- `p5-spike/tools/occlusion-spike/SkyCRPG_OcclusionSpike.ini`
-- `p5-spike/docs/evidence/p5/occlusion-spike.md`
-- `p5-spike/tools/occlusion-spike/worker-report.md`
-- `session-p5/routes/write_routes.py`
-- `session-p5/routes/spike_next.py`
-- `session-p5/routes/test_route_tools.py`
-- `session-p5/routes/README.md`
-- Eight regenerated JSONs in `session-p4/autotest/routes/`: `p5-spike-baseline.json`, `p5-spike-baseline-turning.json`, `p5-spike-observe.json`, `p5-spike-observe-turning.json`, `p5-spike-filter-template.json`, `p5-spike-filter-turning-template.json`, `p5-spike-fade-template.json`, `p5-spike-fade-turning-template.json`.
-- New validation evidence directory `session-p5/routes/validation/dyl199-kp7-kp9/`: `schema.json`, `summary.json`, and 12 per-route dry-run logs.
+Within `/srv/storage/Projects/SkyCRPG/session-p5/routes`:
 
-All paths above are under `/srv/storage/Projects/SkyCRPG/`. Every other pre-existing route JSON hash is unchanged. `analyze.py` has no key-name matching and needed no edit. Scratch scripts, test binaries, extracted controlmap and raw logs stay in `/tmp/dyl199-compile-keys/`.
+- `write_routes.py`, `spike_next.py`, `test_route_tools.py`.
+- New `gen/combined/p5-spike-filter.json`, `p5-spike-filter-material.json`, `p5-spike-filter-alphaprop.json`, `p5-spike-observe-selection.provenance`.
 
-Test commands and actual results (purpose/command/expected output/deadline/owner/cleanup recorded before execution in `/tmp/dyl199-compile-keys/jobs.md`):
+No runner or non-p5 route changes. Existing generator/file parity tests pass.
 
-- `timeout 600 bash /tmp/dyl199-compile-keys/portable.sh`: PASS, exit 0. Compiles/runs all three `tools/occlusion-spike/tests/*_test.cpp` with `g++ -std=c++20 -Wall -Wextra -Werror -pedantic`; then `python3 -B -m unittest discover -s tools/occlusion-spike/tests -p 'test_*.py' -v`: 12 tests PASS. Log: `portable.log`.
-- `timeout 600 python3 -B /srv/storage/Projects/SkyCRPG/session-p5/routes/test_route_tools.py`: final PASS, exit 0, 18 tests; log `route-tools-final.log`. Initial FAIL (17 passed, one fixture error) retained in `route-tools.log`: test expected old `p5-stage-manifest.json`, existing builder writes `p5-stage-manifest-off-lock-selection-spike.json`. Corrected only test expectation and reran once. Synthetic staging never loads the fake plugin fixtures.
-- `timeout 600 python3 -B /srv/storage/Projects/SkyCRPG/session-p5/routes/validate_routes.py --out /srv/storage/Projects/SkyCRPG/session-p5/routes/validation/dyl199-kp7-kp9`: schema/keys PASS (12/12, no unsupported keys); dry runs BLOCKED, aggregate exit 2 and all 12 dry-run exits 2. Refusals: deployed profile, existing probe DLL/INI, Steam unavailable; route-specific existing lock save or missing selection/spike stage/dist; native KP7 blocker and template observe/reference prerequisite. Exact per-route reasons retained in `summary.json`. No host resources were changed to evade these refusals.
-- `timeout 120 python3 /tmp/dyl199-compile-keys/controlmap.py`: FAIL, exit 1, unmapped-KP7 assertion disproved. `timeout 120 python3 /tmp/dyl199-compile-keys/controlmap-diagnostic.py`: PASS, exit 0, confirms Hotkey7 conflict and unmapped KP0/KP9 alternative using tab-delimited keyboard fields, comma alternatives and chord components. Both logs retained.
-- `git diff --check` and SHA-256 comparison against `routes-before.json`: PASS; exactly eight Spike JSONs changed. Log: `final-checks.log`.
-- Corrected Windows build and every game/input/visual/performance row: NOT_RUN. No cmake/MSVC available. Original CI C4834 FAIL is owner-reported; no CI success or package hash invented. All worker foreground jobs completed; synthetic temporary directories cleaned by the test contexts.
+## Test commands and actual results
 
-Decisions made: preserve behavior by explicitly discarding both handshake results while retaining the data-load provider guard; centralize requested DIK values; preserve native input/refusal and template review gates; replace obsolete key-availability blocker with the concrete stock-map conflict; update stale test manifest expectation without changing builder/runner/input code. No product/owner decision was changed. Shared-file proposals remain only in the evidence file's “Proposed shared-file changes” section.
+Job records and raw logs: `/tmp/dyl199-game-fixes/`.
 
-Unverified: MSVC `/W4 /WX` success; native key delivery/remapping refusal; all existing collision/fade/restoration/culling/thread/performance/owner acceptance obligations. The requested stock-key verification cannot pass for KP7. No GO/REVISE/HOLD decision is inferred.
+- **PASS**, exit 0: `timeout 600 bash /tmp/dyl199-game-fixes/portable.sh`. Compiles each existing `tools/occlusion-spike/tests/*_test.cpp` with `g++ -std=c++20 -Wall -Wextra -Werror -pedantic`, runs three executables, then Python unittest discovery: 16 tests. Log `portable-final.log`.
+- **PASS**, exit 0: final affected-suite recheck `timeout 600 python3 -B -m unittest discover -s tools/occlusion-spike/tests -p 'test_*.py' -v`: 16 tests, `analyzer-final.log` (adds original-contact rediscovery requirement).
+- **PASS**, exit 0: `timeout 600 python3 -B /srv/storage/Projects/SkyCRPG/session-p5/routes/test_route_tools.py`: 20 tests, `routes-final.log`. First attempt **FAIL**, 18 passes/2 errors: runner schema rejects blank INI values. Changed input to explicit `none`, added parser coverage, one corrected retry passed; runner unchanged. Synthetic preflight correctly reports Steam unavailable; no game preflight pass claimed.
+- **PASS**, exit 0: separate `timeout 120 python3 /tmp/dyl199-game-fixes/offline.py`, `material.py`, `verify-abi.py`: read-only executable/library hashes, native material setter/clone/copy/refcount/cache/exact restore, gap sweep/collector/locking and prologue checks. Matching logs and disassembly retained.
+- **PASS**, exit 0: `timeout 60 python3 -B /srv/storage/Projects/SkyCRPG/session-p5/routes/spike_next.py /srv/storage/Projects/SkyCRPG/session-p5/logs/collected/j-p5-spike-observe/SkyCRPG_OcclusionSpike.jsonl --reference 000E7A7B --combined --out-dir /srv/storage/Projects/SkyCRPG/session-p5/routes/gen/combined`: three routes plus provenance, `generation-final.log`.
+- **PASS**: `git diff --check`.
 
-Question for owner: approve KP0 (DIK `0x52`) for arm/apply with KP9 (DIK `0x49`) for restore, or retain requested KP7/KP9 with its confirmed native-mapping blocker? KP0/KP9 is the verified unmapped, runner-supported proposal; actual delivery would still need the serialized game run.
+Reviewed old game results: all four batch-k runner and restoration reports PASS; filter functionality FAIL (zero committed discards, four repeated beam recasts then rollback); alpha/material visual transparency NOT_RUN because camera remained compressed; app-cull is Hidden/Culled, not Transparent. All three fade logs have six recorded restore PASS events. New code does not inherit those passes.
+
+## Unverified
+
+**NOT_RUN:** new Windows `/W4 /WX` compile/link and DLL hash; every new in-game result, including real Havok gap/start-overlap behavior, fixed-height stability, material clone render behavior and lifetime, all restoration exits, contact-counter observations, matched above-beam screenshots and actual ≤10% p95 cost. No local Windows toolchain. Orchestrator owns CI and serialized game runs. External reference modes and the existing near-clip ABI blocker remain unchanged.
+
+## Engineering decisions
+
+- Advance `max(30, 2*hull)` from the farther of current start and projected contact; at most eight steps, ten gateway calls/hull writes including context reset.
+- Before jumping, query all contacts with the same hull, including start overlaps, and require original-collidable rediscovery. Bound storage to 256 contacts and parent walks to 32. A wall/unknown/cap within the skipped interval rolls back to the original native hit, never to clear. A non-allowlisted suffix hit keeps its real native outputs; a true continuation miss returns the goal. Closely overlapping beam/enclosure is deliberately refused rather than synthesizing a wall contact.
+- Combined modes require the same single explicit reference, apply fade before filter arming, and use one restore path.
+- Use the native unique-material Create/CopyMembers/cache path, retain/release via native cache-aware refcounting, and restore exact original pointers. Shared shader or clone failure stays explicitly labelled shared; locality claims are bounded to the attached-world shader scan.
+- Fade counters count original entry results without sampling, report ≥500ms windows plus actual lifecycle boundaries, and explicitly log zero for the selected reference. Native binary inspection shows app-cull can exclude contacts; its role in batch-k is a source-backed hypothesis until measured.
+
+## Questions for owner
+
+None needed for this implementation brief. Visual acceptance and any GO/REVISE/HOLD decision remain pending after the orchestrator's build and game evidence. No owner decision was changed.

@@ -5,6 +5,44 @@
 #include <limits>
 #define CHECK(expr) do { if (!(expr)) return __LINE__; } while (false)
 using namespace skycrpg::occlusion;
+// One-dimensional swept hull fixture. The closest-hit adapter deliberately
+// misses surfaces when starting inside them; the all-contact prefix must still
+// reject enclosure overlaps instead of trusting that miss.
+struct Solid { float lo, hi; unsigned id; bool allowed; };
+struct MarchResult { unsigned id, casts, guards; float end; bool rollback; };
+MarchResult March(const std::vector<Solid>& solids, float goal = 400)
+{
+	unsigned casts{}, guards{};
+	auto cast = [&](float from) {
+		++casts;
+		const Solid* nearest = nullptr;
+		float distance = goal;
+		for (const auto& solid : solids) {
+			if (solid.hi < from || solid.lo > goal) continue;
+			if (solid.lo < from && !solid.allowed) continue; // adversarial embedded enclosure
+			const float hit = std::max(from, solid.lo);
+			if (hit < distance) { distance = hit; nearest = &solid; }
+		}
+		return std::pair{ nearest, distance };
+	};
+	float from{};
+	auto [solid, end] = cast(from);
+	const unsigned first = solid ? solid->id : 0;
+	const float firstEnd = end;
+	Continuation continuation;
+	bool rollback = false;
+	while (solid && solid->allowed) {
+		Point next;
+		if (continuation.advance({from,0,0}, {goal,0,0}, {end,0,0}, 15, next) != Continuation::Step::cast) { rollback = true; break; }
+		GapGuard guard; ++guards;
+		for (const auto& item : solids) if (item.hi >= from && item.lo <= next.x) guard.contact(true, item.allowed);
+		if (!guard.safe()) { rollback = true; break; }
+		from = next.x;
+		const auto hit = cast(from); solid = hit.first; end = hit.second;
+	}
+	if (casts > 1) ++casts; // original-input context reset
+	return { rollback ? first : solid ? solid->id : 0, casts, guards, rollback ? firstEnd : end, rollback };
+}
 int main()
 {
 	CHECK(OverheadCandidate({ -1, 1, true }));
@@ -13,6 +51,7 @@ int main()
 	CHECK(!OverheadCandidate({ -1, 1, false }));
 	CHECK(!OverheadCandidate({ std::numeric_limits<float>::quiet_NaN(), 1, true }));
 	IDs refs{}, bases{};
+	CHECK(ParseIDs("none", refs)); CHECK(refs[0] == 0);
 	CHECK(ParseIDs(" 0x12345678, 00000001 ", refs));
 	CHECK(ParseIDs("ABCD", bases));
 	CHECK(Allowlisted(1, 2, refs, bases)); CHECK(Allowlisted(2, 0xabcd, refs, bases));
@@ -40,16 +79,30 @@ int main()
 	requests.post(stopRequest); requests.post(armRequest); CHECK(!MayArm(requests.take()));
 	requests.post(armRequest); CHECK(MayArm(requests.take()));
 	Point next;
-	CHECK(ContinueRay({0,0,0}, {100,0,0}, {20,0,0}, next)); CHECK(next.x > 20 && next.x < 20.001f);
-	// Beam then enclosure: a continuation reaches the wall; it must not be
-	// allowlisted by the earlier beam's identity.
-	CHECK(ContinueRay(next, {100,0,0}, {60,0,0}, next)); CHECK(next.x > 60 && next.x < 60.001f);
-	CHECK(!ContinueRay({}, {}, {}, next));
-	CHECK(!ContinueRay({}, {100,0,0}, {101,0,0}, next));
-	CHECK(!ContinueRay({}, {100,0,0}, {-1,0,0}, next));
-	CHECK(!ContinueRay({}, {100,0,0}, {100,0,0}, next));
-	CHECK(!ContinueRay({}, {100,0,0}, {std::numeric_limits<float>::infinity(),0,0}, next));
-	CHECK(ContinueRay({100,20,10}, {}, {50,10,5}, next)); CHECK(next.x < 50 && next.y < 10 && next.z < 5);
+	CHECK(ContinueRay({0,0,0}, {100,0,0}, {20,0,0}, 15, next)); CHECK(next.x == 50);
+	CHECK(ContinueRay({0,0,0}, {200,0,0}, {20,0,0}, 30, next)); CHECK(next.x == 80);
+	CHECK(ContinueRay({20,0,0}, {100,0,0}, {19.953f,0,0}, 15, next)); CHECK(next.x == 50);
+	CHECK(!ContinueRay({}, {}, {}, 15, next));
+	CHECK(!ContinueRay({}, {100,0,0}, {101,0,0}, 15, next));
+	CHECK(!ContinueRay({}, {100,0,0}, {70,0,0}, 15, next));
+	CHECK(!ContinueRay({}, {100,0,0}, {100,0,0}, 15, next));
+	CHECK(!ContinueRay({}, {100,0,0}, {}, 0, next));
+	CHECK(!ContinueRay({}, {100,0,0}, {std::numeric_limits<float>::infinity(),0,0}, 15, next));
+	CHECK(ContinueRay({100,20,10}, {}, {50,10,5}, 15, next)); CHECK(next.x < 50 && next.y < 10 && next.z < 5);
+	for (auto mode : {Mode::filterMaterialAlpha, Mode::filterAlphaProperty}) {
+		CHECK(FilterMode(mode) && FadeMode(mode) && CasterMode(mode));
+		CHECK(CanDiscard(mode, true, true, true, true, true, true));
+		CHECK(!CanDiscard(mode, false, true, true, true, true, true));
+		CHECK(ParseIDs("E7A7B", refs)); bases = {};
+		CHECK(CombinedTarget(mode, 0xe7a7b, refs, bases));
+		CHECK(!CombinedTarget(mode, 0x123, refs, bases));
+		bases[0] = 0x602a6; CHECK(!CombinedTarget(mode, 0xe7a7b, refs, bases));
+		bases = {}; refs[1] = 1; CHECK(!CombinedTarget(mode, 0xe7a7b, refs, bases));
+	}
+	CHECK(ParseMode("filter_material_alpha") == Mode::filterMaterialAlpha);
+	CHECK(ParseMode("filter_alpha_property") == Mode::filterAlphaProperty);
+	CHECK(AlphaPropertyMode(Mode::filterAlphaProperty));
+	CHECK(!AlphaPropertyMode(Mode::filterMaterialAlpha));
 	unsigned order{};
 	bool correctOrder = true;
 	CHECK(!Seed(2, {}, {8,0,0}, {}, 0, 10, [&](Point p) { correctOrder = correctOrder && p.x == 8 - 2*order; ++order; return false; }));
@@ -58,13 +111,40 @@ int main()
 	Continuation continuation;
 	Point origin{};
 	for (unsigned i = 0; i < maxRecasts; ++i) {
-		CHECK(continuation.advance(origin, {100,0,0}, {float(i+1),0,0}, next) == Continuation::Step::cast);
+		CHECK(continuation.advance(origin, {1000,0,0}, origin, 15, next) == Continuation::Step::cast);
+		CHECK(next.x - origin.x >= 30);
 		origin = next;
 	}
 	CHECK(continuation.count() == maxRecasts);
-	CHECK(continuation.advance(origin, {100,0,0}, {20,0,0}, next) == Continuation::Step::depthLimit);
-	Continuation overlap;
-	CHECK(overlap.advance({20,0,0}, {100,0,0}, {19,0,0}, next) == Continuation::Step::noProgress);
-	CHECK(overlap.count() == 0);
+	CHECK(continuation.advance(origin, {1000,0,0}, origin, 15, next) == Continuation::Step::depthLimit);
+	CHECK(NativeIgnoredContact(1, true, false));
+	CHECK(!NativeIgnoredContact(17, true, false));
+	CHECK(NativeIgnoredContact(8, false, true));
+	CHECK(!NativeIgnoredContact(8, false, false));
+	CHECK(!NativeIgnoredContact(1, false, true));
+	GapGuard guard;
+	for (unsigned i = 0; i < maxGuardContacts; ++i) guard.contact(true, true);
+	CHECK(guard.safe()); guard.contact(true, true); CHECK(!guard.safe());
+	GapGuard unknown; unknown.contact(false, true); CHECK(!unknown.safe());
+	GapGuard enclosure; enclosure.contact(true, true); enclosure.contact(true, false); CHECK(!enclosure.safe());
+	GapGuard lost; lost.invalid(); CHECK(!lost.safe());
+	const auto clear = March({{20,45,1,true}});
+	CHECK(clear.id == 0 && clear.end == 400 && !clear.rollback && clear.casts == 3);
+	const auto wall = March({{20,45,1,true},{100,130,2,false},{200,230,3,false}});
+	CHECK(wall.id == 2 && wall.end == 100 && !wall.rollback); // first enclosure returned
+	const auto multiple = March({{20,45,1,true},{80,105,2,true},{150,200,3,false}});
+	CHECK(multiple.id == 3 && !multiple.rollback && multiple.guards == 2);
+	// A <30-unit gap, touching hulls, and an overlapping/embedded wall are not clear.
+	for (const auto& solids : {std::vector<Solid>{{20,45,1,true},{46,49,2,false}},
+		std::vector<Solid>{{20,45,1,true},{45,75,2,false}},
+		std::vector<Solid>{{20,45,1,true},{25,80,2,false}},
+		std::vector<Solid>{{20,45,1,true},{-10,90,2,false}}}) {
+		const auto result = March(solids); CHECK(result.rollback && result.id == 1 && result.end == 20);
+	}
+	const auto thick = March({{20,350,1,true}});
+	CHECK(thick.rollback && thick.id == 1 && thick.casts <= maxRecasts + 2 && thick.guards == maxRecasts);
+	const auto nearGoal = March({{380,395,1,true}});
+	CHECK(nearGoal.rollback && nearGoal.id == 1); // never synthesize a miss at the bound
+	const auto empty = March({}); CHECK(empty.id == 0 && empty.casts == 1 && empty.end == 400);
 
 }

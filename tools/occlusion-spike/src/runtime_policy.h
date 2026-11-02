@@ -46,30 +46,54 @@ public:
 	}
 };
 inline constexpr unsigned maxRecasts = 8;
-// Advance only one representable step beyond the contact projected on the ray.
-// Never jump a hull diameter (which could skip enclosure). Overlap/repeated hits
-// are kept at the depth bound; this can refuse a beam, never turn the bound into miss.
-inline bool ContinueRay(Point start, Point goal, Point contact, Point& next)
+// A jump is authorized only after an all-contact hull sweep covers the skipped
+// prefix, including start overlaps. A closest-hit ray cannot certify that gap.
+inline bool ContinueRay(Point start, Point goal, Point contact, float hull, Point& next)
 {
-	if (!Finite(start) || !Finite(goal) || !Finite(contact)) return false;
+	if (!Finite(start) || !Finite(goal) || !Finite(contact) || !std::isfinite(hull) || hull <= 0) return false;
 	const Point d{ goal.x-start.x, goal.y-start.y, goal.z-start.z };
 	const double length2 = double(d.x)*d.x + double(d.y)*d.y + double(d.z)*d.z;
 	if (!std::isfinite(length2) || length2 <= 0) return false;
-	const double t = ((double(contact.x)-start.x)*d.x + (double(contact.y)-start.y)*d.y + (double(contact.z)-start.z)*d.z)/length2;
-	if (!std::isfinite(t) || t < 0 || t >= 1) return false;
-	next = Mix(start, goal, static_cast<float>(t));
-	next.x = std::nextafter(next.x, goal.x); next.y = std::nextafter(next.y, goal.y); next.z = std::nextafter(next.z, goal.z);
+	const double length = std::sqrt(length2);
+	const double along = ((double(contact.x)-start.x)*d.x + (double(contact.y)-start.y)*d.y + (double(contact.z)-start.z)*d.z)/length;
+	if (!std::isfinite(along) || along >= length) return false;
+	// Native penetration contacts can project just behind the start. Advancing
+	// from max(start, contact) prevents repeated overlap from reversing the ray.
+	const double distance = std::max(0.0, along) + std::max(30.0, 2.0*double(hull));
+	if (distance >= length) return false; // never turn reaching the goal into a miss
+	next = Mix(start, goal, static_cast<float>(distance/length));
 	return Finite(next) && !(next.x == goal.x && next.y == goal.y && next.z == goal.z) &&
 		!(next.x == start.x && next.y == start.y && next.z == start.z);
 }
+// Exact 1.7.104 caster exclusions: app-culled objects except layer 17, and
+// the player on the actor-processing branches of its layer switch.
+inline bool NativeIgnoredContact(unsigned layer, bool culled, bool player)
+{
+	if (culled && layer != 17) return true;
+	return player && (layer == 5 || layer == 8 || layer == 19 || layer == 20 ||
+		layer == 25 || layer == 30 || layer == 32 || layer == 33 || layer == 35);
+}
+inline constexpr unsigned maxGuardContacts = 256;
+class GapGuard {
+	unsigned count_{};
+	bool safe_{ true };
+public:
+	void contact(bool resolvedStatic, bool explicitMatch) {
+		if (count_ < maxGuardContacts + 1) ++count_;
+		safe_ = safe_ && count_ <= maxGuardContacts && resolvedStatic && explicitMatch;
+	}
+	void invalid() { safe_ = false; }
+	unsigned count() const { return count_; }
+	bool safe() const { return safe_; }
+};
 class Continuation {
 	unsigned count_{};
 public:
 	enum class Step { cast, depthLimit, noProgress };
 	unsigned count() const { return count_; }
-	Step advance(Point start, Point goal, Point contact, Point& next) {
+	Step advance(Point start, Point goal, Point contact, float hull, Point& next) {
 		if (count_ == maxRecasts) return Step::depthLimit;
-		if (!ContinueRay(start, goal, contact, next)) return Step::noProgress;
+		if (!ContinueRay(start, goal, contact, hull, next)) return Step::noProgress;
 		++count_; return Step::cast;
 	}
 };
