@@ -72,6 +72,44 @@ int main() {
     input.interrupt(); assert(!input.ready);
     input.observe(false); input.observe(std::nullopt); input.observe(false); assert(!input.ready);
     input.observe(false); assert(input.ready);
+    // A null event head is an idle poll; release is not an idle poll.
+    input.interrupt();
+    input.dispatch(true,false); assert(!input.ready);
+    input.dispatch(false,true); assert(!input.ready && input.idleDispatches == 0);
+    input.dispatch(false,false); assert(!input.ready);
+    input.dispatch(false,false); assert(input.ready);
+    input.interrupt();
+    input.dispatch(true,true); assert(!input.ready && input.idleDispatches == 0);
+    input.dispatch(false,false); input.dispatch(true,false); assert(!input.ready);
+    input.dispatch(false,false); input.dispatch(false,false); assert(input.ready);
+    LockIndicatorAttempt indicator;
+    indicator.begin({10,11},5.0);
+    assert(!indicator.isNew(10) && !indicator.isNew(11) && indicator.isNew(12));
+    assert(indicator.waiting(5.0) && indicator.waiting(5.49) && !indicator.waiting(5.5));
+    indicator.effect = 12;
+    assert(!indicator.waiting(5.01)); // disappearance after discovery is a failure
+    indicator.reset(); assert(!indicator.effect && !indicator.waiting(5.1) && !indicator.isNew(12));
+    indicator.begin({10,11,12},6.0); // retarget/retry excludes previous sources
+    assert(!indicator.isNew(12) && indicator.isNew(13));
+    const float savedAge = 123.5f;
+    const float savedLifetime = savedAge+LockIndicatorAttempt::duration;
+    assert(savedLifetime-savedAge == 2.0f); // save/load retains both audited fields
+    LockRetargetWindow retarget;
+    assert(retarget.awaiting(true,10.0));
+    assert(retarget.awaiting(true,10.99));
+    assert(!retarget.awaiting(true,11.0) && !retarget.awaiting(true,11.1));
+    assert(!retarget.awaiting(false,11.2) && !retarget.started);
+    assert(retarget.awaiting(true,12.0));
+    i = {true,true,true,true,true,false,false,true}; // dead target awaiting TDM
+    assert(targetLockLease(i).action == LockLeaseAction::keep && !targetLockLease(i).lockStateAllowed);
+    i.locked = true; assert(targetLockLease(i).lockStateAllowed); // new live target
+    i.locked = std::nullopt; assert(targetLockLease(i).action == LockLeaseAction::acquire);
+    LockStateChange<unsigned> leaseLog;
+    assert(leaseLog.changed(2));
+    for (unsigned frame = 0; frame < 10000; ++frame) assert(!leaseLog.changed(2));
+    assert(leaseLog.changed(3) && !leaseLog.changed(3) && leaseLog.changed(0));
+    for (float yaw : {-3.0f,-1.57f,-.1f,0.0f,.1f,1.57f,3.0f})
+        assert(std::abs(lockWorldYaw(std::sin(yaw),std::cos(yaw))-yaw) < .00001f);
     LockInterrupt interrupt;
     unsigned releases = 0;
     auto release = [&] { ++releases; };

@@ -7,6 +7,7 @@
 #include "precision_trace.h"
 #include "lifecycle_policy.h"
 #include "target_lock_policy.h"
+#include "lock_frame_trace.h"
 #include "obstruction_policy.h"
 #pragma warning(push)
 #pragma warning(disable: 4191) // permitted external API FARPROC conversion
@@ -24,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <limits>
 
 namespace {
 using namespace skycrpg::camera;
@@ -39,6 +41,8 @@ static_assert(offsetof(RE::PlayerControlsData,povScriptMode) == 0x28);
 static_assert(offsetof(RE::PlayerControlsData,povBeastMode) == 0x29);
 static_assert(offsetof(RE::ControlMap::RUNTIME_DATA,enabledControls) == 0x30);
 static_assert(offsetof(RE::Main,threadID) == 0x28);
+static_assert(offsetof(RE::ShaderReferenceEffect,lifetime) == 0x10);
+static_assert(offsetof(RE::ShaderReferenceEffect,age) == 0x20);
 static_assert(offsetof(RE::ShaderReferenceEffect,effectID) == 0x28);
 static_assert(offsetof(RE::ShaderReferenceEffect,target) == 0x38);
 static_assert(offsetof(RE::ShaderReferenceEffect,finished) == 0x40);
@@ -58,13 +62,19 @@ bool movementLease = false, applyZoom = true, compatibleSettings = true, movemen
 bool targetLockEnabled = false, lockConfigSafe = false, lockConfigLogged = false;
 bool lockHooksReady = false;
 bool lockFrameTraceEnabled = false;
-LockFrameTraceBudget lockFrameTraceBudget;
+LockTraceWindow lockTraceWindow;
+LockFrameWriter lockFrameWriter;
+RE::NiPoint2 lockLookInput{};
+unsigned lockLookCalls = 0;
+LockRetargetWindow lockRetargetWindow;
+LockStateChange<TDM_API::APIResult> lockLeaseLog;
+bool lockRefusalNotified = false;
 LockInterrupt lockInterrupt, lockConfigRefresh;
 float lockHoldSeconds = .4f;
-RE::FormID indicatorShaderForm = 0xDC209;
+RE::FormID indicatorShaderForm = 0xAAEB3;
 RE::TESEffectShader* indicatorShader = nullptr;
 RE::ObjectRefHandle indicatorTarget;
-std::optional<std::uint32_t> indicatorEffect;
+LockIndicatorAttempt indicatorAttempt;
 LockInputRelease lockInputRelease;
 std::optional<bool> observedLock;
 RE::ActorHandle observedTarget;
@@ -204,7 +214,7 @@ void loadSettings() {
     s.recenterGamepad = number("Controls","iRecenterGamepad",-1);
     targetLockEnabled = flag("TargetLock","bEnabled",0);
     if (targetLockEnabled) {
-        indicatorShaderForm = number<RE::FormID>("TargetLock","iIndicatorShaderFormID",0xDC209);
+        indicatorShaderForm = number<RE::FormID>("TargetLock","iIndicatorShaderFormID",0xAAEB3);
         lockHoldSeconds = number("TargetLock","fPOVHoldSeconds",.4f);
         lockFrameTraceEnabled = flag("TargetLock","iLockFrameTrace",0);
         if (lockHoldSeconds < .2f || lockHoldSeconds > 1.5f) {
@@ -252,34 +262,53 @@ bool onTargetLockThread() {
     if (!movement) return false;
     const auto main = RE::Main::GetSingleton();
     const auto thread = GetCurrentThreadId();
-    return main && main->threadID == thread && movement->GetTDMThreadId() == thread;
+    const auto tdmThread = movement->GetTDMThreadId();
+    const bool matches = main && main->threadID == thread && tdmThread == thread;
+    static std::atomic_flag reported = ATOMIC_FLAG_INIT;
+    if (!matches && !reported.test_and_set()) {
+        char line[160]{};
+        std::snprintf(line,sizeof(line),"Target lock thread mismatch: current=%lu Main=%lu TDM=%lu; lock policy suspended.",
+            static_cast<unsigned long>(thread),static_cast<unsigned long>(main ? main->threadID : 0),tdmThread);
+        log(line);
+    }
+    return matches;
 }
 bool acquireMovementLease() {
     if (!movement) return false;
-    if (targetLockEnabled && !onTargetLockThread()) { lockInterrupt.request(); return false; }
     const auto lease = movement->RequestDisableTargetLock(SKSE::GetPluginHandle());
     movementLease = lease == TDM_API::APIResult::OK || lease == TDM_API::APIResult::AlreadyGiven;
-    if (!movementLease) { prerequisiteFailed = true; log("TDM target-lock-disable lease refused; controller suspended."); }
-    else log("TDM target-lock-disable lease acquired.");
+    if (!movementLease) prerequisiteFailed = true;
+    if (!targetLockEnabled) {
+        if (!movementLease) log("TDM target-lock-disable lease refused; controller suspended.");
+        else log("TDM target-lock-disable lease acquired.");
+    } else if (lockLeaseLog.changed(lease)) {
+        if (!movementLease) {
+            char line[128]{};
+            std::snprintf(line,sizeof(line),"TDM target-lock-disable lease refused (result=%u); controller suspended.",
+                static_cast<unsigned>(lease));
+            log(line);
+        } else log("TDM target-lock-disable lease acquired.");
+    }
     return movementLease;
 }
 void stopIndicator() {
     if (!onTargetLockThread()) { lockInterrupt.request(); return; }
-    if (indicatorEffect) {
+    if (indicatorAttempt.effect) {
         const auto processes = RE::ProcessLists::GetSingleton();
         if (!processes) return; // retry cleanup when process lists return
         processes->ForEachShaderEffect([](RE::ShaderReferenceEffect* effect) {
-            if (effect->effectID == *indicatorEffect && effect->target == indicatorTarget && effect->effectData == indicatorShader)
+            if (effect->effectID == *indicatorAttempt.effect && effect->target == indicatorTarget && effect->effectData == indicatorShader)
                 effect->finished = true;
             return RE::BSContainer::ForEachResult::kContinue;
         });
     }
-    indicatorEffect.reset(); indicatorTarget = {};
+    indicatorAttempt.reset(); indicatorTarget = {};
 }
 void consumeLockInterrupt() {
     if (!ready || !lockHooksReady || !onTargetLockThread()) return;
     if (lockInterrupt.consume()) {
         lockInputRelease.interrupt();
+        lockRetargetWindow.started.reset();
         stopIndicator();
         if (!movementLease) static_cast<void>(acquireMovementLease());
     }
@@ -302,12 +331,23 @@ void observeTargetLock() {
     observedTarget = movement->GetCurrentTarget();
     if (locked) {
         const auto actor = observedTarget.get();
-        if (!actor || actor->IsDead() || !actor->Is3DLoaded()) return;
+        if (!actor || !actor->Is3DLoaded()) return;
+        const auto now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (actor->IsDead()) {
+            if (movementLease) observedLock = true; // still require an actual disable acknowledgement
+            else if (lockRetargetWindow.awaiting(true,now)) observedLock = false;
+            return;
+        }
     }
+    lockRetargetWindow.started.reset();
     observedLock = locked;
 }
 void updateTargetLock(Context& c) {
-    if (!ready || !lockHooksReady || !onTargetLockThread()) { interruptTargetLock(); c.prerequisites = false; return; }
+    if (!ready || !lockHooksReady || !onTargetLockThread()) {
+        interruptTargetLock();
+        if (movement && !movementLease) static_cast<void>(acquireMovementLease());
+        c.prerequisites = false; return;
+    }
     observeTargetLock();
     consumeLockInterrupt();
     if (lockConfigRefresh.consume()) movementConfigSafe = checkLockMovementConfig();
@@ -327,6 +367,7 @@ void updateTargetLock(Context& c) {
         if (!lockInterrupt.releaseIfClear([&] {
             const auto result = movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle());
             movementLease = false;
+            lockLeaseLog.previous.reset();
             if (result == TDM_API::APIResult::OK)
                 log("TDM target-lock-disable lease released after unlocked acknowledgement and idle input.");
             else {
@@ -342,35 +383,37 @@ void updateTargetLock(Context& c) {
         if (!actor || actor->IsDead() || !actor->Is3DLoaded()) {
             c.targetLock = c.prerequisites = false; interruptTargetLock(); return;
         }
-        const auto target = actor->CreateRefHandle();
-        if (indicatorTarget == target && indicatorEffect) {
-            bool alive = false;
-            RE::ProcessLists::GetSingleton()->ForEachShaderEffect([&](RE::ShaderReferenceEffect* effect) {
-                if (effect->effectID == *indicatorEffect && effect->target == target &&
-                    effect->effectData == indicatorShader && !effect->finished) alive = true;
-                return RE::BSContainer::ForEachResult::kContinue;
-            });
-            if (!alive) {
-                c.targetLock = false; interruptTargetLock();
-                log("Target lock refused: owned indicator ended; retry after a fresh lock.");
-            }
-        } else {
+        const RE::ObjectRefHandle target{observedTarget};
+        const auto now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        const auto processes = RE::ProcessLists::GetSingleton();
+        if (indicatorTarget != target || !indicatorAttempt.started) {
             stopIndicator();
-            bool existing = false;
-            RE::ProcessLists::GetSingleton()->ForEachShaderEffect([&](RE::ShaderReferenceEffect* effect) {
-                if (!effect->finished && effect->target == target && effect->effectData == indicatorShader) existing = true;
+            std::vector<std::uint32_t> previous;
+            processes->ForEachShaderEffect([&](RE::ShaderReferenceEffect* effect) {
+                if (effect->target == target && effect->effectData == indicatorShader) previous.push_back(effect->effectID);
                 return RE::BSContainer::ForEachResult::kContinue;
             });
-            if (existing) {
-                c.targetLock = false; interruptTargetLock();
-                log("Target lock refused: another effect uses the indicator shader on this actor; retry after a fresh lock.");
+            indicatorAttempt.begin(std::move(previous),now);
+            indicatorTarget = target;
+            // Exact 1.7.104 tail calls do not return an effect pointer.
+            static_cast<void>(actor->ApplyEffectShader(indicatorShader,LockIndicatorAttempt::duration));
+        }
+        bool alive = false;
+        processes->ForEachShaderEffect([&](RE::ShaderReferenceEffect* effect) {
+            if (effect->finished || effect->target != target || effect->effectData != indicatorShader)
+                return RE::BSContainer::ForEachResult::kContinue;
+            if (indicatorAttempt.waiting(now) && indicatorAttempt.isNew(effect->effectID)) indicatorAttempt.effect = effect->effectID;
+            if (indicatorAttempt.effect && effect->effectID == *indicatorAttempt.effect) {
+                alive = true;
+                // Save serializes lifetime AND age. A stale instance has at
+                // most two seconds of unpaused effect updates left after load.
+                effect->lifetime = effect->age+LockIndicatorAttempt::duration;
             }
-            const auto effect = existing ? nullptr : actor->ApplyEffectShader(indicatorShader);
-            if (effect) { indicatorEffect = effect->effectID; indicatorTarget = target; }
-            else if (!existing) {
-                c.targetLock = false; interruptTargetLock();
-                log("Target lock refused: ApplyEffectShader failed; retry after a fresh lock.");
-            }
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
+        if (!alive && !indicatorAttempt.waiting(now)) {
+            c.targetLock = false; interruptTargetLock();
+            log("Target lock refused: owned indicator absent/ended after bounded apply window; retry after a fresh lock.");
         }
     }
     // A held disable lease may still be awaiting TDM's unpaused update.
@@ -465,6 +508,24 @@ bool noActiveMenus() {
             menu.get() != fader.get() && menu.get() != mist.get())) return false;
     }
     return true;
+}
+bool lockBlockingMenu(const RE::MenuOpenCloseEvent* event) {
+    if (!event) return false;
+    const auto& name = event->menuName;
+    if (name == "HUD Menu" || name == "Cursor Menu" || name == "Fader Menu" || name == "Mist Menu") return false;
+    if (name == "Dialogue Menu" || name == "Console" || name == "Loading Menu") return true;
+    const auto ui = RE::UI::GetSingleton();
+    if (!ui) return true;
+    const auto menu = ui->GetMenu(name);
+    return menu && menu->menuFlags.any(RE::UI_MENU_FLAGS::kPausesGame,
+        RE::UI_MENU_FLAGS::kUsesCursor,RE::UI_MENU_FLAGS::kUsesMenuContext,RE::UI_MENU_FLAGS::kModal);
+}
+void notifyLockRefusal(Context c) {
+    if (targetLockEnabled && !lockRefusalNotified && !lockConfigSafe &&
+        c.world && !c.menu && !loading && noActiveMenus()) {
+        RE::SendHUDMessage::ShowHUDMessage("SkyCRPG target lock unavailable: check the TDM overlay and Camera log");
+        lockRefusalNotified = true;
+    }
 }
 void observePrerequisiteFailure(Context c, bool failure) {
     if (failureNotified) return;
@@ -576,6 +637,9 @@ void sampleObstruction(RE::ThirdPersonState* state) {
         {actual.x,actual.y,actual.z},{goal.x,goal.y,goal.z},focus),dt,obstructionSettings);
 }
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
+    if (targetLockEnabled && lockFrameTraceEnabled && lockTraceWindow.budget.lines < LockFrameTraceBudget::limit && onTargetLockThread()) {
+        lockLookInput.x += input.x; lockLookInput.y += input.y; ++lockLookCalls;
+    }
     const auto c = context();
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (!heldFramingAllowed(c) || !camera || camera->currentState.get() != state || !state->freeRotationEnabled) {
@@ -632,7 +696,6 @@ void pollLockInput(RE::InputEvent* input) {
     if (!onTargetLockThread()) { interruptTargetLock(); return; }
     consumeLockInterrupt();
     const auto map = RE::ControlMap::GetSingleton();
-    const auto devices = RE::BSInputDeviceManager::GetSingleton();
     // U is a test default, never a second consumer of a native/Camera binding.
     const bool bindingsSafe = map && map->GetUserEventName(22,RE::INPUT_DEVICE::kKeyboard).empty() &&
         map->GetMappedKey("Toggle POV",RE::INPUT_DEVICE::kGamepad) == 128 &&
@@ -645,57 +708,50 @@ void pollLockInput(RE::InputEvent* input) {
             lockConfigLogged = true;
         }
     }
-    std::optional<bool> pressed;
-    if (devices && devices->GetKeyboard() && devices->GetKeyboard()->IsEnabled()) {
-        pressed = devices->GetKeyboard()->IsPressed(22);
-        if (devices->IsGamepadConnected()) {
-            const auto pad = devices->GetGamepad();
-            if (!pad || !pad->IsEnabled()) pressed.reset();
-            else *pressed = *pressed || pad->IsPressed(128);
-        }
-    }
+    bool pressed = false, released = false;
     // Held seconds can be zero on the first down event. Include this dispatch
     // explicitly and do not release the lease on a POV-up dispatch.
     for (auto event = input; event; event = event->next) {
         const auto button = event->AsButtonEvent();
         if (!button) continue;
         if ((event->GetDevice() == RE::INPUT_DEVICE::kKeyboard && button->GetIDCode() == 22) ||
-            (event->GetDevice() == RE::INPUT_DEVICE::kGamepad && button->QUserEvent() == "Toggle POV")) {
+            (event->GetDevice() == RE::INPUT_DEVICE::kGamepad && button->GetIDCode() == 128)) {
             if (button->IsPressed()) pressed = true;
-            else if (!lockInputRelease.ready) { lockInputRelease.interrupt(); return; }
+            else released = true;
         }
     }
-    lockInputRelease.observe(pressed);
+    lockInputRelease.dispatch(pressed,released);
 }
 void traceLockFrame(Context c) {
-    if (!targetLockEnabled || !onTargetLockThread() ||
-        !lockFrameTraceBudget.take(targetLockEnabled,lockFrameTraceEnabled)) return;
+    if (!targetLockEnabled || !lockFrameTraceEnabled || lockTraceWindow.budget.lines >= LockFrameTraceBudget::limit || !onTargetLockThread()) return;
     const auto camera = RE::PlayerCamera::GetSingleton();
     const auto player = RE::PlayerCharacter::GetSingleton();
-    float worldPitch = NAN, worldYaw = NAN, netPitch = NAN, netYaw = NAN;
+    constexpr float unavailable = std::numeric_limits<float>::quiet_NaN();
+    float worldPitch = unavailable, worldYaw = unavailable, netPitch = unavailable, netYaw = unavailable;
     // Input dispatch sees the last completed SmoothCam render, outside our
     // inner native-update hook. Trace its world forward axis as well as angles.
-    RE::NiPoint3 forward{NAN,NAN,NAN};
+    RE::NiPoint3 forward{unavailable,unavailable,unavailable};
     if (camera && camera->cameraRoot) {
         const auto& rotation = camera->cameraRoot->world.rotate;
         forward = {rotation.entry[0][1],rotation.entry[1][1],rotation.entry[2][1]};
         worldPitch = std::atan2(-forward.z,std::hypot(forward.x,forward.y));
-        worldYaw = std::atan2(-forward.x,forward.y);
+        worldYaw = lockWorldYaw(forward.x,forward.y);
     }
     if (player && camera && camera->currentState && camera->currentState->id == RE::CameraState::kThirdPerson) {
         const auto state = static_cast<RE::ThirdPersonState*>(camera->currentState.get());
         netPitch = player->GetAngleX()-state->freeRotation.y;
         netYaw = wrap(player->GetAngleZ()+state->freeRotation.x);
     }
-    char line[512]{};
+    LockTraceRow line{};
     static std::uint64_t frame = 0;
     const auto now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    std::snprintf(line,sizeof(line),"TargetLock event=frame frame=%llu us=%llu decision=%u lease=%u lock=%d target=%08X fresh=%u worldPitch=%.7f worldYaw=%.7f netPitch=%.7f netYaw=%.7f forward=%.7f,%.7f,%.7f sample=last-rendered",
+    std::snprintf(line.data(),line.size(),"TargetLock event=frame frame=%llu us=%llu decision=%u lease=%u lock=%d target=%08X fresh=%u worldPitch=%.7f worldYaw=%.7f netPitch=%.7f netYaw=%.7f forward=%.7f,%.7f,%.7f look=%.7f,%.7f lookCalls=%u sample=last-rendered",
         static_cast<unsigned long long>(++frame),static_cast<unsigned long long>(now),static_cast<unsigned>(select(c)),
         static_cast<unsigned>(movementLease),observedLock ? (*observedLock ? 1 : 0) : -1,
         observedTarget.native_handle(),static_cast<unsigned>(lockInputRelease.ready),worldPitch,worldYaw,netPitch,netYaw,
-        forward.x,forward.y,forward.z);
-    log(line);
+        forward.x,forward.y,forward.z,lockLookInput.x,lockLookInput.y,lockLookCalls);
+    lockTraceWindow.sample(line,observedLock.value_or(false),[](const LockTraceRow& row) { lockFrameWriter.append(row); });
+    lockLookInput = {}; lockLookCalls = 0;
 }
 class Events final : public RE::BSTEventSink<RE::InputEvent*>, public RE::BSTEventSink<RE::MenuOpenCloseEvent>,
     public RE::BSTEventSink<RE::TESLoadGameEvent>, public RE::BSTEventSink<RE::TESCellAttachDetachEvent> {
@@ -712,8 +768,9 @@ public:
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
         // Queue before any context() can consider releasing the lease.
         if (targetLockEnabled) {
-            interruptTargetLock();
             lockConfigRefresh.request();
+            if (!lockBlockingMenu(event)) return RE::BSEventNotifyControl::kContinue;
+            interruptTargetLock();
         }
         bool hard = true;
         const auto c = precisionTraceEnabled ? context(&hard) : Context{};
@@ -731,10 +788,6 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
         if (!events) return RE::BSEventNotifyControl::kContinue;
-        if (targetLockEnabled && !onTargetLockThread()) {
-            interruptTargetLock();
-            return RE::BSEventNotifyControl::kContinue;
-        }
         if (targetLockEnabled) {
             pollLockInput(*events);
             for (auto event = *events; event; event = event->next) {
@@ -747,6 +800,7 @@ public:
         bool failure = false;
         const auto c = context(&hardSpecial,!settings.enabled && !movementLease,&failure);
         observePrerequisiteFailure(c,failure);
+        if (targetLockEnabled) notifyLockRefusal(c);
         if (targetLockEnabled) traceLockFrame(c);
         const bool ownedBefore = ownFirstPerson;
         ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hardSpecial);
@@ -781,6 +835,18 @@ public:
                     tracePrecision(button->IsPressed() ? PrecisionTraceEvent::togglePress : PrecisionTraceEvent::toggleRelease,
                         before,before,pad?2u:1u,button->IsPressed(),button->IsDown());
                 if (!safe) {
+                    // A refused opt-in policy must still allow the native F6
+                    // escape. It cannot re-enable unsafe held framing.
+                    if (targetLockEnabled && i == 0 && button->IsDown() && c.world &&
+                        !c.menu && !c.special && !c.slide && !c.firstPerson) {
+                        const auto map = RE::ControlMap::GetSingleton();
+                        if (map && map->GetUserEventName(button->GetIDCode(),device).empty() && button->QUserEvent().empty()) {
+                            interruptTargetLock();
+                            settings.enabled = false; ownFirstPerson = false;
+                            static_cast<void>(RE::PlayerCamera::GetSingleton()->ForceFirstPerson());
+                            savePreferences();
+                        }
+                    }
                     keys[keyIndex].observeSuppressed(button->IsPressed());
                     if (i == 0 && (before.down != keys[keyIndex].down || before.armed != keys[keyIndex].armed))
                         tracePrecision(PrecisionTraceEvent::toggleSuppressed,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,button->IsPressed(),button->IsDown());
@@ -862,8 +928,9 @@ void messages(SKSE::MessagingInterface::Message* message) {
                 if (!acquireMovementLease()) { ready = false; break; }
             } else if (!settings.enabled) log("TDM target-lock-disable lease not requested because Camera is disabled.");
         } else {
-            // Data-loaded callbacks need not run on TDM's thread. First eligible
-            // main-thread observation takes the lease before considering release.
+            // TDM's disable-request API permits startup acquisition without a
+            // thread-ID match. Effect mutation and release remain gated.
+            static_cast<void>(acquireMovementLease());
             interruptTargetLock();
             lockConfigRefresh.request();
         }
@@ -877,9 +944,13 @@ void messages(SKSE::MessagingInterface::Message* message) {
         const REL::Relocation<std::uintptr_t> nativeUpdate{REL::ID(50896)};
         const REL::Relocation<std::uintptr_t> nativeLook{REL::ID(50914)};
         if (slots[3] != nativeUpdate.address() || slots[15] != nativeLook.address()) {
-            // Opt-in acquisition is deferred until after hook installation.
-            if (!targetLockEnabled && movementLease) static_cast<void>(movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle()));
-            movementLease = false; ready = false; prerequisiteFailed = true;
+            if (targetLockEnabled) {
+                if (!movementLease) static_cast<void>(acquireMovementLease());
+            } else {
+                if (movementLease) static_cast<void>(movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle()));
+                movementLease = false;
+            }
+            ready = false; prerequisiteFailed = true;
             log("Unexpected camera hook order/owner before SmoothCam deferred attach; policy left inert.");
             return;
         }
@@ -923,6 +994,8 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const SKSE::LoadInterface*
     }
     SKSE::Init(skse,false);
     loadSettings();
+    if (targetLockEnabled && lockFrameTraceEnabled)
+        lockFrameWriter.start(std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera_TargetLock.log");
     const auto messaging = SKSE::GetMessagingInterface();
     return messaging && messaging->RegisterListener(messages);
 }

@@ -1,12 +1,15 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #pragma once
 #include <array>
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace skycrpg::camera {
 constexpr bool phase4Prerequisites(bool baseReady, bool leaseReady, bool allowLeaseRequest, bool haveLease) {
@@ -71,7 +74,43 @@ struct LockInputRelease {
         if (!pressed || *pressed) { idleDispatches = 0; return; }
         if (++idleDispatches >= 2) ready = true;
     }
+    void dispatch(bool pressed, bool released) {
+        if (released && !ready) { interrupt(); return; }
+        observe(pressed);
+    }
 };
+struct LockRetargetWindow {
+    std::optional<double> started;
+    bool awaiting(bool dead, double now) {
+        if (!dead) { started.reset(); return false; }
+        if (!started) started = now;
+        return now-*started < 1.0;
+    }
+};
+struct LockIndicatorAttempt {
+    static constexpr float duration = 2.0f;
+    std::vector<std::uint32_t> previous;
+    std::optional<std::uint32_t> effect;
+    std::optional<double> started;
+    void begin(std::vector<std::uint32_t> ids, double now) {
+        previous = std::move(ids); effect.reset(); started = now;
+    }
+    bool isNew(std::uint32_t id) const {
+        return started && std::find(previous.begin(),previous.end(),id) == previous.end();
+    }
+    bool waiting(double now) const { return started && !effect && now-*started < .5; }
+    void reset() { previous.clear(); effect.reset(); started.reset(); }
+};
+template<class T> struct LockStateChange {
+    std::optional<T> previous;
+    bool changed(T value) {
+        if (previous && *previous == value) return false;
+        previous = value; return true;
+    }
+};
+inline float lockWorldYaw(float forwardX, float forwardY) {
+    return std::atan2(forwardX,forwardY);
+}
 struct LockSetting {
     const char* section;
     const char* key;
