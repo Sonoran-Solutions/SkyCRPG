@@ -46,11 +46,11 @@ inline Settings validate(Settings s) {
 inline float zoomRequest(float nativeRequest, const Settings& s, bool applyPreference) {
     return applyPreference ? s.zoom : bounded(nativeRequest,s.zoom,s.minZoom,s.maxZoom);
 }
-enum class State { disabled, invalidWorld, special, menu, firstPerson, precision, targeting, obstruction, normal };
+enum class State { disabled, invalidWorld, special, menu, firstPerson, precision, targeting, obstruction, normal, targetLock };
 struct Context {
     bool enabled = false, prerequisites = false, world = false, special = false, menu = false;
     bool firstPerson = false, tween = false, precision = false, targeting = false, obstruction = false;
-    bool slide = false;
+    bool slide = false, targetLock = false;
 };
 constexpr State select(Context c) {
     if (!c.enabled || !c.prerequisites) return State::disabled;
@@ -59,9 +59,14 @@ constexpr State select(Context c) {
     if (c.menu) return State::menu;
     if (c.firstPerson) return State::firstPerson;
     if (c.precision) return State::precision;
+    if (c.targetLock) return State::targetLock;
     if (c.targeting) return State::targeting;
     if (c.obstruction) return State::obstruction;
     return State::normal;
+}
+constexpr bool heldFramingAllowed(Context c) {
+    const auto state = select(c);
+    return state == State::normal || state == State::obstruction || state == State::targetLock;
 }
 enum class ToggleRequest { none, firstPerson, thirdPerson, enableOnly };
 constexpr ToggleRequest toggleRequest(Context c, bool ownFirstPerson) {
