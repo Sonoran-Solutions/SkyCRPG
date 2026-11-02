@@ -119,3 +119,17 @@ These are proposals for the integrator; no shared product document or `tools/pac
 Implemented all eleven review fixes; no owner decision changed. Engineering details: retain native carryable torches while dropping scenery lights; reference-pose OBND with native scale and fail-native invalid player bounds; eight reader-CAS attempts without waiting on writers; accepted-scan membership as text cache; layer44 ACTI collision check alongside layer41 body LOS; up to6 selected/API rays; process-lifetime diagnostic path and nonjoining250ms flush worker. No new dependency, configuration default, hook site or API ABI change.
 
 Owner questions remain for the runtime gate: do reference-pose body/surface distances give the desired bench/shelf/actor choices, and is the eight-attempt cycle window adequate after cheap filtering? Which tested keyboard/controller cycle/cursor bindings should be approved alongside D5-2 R3 behavior? Earlier provisional drawn-weapon/combat/sneak handling and native Steal semantics still need owner disposition. No response or owner playtest acceptance is assumed; none blocks these authorized pre-run fixes.
+
+## In-game run j-p5 — 2026-11-02
+
+`p5-selection-main` on Selection DLL `eba23c2e…` from `1506e6d`, camera-only, keyboard/mouse, unattended; no crash, clean restore. `check_selection_log.py` **PASS**: 57 substitutions in 11,353 picks.
+
+| Check | Result | Note |
+| --- | --- | --- |
+| Hook installs with SmoothCam loaded | **PASS** | Chain check passed and Pick was called. |
+| Pick thread | **Observed** | First pick on thread 448 with main 368; input on main. Confirms the job-thread design. |
+| Bannered Mare bench without F6 | **PASS, prompt only** | Screen shows "E Sit / Bench", native target `00000000`, selected `000616DF` at 77.79 units by bounds. E was not pressed. |
+| Stable cycling and wrap | **PASS** | Indexes 0, 1, 2, 0 with three candidates. |
+| Scan limits | **PASS on this route** | capped=0, world_contended=0, cell_contended=0, 3 lock retries; last-scan cost 0.3 to 0.4 ms in summaries. Not a frame-budget measurement. |
+| Real activation, walls, combat, sneak, telekinesis, grab | **NOT_RUN** | Screenshots of drawn, sneak and first-person states exist but have not been judged row by row. |
+| Controller | **NOT_RUN** | |
