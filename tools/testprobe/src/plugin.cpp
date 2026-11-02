@@ -1,7 +1,13 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
-// Test-only observer. No hooks, input, serialization or game-state mutations.
+// Test-only observer. No hooks, input emission, serialization or game-state mutations.
 #include <SKSE/SKSE.h>
 #include <RE/A/ActorValueOwner.h>
+#include <RE/A/AIProcess.h>
+#include <RE/B/BSInputDeviceManager.h>
+#include <RE/B/ButtonEvent.h>
+#include <RE/B/BSTimer.h>
+#include <RE/C/ControlMap.h>
+#include <RE/I/InputEvent.h>
 #include <RE/G/GFxMovieView.h>
 #include <RE/G/GFxValue.h>
 #include <RE/M/Main.h>
@@ -15,6 +21,10 @@
 #include <RE/T/TESContainerChangedEvent.h>
 #include <RE/T/TESEquipEvent.h>
 #include <RE/T/TESObjectCELL.h>
+#include <RE/T/TESObjectREFR.h>
+#include <RE/T/TESObjectARMO.h>
+#include <RE/T/TESObjectWEAP.h>
+#include <RE/B/BGSBipedObjectForm.h>
 #include <RE/U/UI.h>
 
 // CommonLib/REX headers must precede the Windows headers in the skeleton.
@@ -22,8 +32,13 @@
 #include "json_line.h"
 #include "probe_config.h"
 #include "snapshot_policy.h"
+#include "observation_policy.h"
+#include "perf_policy.h"
+#include "cursor_policy.h"
+#include "magic_policy.h"
 
 #include <bcrypt.h>
+#include <psapi.h>
 
 #include <array>
 #include <atomic>
@@ -46,6 +61,14 @@ struct Probe {
 	std::mutex outputMutex;
 	std::mutex logMutex;
 	std::mutex lifecycleMutex;
+	std::mutex perfMutex;
+	LARGE_INTEGER qpcFrequency{};
+	json::FrameRing<16384> frames, engineFrames;
+	json::FrameChain frameChain;
+	json::InventoryWindow inventory;
+	std::string captureLabel;
+	bool hasInventoryKey{}, inventoryMenuOpen{}, inventoryEverOpened{};
+	double previousFrameMs{}, captureStartMs{}, inventoryKeyMs{}, preOpenMedian{};
 	std::wstring directory;
 	std::string saveName;
 	bool hasSaveName{ false };
@@ -55,6 +78,7 @@ struct Probe {
 	std::atomic_uint32_t mainThreadID{ 0 };
 	std::atomic_bool timerBusy{ false };
 	std::atomic_bool timerPending{ false };
+	std::atomic_bool memoryFailureLogged{ false };
 	std::uint32_t interval{ 1000 };
 	HANDLE timer{};
 };
@@ -191,26 +215,196 @@ json::Object Resource(RE::PlayerCharacter* player, RE::ActorValue value)
 void ItemCardField(json::Object& fields, RE::UI* ui)
 {
 	constexpr const char* card = "_root.Menu_mc.itemCardFadeHolder.ItemCard_mc";
-	if (!ui || !ui->IsMenuOpen("InventoryMenu")) { fields.Null("item_card_submenu"); return; }
+	if (!ui || !ui->IsMenuOpen("InventoryMenu")) { fields.Null("item_card_submenu").Null("item_card_quantity"); return; }
 	const auto movie = ui->GetMovieView("InventoryMenu");
 	RE::GFxValue value;
 	if (!movie || !movie->GetVariable(&value, card) || value.IsUndefined()) {
 		Log("SkyCRPG_TestProbe: inventory item card unavailable\n");
-		fields.Null("item_card_submenu");
+		fields.Null("item_card_submenu").Null("item_card_quantity");
 		return;
 	}
 	RE::GFxValue handler;
 	const bool open = movie->GetVariable(&handler, (std::string(card) + ".InputHandler").c_str()) &&
 		!handler.IsUndefined() && !handler.IsNull();
 	fields.Boolean("item_card_submenu", open);
+	RE::GFxValue quantity;
+	if (open && movie->GetVariable(&quantity, (std::string(card) + ".QuantitySlider_mc.value").c_str()) && quantity.IsNumber())
+		fields.Numeric("item_card_quantity", quantity.GetNumber());
+	else fields.Null("item_card_quantity");
 }
 
-void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
+// All GFx values are task-local copies; observation calls do not mutate movies.
+bool Variable(RE::GFxMovieView* movie, const char* path, RE::GFxValue& value)
+{
+	return movie && movie->GetVariable(&value, path) && !value.IsUndefined() && !value.IsNull();
+}
+void BooleanVariable(json::Object& output, std::string_view name, RE::GFxMovieView* movie, const char* path)
+{
+	RE::GFxValue value;
+	if (Variable(movie, path, value) && value.IsBool()) output.Boolean(name, value.GetBool());
+	else output.Null(name);
+}
+void Clip(json::Object& output, std::string_view name, RE::GFxMovieView* movie, const char* path)
+{
+	json::Object clip;
+	RE::GFxValue value;
+	if (!movie) { output.Null(name); return; }
+	const bool present = Variable(movie, path, value) && value.IsDisplayObject();
+	clip.Boolean("present", present);
+	if (!present) { clip.Boolean("visible", false); output.Raw(name, clip.Json()); return; }
+	// _visible is local in AS2. Include every ancestor's visibility and alpha,
+	// with a hard bound and unknown if a chain/property cannot be resolved.
+	bool visible = true, complete = false;
+	for (unsigned depth = 0; depth < 16; ++depth) {
+		RE::GFxValue shown, alpha, parent;
+		if (!value.GetMember("_visible", &shown) || !shown.IsBool() ||
+			!value.GetMember("_alpha", &alpha) || !alpha.IsNumber()) break;
+		visible = visible && shown.GetBool() && alpha.GetNumber() > 0;
+		if (!visible) { complete = true; break; }
+		if (!value.GetMember("_parent", &parent) || parent.IsUndefined() || parent.IsNull()) { complete = true; break; }
+		if (!parent.IsDisplayObject()) break;
+		value = parent;
+	}
+	if (complete) clip.Boolean("visible", visible);
+	else clip.Null("visible");
+	output.Raw(name, clip.Json());
+}
+void CursorFields(json::Object& inventory, RE::GFxMovieView* movie, RE::GFxValue& itemList, RE::GFxValue& selected, bool gridActive)
+{
+	json::Object cursor;
+	RE::GFxValue root, x, y, index, clip, bounds, visible, result;
+	const bool hasRoot = Variable(movie, "_root", root) && root.IsDisplayObject();
+	const bool hasX = hasRoot && root.GetMember("_xmouse", &x) && x.IsNumber() && json::CursorNumber(true, x.GetNumber());
+	const bool hasY = hasRoot && root.GetMember("_ymouse", &y) && y.IsNumber() && json::CursorNumber(true, y.GetNumber());
+	if (hasX) cursor.Numeric("x", x.GetNumber()); else cursor.Null("x");
+	if (hasY) cursor.Numeric("y", y.GetNumber()); else cursor.Null("y");
+	std::array<RE::GFxValue, 3> hitArgs;
+	if (hasX && hasY) { hitArgs[0].SetNumber(x.GetNumber()); hitArgs[1].SetNumber(y.GetNumber()); hitArgs[2].SetBoolean(true); }
+	if (hasX && hasY && itemList.IsDisplayObject() && itemList.Invoke("hitTest", &result, hitArgs) && result.IsBool()) cursor.Boolean("over_list", result.GetBool());
+	else cursor.Null("over_list");
+	const bool hasIndex = selected.IsObject() && selected.GetMember("clipIndex", &index) && index.IsNumber() && json::CursorNumber(true, index.GetNumber());
+	std::array<RE::GFxValue, 1> args;
+	if (hasIndex) args[0] = index;
+	const bool hasClip = hasIndex && itemList.IsDisplayObject() && itemList.Invoke("getClipByIndex", &clip, args) && clip.IsDisplayObject();
+	bool completeBounds = false, hasVisible = false;
+	if (hasClip) {
+		json::Object box;
+		args[0] = root;
+		const bool hasBounds = hasRoot && clip.Invoke("getBounds", &bounds, args) && bounds.IsObject();
+		completeBounds = hasBounds;
+		for (const auto& pair : { std::pair{ "x_min", "xMin" }, std::pair{ "x_max", "xMax" }, std::pair{ "y_min", "yMin" }, std::pair{ "y_max", "yMax" } }) {
+			RE::GFxValue value;
+			if (hasBounds && bounds.GetMember(pair.second, &value) && value.IsNumber() && json::CursorNumber(true, value.GetNumber())) box.Numeric(pair.first, value.GetNumber());
+			else { box.Null(pair.first); completeBounds = false; }
+		}
+		hasVisible = clip.GetMember("_visible", &visible) && visible.IsBool();
+		if (hasVisible) box.Boolean("visible", visible.GetBool()); else box.Null("visible");
+		cursor.Raw("selected_clip", box.Json());
+	} else cursor.Null("selected_clip");
+	// Local painted rectangle, from skycrpgPaintCell; skycrpgGridBounds explains inflated native children.
+	constexpr double cellWidth = 165.0, cellHeight = 68.0;
+	double coords[4]{};
+	bool mapped = hasRoot && hasClip && gridActive;
+	for (int i = 0; i < 2 && mapped; ++i) {
+		RE::GFxValue point, px, py;
+		movie->CreateObject(&point);
+		px.SetNumber(i == 0 ? 0.0 : cellWidth);
+		py.SetNumber(i == 0 ? 0.0 : cellHeight);
+		std::array<RE::GFxValue, 1> pointArg;
+		pointArg[0] = point;
+		mapped = point.IsObject() && point.SetMember("x", px) && point.SetMember("y", py) &&
+			clip.Invoke("localToGlobal", nullptr, pointArg) && root.Invoke("globalToLocal", nullptr, pointArg) &&
+			point.GetMember("x", &px) && px.IsNumber() && point.GetMember("y", &py) && py.IsNumber();
+		if (mapped) { coords[i * 2] = px.GetNumber(); coords[i * 2 + 1] = py.GetNumber(); }
+	}
+	const auto cell = json::SelectedCell(gridActive, hasClip, mapped, coords[0], coords[1], coords[2], coords[3]);
+	if (cell) {
+		json::Object box;
+		box.Numeric("x_min", cell->x_min).Numeric("x_max", cell->x_max).Numeric("y_min", cell->y_min).Numeric("y_max", cell->y_max);
+		cursor.Raw("selected_cell", box.Json());
+	} else cursor.Null("selected_cell");
+	const bool hitResult = hasClip && completeBounds && hasVisible && hasX && hasY && clip.Invoke("hitTest", &result, hitArgs) && result.IsBool();
+	if (json::CursorHitKnown(hasX && hasY, hasClip, hitResult)) cursor.Boolean("hit", result.GetBool()); else cursor.Null("hit");
+	inventory.Raw("cursor", cursor.Json());
+}
+void UIFields(json::Object& fields, RE::UI* ui)
+{
+	const auto hud = ui ? ui->GetMovieView("HUD Menu") : nullptr;
+	json::Object state;
+	Clip(state, "compass", hud.get(), "_root.HUDMovieBaseInstance.CompassShoutMeterHolder.Compass");
+	Clip(state, "minimap", hud.get(), "_root.HUDMovieBaseInstance.Minimap");
+	Clip(state, "root", hud.get(), "_root.HUDMovieBaseInstance.SkyCRPGStatus");
+	// A present root can be hidden while data is stale. Expose readiness separately.
+	BooleanVariable(state, "data_ready", hud.get(), "_root.HUDMovieBaseInstance.SkyCRPGStatus._skycrpgDataReady");
+	std::string slots = "[";
+	for (unsigned i = 0; i < 8; ++i) {
+		if (i != 0) slots += ',';
+		json::Object slot;
+		const auto path = "_root.HUDMovieBaseInstance.SkyCRPGHotbar.slot" + std::to_string(i);
+		for (const auto* member : { "key", "kind", "name", "count" }) {
+			RE::GFxValue text;
+			if (Variable(hud.get(), (path + "." + member + ".text").c_str(), text) && text.IsString())
+				slot.String(member, text.GetString());
+			else slot.Null(member);
+		}
+		slots += slot.Json();
+	}
+	state.Raw("hotbar", slots + ']');
+	fields.Raw("hud", state.Json());
+	if (!ui || !ui->IsMenuOpen("MagicMenu")) fields.Null("magic");
+	else {
+		const auto magicMovie = ui->GetMovieView("MagicMenu");
+		RE::GFxValue magicList, magicSelected, magicName, magicFlag;
+		json::Object magic;
+		if (Variable(magicMovie.get(), "_root.Menu_mc.inventoryLists.itemList", magicList) &&
+			magicList.GetMember("selectedEntry", &magicSelected) && magicSelected.IsObject()) {
+			if (magicSelected.GetMember("text", &magicName) && magicName.IsString()) magic.String("selected_name", magicName.GetString());
+			else magic.Null("selected_name");
+			std::optional<double> filterFlag;
+			if (magicSelected.GetMember("filterFlag", &magicFlag) && magicFlag.IsNumber()) {
+				filterFlag = magicFlag.GetNumber();
+				magic.Numeric("selected_filter_flag", *filterFlag);
+			} else magic.Null("selected_filter_flag");
+			const auto favorite = json::MagicFavorite(filterFlag);
+			if (favorite) magic.Boolean("selected_favorite", *favorite);
+			else magic.Null("selected_favorite");
+		} else magic.Null("selected_name").Null("selected_filter_flag").Null("selected_favorite");
+		fields.Raw("magic", magic.Json());
+	}
+	if (!ui || !ui->IsMenuOpen("InventoryMenu")) { fields.Null("inventory"); return; }
+	const auto movie = ui->GetMovieView("InventoryMenu");
+	constexpr const char* list = "_root.Menu_mc.inventoryLists.itemList";
+	json::Object inventory;
+	RE::GFxValue itemList, grid, selected, name, count, favorite;
+	if (!Variable(movie.get(), list, itemList)) { fields.Null("inventory"); return; }
+	// skycrpgGrid is absent from a stock movie and explicitly false on a generated fallback.
+	const bool hasGrid = itemList.GetMember("skycrpgGrid", &grid) && !grid.IsUndefined();
+	if (!hasGrid || grid.IsBool()) inventory.Boolean("grid_active", hasGrid && grid.GetBool());
+	else inventory.Null("grid_active");
+	if (itemList.GetMember("selectedEntry", &selected) && selected.IsObject()) {
+		if (selected.GetMember("text", &name) && name.IsString()) inventory.String("selected_name", name.GetString());
+		else inventory.Null("selected_name");
+		if (selected.GetMember("count", &count) && count.IsNumber()) inventory.Numeric("selected_count", count.GetNumber());
+		else inventory.Null("selected_count");
+		// SkyUI 6.11 InventoryListEntry.setEntry reads entry.favorite == true.
+		// Missing/invalid data stays unknown; it must never authorize a toggle.
+		if (selected.GetMember("favorite", &favorite) && favorite.IsBool()) inventory.Boolean("selected_favorite", favorite.GetBool());
+		else inventory.Null("selected_favorite");
+	} else inventory.Null("selected_name").Null("selected_count").Null("selected_favorite");
+	CursorFields(inventory, movie.get(), itemList, selected, hasGrid && grid.IsBool() && grid.GetBool());
+	fields.Raw("inventory", inventory.Json());
+}
+
+void Snapshot(bool requested, const std::string& tag, std::uint64_t generation, const json::StateRequest& request)
 {
 	json::Object fields;
-	fields.Boolean("requested", requested);
+	fields.Numeric("observation_protocol", json::kObservationProtocol).Boolean("requested", requested);
 	if (requested) fields.String("tag", tag);
 	ThreadFields(fields);
+	if (!request.valid) {
+		fields.Boolean("available", false).String("reason", "invalid_state_request");
+		Emit("player_state", fields); return;
+	}
 	const auto currentGeneration = g_probe->generation.load();
 	const bool loaded = g_probe->loaded.load();
 	fields.Numeric("queued_generation", generation).Numeric("current_generation", currentGeneration)
@@ -253,7 +447,51 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
 	FormField(equipped, "right", player->GetEquippedObject(false));
 	FormField(equipped, "left", player->GetEquippedObject(true));
 	FormField(equipped, "ammo", player->GetCurrentAmmo());
+	const auto* right = player->GetEquippedObject(false);
+	// Form-type check plus static_cast: the static CommonLib build does not
+	// instantiate TESForm::As<T> (same link failure fixed in ba10da6).
+	const auto* weapon = right && right->GetFormType() == RE::FormType::Weapon ? static_cast<const RE::TESObjectWEAP*>(right) : nullptr;
+	equipped.Boolean("two_handed", weapon && json::TwoHandedWeapon(static_cast<unsigned>(weapon->GetWeaponType())));
+	using Slot = RE::BGSBipedObjectForm::BipedObjectSlot;
+	if (requested) {
+		// Vanilla helmets often use Hair/Circlet, not Head (Iron Helmet BOD2 = slots 31 and 42).
+		auto* head = player->GetWornArmor(Slot::kHead, true);
+		if (!head) head = player->GetWornArmor(Slot::kHair, true);
+		if (!head) head = player->GetWornArmor(Slot::kCirclet, true);
+		FormField(equipped, "head", head);
+		FormField(equipped, "body", player->GetWornArmor(Slot::kBody, true));
+		FormField(equipped, "ring", player->GetWornArmor(Slot::kRing, true));
+		FormField(equipped, "amulet", player->GetWornArmor(Slot::kAmulet, true));
+	} else equipped.Null("head").Null("body").Null("ring").Null("amulet");
 	fields.Raw("equipped", equipped.Json());
+	FormField(fields, "selected_power", player->GetActorRuntimeData().selectedPower);
+	const auto* process = player->GetActorRuntimeData().currentProcess;
+	if (process && process->high) fields.Numeric("voice_recovery", player->GetVoiceRecoveryTime());
+	else fields.Null("voice_recovery");
+	fields.Boolean("weapon_drawn", player->IsWeaponDrawn());
+	fields.Numeric("carry_weight", player->GetActorValue(RE::ActorValue::kInventoryWeight));
+	json::Object counts, weights;
+	if (request.count > 0) {
+		// One filtered no-init scan per explicit request, never on the periodic path.
+		const bool inventoryAvailable = player->GetInventoryChanges(true) != nullptr;
+		const auto inventory = inventoryAvailable ? player->GetInventoryCounts([&request](RE::TESBoundObject& object) {
+			for (std::size_t i = 0; i < request.count; ++i) if (object.GetFormID() == request.forms[i]) return true;
+			return false;
+		}, true) : RE::TESObjectREFR::InventoryCountMap{};
+		for (std::size_t i = 0; i < request.count; ++i) {
+			const auto formID = request.forms[i];
+			const auto* raw = RE::TESForm::LookupByID(formID);
+			const auto* form = raw && raw->IsBoundObject() ? static_cast<const RE::TESBoundObject*>(raw) : nullptr;
+			if (!form) { counts.Null(json::FormID(formID)); weights.Null(json::FormID(formID)); continue; }
+			weights.Numeric(json::FormID(formID), form->GetWeight());
+			if (!inventoryAvailable) { counts.Null(json::FormID(formID)); continue; }
+			std::int32_t count = 0;
+			for (const auto& [object, quantity] : inventory) if (object && object->GetFormID() == formID) count = quantity;
+			counts.Numeric(json::FormID(formID), count);
+		}
+	}
+	fields.Raw("item_counts", counts.Json()).Raw("item_weights", weights.Json());
+	UIFields(fields, ui);
 	const auto* camera = RE::PlayerCamera::GetSingleton();
 	if (camera && camera->currentState) fields.Numeric("camera_state", static_cast<std::uint32_t>(camera->currentState->id));
 	else {
@@ -273,7 +511,7 @@ void Snapshot(bool requested, const std::string& tag, std::uint64_t generation)
 		ItemCardField(fields, ui);
 	} else {
 		Log("SkyCRPG_TestProbe: UI unavailable\n");
-		fields.Null("paused").Null("open_menus").Null("item_card_submenu");
+		fields.Null("paused").Null("open_menus").Null("item_card_submenu").Null("item_card_quantity");
 	}
 	Emit("player_state", fields);
 }
@@ -287,8 +525,9 @@ bool QueueSnapshot(bool requested = false, std::string tag = {}, bool timer = fa
 	try {
 		if (timer && g_probe->timerPending.exchange(true)) return false;
 		const auto generation = g_probe->generation.load();
-		const bool queued = QueueProbeTask([requested, tag = std::move(tag), generation, timer] {
-			try { Snapshot(requested, tag, generation); }
+		const auto request = json::ParseStateRequest(tag);
+		const bool queued = QueueProbeTask([requested, request, generation, timer] {
+			try { Snapshot(requested, request.tag, generation, request); }
 			catch (...) { Log("SkyCRPG_TestProbe: snapshot failed; skipped\n"); }
 			if (timer) g_probe->timerPending.store(false);
 		});
@@ -303,6 +542,225 @@ bool QueueSnapshot(bool requested = false, std::string tag = {}, bool timer = fa
 		return false;
 	}
 }
+
+// QPC samples are anchored on the UI drain, with a main-queue helper between
+// samples. Neither delegate requeues into its own currently draining queue.
+// Persistent Run/Dispose delegates use CommonLib's passthrough pointer overloads.
+double PerfNow() noexcept
+{
+	LARGE_INTEGER now{};
+	if (!QueryPerformanceCounter(&now)) return 0;
+	return static_cast<double>(now.QuadPart) * 1000.0 / static_cast<double>(g_probe->qpcFrequency.QuadPart);
+}
+
+void EmitInventory()
+{
+	auto& window = g_probe->inventory;
+	if (!window.active) return;
+	window.active = false;
+	json::Object fields;
+	fields.String("label", g_probe->captureLabel).Boolean("cold", window.cold)
+		.Boolean("correlated", window.correlated).Numeric("pre_open_median_ms", window.preMedian)
+		.Numeric("open_qpc_ms", window.openMs);
+	if (window.correlated) fields.Numeric("key_qpc_ms", window.keyMs);
+	else fields.Null("key_qpc_ms");
+	if (window.correlated) fields.Numeric("t_event_ms", window.openMs - window.keyMs);
+	else fields.Null("t_event_ms");
+	if (window.settled) fields.Numeric("t_settled_ms", window.settledMs);
+	else fields.Null("t_settled_ms");
+	std::string periods = "[";
+	for (std::size_t i = 0; i < window.count; ++i) {
+		if (i) periods += ',';
+		periods += json::Number(window.periods[i]);
+	}
+	fields.Raw("periods_ms", periods + ']');
+	Emit("inventory_open", fields);
+}
+
+void QueueFrameHop(json::FrameChain::Hop hop) noexcept;
+
+void AbortFrameCapture(const char* reason)
+{
+	g_probe->frameChain.stop();
+	g_probe->inventory = {};
+	g_probe->hasInventoryKey = false;
+	Emit("perf_capture", json::Object{}.String("label", g_probe->captureLabel)
+		.String("phase", "abort").Boolean("available", false).String("reason", reason));
+}
+
+class FrameUITask final : public SKSE::detail::UIDelegate_v1 {
+public:
+	void Run() noexcept override
+	{
+		try {
+			{
+				std::scoped_lock lock(g_probe->perfMutex);
+				const double now = PerfNow();
+				const auto tick = g_probe->frameChain.uiRun(now);
+				if (tick == json::FrameChain::Tick::idle) return;
+				if (tick == json::FrameChain::Tick::runaway) {
+					Log("SkyCRPG_TestProbe: frame capture stopped: runaway\n");
+					AbortFrameCapture("runaway");
+					return;
+				}
+				const auto* timer = RE::BSTimer::GetSingleton();
+				const double engineMs = timer ? static_cast<double>(timer->realTimeDelta) * 1000.0 : 0;
+				if (g_probe->previousFrameMs > 0 && now > g_probe->previousFrameMs) {
+					const double period = now - g_probe->previousFrameMs;
+					g_probe->frames.push(period);
+					if (engineMs > 0) g_probe->engineFrames.push(engineMs);
+					if (g_probe->inventory.observe(period, now)) EmitInventory();
+				}
+				g_probe->previousFrameMs = now;
+			}
+			QueueFrameHop(json::FrameChain::Hop::main);
+		} catch (...) {
+			std::scoped_lock lock(g_probe->perfMutex);
+			g_probe->frameChain.enqueueFailed();
+			AbortFrameCapture("ui_task_failed");
+			Log("SkyCRPG_TestProbe: frame UI task failed\n");
+		}
+	}
+	void Dispose() noexcept override {}  // process-lifetime, never self-requeue
+};
+
+class FrameMainTask final : public SKSE::detail::TaskDelegate {
+public:
+	void Run() noexcept override
+	{
+		try {
+			bool queueUI = false;
+			{
+				std::scoped_lock lock(g_probe->perfMutex);
+				queueUI = g_probe->frameChain.mainRun();
+			}
+			if (queueUI) QueueFrameHop(json::FrameChain::Hop::ui);
+		} catch (...) {
+			std::scoped_lock lock(g_probe->perfMutex);
+			g_probe->frameChain.enqueueFailed();
+			AbortFrameCapture("main_task_failed");
+			Log("SkyCRPG_TestProbe: frame main helper failed\n");
+		}
+	}
+	void Dispose() noexcept override {}
+};
+FrameUITask g_frameUITask;
+FrameMainTask g_frameMainTask;
+
+void QueueFrameHop(json::FrameChain::Hop hop) noexcept
+{
+	// Never hold perfMutex while acquiring SKSE's UI queue lock: the UI drain
+	// holds that lock while calling Run, which itself acquires perfMutex.
+	try {
+		if (const auto* tasks = SKSE::GetTaskInterface()) {
+			if (hop == json::FrameChain::Hop::ui)
+				tasks->AddUITask(reinterpret_cast<::UIDelegate_v1*>(&g_frameUITask));
+			else if (hop == json::FrameChain::Hop::main)
+				tasks->AddTask(reinterpret_cast<::TaskDelegate*>(&g_frameMainTask));
+			return;
+		}
+	} catch (...) { /* emit a single unavailable result below */ }
+	std::scoped_lock lock(g_probe->perfMutex);
+	g_probe->frameChain.enqueueFailed();
+	AbortFrameCapture("enqueue_failed");
+	Log("SkyCRPG_TestProbe: frame enqueue failed\n");
+}
+
+void PerfRequest(const std::string& tag)
+{
+	const auto request = json::ParsePerfRequest(tag);
+	std::unique_lock lock(g_probe->perfMutex);
+	bool queueUI = false;
+	bool available = false;
+	if (request.command == json::PerfCommand::start && !g_probe->frameChain.active() && g_probe->loaded.load()) {
+		g_probe->captureLabel = request.label;
+		g_probe->frames.clear();
+		g_probe->engineFrames.clear();
+		g_probe->inventory = {};
+		g_probe->hasInventoryKey = false;
+		g_probe->previousFrameMs = 0;
+		g_probe->captureStartMs = PerfNow();
+		queueUI = g_probe->frameChain.start();
+		available = g_probe->frameChain.queued();
+		if (!available) g_probe->frameChain.stop();
+		if (available && request.label == "resource") Emit("resource_check", json::Object{}.String("phase", "start"));
+	} else if (request.command == json::PerfCommand::stop && g_probe->frameChain.active() && request.label == g_probe->captureLabel) {
+		g_probe->frameChain.stop();
+		EmitInventory();
+		const auto summary = g_probe->frames.summary();
+		const auto engine = g_probe->engineFrames.summary();
+		json::Object fields;
+		fields.String("label", g_probe->captureLabel)
+			.Numeric("count", summary.count).Numeric("total_count", g_probe->frames.total())
+			.Numeric("median", summary.median).Numeric("p95", summary.p95).Numeric("p99", summary.p99)
+			.Numeric("max", summary.maximum).Numeric("over33", summary.over33).Numeric("over50", summary.over50)
+			.Numeric("engine_count", engine.count).Numeric("engine_total_count", g_probe->engineFrames.total())
+			.Numeric("engine_median", engine.median).Numeric("engine_p95", engine.p95)
+			.Numeric("duration_ms", PerfNow() - g_probe->captureStartMs);
+		if (engine.median > 0 && summary.count > 0) fields.Numeric("anchor_ratio", summary.median / engine.median);
+		else fields.Null("anchor_ratio");
+		Emit("frame_summary", fields);
+		if (request.label == "resource") Emit("resource_check", json::Object{}.String("phase", "stop"));
+		available = true;
+	}
+	Emit("perf_capture", json::Object{}.String("tag", tag).String("label", request.label)
+		.String("phase", request.command == json::PerfCommand::start ? "start" : "stop").Boolean("available", available));
+	lock.unlock();
+	if (queueUI) QueueFrameHop(json::FrameChain::Hop::ui);
+}
+
+void InventoryMenuEvent(bool opening, double now)
+{
+	std::scoped_lock lock(g_probe->perfMutex);
+	if (opening) {
+		const bool cold = !g_probe->inventoryEverOpened;
+		g_probe->inventoryEverOpened = true;
+		g_probe->inventoryMenuOpen = true;
+		if (g_probe->frameChain.active()) {
+			EmitInventory();
+			const bool correlated = g_probe->hasInventoryKey && now >= g_probe->inventoryKeyMs && now - g_probe->inventoryKeyMs <= 10000;
+			g_probe->inventory.begin(g_probe->inventoryKeyMs, now, g_probe->preOpenMedian, correlated, cold);
+		}
+		g_probe->hasInventoryKey = false;
+	} else {
+		g_probe->inventoryMenuOpen = false;
+		EmitInventory();
+	}
+}
+
+class InputEvents final : public RE::BSTEventSink<RE::InputEvent*> {
+public:
+	RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,
+		RE::BSTEventSource<RE::InputEvent*>*) noexcept override
+	{
+		try {
+			if (!events) return RE::BSEventNotifyControl::kContinue;
+			{
+				std::scoped_lock lock(g_probe->perfMutex);
+				if (!g_probe->frameChain.active()) return RE::BSEventNotifyControl::kContinue;
+			}
+			for (auto* event = *events; event; event = event->next) {
+				const auto* button = event->AsButtonEvent();
+				if (!button || !button->IsDown()) continue;
+				const double now = PerfNow();
+				const auto* controls = RE::ControlMap::GetSingleton();
+				if (!controls) continue;
+				const auto device = event->GetDevice();
+				const auto key = button->GetIDCode();
+				const auto inventoryKey = controls->GetMappedKey("Inventory", device);
+				const auto tweenKey = controls->GetMappedKey("Tween Menu", device);
+				if ((inventoryKey == RE::ControlMap::kInvalid || key != inventoryKey) &&
+					(tweenKey == RE::ControlMap::kInvalid || key != tweenKey)) continue;
+				std::scoped_lock lock(g_probe->perfMutex);
+				if (!g_probe->frameChain.active() || g_probe->inventoryMenuOpen) continue;
+				g_probe->inventoryKeyMs = now;
+				g_probe->preOpenMedian = g_probe->frames.summary().median;
+				g_probe->hasInventoryKey = true;
+			}
+		} catch (...) { Log("SkyCRPG_TestProbe: input timestamp failed\n"); }
+		return RE::BSEventNotifyControl::kContinue;
+	}
+};
 
 struct Handle {
 	HANDLE value{ INVALID_HANDLE_VALUE };
@@ -377,7 +835,11 @@ bool PollRequest()
 		return false;
 	}
 	const auto tag = json::ParseRequest(std::string_view(buffer.data(), bytesRead));
-	if (!tag || !QueueSnapshot(true, *tag, true)) return false;
+	if (!tag) return false;
+	const auto perf = json::ParsePerfRequest(*tag);
+	if (perf.command == json::PerfCommand::checkpoint) {
+		if (!QueueSnapshot(true, *tag, true)) return false;
+	} else if (!QueueProbeTask([requestTag = *tag] { PerfRequest(requestTag); })) return false;
 	FILE_DISPOSITION_INFO disposition{};
 	disposition.DeleteFile = TRUE;
 	if (!SetFileInformationByHandle(file.value, FileDispositionInfo, &disposition, static_cast<DWORD>(sizeof(disposition))))
@@ -385,10 +847,23 @@ bool PollRequest()
 	return true;
 }
 
+void SampleMemory()
+{
+	PROCESS_MEMORY_COUNTERS_EX counters{};
+	counters.cb = static_cast<DWORD>(sizeof(counters));
+	if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), counters.cb)) {
+		Emit("process_memory", json::Object{}.Numeric("private_bytes", static_cast<std::uint64_t>(counters.PrivateUsage))
+			.Numeric("working_set_bytes", static_cast<std::uint64_t>(counters.WorkingSetSize)));
+	} else if (!g_probe->memoryFailureLogged.exchange(true)) {
+		Log("SkyCRPG_TestProbe: process memory sample unavailable\n");
+	}
+}
+
 void CALLBACK TimerTick(void*, BOOLEAN) noexcept
 {
 	if (g_probe->timerBusy.exchange(true)) return;
 	try {
+		if (g_probe->loaded.load()) SampleMemory();
 		if (!g_probe->timerPending.load() && !PollRequest() && g_probe->loaded.load())
 			QueueSnapshot(false, {}, true);
 	} catch (...) {
@@ -451,6 +926,8 @@ public:
 	{
 		try {
 			if (!event) { Log("SkyCRPG_TestProbe: null menu event\n"); return RE::BSEventNotifyControl::kContinue; }
+			// Capture the open endpoint before JSON/log I/O on this callback.
+			if (event->menuName == "InventoryMenu") InventoryMenuEvent(event->opening, PerfNow());
 			ThreadContext("menu");
 			Emit("menu", json::Object{}.String("name", event->menuName.c_str()).Boolean("opening", event->opening));
 			if (!event->opening) QueueSnapshot();
@@ -491,6 +968,15 @@ public:
 	}
 };
 
+void ResetPerformance()
+{
+	std::scoped_lock lock(g_probe->perfMutex);
+	g_probe->frameChain.stop();
+	g_probe->inventory = {};
+	g_probe->hasInventoryKey = false;
+	g_probe->inventoryMenuOpen = false;
+}
+
 void Messages(SKSE::MessagingInterface::Message* message) noexcept
 {
 	try {
@@ -501,9 +987,12 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 			ThreadContext("data_loaded");
 			Emit("data_loaded");
 			static auto* events = new Events();
+			static auto* inputs = new InputEvents();
 			static bool registered = false;
 			if (registered) return;
 			registered = true;
+			if (auto* input = RE::BSInputDeviceManager::GetSingleton()) input->AddEventSink(inputs);
+			else Log("SkyCRPG_TestProbe: input event source unavailable\n");
 			if (auto* ui = RE::UI::GetSingleton()) ui->AddEventSink<RE::MenuOpenCloseEvent>(events);
 			else Log("SkyCRPG_TestProbe: menu event source unavailable\n");
 			if (auto* source = RE::ScriptEventSourceHolder::GetSingleton()) {
@@ -518,6 +1007,7 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 		case SKSE::MessagingInterface::kPreLoadGame: {
 			g_probe->loaded.store(false);
 			g_probe->generation.fetch_add(1);
+			ResetPerformance();
 			ThreadContext("pre_load_game");
 			std::scoped_lock lock(g_probe->lifecycleMutex);
 			g_probe->hasSaveName = message->data && message->dataLen <= json::kMaxRequestBytes;
@@ -549,6 +1039,7 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 			break;
 		}
 		case SKSE::MessagingInterface::kNewGame: {
+			ResetPerformance();
 			ThreadContext("new_game");
 			g_probe->generation.fetch_add(1);
 			g_probe->loaded.store(true);
@@ -610,12 +1101,13 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* sks
 		// starts no timer and writes no JSONL or log, even if installed by mistake.
 		if (!json::ProbeEnabled(ReadDigits(ini, L"bEnabled", L"").data())) return true;
 		g_probe = new Probe();
+		if (!QueryPerformanceFrequency(&g_probe->qpcFrequency) || g_probe->qpcFrequency.QuadPart <= 0) return false;
 		g_probe->directory = skycrpg::LogDirectory();
 		if (g_probe->directory.empty()) { Log("SkyCRPG_TestProbe: SKSE directory unavailable\n"); return false; }
 		g_probe->interval = json::ParseInterval(ReadDigits(ini, L"iStateIntervalMs", L"1000").data());
 		const auto fields = json::Object{}.String("runtime", Version(skseInterface->runtimeVersion))
 			.String("skse", Version(skseInterface->skseVersion)).String("probe_version", SKYCRPG_VERSION)
-			.String("snapshot_dispatch", "ui_task_drain_v3")
+			.String("snapshot_dispatch", "ui_task_drain_v3").Numeric("perf_protocol", 1).Numeric("observation_protocol", json::kObservationProtocol)
 			.String("build_commit", SKYCRPG_SOURCE_COMMIT).Boolean("enabled", true).Numeric("state_interval_ms", g_probe->interval);
 		if (!PinnedAddressLibrary()) {
 			Log("SkyCRPG_TestProbe: pinned Address Library 13 missing/unreadable/mismatched; CommonLib Init skipped\n");
