@@ -26,9 +26,9 @@ int main() {
     assert(!matches(0,resolved) && !matches(0x602A6,resolved) && !matches(0x060602AF,resolved));
     for (unsigned mask = 0;mask < 32;++mask)
         assert(install((mask&1)!=0,(mask&2)!=0,(mask&4)!=0,(mask&8)!=0,(mask&16)!=0) == (mask == 31));
-    assert(eligible(State::normal) && eligible(State::targetLock));
+    assert(eligible(State::normal) && eligible(State::targetLock) && eligible(State::obstruction));
     for (const auto s : {State::disabled,State::invalidWorld,State::special,State::menu,
-        State::firstPerson,State::precision,State::targeting,State::obstruction}) assert(!eligible(s));
+        State::firstPerson,State::precision,State::targeting}) assert(!eligible(s));
     for (bool native : {false,true}) assert(compressionAllowed(false,native)); // Disabled equals branch base.
     assert(!compressionAllowed(true,false) && compressionAllowed(true,true));
 
@@ -103,6 +103,30 @@ int main() {
         assert(state.material() == ((mask&11) == 11));
         assert(state.property() == ((mask&21) == 21));
     }
+    for (unsigned layer = 0;layer < 64;++layer) {
+        assert(skipCharacter(layer,true,false) == (actorLayer(layer) && layer != 32));
+        assert(skipCharacter(layer,false,true) == actorLayer(layer));
+        assert(!skipCharacter(layer,false,false)); // Door, furniture, clutter remain contacts.
+    }
+    assert(!countsAsKept(true,true,true)); // Refused/filtered beam cannot latch compression.
+    assert(!countsAsKept(true,false,false)); // Zero-length probe.
+    assert(countsAsKept(true,false,true));
+    assert(!countsAsKept(false,false,true));
+    assert(intersectsBox({0,0,0},{0,0,500},{-11,-384,140},{11,384,256}));
+    assert(!intersectsBox({30,0,0},{30,0,500},{-11,-384,140},{11,384,256}));
+    assert(intersectsBox({0,-50,250},{0,50,250},{-119,-10,241},{120,11,255}));
+    assert(!intersectsBox({nan,0,0},{0,0,500},{-11,-384,140},{11,384,256}));
+    FadeState prepared; prepared.touch(0);
+    assert(prepared.step(.11,.05,.35f,true,true) && prepared.admitted && prepared.alpha == 1);
+    prepared.touch(.12);
+    assert(prepared.step(.12,.01,.35f,true,false) && prepared.alpha < 1); // Only narrow/contact fades.
+    assert(prepared.step(.13,2,.35f,true,false)); // Hitch clamps ramp, never restores.
+    HeightWindow heights;
+    heights.observe(552); heights.observe(347); heights.observe(552);
+    assert(heights.minimum == 347 && heights.maximum == 552 && heights.maxDelta == 205);
+    heights.sampled(); heights.observe(551);
+    assert(heights.minimum == 551 && heights.maximum == 552 && heights.maxDelta == 1);
+    heights.observe(nan); assert(heights.previous == 551);
     const auto flags = translucentFlags(0x12EC);
     assert(flags == 0x10ED && (flags&0x200) == 0 && (flags&1) == 1);
     assert(translucentFlags(0) == 0xED);

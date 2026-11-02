@@ -9,7 +9,7 @@
 namespace skycrpg::camera::thin {
 constexpr unsigned maxForms = 16, maxReferences = 8, maxParts = 16, maxPool = 256;
 constexpr unsigned maxCasts = 24, maxGaps = 16, maxSteps = 8, maxContacts = 256;
-constexpr unsigned maxTraceLines = 1200;
+constexpr unsigned maxTraceLines = 12000;
 inline float validateAlpha(float alpha) { return bounded(alpha,.35f,.1f,.8f); }
 constexpr bool recycle(bool active,bool conflict,bool sameMaterial,bool sameFlags,bool sameAlpha,
     bool reserved,std::uint64_t retired,std::uint64_t frame) {
@@ -32,12 +32,12 @@ inline std::optional<FormEntry> parseForm(std::string_view text) {
 inline bool matches(std::uint32_t base,const std::array<std::uint32_t,maxForms>& forms) {
     return base && std::find(forms.begin(),forms.end(),base) != forms.end();
 }
-constexpr bool eligible(State state) { return state == State::normal || state == State::targetLock; }
+constexpr bool eligible(State state) { return state == State::normal || state == State::targetLock || state == State::obstruction; }
 constexpr bool install(bool enabled,bool hashes,bool addresses,bool prologues,bool forms) {
     return enabled && hashes && addresses && prologues && forms;
 }
 struct Budget {
-    unsigned casts{}, gaps{}, fades{}, scans{}, refused{}, discarded{}, kept{};
+    unsigned casts{}, gaps{}, fades{}, scans{}, refused{}, discarded{}, kept{}, unknown{}, overlap{}, cap{};
     bool cast() { if (casts == maxCasts) return false; ++casts; return true; }
     bool gap() { if (gaps == maxGaps) return false; ++gaps; return true; }
 };
@@ -51,6 +51,49 @@ inline bool intersects(Point from,Point to,Point center,float radius) {
     if (length2 <= .001f) return false;
     const float t = std::clamp(((center.x-from.x)*d.x+(center.y-from.y)*d.y+(center.z-from.z)*d.z)/length2,0.0f,1.0f);
     return distance({from.x+t*d.x,from.y+t*d.y,from.z+t*d.z},center) <= radius;
+}
+// Segment versus a local, axis-aligned OBND box. Caller applies the inverse
+// reference transform; a whole-model sphere is only a preparation broad phase.
+inline bool intersectsBox(Point from,Point to,Point low,Point high,float margin = 2) {
+    if (!finite(from) || !finite(to) || !finite(low) || !finite(high) ||
+        !std::isfinite(margin) || margin < 0) return false;
+    const std::array a{from.x,from.y,from.z}, b{to.x,to.y,to.z};
+    const std::array lo{low.x,low.y,low.z}, hi{high.x,high.y,high.z};
+    float enter = 0, leave = 1;
+    for (unsigned i = 0;i < 3;++i) {
+        if (lo[i] > hi[i]) return false;
+        const float delta = b[i]-a[i];
+        if (std::abs(delta) < .0001f) {
+            if (a[i] < lo[i]-margin || a[i] > hi[i]+margin) return false;
+        } else {
+            float first = (lo[i]-margin-a[i])/delta, last = (hi[i]+margin-a[i])/delta;
+            if (first > last) std::swap(first,last);
+            enter = (std::max)(enter,first); leave = (std::min)(leave,last);
+            if (enter > leave) return false;
+        }
+    }
+    return distance(from,to) > .001f;
+}
+struct HeightWindow {
+    bool valid{};
+    float previous{},minimum{},maximum{},maxDelta{};
+    void observe(float z) {
+        if (!std::isfinite(z)) return;
+        if (!valid) { previous = minimum = maximum = z; valid = true; }
+        minimum = (std::min)(minimum,z); maximum = (std::max)(maximum,z);
+        maxDelta = (std::max)(maxDelta,std::abs(z-previous)); previous = z;
+    }
+    void sampled() { minimum = maximum = previous; maxDelta = 0; }
+};
+constexpr bool actorLayer(unsigned layer) {
+    return layer == 5 || layer == 8 || layer == 19 || layer == 20 ||
+        layer == 25 || layer == 30 || layer == 32 || layer == 33 || layer == 35;
+}
+constexpr bool skipCharacter(unsigned layer,bool character,bool player) {
+    return actorLayer(layer) && (player || (character && layer != 32));
+}
+constexpr bool countsAsKept(bool hit,bool listedContact,bool nonzero) {
+    return hit && !listedContact && nonzero;
 }
 inline std::optional<Point> advance(Point start,Point goal,Point contact,float hull,unsigned steps) {
     if (!finite(start) || !finite(goal) || !finite(contact) || !std::isfinite(hull) || hull <= 0 || hull > 64 || steps >= maxSteps) return {};
@@ -82,8 +125,7 @@ struct GapDecision {
 };
 constexpr bool nativeIgnored(unsigned layer,bool missingOrCulled,bool player) {
     if (layer != 17 && missingOrCulled) return true;
-    return player && (layer == 5 || layer == 8 || layer == 19 || layer == 20 ||
-        layer == 25 || layer == 30 || layer == 32 || layer == 33 || layer == 35);
+    return player && actorLayer(layer);
 }
 constexpr std::uint16_t translucentFlags(std::uint16_t original) {
     // Blend SRC_ALPHA / INV_SRC_ALPHA; disable alpha test, retain other flags.
@@ -95,14 +137,14 @@ struct FadeState {
     bool admitted{};
     void touch(double now) { if (first < 0 || now-last > .4) first = now; last = now; }
     void reset() { *this = {}; }
-    bool step(double now,double dt,float target,bool valid) {
+    bool step(double now,double dt,float target,bool valid,bool opacityOnly = false) {
         if (!valid || !std::isfinite(now) || !std::isfinite(dt) || dt < 0) { reset(); return false; }
         const bool recent = last >= 0 && now-last <= .4;
         if (recent && now-first >= .10) admitted = true;
         if (!recent) admitted = false;
-        const float goal = recent ? target : 1.0f;
-        const float step = static_cast<float>((std::min)(dt,.05)) * 4.0f;
-        alpha += std::clamp(goal-alpha,-step,step);
+        const float goal = recent && !opacityOnly ? target : 1.0f;
+        const float increment = static_cast<float>((std::min)(dt,.05)) * 4.0f;
+        alpha += std::clamp(goal-alpha,-increment,increment);
         return recent || alpha < 1;
     }
 };

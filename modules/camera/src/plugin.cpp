@@ -100,6 +100,7 @@ Update previousUpdate = nullptr;
 std::filesystem::path iniPath;
 bool thinEligible();
 RE::NiPoint3 thinGoal();
+RE::NiPoint3 thinFocus();
 void log(const char* text) {
     FILE* file = nullptr;
     const auto path = skycrpg::LogDirectory() + L"SkyCRPG_Camera.log";
@@ -234,7 +235,7 @@ void loadSettings() {
     if (flag("ThinOccluder","bEnabled",0)) {
         thin::runtime = new thin::Runtime;
         auto& t = *thin::runtime;
-        t.enabled = true; t.logger = log; t.eligibleNow = thinEligible; t.goalNow = thinGoal;
+        t.enabled = true; t.logger = log; t.eligibleNow = thinEligible; t.goalNow = thinGoal; t.focusNow = thinFocus;
         t.trace = flag("ThinOccluder","iTrace",0);
         t.targetAlpha = thin::validateAlpha(number("ThinOccluder","fTargetAlpha",.35f));
         const auto count = number("ThinOccluder","iFormCount",3u);
@@ -513,7 +514,7 @@ void resetObstruction() {
     obstructionSampleTime = {}; obstructionCell = 0;
     resetObstructionZoom(adjustedZoomWritten,lastAdjustedZoom,applyZoom);
 }
-void suspend() { thin::requestRestore(); resetObstruction(); recenter = false; for (auto& key : keys) key.suspend(); }
+void suspend() { resetObstruction(); recenter = false; for (auto& key : keys) key.suspend(); }
 bool focused() {
     const auto ui = RE::UI::GetSingleton();
     if (!ui || ui->GameIsPaused() || ui->IsApplicationMenuOpen() || ui->IsModalMenuOpen()) return true;
@@ -583,9 +584,17 @@ RE::NiPoint3 thinGoal() {
     provider->GetGoalPosition(RE::PlayerCharacter::GetSingleton(),goal,local);
     return goal;
 }
+RE::NiPoint3 thinFocus() {
+    RE::NiPoint3 goal{},local{};
+    provider->GetGoalPosition(RE::PlayerCharacter::GetSingleton(),goal,local);
+    return {goal.x-local.x,goal.y-local.y,goal.z-local.z};
+}
 bool thinEligible() {
     const auto c = context();
-    return thin::eligible(select(c)) && !c.slide;
+    const auto state = select(c);
+    thin::runtime->ineligibleCause = state == State::disabled ? thin::Exit::disable :
+        c.firstPerson ? thin::Exit::firstPerson : c.menu ? thin::Exit::menu : thin::Exit::special;
+    return thin::eligible(state) && !c.slide;
 }
 bool noActiveMenus() {
     const auto ui = RE::UI::GetSingleton();
@@ -676,7 +685,7 @@ void lifecycleLog(const char* event, Context c, unsigned stateId) {
     log(line);
 }
 void resetLifecycle(const char* event) {
-    thin::requestRestore();
+    thin::requestRestore(std::strstr(event,"load") ? thin::Exit::load : thin::Exit::cell);
     interruptTargetLock();
     resetTransient(ownFirstPerson,recenter,applyZoom,keys);
     resetObstruction();
@@ -843,13 +852,12 @@ public:
         return RE::BSEventNotifyControl::kContinue;
     }
     RE::BSEventNotifyControl ProcessEvent(const RE::TESCellAttachDetachEvent* event, RE::BSTEventSource<RE::TESCellAttachDetachEvent>*) override {
-        thin::requestRestore();
         if (event && event->reference.get() == RE::PlayerCharacter::GetSingleton())
             resetLifecycle(event->attached ? "player-attach" : "player-detach");
         return RE::BSEventNotifyControl::kContinue;
     }
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
-        thin::requestRestore();
+        if (thin::enabled() && lockBlockingMenu(event)) thin::requestRestore(thin::Exit::menu);
         // Queue before any context() can consider releasing the lease.
         if (targetLockEnabled) {
             lockConfigRefresh.request();
@@ -877,7 +885,7 @@ public:
                 const auto button = event->AsButtonEvent();
                 if (button && button->IsDown() && ((event->GetDevice() == RE::INPUT_DEVICE::kKeyboard &&
                     (button->GetIDCode() == 66 || button->GetIDCode() == 64)) || button->QUserEvent() == "Toggle POV"))
-                    thin::requestRestore();
+                    thin::requestRestore(button->GetIDCode() == 66 ? thin::Exit::f8 : thin::Exit::firstPerson);
             }
         }
         if (targetLockEnabled) {
@@ -1034,6 +1042,10 @@ void messages(SKSE::MessagingInterface::Message* message) {
         const auto slots = reinterpret_cast<const std::uintptr_t*>(table.address());
         const REL::Relocation<std::uintptr_t> nativeUpdate{REL::ID(50896)};
         const REL::Relocation<std::uintptr_t> nativeLook{REL::ID(50914)};
+        if (thin::enabled()) {
+            thin::guardResult("third-person-update-before-SmoothCam",slots[3] == nativeUpdate.address());
+            thin::guardResult("third-person-look-before-SmoothCam",slots[15] == nativeLook.address());
+        }
         if (slots[3] != nativeUpdate.address() || slots[15] != nativeLook.address()) {
             if (targetLockEnabled) {
                 if (!movementLease) static_cast<void>(acquireMovementLease());
