@@ -4,7 +4,8 @@
 `c7333c7c13284ad9d228e6f15213bc8465bd6e19`; merged probe head `ac28d3c` (#30);
 Windows CI [run 41211742722](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41211742722);
 probe DLL `4f993c30b020cf6f8f61b2b0222758a3085adf8f47941c3cb240e8de76dbf997`. The
-same probe drove the DYL-170 automated routes; no performance capture has run yet.
+same probe drove the DYL-170 automated routes. The later rc1 captures and this
+Proton correction are recorded below; the new adapter has not run in game.
 The comparison runner (`perf_compare.py`) lives in the session autotest tree outside
 Git; record its exact version and outputs with the final captures.
 
@@ -15,7 +16,176 @@ executable/dependency/source/package/probe/fixture hashes and durations must be
 attached to each game result. Portable tests and simulations do not compile the
 Windows adapter or establish game behavior.
 
-## Audit and acceptance ledger
+## DYL-172 Proton evidence correction — 2026-11-02
+
+**Offline PASS; new Windows adapter and live correction NOT_RUN.** Worktree base
+`6b4c0fc6a6da4effd9faeafc9a2c59874a612271`; no commit, push, branch creation,
+provider/pin change or game launch. New candidate: `<head SHA>`, `<CI run>`,
+`<DLL sha256>`. This section supersedes earlier statements about missing captures.
+The assigned Linear ticket currently reads Done; that does not establish the
+missing latency/memory measurements or owner acceptance.
+
+| Requirement / existing evidence | Change / offline disposition | New runtime |
+| --- | --- | --- |
+| rc1 baseline `batch-dyl172-rc1-00`, camera/UI/combined `batch-dyl172-rc1b-00/01/02`; sixteen anchors 1.00–1.01 | Old frame table reproduced unchanged: combined standing p95 16.81 vs 16.86 ms; turn 16.93 vs 17.03 ms, both PASS | New probe requires all four fresh profiles |
+| Forty inventory opens lack a correlated edge; old private bytes always zero | Old latency and memory remain NOT_RUN in all four profiles; no invented replacement for old samples | NOT_RUN |
+| Late appended observer, no input diagnostics | Verified prepend API; bounded scalar input buffer, timer emission and stop counters; portable PASS | NOT_RUN |
+| PrivateUsage and working set only | Timer-thread private-commit walk with cost/completeness fields; whole-window comparer fallback; portable/unit PASS | NOT_RUN |
+| SmoothCam creates an undeployed config in a newly deployed directory | Runner journals pre-prepare names, moves generated leftovers into evidence after restore, hashes them, removes empty new directories; fake baseline/MO2 tests PASS | NOT_RUN |
+| Full route is too long for initial diagnosis | Combined rc1 `perf-probe-diag`: same copied save/500-form fixture, 3 opens, 15-second resource capture, 360-second watchdog | NOT_RUN |
+
+### Input diagnosis, supported correction and limits
+
+Source root for every CommonLib citation below:
+`session-p2-20261026/commonlib-7.2.0/`.
+
+- `include/RE/B/BSTEvent.h:34–49` appends sinks; `:131–150` dispatches in
+  array order and **breaks on kStop**. `:64–104` actually provides
+  `PrependEventSink(Sink*)`; when not notifying it inserts at the front. During
+  notification it only prepends to pending registrations, which later append.
+- `include/RE/M/MenuControls.h:25–28,59–60,92` declares MenuControls as an
+  InputEvent sink and owns MenuOpenHandler. `include/RE/P/PlayerControls.h:32–37`
+  declares the other native input sink. The engine bodies/registration order
+  and MenuControls' actual return on I are **not implemented in CommonLib**:
+  `src/RE/M/MenuControls.cpp` supplies singleton/handler wrappers, and
+  `include/RE/M/MenuOpenHandler.h:7–23` only declares the handler. Therefore
+  source does **not** prove that MenuControls returned kStop in these runs.
+  MenuOpenHandler is a nested handler, not a separately registered source sink.
+  An earlier sink can stop the chain, edit the event, or open the menu before
+  the old observer sees the edge. The latter would make the old menu-open gate
+  reject a perfectly valid down even if dispatch continued.
+- `include/RE/B/ButtonEvent.h:29–35` defines down as `value > 0 &&
+  heldDownSecs == 0`. A 50 ms tap can include a down followed by held/up;
+  short duration alone does not justify accepting held/up as a new key-down.
+  The actual delivered values were not recorded, so that alternative remains
+  testable rather than excluded. Keep the exact IsDown rule.
+- `include/RE/C/ControlMap.h:89` defaults GetMappedKey to gameplay;
+  `src/RE/C/ControlMap.cpp:28–46` searches that context's device mapping and
+  returns kInvalid if absent. Inventory/Tween Menu are resolved separately for
+  the event's actual device. Invalid devices are now rejected before indexing. The new observer mirrors
+  that first-match lookup over the declared controlMap/deviceMappings arrays
+  (`ControlMap.h:45–64,138`) with string views, avoiding GetMappedKey's temporary
+  BSFixedString interning on the hot path.
+- Old `plugin.cpp` at base: `:740` rejects inactive captures;
+  `:755` rejects an already-open InventoryMenu; `:715–728` sets/clears that
+  flag. The runner starts capture and waits for acknowledgement before I,
+  then waits three seconds for pre-open samples (`runner/executor.py`,
+  inventory_cycle). That supports active-at-down, but cannot prove it for the
+  old event without diagnostics. A reentrant native open before a late sink is
+  a plausible explanation for menuOpen-at-down.
+
+**The exact engine root cause remains unproven.** The proven design defect is
+that a late appended observer cannot promise observation before native handlers.
+The supported correction uses the existing **PrependEventSink** at kDataLoaded,
+returns kContinue, and leaves every event untouched. No assumption that
+kInputLoaded alone precedes MenuControls, no hook and no raw sink-array mutation.
+The one-time `input_registration` records probe/MenuControls/PlayerControls
+indices, sink count and notifying state. Require probe index 0 and inspect the
+native indices on the next run; later plugins can still prepend themselves.
+
+For precedent, inspected SKSE's own observer
+[PapyrusEvents.cpp, lines 182–233](https://github.com/ianpatt/skse64/blob/master/skse64/PapyrusEvents.cpp#L182-L233):
+it observes button-down/control names and updates the last-control cache in an
+input sink. [Hooks_Event.cpp, lines 27–35](https://github.com/ianpatt/skse64/blob/master/skse64/Hooks_Event.cpp#L27-L35)
+registers that sink before broadcasting InputLoaded. The observer does not need
+an additional plugin hook, but its last-control cache has no QPC edge timestamp;
+no verified hook-free menu-latency helper was found to substitute for our sink.
+No third-party implementation was copied.
+
+Each active capture counts all observed buttons, downs and accepted mapped
+edges. The first **32** button records copy only scalars and up to 63 userEvent
+bytes into a fixed buffer (truncation flagged). The timer drains that buffer
+while capture is active; stop flushes remaining records outside perfMutex.
+There is no JSON formatting, file I/O, retained event/string pointer or new
+probe allocation in the input callback. Mapping and QPC happen outside
+perfMutex; the existing fixed-array pre-open median runs only on accepted edges.
+Each `input_diag` includes device, idCode, value, heldDownSecs, userEvent,
+Inventory/Tween mappings, QPC, down/mapped/menu-open gates and accepted. The
+successful stop record adds `input_buttons_seen`, `input_downs_seen`,
+`input_accepted` and `input_diag_count`. Counters continue after the 32-record cap;
+missing counters in old evidence stay unknown in the comparer.
+
+Timing semantics are unchanged: key-down → native InventoryMenu open event,
+first process open cold, input older than **10 s** uncorrelated, pre-open median,
+six consecutive periods ≤2× median with the first qualifying period's endpoint
+as settled time, 3-second observation and first 30 periods. No painted-grid or
+runner-injection time is substituted. Zero accepted edges with no buttons,
+buttons with no downs, mismatched keys, or menuOpen=true identify different next
+hypotheses; these diagnostics must decide rather than assert a runtime fix.
+
+### Wine memory finding and bounded commit source
+
+The brief's swap-only hypothesis is **not confirmed** by the inspected Wine
+source. Wine 11.0's Linux VM counters read `/proc/self/status` or `/proc/<pid>/status`,
+add **RssAnon plus VmSwap** into PagefileUsage, and assign PrivateUsage from that
+value. [Wine process.c, lines 949–977 and 1117–1138](https://github.com/wine-mirror/wine/blob/wine-11.0/dlls/ntdll/unix/process.c#L949-L977).
+The same code appears in
+[Valve experimental_11.0, lines 970–997 and 1182–1203](https://github.com/ValveSoftware/wine/blob/experimental_11.0/dlls/ntdll/unix/process.c#L970-L997).
+Thus zero swap alone does not explain the old zeros. Exact bundled-Proton source
+identity and the old host's proc counters were not recovered here; do not claim
+that upstream source proves the deployed binary's behavior. The observed zeros
+still make PrivateUsage unusable as acceptance evidence.
+
+The original `private_bytes` and `working_set_bytes` remain raw. The added
+`private_commit_bytes` sums RegionSize only where VirtualQuery reports
+`State == MEM_COMMIT && Type == MEM_PRIVATE`, excluding reserved, mapped and image
+regions. This is private committed virtual address space, not RSS or proven
+physical/private resident usage. The existing timer thread does the entire walk;
+frame/UI/input callbacks never query virtual memory. Its streamed fields are
+`private_commit_regions` (all queried regions),
+`private_commit_matching_regions`, `private_commit_walk_us`, and
+`private_commit_complete`. Partial/error walks emit null bytes and log once.
+
+The portable walk checks zero sizes, nonprogress, base/range and byte-sum overflow,
+ends at GetSystemInfo's maximum application address, and caps work at one million
+queries or a **100 ms** elapsed deadline checked before each query. One OS query
+cannot be preempted; observed cost is emitted, not claimed ≤100 ms. Normal cost on
+Proton is **NOT_RUN** and must be reviewed in the diagnostic run. Walks are
+coalesced by the existing timerBusy guard. VirtualQuery is a moving snapshot,
+not an atomic heap census; no allocator or leak-free inference is made.
+
+Comparer choice is per profile and whole 600-second window: use private_bytes
+only if **every** sample is finite/positive; otherwise use private_commit_bytes
+only if every sample is finite/positive; otherwise NOT_RUN. Never mix sources.
+The output reports the selected source and input counters. The 1 MiB/min **and**
+105% quartile growth rule, coverage/gap checks, anchors, frame and ≤250 ms warm
+budgets are unchanged. The short diagnostic route cannot produce acceptance.
+
+### Restoration and verification
+
+The runner snapshots game-relative file names before vanilla prepare and reads
+`active-at-deploy.json`'s `dirs` plus preservation/planned files. After successful
+restore, an undeployed new regular file under a deployment-created directory is
+**moved**, with its relative path, to the run's
+`evidence/leftover-after-restore/`. restoration.json journals destination, SHA-256
+and pending/moved state. Reconciliation cannot claim PASS until complete. New
+files elsewhere are hashed/reported and retained; symlinks are reported without
+following them. Empty directories in those wholly new subtrees are pruned deepest
+first; pre-existing directories are not removed. Occupied evidence destinations
+fail without overwriting either file. MO2 bypasses this path entirely and retains
+its own Data-byte-identity/restoration contract. No runtime_profile.py or game
+installation was edited by this work.
+
+Final offline logs and per-job purpose/command/deadline/PID/cleanup records:
+`session-p4/logs/perf/proton-*.{log,job.json}`. Exact commands and changed-file
+hashes: `session-p4/logs/perf/final-probe-proton.md`.
+
+| Check | Result |
+| --- | --- |
+| Strict portable C++20 probe contracts | PASS, 8 executables |
+| Full runner suite (`timeout 600 python3 -m unittest discover -s autotest/runner/tests`) | PASS, 254 tests including 17 comparer tests |
+| Focused comparer tests | PASS, 17 tests |
+| Diagnostic simulation / full batch simulation | PASS / 4 PASS, fake control flow and clean restoration only |
+| Diagnostic / four batch dry runs | BLOCKED: Steam not running in the sandbox-visible process table; schema/plans valid, no launch attempted |
+| Four old reports re-compared | PASS: frame table byte-identical; sixteen VALID anchors; combined p95 PASS both; latency/memory NOT_RUN all four |
+| New Windows /W4 /WX /permissive- build, actual sink order/key delivery, commit-walk cost, new live diag/batch | NOT_RUN |
+
+Initial offline failures remain in logs: diagnostic wait_s=1 violated the existing
+minimum (fixed to 3); relative simulation roots duplicated fixture paths (rerun
+with absolute roots, no product/backend change). No unchanged failing retry loop.
+No integration patch, owner decision, SWF build or budget relaxation is needed.
+
+## Audit and acceptance ledger (historical rounds 1–4)
 
 | Checklist / blocker 9 item | Existing coverage | Implemented through round 4 / offline status | Runtime |
 | --- | --- | --- | --- |
