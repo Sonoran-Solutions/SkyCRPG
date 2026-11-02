@@ -11,7 +11,8 @@ LEAF_PREFIXES = {"camera": "modules/camera/", "ui": "modules/ui/", "testprobe": 
 SHARED_FILES = frozenset({
     "CMakeLists.txt", "CMakePresets.json", "vcpkg.json", "vcpkg-configuration.json",
     "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py",
-    ".github/workflows/build.yml",
+    ".github/workflows/build.yml", "LICENSE", "docs/LICENSING.md", "docs/THIRD_PARTY.md",
+    "docs/compatibility/dependency-lock.md",
 })
 SHARED_PREFIXES = ("shared/", "cmake/", "LICENSES/", ".github/actions/")
 
@@ -24,7 +25,7 @@ def select_modules(paths, requested=""):
         return list(MODULES) if requested == "both" else list(TARGETS) if requested == "all" else [requested]
     paths = tuple(paths)
     # Shared changes take precedence even when a target also changed.
-    if any(p in SHARED_FILES or p.startswith(SHARED_PREFIXES) for p in paths):
+    if any(p in SHARED_FILES or p.startswith(SHARED_PREFIXES) or p.startswith("tools/tests/test_package") for p in paths):
         return list(TARGETS)
     changed = [t for t in TARGETS if any(p.startswith(LEAF_PREFIXES[t]) for p in paths)]
     return changed or list(TARGETS)
