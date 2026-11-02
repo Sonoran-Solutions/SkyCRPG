@@ -1,8 +1,21 @@
 # Current status
 
-Updated 2026-10-28 for the Phase 3 gate. **Phase 3 is GO by owner decision with documented deferrals**; see the [Phase 3 gate](evidence/p3/gate.md). Phase 4 may start with DYL-170. This GO does not turn untested or failed requirements into passes, and it is not an MVP release.
+Updated for the Phase 4 internal candidate handoff; Phase 3 gate recorded 2026-10-28. **Phase 3 is GO by owner decision with documented deferrals**; see the [Phase 3 gate](evidence/p3/gate.md). Phase 4 is in progress. This GO does not turn untested or failed requirements into passes, and it is not an MVP release.
 
 Main `c10cd80` contains every Phase 3 merge (#15–#23). Main CI on `8eef712` [run 40753002080](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40753002080) **PASS**; on `c10cd80`, [run 40759295249](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40759295249). Main's module sources equal the tested internal candidate: UI `9a8692e` and Camera `28aae27`.
+
+## Phase 4 — internal candidates
+
+Source `6b4c0fc` (merge #29), [CI 41376680950](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41376680950). Exact archives and hashes: [acceptance handoff](evidence/p4/acceptance.md). Automated evidence does not establish owner acceptance. Public redistribution is deferred by [D023](DECISIONS.md).
+
+| Ticket | Current evidence and remaining obligation |
+| --- | --- |
+| DYL-170 | Scoped automated **PASS**, 22/22; owner approved 40 screenshots. [UI](evidence/p4/blocker-resolution-ui.md), [Camera](evidence/p4/blocker-resolution-camera.md). |
+| DYL-171 | Strict assembly/repro and bounded MO2 automated fresh, controlled update and removal **PASS** (5/5); controller, Vortex, edited-settings migration and person-followed instructions **NOT_RUN**. [Packaging](evidence/p4/packaging.md). |
+| DYL-172 | Frame cost **PASS** (combined p95 +0.58% standing, +0.72% turn) and warm inventory latency **PASS** (max 203 ms); memory **FAIL** with the optional minimap stack, also in the baseline without SkyCRPG modules and not flagged with the stack omitted. Accepted as an external-provider limitation by owner decision 2026-11-02 ([D024](DECISIONS.md)); not a pass. [Performance](evidence/p4/performance.md). |
+| DYL-173 | Packaged keyboard/mouse automated **PASS** (22/22); controller and broader coverage **NOT_RUN**. [Regression](evidence/p4/regression.md). |
+| DYL-174 | Final documentation in review; package identities cross-checked; public rights clearance deferred. [Review](evidence/p4/docs-review.md). |
+| DYL-175 | **OWNER_PLAYTEST_PENDING**. [Handoff](evidence/p4/acceptance.md) and [route](PLAYTEST.md). |
 
 ## Phase 3
 
@@ -39,7 +52,7 @@ Recorded 2026-10-26 at the Phase 2 gate. PRs #1–5 established the gate base `e
 
 [ARCHITECTURE](ARCHITECTURE.md), [ADR-001](decisions/ADR-001-stack.md) and the [acceptance matrix](compatibility/acceptance-matrix.md) retain the reviewed contracts. SmoothCam 1.8.1 owns normal third-person transforms; TDM 2.3.1 supplies movement with competing yaw/lock disabled. Native first person is the proven precision fallback. The bounded pitch/zoom/input-policy adapter is implemented in PR7 with owner-observed controls PASS; bounded collision, aiming and lifecycle work is merged through DYL-157/158/159; full coverage and the gate deferrals remain open. UI uses SkyUI 6.11 native InventoryMenu/Scaleform and engine-authoritative actions, identity and weight. The existing minimap trio works; automatic readiness-driven compass replacement remains future work. Party Sheet is optional/unverified; the DYL-161 eight-slot candidate has bounded owner-reported controller Favorites and keyboard auto-FAV dispatch PASS, with native-bound duplicate-action proof and other checks still open; see [hotbar evidence](evidence/p2/hotbar.md).
 
-Only the [recorded Steam 1.7.104 / Proton host](compatibility/runtime-matrix.md) has gameplay evidence. D015 is resolved: original source/config/docs use MIT, original artwork uses CC BY 4.0, rights holder **devils_17**; see [licensing scope](LICENSING.md). Third-party distribution rights remain DYL-171/174 work. The Phase 2 GO and its explicit deferrals are recorded in the gate; it does not establish full MVP or release acceptance.
+Only the [recorded Steam 1.7.104 / Proton host](compatibility/runtime-matrix.md) has gameplay evidence. D015 is resolved: original source/config/docs use MIT, original artwork uses CC BY 4.0, rights holder **devils_17**; see [licensing scope](LICENSING.md). Public redistribution and its third-party rights clearance are deferred by [D023](DECISIONS.md). The Phase 2 GO and its explicit deferrals are recorded in the gate; it does not establish full MVP or release acceptance.
 
 ## Gate validation and preservation
 

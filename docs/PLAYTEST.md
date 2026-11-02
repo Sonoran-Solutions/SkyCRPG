@@ -1,6 +1,6 @@
 # DYL-175 owner playtest — pending
 
-Allow about 20 minutes on an isolated profile and copied save. First complete the technical package regression; this route is not a substitute. Record date, host, executable, dependency versions, profile, source `<candidate SHA>`, CI `<candidate CI run>`, Camera `<candidate archive hash>`, UI `<candidate archive hash>`, and actual device for every segment. Owner result is **OWNER_PLAYTEST_PENDING** until played.
+Allow about 20 minutes on an isolated profile and copied save. First complete the technical package regression; this route is not a substitute. Record date, host, executable, dependency versions, profile, source `6b4c0fc6a6da4effd9faeafc9a2c59874a612271`, CI `41376680950`, Camera `e3f6d61e2d2075a10d8a31c07ccfbe9c78e324230f5c399cadbc2c3c39c86838`, UI `f508a0e1343e2f15ea825e284f57fafed1108f62eb38acbef4b72582d2d940cb`, and actual device for every segment. Owner result is **OWNER_PLAYTEST_PENDING** until played.
 
 1. **Camera-only, keyboard/mouse (6 minutes):** move outside and into an interior; zoom, recenter F7, F8 recovery, then F6 first-person precision aim and return. Check movement and ordinary inventory. Note overhead aim is a known failure.
 2. **UI-only, controller (6 minutes):** with ordinary camera, inspect player inventory, navigate categories and filter, equip/use an item and read its count/weight; inspect hotbar and follower. Check minimap outside/inside and native compass if the optional stack is absent or hidden.

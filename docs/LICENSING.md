@@ -14,4 +14,6 @@ Provider archives remain external. TDM/CommonLib exceptions, GPL/corresponding-s
 
 ## Candidate notices and source — draft for owner review
 
-The internal candidate DLLs contain statically linked CommonLibSSE-NG and are combined works under GPL-3.0-or-later subject to its exceptions; the original SkyCRPG source retains the MIT grant above. See the draft corresponding-source statement and missing third-party notices in [THIRD_PARTY](THIRD_PARTY.md). Patched SkyUI SWFs are excluded from the original grants; their public distribution and embedded art/font provenance remain unresolved. No public release is authorized by this notice.
+The internal candidate DLLs contain statically linked CommonLibSSE-NG and are combined works under GPL-3.0-or-later subject to its exceptions; the original SkyCRPG source retains the MIT grant above. See the draft corresponding-source statement and third-party notices in [THIRD_PARTY](THIRD_PARTY.md). Patched SkyUI SWFs are excluded from the original grants; their public distribution and embedded art/font provenance remain unresolved. No public release is authorized by this notice.
+
+Public redistribution and third-party rights clearance are deferred until at least Phase 5 completion by [D023](DECISIONS.md). Phase 4 candidates remain internal.

@@ -1,14 +1,21 @@
 # DYL-171 / P4-02 — independent internal candidate packaging
 
-2026-10-28. **Tooling PASS; final candidate and runtime acceptance NOT_RUN.**
+2026-10-28 tooling history; 2026-11-02 final candidate update. **Strict assembly and bounded automated MO2 routes PASS; owner acceptance pending.**
 Base `c7333c7c13284ad9d228e6f15213bc8465bd6e19`, worktree
-`phase4/dyl-171-package`. Source, Windows native build and DLL hashes for final candidates:
-**pending DYL-171 final-package generation**.
+`phase4/dyl-171-package`. Final candidate: source `6b4c0fc6a6da4effd9faeafc9a2c59874a612271`, [main CI run 41376680950](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41376680950); UI SHA-256 `f508a0e1343e2f15ea825e284f57fafed1108f62eb38acbef4b72582d2d940cb`, Camera SHA-256 `e3f6d61e2d2075a10d8a31c07ccfbe9c78e324230f5c399cadbc2c3c39c86838`. Camera DLL `f69277d6943ae6fa4e8c8d51219d114354f7ad0fbade0fde7d305fea334a60c8`; UI DLL `bdf3fa3e3372d644449ad7af720dbc4c996b8fcede8a522dddfa66c9611ee66c`.
 The assigned [ticket](https://linear.app/devils17/issue/DYL-171) and
 [Phase 4](../../phases/PHASE_4.md) were read before implementation.
 No commit, push, branch creation, game launch, live deployment or provider edit
 was performed. Artifacts and job records are outside Git at
 `/srv/storage/Projects/SkyCRPG/session-p4/logs/package/`.
+
+## Final candidate — rc1
+
+Strict `tools/package.py assemble` from clean main `6b4c0fc` produced both internal candidates above. Each has 17 entries, `candidate_eligible=true`, `distribution=internal-candidate`, and no personal paths under the package checks. Manifests and checksums: `session-p4/logs/package/rc1/{ui,camera}/`; CI native inputs: `session-p4/ci/main-6b4c0fc/`. `verify-repro` **PASS** for both: archive, manifest and checksums match a second assembly from identical inputs (`session-p4/logs/package/rc1/repro-{ui,camera}/repro.json`); this does not establish reproducible compilation. Clean-main SWFs (`session-p4/logs/package/rc1/swf/`, `swf-build.log`) match DYL-170 byte for byte.
+
+MO2 2.5.2 portable under Proton: `dyl171-mo2-rc1c` **5/5 PASS**, fresh Camera-only, UI-only, combined, controlled combined update and combined removal. Update replaced DYL-170 native ZIPs plus staged assets with rc layers, retained the old layer disabled and recorded winners; there were **no edited user settings** to preserve. Removal disabled both rc layers, left providers installed and probed native HUD/compass, stock inventory and first/third person; SmoothCam was disabled with F8 for the native camera check. The earlier `dyl171-mo2-rc1` passed technically but captured the MO2 console; the corrected window-identity rule in rc1c produced 35 game-window captures. Evidence: `session-p4/logs/mo2/live-dyl171-mo2-rc1c/summary.{md,json}`, `session-p4/autotest/runs/batch-dyl171-mo2-rc1c-0*`, `session-p4/logs/autotest/final-dyl171-mo2.md` and `final-mo2-window-target.md`. Automated results are not owner visual acceptance.
+
+Historical implementation audit follows; its future-tense statements describe the original lane, not current rc1 status.
 
 ## Audit before implementation
 
@@ -237,8 +244,7 @@ Reused SWF hashes (no new SWF compilation):
 
 ## Draft fresh installation, update and removal
 
-These are DYL-174 handoff instructions, **not yet verified in MO2/Vortex or in
-game**. Use the final eligible archives and sidecars, never the dry ZIPs above.
+These historical draft handoff instructions predate the rc1 results above; bounded automated MO2 routes now pass, while Vortex and a person following the written instructions remain **NOT_RUN**. Use the final eligible archives and sidecars, never the dry ZIPs above.
 In MO2 install each ZIP as a separate mod with its contents at Data root; in
 Vortex install each as a separate mod and set the specified file-conflict rules.
 UI's three loose movies win over SkyUI. Camera's configuration layer wins only
@@ -329,38 +335,29 @@ menus/navigation/movement on the copied save. Compare original settings/backups
 and retain conflicts for reconciliation. None of these procedures certifies
 universal mid-save uninstall safety or a live DLL unload.
 
-## Acceptance ledger and runtime route (all future game rows NOT_RUN)
+## Acceptance ledger and runtime route
 
-| Criterion | Status / evidence |
+| Criterion | Status and scope |
 | --- | --- |
-| Exact expected contents; no junk/personal text/unapproved collision/module coupling | PASS for synthetic checks and historical dry outputs; final same-commit artifact inspection NOT_RUN |
-| Archive/manifest/requirements/version/hash output | PASS for both dry outputs; source mismatches are explicitly recorded, not candidate passes |
-| Same-input assembly reproduction | PASS for synthetic UI and real historical UI/Camera archive, manifest and checksum bytes; native/SWF rebuild reproducibility NOT_RUN |
-| Fresh Camera-only, UI-only, combined installs using written instructions | NOT_RUN; final native builds/assets required |
-| Update/independent disable/removal/restart | NOT_RUN; draft is not owner acceptance |
-| Final DYL-171 ticket acceptance | NOT_RUN; runtime rows and integration work remain |
-| Public distribution/third-party rights clearance | BLOCKED pending DYL-174; no publication requested or authorized |
+| Exact contents, no junk/personal text/unapproved collision/module coupling | **PASS** strict rc1 assembly and 17 entries each; personal-path check is pattern based. |
+| Archive/manifest/requirements/version/hash output | **PASS** for both rc1 packages and sidecars. |
+| Same-input assembly reproduction | **PASS** both; DLL/SWF recompilation reproducibility **NOT_RUN**. |
+| Fresh Camera-only, UI-only, combined installs using written instructions | Automated MO2 **PASS** on each; a person following written instructions and Vortex **NOT_RUN**. |
+| Update/independent disable/removal/restart | Combined controlled update and both-layer removal **PASS**; edited settings, individual layer removal and rollback **NOT_RUN**. Disable variants have bounded [regression](regression.md) **PASS**. |
+| Final DYL-171 ticket acceptance | Bounded technical package/manager **PASS**; uncovered criteria below remain **NOT_RUN**, owner acceptance pending DYL-175. |
+| Public distribution/third-party rights clearance | **NOT_RUN**, deferred by [D023](../../DECISIONS.md) until at least Phase 5 completion. |
 
-The orchestrator must register each game job before launching: purpose, exact
-profile/command, one PID/run handle, logs, 20-minute route deadline, expected
-completion and cleanup. Use copied saves and fresh profiles; no launch is
-performed by this lane. Record Steam executable hash/runtime, SKSE, dependency
-archive/DLL versions/hashes, CommonLib 7.2.0, actual host, source `<head SHA>`,
-`<CI run>`, package/DLL/SWF hashes and final resolved file winners with results.
-State which device the owner actually used. On this Proton host turn the
-controller off for keyboard/mouse, then do a separate controller pass.
-
-| Route (repeat input steps separately on keyboard/mouse and controller) | Status |
+| Route | Status |
 | --- | --- |
-| Fresh Camera-only: install through selected manager, confirm UI DLL/movies absent; load copied save, walk/zoom/recenter, use F6/native POV for aim, F8 disable/return, native inventory and movement usable | NOT_RUN, both device passes |
-| Fresh UI-only: confirm Camera/providers absent; inspect/equip/consume/favorite/drop quantity then cancel, record numeric count/weight, use hotbar/native Favorites, recruit/dismiss follower; ordinary camera works | NOT_RUN, both device passes |
-| UI navigation: exterior/interior/load, minimap replaces compass; provider hidden/whole-stack absent restores compass. Refuse corrupt partial-provider profile before launch | NOT_RUN, both device passes |
-| Fresh combined: union of two separate layers, both controls/features, dialogue and cell/load transitions; record exactly one provider owner/file winner | NOT_RUN, both device passes |
-| Update Camera, UI, then combined from a retained prior candidate, with an edited INI/unrelated provider key; edits preserved or reported and no cross-module change | NOT_RUN |
-| Combined minus Camera, restart: UI/grid/HUD/map remain usable; restored provider camera and ordinary movement; prior SmoothCam/TDM keys preserved | NOT_RUN, both device passes |
-| Combined minus UI, restart: Camera remains usable, SkyUI/native inventory/HUD/compass restored; no orphan UI movie winner or navigation loss | NOT_RUN, both device passes |
-| Remove both, restart copied save: ordinary camera/UI/navigation/input; compare owned-key restoration, original configs/saves and clean exit | NOT_RUN, both device passes |
-| Explicit Camera fragment difference: `bHeadtrackSpine=0` versus historical combined stage's 1; check headtracking/movement with fragment applied | NOT_RUN |
+| Fresh Camera-only: controls, F6/F8, native inventory and movement | Automated keyboard/mouse Camera controls and POV **PASS**; walking, feel and native inventory manual review **NOT_RUN**; controller **NOT_RUN**. |
+| Fresh UI-only: inventory, hotbar, follower and ordinary camera | Automated inventory equipment, drop count/weight and hotbar **PASS**; follower lifecycle and ordinary camera manual review **NOT_RUN**; controller **NOT_RUN**. |
+| UI navigation: transitions, hidden/absent provider, corrupt partial provider | Automated transition/hide/show **PASS** in MO2; absence **PASS** via profile deploy; corrupt partial-provider route and controller **NOT_RUN**. |
+| Fresh combined: both controls/features, dialogue, transitions and winners | Automated HUD, inventory, map, hotbar and F6 **PASS**; dialogue and full transitions **NOT_RUN**; controller **NOT_RUN**. |
+| Update Camera, UI, then combined with edited INI/provider key | Combined update **PASS** on unedited fixture; separate updates and edited-key preservation **NOT_RUN**. |
+| Combined minus Camera, restart | Separate layer removal and preservation of edited SmoothCam/TDM keys **NOT_RUN**; combined Camera-disabled variant **PASS** via profile deploy. |
+| Combined minus UI, restart | Separate layer removal **NOT_RUN**; combined UI-disabled variant **PASS** via profile deploy. |
+| Remove both, restart copied save | Automated MO2 native HUD/compass, inventory and POV **PASS**; visual acceptance, edited-key comparison and controller **NOT_RUN**. |
+| `bHeadtrackSpine=0` fragment difference | rc1 uses repo fragment; subjective headtracking/movement assessment **NOT_RUN**. |
 
 ## Integration handoff, limitations and owner decisions
 
@@ -374,13 +371,11 @@ changes, build both native targets at that same commit, rebuild all three UI
 movies from clean includes, then run strict assemble/repro without mismatch
 flags. The orchestrator owns commits/CI/gameplay; this lane leaves a working diff.
 
-No new product/scope/provider decision is needed for the tooling. DYL-174 must
-resolve rights/notices for linked CommonLib, generated SkyUI derivative movies
-and included TDM configuration before distribution; retain corresponding-source
+No new product/scope/provider decision is needed for the tooling. Public rights clearance for generated SkyUI movies and included TDM configuration is deferred by [D023](../../DECISIONS.md); retain corresponding-source
 and font/art exclusions. The owner must still supply runtime/manager/device
 results and final playtest acceptance. The headtracking config discrepancy is
 an engineering finding for runtime review, not an owner waiver or hidden change
-to the committed fragment. Do not mark DYL-171 Done from this offline evidence.
+to the committed fragment. The later rc1 evidence above supersedes this historical offline-only warning.
 
 Post-MVP backlog candidates: automated compare-and-restore mod-manager settings
 migration; cross-host native/SWF build reproducibility. No enhancement was
