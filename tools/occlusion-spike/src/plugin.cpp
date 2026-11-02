@@ -30,7 +30,7 @@ namespace policy = skycrpg::occlusion;
 namespace json = skycrpg::testprobe;
 using policy::Mode;
 constexpr REL::Version runtime{ 1, 7, 104, 0 };
-constexpr std::uint32_t armKey = 0x47, stopKey = 0x49; // KP7 / KP9
+constexpr std::uint32_t armKey = 0x52, stopKey = 0x49; // KP0 / KP9
 constexpr char exeHash[] = "846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f";
 constexpr char libraryHash[] = "8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842";
 constexpr char smoothHash[] = "b20bf8a276bf76fbe35277dd9b25c64c57d17bfdcc20daa74a5f941c90f563da";
@@ -690,7 +690,7 @@ void ConsumeRequests()
 		!map->GetUserEventName(stopKey, RE::INPUT_DEVICE::kKeyboard).empty()) {
 		Emit("refused", json::Object{}.String("reason", "diagnostic_key_has_native_mapping")); return;
 	}
-	if (g->killed || g->inconclusive || !Eligible()) { Emit("refused", json::Object{}.String("reason", "KP7_ineligible_or_killed")); return; }
+	if (g->killed || g->inconclusive || !Eligible()) { Emit("refused", json::Object{}.String("reason", "KP0_ineligible_or_killed")); return; }
 	Drain();
 	++g->capture;
 	g->captureLabel = Setting("sCaptureLabel", "unlabeled");
@@ -700,7 +700,7 @@ void ConsumeRequests()
 		g->matched = 0; g->discarded = 0; g->keptBehind = 0;
 	}
 	if (policy::FadeMode(g->config.mode)) ApplyFade();
-	else { g->armed = true; Emit("armed", json::Object{}.String("reason", "fresh_KP7")); }
+	else { g->armed = true; Emit("armed", json::Object{}.String("reason", "fresh_KP0")); }
 	g->capturing = g->fade.applied || g->armed;
 	Emit("capture", json::Object{}.Boolean("active", g->capturing).String("label", g->captureLabel));
 	if (g->requests.pending()) Restore("request_during_arm");
@@ -850,7 +850,7 @@ void Message(SKSE::MessagingInterface::Message* message)
 		RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(&events);
 		RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(&events);
 		g->enabled = true;
-		Emit("ready", json::Object{}.String("mutation", "requires_fresh_KP7").String("restore", "KP9_F8_F6_POV_menu_load_cell_exit_kill")
+		Emit("ready", json::Object{}.String("mutation", "requires_fresh_KP0").String("restore", "KP9_F8_F6_POV_menu_load_cell_exit_kill")
 			.String("room_seed_3_policy", "standalone_armed_no_reference_clip_gate"));
 		{ std::scoped_lock lock(g->perfMutex); g->chain.start(); }
 		QueueUI(); break;
