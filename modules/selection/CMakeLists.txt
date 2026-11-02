@@ -1,0 +1,4 @@
+add_library(SkyCRPG_Selection SHARED src/plugin.cpp)
+skycrpg_configure_plugin(SkyCRPG_Selection)
+target_include_directories(SkyCRPG_Selection PRIVATE include)
+target_link_libraries(SkyCRPG_Selection PRIVATE CommonLibSSE::CommonLibSSE bcrypt)
