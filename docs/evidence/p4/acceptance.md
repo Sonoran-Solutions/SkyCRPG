@@ -21,7 +21,7 @@ Phase 4 internal candidates; automated technical results are not owner acceptanc
 | --- | --- |
 | DYL-170 | Scoped automated **PASS**; owner approved screenshots. [UI](blocker-resolution-ui.md), [Camera](blocker-resolution-camera.md). |
 | DYL-171 | Strict assembly/reproduction and MO2 automated 5/5 **PASS**, with open rows in [packaging](packaging.md). |
-| DYL-172 | In progress: frame-time captures valid, combined p95 within budget on the first capture set; inventory latency and memory evidence invalid under Proton, probe fix and full rerun in progress. [Performance](performance.md). |
+| DYL-172 | Frame cost **PASS** (combined p95 +0.58% standing, +0.72% turn) and warm inventory latency **PASS** (max 203 ms); memory **FAIL** with the optional minimap stack, also in the baseline without SkyCRPG modules and not flagged with the stack omitted. Owner decision pending. [Performance](performance.md). |
 | DYL-173 | Automated packaged regression 22/22 **PASS**, bounded to [routes](regression.md); controller **NOT_RUN**. |
 | DYL-174 | Final documentation in review; package identities cross-checked; public rights clearance deferred. [Review](docs-review.md). |
 | DYL-175 | **OWNER_PLAYTEST_PENDING**. |

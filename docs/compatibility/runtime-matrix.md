@@ -105,7 +105,7 @@ On the recorded Proton host, source `6b4c0fc`, CI `41376680950`, the rc1 archive
 | --- | --- |
 | DYL-170 | Scoped automated **PASS**; owner approved screenshots. |
 | DYL-171 | Strict package/repro and MO2 2.5.2 automated fresh, controlled combined update/removal **PASS**; Vortex, other managers and human written-instruction install **NOT_RUN**. [Packaging](../evidence/p4/packaging.md). |
-| DYL-172 | In progress: valid frame-time captures, combined p95 within budget on first capture set; inventory latency and memory invalid under Proton, probe fix and full rerun in progress. [Performance](../evidence/p4/performance.md). |
+| DYL-172 | Frame cost **PASS** (combined p95 +0.58% standing, +0.72% turn) and warm inventory latency **PASS** (max 203 ms); memory **FAIL** with the optional minimap stack, also in the baseline without SkyCRPG modules and not flagged with the stack omitted. Owner decision pending. [Performance](../evidence/p4/performance.md). |
 | DYL-173 | 22/22 bounded keyboard/mouse automated routes **PASS**; automated controller **NOT_RUN** by host policy. [Regression](../evidence/p4/regression.md). |
 | DYL-174 | Final documentation in review; redistribution clearance deferred. [Review](../evidence/p4/docs-review.md). |
 | DYL-175 | **OWNER_PLAYTEST_PENDING**; no owner acceptance claimed. [Handoff](../evidence/p4/acceptance.md). |
