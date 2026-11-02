@@ -339,17 +339,76 @@ void nativeSafety() {
     policy.refresh(active(),candidates,{},180,.01,{});
     assert(policy.latched() && policy.current() == 20);
 }
+void preRunRegressions() {
+    const std::array<std::uint32_t,7> clutterTypes{0x22,0x23,0x24,0x2f,0x1f,0x25,0x32};
+    std::vector<Candidate> refs;
+    for (std::uint32_t i = 0; i < 70; ++i) {
+        Candidate c{i+1,{1,0,0}};
+        c.activatable = interactiveType(clutterTypes[i%clutterTypes.size()]);
+        refs.push_back(c);
+    }
+    for (std::uint32_t i = 0; i < 8; ++i) refs.push_back({100+i,{10+static_cast<double>(i),0,0}});
+    unsigned attempts = 0;
+    const auto checked = lazyValidate(refs,{},180,false,8,[&](const Candidate&) {
+        ++attempts; return Validation::valid;
+    });
+    assert(attempts == 8 && checked.accepted.size() == 8 && !checked.exhausted);
+    assert(checked.accepted.front().id == 100 && checked.accepted.back().id == 107);
+    assert(interactiveType(0x1f,true)); // native carryable torches, not scenery lights
+    for (auto type : {0x18u,0x19u,0x1cu,0x1du,0x26u,0x27u,0x28u,0x2bu}) assert(interactiveType(type));
+    // Named eligibility is an adapter predicate, with no ranking bonus.
+    refs.back().activatable = false;
+    assert(rank(refs,{},180).size() == 7);
+
+    auto box = referenceBounds({0,150,0},{0,0,1.5707963267948966},1,{-140,-10,0},{140,10,30});
+    assert(validBounds(box));
+    assert(std::abs(distanceSquared({},closestPoint(box,{}))-100) < 1e-8);
+    box = referenceBounds({10,20,30},{.2,-.3,.7},2,{-10,-20,0},{10,20,60});
+    assert(validBounds(box));
+    const auto centre = boundsCentre(box);
+    assert(distanceSquared(centre,closestPoint(box,centre)) < 1e-8);
+    assert(!validBounds(referenceBounds({}, {},0,{-1,-1,-1},{1,1,1})));
+    assert(!validBounds(referenceBounds({}, {},1,{},{})));
+
+    std::uint64_t retries = 0;
+    unsigned calls = 0;
+    assert(tryReadAcquire(1,[&](std::int32_t old, std::int32_t next) {
+        assert(next == old+1); return ++calls < 3 ? old+1 : old;
+    },retries));
+    assert(calls == 3 && retries == 2);
+    calls = 0;
+    assert(!tryReadAcquire(-1,[&](std::int32_t old, std::int32_t) { ++calls; return old; },retries));
+    assert(calls == 0);
+    assert(!tryReadAcquire(0,[&](std::int32_t, std::int32_t) { ++calls; return std::int32_t{-1}; },retries));
+    assert(calls == 1); // a writer appearing after CAS stops retries immediately
+    calls = 0;
+    assert(!tryReadAcquire(0,[&](std::int32_t old, std::int32_t) { ++calls; return old+1; },retries));
+    assert(calls == 8);
+    calls = 0;
+    assert(!tryReadAcquire(0x0fffffff,[&](std::int32_t old, std::int32_t) { ++calls; return old; },retries));
+    assert(calls == 0);
+    RefreshGate gate; gate.last = 1;
+    assert(!gate.due(1.01,.1)); gate.reset(); assert(gate.due(1.01,.1));
+    CycleRequests edges;
+    assert(edges.post(1) && edges.post(-1));
+    assert(CycleRequests::count(edges.take()) == 2 && CycleRequests::count(edges.take()) == 0);
+}
 void eventDiagnostics() {
     EventLog events;
     assert(events.observe(EventKind::choose,10,EventSource::nearest,"none") == EventEmission::row);
     assert(events.observe(EventKind::choose,10,EventSource::external,"none") == EventEmission::row);
     assert(events.observe(EventKind::cycle,10,EventSource::cycle,"next") == EventEmission::row);
-    assert(events.observe(EventKind::cycle,10,EventSource::cycle,"next") == EventEmission::none);
+    assert(events.observe(EventKind::cycle,10,EventSource::cycle,"next") == EventEmission::row);
     assert(events.observe(EventKind::pick,10,EventSource::nearest,"none") == EventEmission::row);
     assert(events.observe(EventKind::pick,20,EventSource::nearest,"none") == EventEmission::row);
     for (unsigned i = 0; i < 10000; ++i)
-        assert(events.observe(EventKind::pick,i % 2 ? 10 : 20,EventSource::nearest,"none") == EventEmission::none);
-    assert(events.sequence() == 5 && events.suppressed() == 10001);
+        assert(events.observe(EventKind::pick,20,EventSource::nearest,"none") == EventEmission::none);
+    assert(events.sequence() == 6 && events.suppressed() == 10000);
+    assert(events.observe(EventKind::pick,10,EventSource::nearest,"none",10) == EventEmission::row);
+    assert(events.observe(EventKind::pick,10,EventSource::nearest,"none",20) == EventEmission::row);
+    assert(events.observe(EventKind::pick,10,EventSource::nearest,"none",10) == EventEmission::row);
+    assert(events.observe(EventKind::pick,20,EventSource::nearest,"none",10) == EventEmission::row);
+    assert(events.observe(EventKind::pick,10,EventSource::nearest,"none",10) == EventEmission::row);
     assert(events.observe(EventKind::pick,10,EventSource::native,"menu") == EventEmission::row);
     assert(events.observe(EventKind::latch,10,EventSource::nearest,"timeout") == EventEmission::row);
     assert(events.observe(EventKind::latch,10,EventSource::nearest,"movement") == EventEmission::row);
@@ -401,6 +460,6 @@ void eventDiagnostics() {
         "selection event=dropped seq=2001 ms=13000 reason=budget limit=2000");
 }
 int main() {
-    ranking(); latches(); passthroughTable(); inputEdges(); configurationAndBudget(); accessGate(); nativeSafety(); requestsAndLazyValidation(); eventDiagnostics();
-    std::cout << "PASS selection: surface rank/ties/long rotated bench, latch/wrap/invalidation, passthrough, edges, config/budget/API layout, pool-thread/reentrancy gate, atomic FIFO, lazy validation/unknown rays/native seeding/body probes, sneak/combat/telekinesis/collider safety, event keys/suppression/budget/format\n";
+    ranking(); latches(); passthroughTable(); inputEdges(); configurationAndBudget(); accessGate(); nativeSafety(); requestsAndLazyValidation(); preRunRegressions(); eventDiagnostics();
+    std::cout << "PASS selection: surface rank/ties/long rotated bench, latch/wrap/invalidation, passthrough, edges, config/budget/API layout, pool-thread/reentrancy gate, atomic FIFO, lazy validation/unknown rays/native seeding/body probes, sneak/combat/telekinesis/collider safety, cheap clutter filtering/reference poses/bounded reader retries, event pairs/repeated cycles/suppression/budget/format\n";
 }

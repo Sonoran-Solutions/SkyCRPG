@@ -39,6 +39,42 @@ inline bool validBounds(const Bounds& b) {
     }
     return true;
 }
+// Skyrim reference Euler rotation: clockwise yaw; columns map OBND to world.
+inline Bounds referenceBounds(Point position, Point angles, double scale, Point low, Point high) {
+    Bounds b{position,multiply(low,scale),multiply(high,scale)};
+    const auto sx = std::sin(angles.x), cx = std::cos(angles.x);
+    const auto sy = std::sin(angles.y), cy = std::cos(angles.y);
+    const auto sz = std::sin(angles.z), cz = std::cos(angles.z);
+    b.axes = {Point{cy*cz,sx*sy*cz-cx*sz,cx*sy*cz+sx*sz},
+        Point{cy*sz,sx*sy*sz+cx*cz,cx*sy*sz-sx*cz},Point{-sy,sx*cy,cx*cy}};
+    b.available = finite(angles) && std::isfinite(scale) && scale > 0;
+    return b;
+}
+// Hash-pinned base form types; portable so clutter rejection precedes the cap.
+constexpr bool interactiveType(std::uint32_t type, bool carryLight = false) {
+    switch (type) {
+    case 0x18: case 0x19: // ACTI, TACT
+    case 0x1a: case 0x1b: case 0x1c: case 0x1d: case 0x1e: // items/container/door
+    case 0x20: case 0x21: // MISC, APPA
+    case 0x26: case 0x27: case 0x28: // TREE, FLOR, FURN
+    case 0x29: case 0x2a: case 0x2b: // WEAP, AMMO, NPC
+    case 0x2d: case 0x2e: case 0x30: case 0x34: // KEYM, ALCH, NOTE, SLGM
+        return true;
+    case 0x1f: return carryLight;
+    default: return false;
+    }
+}
+// CAS returns the observed old word. Retry reader churn, never a writer; keep
+// the native low-28-bit reader count and reject overflow without signed UB.
+template<class CAS> bool tryReadAcquire(std::int32_t old, CAS compare, std::uint64_t& retries) {
+    for (unsigned attempt = 0; attempt < 8 && old >= 0; ++attempt) {
+        if ((old & 0x0fffffff) == 0x0fffffff) return false;
+        const auto observed = compare(old,old+1);
+        if (observed == old) return true;
+        ++retries; old = observed;
+    }
+    return false;
+}
 inline Point closestPoint(const Bounds& b, Point p) {
     const auto offset = subtract(p,b.origin);
     const std::array low{b.low.x,b.low.y,b.low.z}, high{b.high.x,b.high.y,b.high.z};
@@ -193,6 +229,11 @@ public:
         return false;
     }
     std::uint32_t take() { return pending_.exchange(0); }
+    static std::uint32_t count(std::uint32_t batch) {
+        std::uint32_t result = 0;
+        while (batch) { ++result; batch >>= 2; }
+        return result;
+    }
     static int pop(std::uint32_t& batch) {
         const auto code = batch & 3u; batch >>= 2;
         return code == 1 ? 1 : code == 2 ? -1 : 0;
@@ -406,20 +447,31 @@ struct SelectionEvent {
 class EventLog {
 public:
     static constexpr std::uint32_t limit = 2000;
-    EventEmission observe(EventKind kind, std::uint32_t id, EventSource source, std::string_view reason) {
-        for (std::uint32_t i = 0; i < used_; ++i) {
-            auto& key = keys_[i];
-            if (key.kind == kind && key.id == id && key.source == source && key.reason == reason) {
-                ++key.suppressed; ++suppressed_; return EventEmission::none;
+    EventEmission observe(EventKind kind, std::uint32_t id, EventSource source, std::string_view reason,
+        std::uint32_t nativeID = 0) {
+        // Every accepted physical cycle and every change of final pick pair
+        // must remain observable, including A -> B -> A and single-entry wrap.
+        bool duplicate = false;
+        if (kind == EventKind::pick) {
+            duplicate = havePick_ && lastPick_.id == id && lastPick_.nativeID == nativeID &&
+                lastPick_.source == source && lastPick_.reason == reason;
+            lastPick_ = {kind,id,source,reason,nativeID}; havePick_ = true;
+        } else if (kind != EventKind::cycle) {
+            for (std::uint32_t i = 0; i < keyCount_; ++i) {
+                const auto& key = keys_[i];
+                if (key.kind == kind && key.id == id && key.source == source && key.reason == reason) {
+                    duplicate = true; break;
+                }
             }
         }
+        if (duplicate) { ++suppressed_; return EventEmission::none; }
         if (used_ == limit) {
             ++suppressed_;
             if (dropped_) return EventEmission::none;
             dropped_ = true; ++sequence_; return EventEmission::dropped;
         }
-        keys_[used_++] = {kind,id,source,reason,0};
-        ++sequence_; return EventEmission::row;
+        if (kind != EventKind::pick && kind != EventKind::cycle) keys_[keyCount_++] = {kind,id,source,reason,nativeID};
+        ++used_; ++sequence_; return EventEmission::row;
     }
     [[nodiscard]] std::uint32_t sequence() const { return sequence_; }
     [[nodiscard]] std::uint64_t suppressed() const { return suppressed_; }
@@ -429,10 +481,12 @@ private:
         std::uint32_t id = 0;
         EventSource source{};
         std::string_view reason;
-        std::uint64_t suppressed = 0;
+        std::uint32_t nativeID = 0;
     };
     std::array<Key,limit> keys_{};
-    std::uint32_t used_ = 0, sequence_ = 0;
+    Key lastPick_{};
+    std::uint32_t used_ = 0, keyCount_ = 0, sequence_ = 0;
+    bool havePick_ = false;
     std::uint64_t suppressed_ = 0;
     bool dropped_ = false;
 };

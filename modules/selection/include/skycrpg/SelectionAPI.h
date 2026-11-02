@@ -55,7 +55,9 @@ using GetAPI = const Interface* (*)(std::uint32_t requestedVersion);
 // validatedLast counts expensive predicate/LOS attempts (<=16 per refresh,
 // including <=8 retained latch members). lastCostMicros measures the scan;
 // lastPickCostMicros includes due scans and fresh selected/external validation.
+// Each validation uses <=3 body LOS rays plus <=3 native-layer ACTI rays.
+// Activation text is cached by accepted scan membership; never read per Pick.
 // raysTotal includes all paths. SmoothCam's second Pick shares the refresh gate.
-// eventSuppressed counts duplicate/budget-suppressed event keys; requestDrops
+// eventSuppressed counts duplicate/budget-suppressed event rows; requestDrops
 // counts full/contended cycle mailboxes. No cursor or activation action is built.
 } // namespace skycrpg::selection::api

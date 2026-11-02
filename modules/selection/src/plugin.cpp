@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstring>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -25,7 +26,9 @@ static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
 static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
 static_assert(sizeof(RE::BSSpinLock) == 8 && sizeof(RE::BSReadWriteLock) == 8);
 static_assert(offsetof(RE::TESBoundObject,boundData) == 0x20);
-static_assert(offsetof(RE::NiAVObject,worldBound) == 0xe4);
+static_assert(offsetof(RE::TESWorldSpace,skyCell) == 0xf8);
+static_assert(static_cast<unsigned>(RE::COL_LAYER::kCustomPick2) == 44);
+static_assert(static_cast<unsigned>(RE::COL_LAYER::kLOS) == 41);
 static_assert(offsetof(RE::CrosshairPickData,target) == 4);
 static_assert(offsetof(RE::CrosshairPickData,targetActor) == 8);
 static_assert(offsetof(RE::CrosshairPickData,grabPickRef) == 12);
@@ -41,13 +44,15 @@ Settings settings;
 Policy policy;
 RefreshGate gate, externalGate;
 std::array<FreshPress,4> keys;
-std::vector<RE::ObjectRefHandle> handles;
 struct RefIdentity { std::uint32_t id; RE::ObjectRefHandle handle; };
 std::vector<RefIdentity> identities;
 std::vector<RE::NiPointer<RE::TESObjectREFR>> discovered;
 api::Snapshot counters;
 std::filesystem::path iniPath;
 AccessGate accessGate, inputGate, logGate, flushGate;
+std::uint64_t worldContentions = 0, worldRetries = 0, cellContentions = 0, discardedEdges = 0, cycleRefusals = 0;
+std::atomic<std::uint64_t> refusedPresses{0};
+bool scanContended = false;
 CycleRequests cycleRequests;
 std::atomic<std::uint64_t> externalRequest{0}; // bit32 marks a request; low32=0 releases
 std::atomic<std::uint32_t> menuState{0}; // known / blocking / dialogue
@@ -83,7 +88,9 @@ Pick previousPick = nullptr;
 std::array<std::array<char,768>,256> logRows{};
 std::size_t logCount = 0;
 std::atomic<std::uint64_t> logDrops{0};
-std::filesystem::path logPath;
+// Process-lifetime path: the nonjoining flush worker must not race its destructor.
+std::filesystem::path& logPath = *new std::filesystem::path;
+HANDLE flushStop = nullptr;
 void log(const char* text) {
     if (!logGate.enter()) { ++logDrops; return; }
     if (logCount < logRows.size()) {
@@ -92,7 +99,7 @@ void log(const char* text) {
     } else ++logDrops;
     logGate.leave();
 }
-// Called only by input/menu/lifecycle callbacks, never by Pick or its API.
+// Never called by Pick or its API; the diagnostic worker has no engine calls.
 void flushLog() {
     if (!flushGate.enter()) return;
     static std::array<std::array<char,768>,256> rows{};
@@ -112,6 +119,25 @@ void flushLog() {
         } else logDrops.fetch_add(dropped+count);
     }
     flushGate.leave();
+}
+DWORD WINAPI flushWorker(void*) {
+    while (WaitForSingleObject(flushStop,250) == WAIT_TIMEOUT) flushLog();
+    return 0;
+}
+void stopFlushWorker() { if (flushStop) SetEvent(flushStop); }
+void startFlushWorker() {
+    if (!diagnostics) return;
+    flushStop = CreateEventW(nullptr,TRUE,FALSE,nullptr);
+    if (!flushStop) { log("Diagnostic flush worker unavailable: event creation failed."); return; }
+    if (std::atexit(stopFlushWorker) != 0) {
+        CloseHandle(flushStop); flushStop = nullptr;
+        log("Diagnostic flush worker unavailable: exit registration failed."); return;
+    }
+    const auto thread = CreateThread(nullptr,0,flushWorker,nullptr,0,nullptr);
+    if (thread) CloseHandle(thread);
+    else log("Diagnostic flush worker unavailable: thread creation failed.");
+    // No join under process teardown. Windows reclaims the stop event and ends
+    // remaining threads on process exit; live DLL unload is unsupported.
 }
 void threadLog(bool pickThread) {
     static std::atomic<bool> picked{false}, inputSeen{false};
@@ -213,8 +239,8 @@ void selectionEvent(EventKind kind, std::uint32_t id, EventSource source, std::s
     RE::TESObjectREFR* ref = nullptr);
 EventSource selectionSource() { return policy.latched() ? latchSource : EventSource::nearest; }
 void reset() {
-    policy.reset(); handles.clear(); identities.clear(); scannedIDs.clear(); cellID = 0; gate.reset();
-    scanReady = false; inputAllowed.store(false); cycleRequests.take(); externalRequest.store(0);
+    policy.reset(); identities.clear(); discovered.clear(); scannedIDs.clear(); cellID = 0; gate.reset();
+    scanReady = false; inputAllowed.store(false); discardedEdges += CycleRequests::count(cycleRequests.take()); externalRequest.store(0);
     counters.target = 0; counters.candidateCount = 0; counters.latched = 0; counters.available = 0;
     counters.externalResult = static_cast<std::uint32_t>(api::Result::unavailable);
     counters.passthrough = static_cast<std::uint32_t>(Pass::invalidWorld);
@@ -253,7 +279,8 @@ Context context() {
     c.reads = player && camera && camera->currentState && (menusSnapshot & 1u) && controls && map &&
         map->controlMap[RE::UserEvents::INPUT_CONTEXT_ID::kGameplay] && RE::CrosshairPickData::GetSingleton();
     if (!c.reads) return c;
-    c.world = player->GetParentCell() && player->GetParentCell()->IsAttached() && player->Is3DLoaded() &&
+    const auto parent = player->GetParentCell();
+    c.world = parent && parent->IsAttached() && player->Is3DLoaded() &&
         finite(point(player->GetPosition()));
     c.dead = player->IsDead();
     c.firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
@@ -294,19 +321,14 @@ bool visibleNode(RE::NiAVObject* node, RE::NiAVObject* root) {
 }
 Bounds bounds(RE::TESObjectREFR* ref, bool report = true) {
     Bounds b;
-    const auto root = ref->Get3D();
-    if (!root) return b;
-    const auto scale = root->world.scale;
-    b.origin = point(root->world.translate);
+    if (!ref) return b;
     const auto base = ref->GetBaseObject();
     if (!base) return b;
-    // OBND is reference-independent data; virtual bound getters use global scratch.
+    // Reference pose + immutable OBND avoids thousands of scene-graph reads.
     const auto low = base->boundData.boundMin, high = base->boundData.boundMax;
-    b.low = multiply({static_cast<double>(low.x),static_cast<double>(low.y),static_cast<double>(low.z)},scale);
-    b.high = multiply({static_cast<double>(high.x),static_cast<double>(high.y),static_cast<double>(high.z)},scale);
-    for (std::size_t i = 0; i < 3; ++i) b.axes[i] = {
-        root->world.rotate.entry[0][i],root->world.rotate.entry[1][i],root->world.rotate.entry[2][i]};
-    b.available = std::isfinite(scale) && scale > 0;
+    b = referenceBounds(point(ref->GetPosition()),point(ref->GetAngle()),ref->GetScale(),
+        {static_cast<double>(low.x),static_cast<double>(low.y),static_cast<double>(low.z)},
+        {static_cast<double>(high.x),static_cast<double>(high.y),static_cast<double>(high.z)});
     if (!validBounds(b)) {
         b.available = false;
         if (report && boundsLogs < 8) { ++boundsLogs; log("Bound box unavailable/invalid: using reference origin for distance."); }
@@ -316,12 +338,6 @@ Bounds bounds(RE::TESObjectREFR* ref, bool report = true) {
 Point bodyCentre(RE::PlayerCharacter* player) {
     const auto box = bounds(player,false);
     if (validBounds(box)) return boundsCentre(box);
-    const auto root = player->Get3D();
-    if (root && std::isfinite(root->worldBound.radius) && root->worldBound.radius > 0 && finite(point(root->worldBound.center))) {
-        static bool reported = false;
-        if (!reported) { reported = true; log("selection body_centre=world_bound (base OBND unavailable)"); }
-        return point(root->worldBound.center);
-    }
     forwardReason("body_centre_unavailable");
     return {std::numeric_limits<double>::quiet_NaN(),0,0};
 }
@@ -330,23 +346,34 @@ Candidate candidate(RE::TESObjectREFR* ref, RE::PlayerCharacter* player) {
     if (!ref) { c.loaded = false; return c; }
     c.id = ref->GetFormID(); c.position = point(ref->GetPosition());
     c.player = ref == player; c.disabled = ref->IsDisabled(); c.deleted = ref->IsDeleted();
-    const auto root = ref->Get3D();
-    c.loaded = root && ref->GetParentCell() && ref->GetParentCell()->IsAttached();
-    c.liveActor = liveActor(ref);
+    const auto base = ref->GetBaseObject();
+    const auto parent = ref->GetParentCell();
+    c.loaded = parent && parent->IsAttached();
     c.activatable = false;
-    if (c.player || c.disabled || c.deleted || !c.loaded || !ref->GetBaseObject()) return c;
+    if (c.player || c.disabled || c.deleted || !c.loaded || !base) return c;
+    const auto type = base->GetFormType();
+    const bool carryLight = type == RE::FormType::Light && static_cast<RE::TESObjectLIGH*>(base)->CanBeCarried();
+    if (!interactiveType(static_cast<std::uint32_t>(type),carryLight)) return c;
+    // Same cheap name predicate as native canPick at 40B1FE, before the cap.
+    const auto name = ref->GetDisplayFullName();
+    if (!name || !*name) return c;
+    c.loaded = ref->Is3DLoaded();
+    if (!c.loaded) return c;
+    c.liveActor = liveActor(ref);
     if ((ref->GetFormFlags() & 0x800000u) && ref->GetFormType() != RE::FormType::ActorCharacter) return c;
     c.bounds = bounds(ref);
     c.activatable = true;
     return c;
 }
-bool nativeEligible(RE::TESObjectREFR* ref, RE::PlayerCharacter* player) {
+bool nativeEligible(RE::TESObjectREFR* ref, RE::PlayerCharacter* player, bool checkText) {
     using CanPick = bool(*)(RE::CrosshairPickData*,RE::TESObjectREFR*);
     static REL::Relocation<CanPick> canPick{REL::ID(26130)};
     if (!canPick(RE::CrosshairPickData::GetSingleton(),ref)) return false;
     float filtered = 0;
     RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kFilterActivation,player,ref,&filtered);
     if (filtered != 0) return false;
+    if (!checkText || liveActor(ref)) return true;
+    // Scan-only cache: live NPC text reads process state and is never called here.
     // The prompt supplies R9B=true; CommonLib's declaration omits that argument.
     using ActivateText = bool(*)(RE::TESBoundObject*,RE::TESObjectREFR*,RE::BSString*,bool);
     const auto base = ref->GetBaseObject();
@@ -354,14 +381,16 @@ bool nativeEligible(RE::TESObjectREFR* ref, RE::PlayerCharacter* player) {
     RE::BSString text;
     return reinterpret_cast<ActivateText>(vtable[0x4c])(base,ref,&text,true) && !text.empty();
 }
-// Hash-pinned lock layouts: one CAS attempt, no spin/sleep. See evidence audit.
+// Hash-pinned layouts. Retry reader churn at most eight times; never wait on a writer.
 struct TryWorldRead {
     volatile LONG* word;
     bool acquired;
     explicit TryWorldRead(RE::BSReadWriteLock& lock) :
         word(reinterpret_cast<volatile LONG*>(reinterpret_cast<std::byte*>(&lock)+4)), acquired(false) {
-        const LONG old = InterlockedCompareExchange(word,0,0);
-        if (old >= 0 && old < 0x0fffffff) acquired = InterlockedCompareExchange(word,old+1,old) == old;
+        acquired = tryReadAcquire(static_cast<std::int32_t>(InterlockedCompareExchange(word,0,0)),
+            [&](std::int32_t old, std::int32_t next) {
+                return static_cast<std::int32_t>(InterlockedCompareExchange(word,next,old));
+            },worldRetries);
     }
     ~TryWorldRead() { if (acquired) InterlockedDecrement(word); }
 };
@@ -378,10 +407,9 @@ struct TryCellLock {
 };
 Validation bodyLOS(RE::TESObjectREFR* ref, RE::PlayerCharacter* player, const Candidate& value, ScanBudget& rays) {
     const auto cell = player->GetParentCell();
-    const auto world = cell ? cell->GetbhkWorld() : nullptr;
-    const RE::NiPointer<RE::NiAVObject> root{ref->Get3D()};
+    const auto world = cell && cell->IsAttached() ? cell->GetbhkWorld() : nullptr;
     const auto controller = player->GetCharController();
-    if (!world || !root || !controller) return Validation::unknown;
+    if (!world || !controller) return Validation::unknown;
     const auto origin = bodyCentre(player);
     const float scale = RE::bhkWorld::GetWorldScale();
     if (!finite(origin) || !std::isfinite(scale) || scale <= 0) return Validation::unknown;
@@ -390,47 +418,69 @@ Validation bodyLOS(RE::TESObjectREFR* ref, RE::PlayerCharacter* player, const Ca
     const bool needsCollision = ref->GetBaseObject()->GetFormType() == RE::FormType::Activator;
     const auto targets = losPoints(value,origin);
     for (const auto target : targets) {
-        if (!rays.inspect()) return Validation::unknown;
         if (!finite(target)) return Validation::unknown;
-        RE::bhkPickData ray{};
-        ray.rayInput.from = RE::hkVector4(static_cast<float>(origin.x)*scale,static_cast<float>(origin.y)*scale,static_cast<float>(origin.z)*scale,0);
-        ray.rayInput.to = RE::hkVector4(static_cast<float>(target.x)*scale,static_cast<float>(target.y)*scale,static_cast<float>(target.z)*scale,0);
-        ray.rayInput.filterInfo.filter = (filter.filter & 0xffff0000u) | 41u;
-        ray.rayInput.enableShapeCollectionFilter = false;
-        ray.rayOutput.Reset();
         TryWorldRead lock(world->worldLock);
-        if (!lock.acquired) { forwardReason("world_lock_contended"); return Validation::unknown; }
-        if (!world->GetWorld1()) return Validation::unknown;
-        ++counters.raysTotal;
-        world->PickObject(ray);
-        if (ray.pickFailed) { forwardReason("ray_refused_unknown"); return Validation::unknown; }
-        const auto hit = ray.rayOutput.rootCollidable;
-        if (!hit) { if (!needsCollision) return Validation::valid; }
-        else if (RE::TESHavokUtilities::FindCollidableRef(*hit) == ref) {
-            const auto node = RE::TESHavokUtilities::FindCollidableObject(*hit);
-            if (node && visibleNode(node,root.get())) return Validation::valid;
+        if (!lock.acquired) {
+            ++worldContentions; scanContended = true;
+            forwardReason("world_lock_contended"); return Validation::unknown;
         }
+        if (!world->GetWorld1() || player->GetParentCell() != cell) return Validation::unknown;
+        // Never retain/increment a raw root pointer. Only compare its identity;
+        // hit-node ancestry is read under the physics read lock, root excluded.
+        const auto root = ref->Get3D();
+        if (!root) return Validation::unknown;
+        const auto cast = [&](RE::COL_LAYER layer, bool requireHit) {
+            if (!rays.inspect()) return Validation::unknown;
+            RE::bhkPickData ray{};
+            ray.rayInput.from = RE::hkVector4(static_cast<float>(origin.x)*scale,static_cast<float>(origin.y)*scale,static_cast<float>(origin.z)*scale,0);
+            ray.rayInput.to = RE::hkVector4(static_cast<float>(target.x)*scale,static_cast<float>(target.y)*scale,static_cast<float>(target.z)*scale,0);
+            ray.rayInput.filterInfo.filter = (filter.filter & 0xffff0000u) | static_cast<std::uint32_t>(layer);
+            ray.rayInput.enableShapeCollectionFilter = false;
+            ray.rayOutput.Reset();
+            ++counters.raysTotal;
+            world->PickObject(ray);
+            if (ray.pickFailed || ref->Get3D() != root) {
+                forwardReason("ray_refused_or_root_changed"); return Validation::unknown;
+            }
+            const auto hit = ray.rayOutput.rootCollidable;
+            if (!hit) return requireHit ? Validation::invalid : Validation::valid;
+            if (RE::TESHavokUtilities::FindCollidableRef(*hit) != ref) return Validation::invalid;
+            const auto node = RE::TESHavokUtilities::FindCollidableObject(*hit);
+            const bool visible = node && visibleNode(node,root);
+            if (ref->Get3D() != root) return Validation::unknown;
+            return visible ? Validation::valid : Validation::invalid;
+        };
+        const auto los = cast(RE::COL_LAYER::kLOS,false);
+        if (los == Validation::unknown) return los;
+        if (los != Validation::valid) continue;
+        if (!needsCollision) return Validation::valid;
+        const auto collision = cast(RE::COL_LAYER::kCustomPick2,true);
+        if (collision != Validation::invalid) return collision;
     }
     return Validation::invalid;
 }
 Validation validateTarget(RE::TESObjectREFR* ref, RE::PlayerCharacter* player,
-    const Candidate& value, Point body, double radius, ScanBudget& rays) {
-    if (!ref || !rankable(value,lastSneaking) || !eligible(value,body,radius) || !nativeEligible(ref,player))
+    const Candidate& value, Point body, double radius, ScanBudget& rays, bool checkText = false) {
+    if (!ref || !rankable(value,lastSneaking) || !eligible(value,body,radius) || !nativeEligible(ref,player,checkText))
         return Validation::invalid;
     return bodyLOS(ref,player,value,rays);
 }
 bool collect(RE::PlayerCharacter* player, double radius, ScanBudget& budget, ScanBudget& visits) {
     const auto tes = RE::TES::GetSingleton();
     if (!tes) return false;
-    handles.clear(); identities.clear(); scannedIDs.clear(); discovered.clear();
+    scannedIDs.clear(); discovered.clear();
     // The native pick is considered even outside the bounded origin horizon.
-    if (nativeTarget && budget.inspect()) handles.push_back(nativeTarget);
+    const auto native = nativeTarget.get();
+    if (native && budget.inspect()) discovered.push_back(native);
     const auto position = bodyCentre(player);
     auto scan = [&](RE::TESObjectCELL* cell) {
         if (!cell || !cell->IsAttached() || !budget.complete || !visits.complete) return;
         auto& data = cell->GetRuntimeData();
         TryCellLock lock(data.spinLock);
-        if (!lock.acquired) { budget.complete = false; forwardReason("cell_lock_contended"); return; }
+        if (!lock.acquired) {
+            ++cellContentions; scanContended = true;
+            budget.complete = false; forwardReason("cell_lock_contended"); return;
+        }
         for (const auto& entry : data.references) {
             const auto ref = entry.get();
             if (!ref) continue;
@@ -438,7 +488,7 @@ bool collect(RE::PlayerCharacter* player, double radius, ScanBudget& budget, Sca
             if (ref == player || !inBroadPhase(position,point(ref->GetPosition()),radius,settings.boundsPadding))
                 continue;
             if (!budget.inspect()) break;
-            discovered.emplace_back(ref);
+            if (ref != native.get()) discovered.push_back(entry);
         }
     };
     if (tes->interiorCell) scan(tes->interiorCell);
@@ -457,27 +507,18 @@ bool collect(RE::PlayerCharacter* player, double radius, ScanBudget& budget, Sca
                     std::clamp(position.y,bottom,bottom+4096),position.z};
                 if (inBroadPhase(position,closest,radius,settings.boundsPadding)) scan(cell);
             }
+        const auto ws = tes->GetRuntimeData2().worldSpace;
+        if (ws && budget.complete && visits.complete) scan(ws->skyCell);
     }
-    const auto ws = tes->GetRuntimeData2().worldSpace;
-    if (ws && budget.complete && visits.complete) scan(ws->GetSkyCell());
-    for (const auto& ref : discovered) {
-        const auto handle = ref->CreateRefHandle();
-        if (handle && handle != nativeTarget) handles.push_back(handle);
-    }
-    discovered.clear();
-    for (const auto& handle : handles) {
-        const auto ref = handle.get();
-        if (ref) {
-            scannedIDs.push_back(ref->GetFormID());
-            identities.push_back({ref->GetFormID(),handle});
-        }
-    }
+    for (const auto& ref : discovered) scannedIDs.push_back(ref->GetFormID());
     return budget.complete && visits.complete;
 }
 void selectionEvent(EventKind kind, std::uint32_t id, EventSource source, std::string_view reason,
     RE::TESObjectREFR* ref) {
     if (!diagnostics) return;
-    const auto emission = eventLog.observe(kind,id,source,reason);
+    const auto native = nativeTarget.get();
+    const auto nativeID = native ? native->GetFormID() : 0;
+    const auto emission = eventLog.observe(kind,id,source,reason,nativeID);
     if (emission == EventEmission::none) return;
     const auto now = std::chrono::steady_clock::now();
     static const auto start = now;
@@ -485,8 +526,7 @@ void selectionEvent(EventKind kind, std::uint32_t id, EventSource source, std::s
     SelectionEvent event;
     if (emission == EventEmission::row) {
         event.kind = kind; event.id = id; event.source = source; event.reason = reason;
-        const auto native = nativeTarget.get();
-        event.nativeID = native ? native->GetFormID() : 0;
+        event.nativeID = nativeID;
         const auto selected = ref ? RE::NiPointer<RE::TESObjectREFR>{} : reference(id);
         if (!ref) ref = selected.get();
         const auto player = RE::PlayerCharacter::GetSingleton();
@@ -515,12 +555,17 @@ void publish() {
 void diagnostic(double now) {
     if (!diagnostics || diagnosticCount >= diagnosticLimit || now-diagnosticTime < 5) return;
     diagnosticTime = now; ++diagnosticCount;
-    char line[384]{};
-    std::snprintf(line,sizeof(line),"selection target=%08X candidates=%u latch=%u pass=%u radius=%.2f inspected=%u scans=%llu capped=%u rays=%llu cost_us=%llu visits=%u scan_rays=%u picks=%llu suppressed=%llu validated=%u",
+    char line[768]{};
+    std::snprintf(line,sizeof(line),"selection target=%08X candidates=%u latch=%u pass=%u radius=%.2f inspected=%u scans=%llu capped=%u rays=%llu cost_us=%llu visits=%u scan_rays=%u picks=%llu suppressed=%llu validated=%u world_contended=%llu world_retries=%llu cell_contended=%llu refused_presses=%llu discarded_edges=%llu cycle_refusals=%llu pick_cost_us=%llu cycles=%llu request_drops=%llu",
         counters.target,counters.candidateCount,counters.latched,counters.passthrough,counters.radius,counters.inspectedLast,
         static_cast<unsigned long long>(counters.refreshes),counters.cappedScans,
         static_cast<unsigned long long>(counters.raysTotal),static_cast<unsigned long long>(counters.lastCostMicros),counters.visitedLast,counters.scanRaysLast,
-        static_cast<unsigned long long>(counters.pickChecks),static_cast<unsigned long long>(eventLog.suppressed()),counters.validatedLast);
+        static_cast<unsigned long long>(counters.pickChecks),static_cast<unsigned long long>(eventLog.suppressed()),counters.validatedLast,
+        static_cast<unsigned long long>(worldContentions),static_cast<unsigned long long>(worldRetries),
+        static_cast<unsigned long long>(cellContentions),static_cast<unsigned long long>(refusedPresses.load()),
+        static_cast<unsigned long long>(discardedEdges),static_cast<unsigned long long>(cycleRefusals),
+        static_cast<unsigned long long>(counters.lastPickCostMicros),static_cast<unsigned long long>(counters.cyclesTotal),
+        static_cast<unsigned long long>(requestDrops.load()));
     log(line);
 }
 bool refresh(double now) {
@@ -530,9 +575,9 @@ bool refresh(double now) {
     if (state != lastState || c.sneaking != lastSneaking) gate.reset();
     lastState = state; lastSneaking = c.sneaking;
     if (state != Pass::none) {
-        policy.refresh(c,{}, {},0,now,settings); handles.clear();
+        policy.refresh(c,{}, {},0,now,settings); identities.clear();
         scanReady = false; inputAllowed.store(false);
-        cycleRequests.take(); externalRequest.store(0);
+        discardedEdges += CycleRequests::count(cycleRequests.take()); externalRequest.store(0);
         scanReason = passName(state); publish(); return false;
     }
     const auto player = RE::PlayerCharacter::GetSingleton();
@@ -544,7 +589,9 @@ bool refresh(double now) {
         scanReason = expired == "timeout" ? "latch_timeout" : "latch_movement";
         forwardReason(scanReason);
     }
-    const auto cell = player->GetParentCell()->GetFormID();
+    const auto parent = player->GetParentCell();
+    if (!parent || !parent->IsAttached()) { reset(); scanReason = "invalid_world"; return false; }
+    const auto cell = parent->GetFormID();
     if (cellID != cell) { gate.reset(); cellID = cell; }
     if (!gate.due(now,settings.refreshSeconds)) { publish(); return scanReady && policy.reason() == Pass::none; }
     gate.last = now;
@@ -558,31 +605,28 @@ bool refresh(double now) {
         if (frozen.empty()) break;
         if (std::find(frozen.begin(),frozen.end(),entry.id) != frozen.end()) retained.push_back(entry.handle);
     }
+    scanContended = false;
     bool complete = radius > 0 && collect(player,radius,budget,visits);
     for (const auto handle : retained) {
-        if (std::find(handles.begin(),handles.end(),handle) == handles.end()) {
+        const auto ref = handle.get();
+        if (ref && std::find(scannedIDs.begin(),scannedIDs.end(),ref->GetFormID()) == scannedIDs.end()) {
             if (!budget.inspect()) { complete = false; break; }
-            handles.push_back(handle);
-            const auto ref = handle.get();
-            if (ref) {
-                identities.push_back({ref->GetFormID(),handle});
-                scannedIDs.push_back(ref->GetFormID());
-            }
+            discovered.push_back(ref);
+            scannedIDs.push_back(ref->GetFormID());
         }
     }
     LazyResult checked;
     std::uint32_t validated = 0;
     if (complete) {
         std::vector<Candidate> cheap;
-        cheap.reserve(handles.size());
-        for (const auto& handle : handles) {
-            const auto ref = handle.get();
-            cheap.push_back(candidate(ref.get(),player));
-        }
+        cheap.reserve(discovered.size());
+        for (const auto& ref : discovered) cheap.push_back(candidate(ref.get(),player));
         const auto validateOne = [&](const Candidate& value) {
             ++validated;
-            const auto ref = reference(value.id);
-            return validateTarget(ref.get(),player,value,body,radius,rays);
+            const auto it = std::find_if(discovered.begin(),discovered.end(),
+                [&](const auto& ref) { return ref->GetFormID() == value.id; });
+            return it == discovered.end() ? Validation::invalid :
+                validateTarget(it->get(),player,value,body,radius,rays,true);
         };
         checked = lazyValidate(cheap,body,radius,c.sneaking,8,validateOne);
         // At most eight extra checks preserve a frozen cycle list even if
@@ -597,6 +641,20 @@ bool refresh(double now) {
             else if (result == Validation::valid) checked.accepted.push_back(*it);
         }
     }
+    if (scanContended || checked.unknown) gate.reset(); // retry next Pick, not 100ms later
+    if (complete && !checked.unknown) {
+        identities.clear();
+        // Only validated candidates get handles (<=8 prefix + <=8 frozen).
+        std::erase_if(checked.accepted,[&](const auto& value) {
+            const auto it = std::find_if(discovered.begin(),discovered.end(),
+                [&](const auto& ref) { return ref->GetFormID() == value.id; });
+            const auto handle = it != discovered.end() ? (*it)->CreateRefHandle() : RE::ObjectRefHandle{};
+            if (!handle) return true;
+            identities.push_back({value.id,handle});
+            return false;
+        });
+    }
+    discovered.clear();
     scanReady = false;
     scanReason = !complete ? "incomplete_scan" : checked.unknown ? "validation_unknown" : "none";
     if (complete && !checked.unknown) {
@@ -627,7 +685,7 @@ void consumeRequests(double now, RE::PlayerCharacter* player) {
             ++counters.cyclesTotal;
             latchSource = EventSource::cycle;
             selectionEvent(EventKind::cycle,policy.current(),latchSource,direction > 0 ? "next" : "previous");
-        }
+        } else ++cycleRefusals;
     }
     const auto request = externalGate.due(now,settings.refreshSeconds) ? externalRequest.exchange(0) : 0;
     if (request) {
@@ -641,7 +699,7 @@ void consumeRequests(double now, RE::PlayerCharacter* player) {
         else {
             const auto order = policy.order();
             const auto ref = reference(id);
-            ScanBudget rays{3};
+            ScanBudget rays{6};
             const auto result = std::find(order.begin(),order.end(),id) == order.end() ? Validation::invalid :
                 validateTarget(ref.get(),player,candidate(ref.get(),player),body,nativeRadius(),rays);
             const bool accepted = result == Validation::valid && !invalidated.load() &&
@@ -681,16 +739,18 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
         nativeDecision("new_native_since_scan"); return;
     }
     const auto target = reference(policy.current());
-    ScanBudget rays{3};
+    ScanBudget rays{6};
     const auto value = candidate(target.get(),player);
     const auto validation = validateTarget(target.get(),player,value,bodyCentre(player),nativeRadius(),rays);
     if (validation != Validation::valid) {
         if (validation == Validation::invalid) policy.invalidate(policy.current());
-        // Unknown rays retain latch/list and retry at the next bounded refresh.
+        // Unknown rays retain latch/list and retry at the next Pick.
+        if (validation == Validation::unknown) gate.reset();
         scanReady = false; scanReason = validation == Validation::unknown ? "validation_unknown" : "target_validation";
         inputAllowed.store(false); publish(); nativeDecision(scanReason); return;
     }
-    const auto handle = target->CreateRefHandle();
+    RE::ObjectRefHandle handle;
+    for (const auto& entry : identities) if (entry.id == policy.current()) { handle = entry.handle; break; }
     if (!handle) {
         policy.invalidate(policy.current()); publish(); nativeDecision("invalid_handle"); return;
     }
@@ -746,7 +806,7 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* input,RE::BSTEventSource<RE::InputEvent*>*) override {
         threadLog(false);
-        updateMenus(); flushLog();
+        flushLog();
         if (!input || !inputGate.enter()) return RE::BSEventNotifyControl::kContinue;
         const bool safe = inputAllowed.load() && !invalidated.load() && !loading.load() && menuState.load() == 1u;
         if (!safe) for (auto& key : keys) key.suspend();
@@ -763,6 +823,7 @@ public:
                 const auto map = RE::ControlMap::GetSingleton();
                 const bool mapped = !map || !map->controlMap[RE::UserEvents::INPUT_CONTEXT_ID::kGameplay] ||
                     !map->GetUserEventName(button->GetIDCode(),device).empty() || !button->QUserEvent().empty();
+                if (button->IsDown() && (!safe || mapped)) ++refusedPresses;
                 if (mapped && button->IsDown() && conflictLogs < 8) { ++conflictLogs; log("Cycle binding refused: mapped native event or unreadable ControlMap."); }
                 if (keys[(pad ? 2u : 0u)+i].update(button->value > 0,button->IsDown(),safe && !mapped)) {
                     if (!cycleRequests.post(i == 0 ? 1 : -1)) ++requestDrops;
@@ -836,8 +897,7 @@ void install() {
     }
     previousPick = reinterpret_cast<Pick>(native.address());
     mainThreadID = main ? main->threadID : 0;
-    handles.reserve(settings.inspectLimit);
-    identities.reserve(settings.inspectLimit);
+    identities.reserve(16);
     discovered.reserve(settings.inspectLimit);
     scannedIDs.reserve(settings.inspectLimit);
     std::memcpy(site,replacement.data(),replacement.size());
@@ -892,5 +952,8 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const SKSE::LoadInterface*
     SKSE::Init(skse,false); loadSettings();
     flushLog();
     const auto messaging = SKSE::GetMessagingInterface();
-    return messaging && messaging->RegisterListener(messages);
+    const bool registered = messaging && messaging->RegisterListener(messages);
+    if (registered) startFlushWorker();
+    flushLog();
+    return registered;
 }
