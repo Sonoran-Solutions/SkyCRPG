@@ -2,7 +2,7 @@
 
 [Roadmap](../ROADMAP.md) · [MVP scope](../MVP_SCOPE.md) · [Research and feasibility](../planning/phase5-targeting-camera-research.md) · [Linear project](https://linear.app/devils17/project/skycrpg-3bba43f5930f)
 
-**Status: started 2026-11-02 after the Phase 4 owner ACCEPT ([D025](../DECISIONS.md)); proposal dated 2026-10-28, revised after the senior review of PR #24.** It does not change the four-phase MVP commitment in [ROADMAP](../ROADMAP.md). Linear tickets: P5-01 DYL-197, P5-02 DYL-198, P5-03 DYL-200, P5-04 DYL-199, P5-05 DYL-201, P5-06 DYL-202. The owner rulings are recorded in [DECISIONS](../DECISIONS.md); the table below keeps the original engineering proposals. All feasibility statements come from the research document; nothing in this phase has in-game evidence.
+**Status: started 2026-11-02 after the Phase 4 owner ACCEPT ([D025](../DECISIONS.md)); proposal dated 2026-10-28, revised after the senior review of PR #24.** It does not change the four-phase MVP commitment in [ROADMAP](../ROADMAP.md). Linear tickets: P5-01 DYL-197, P5-02 DYL-198, P5-03 DYL-200, P5-04 DYL-199, P5-05 DYL-201, P5-06 DYL-202. The owner rulings are recorded in [DECISIONS](../DECISIONS.md); the table below keeps the original engineering proposals. **[D026](../DECISIONS.md) replaces BTPS with an original selection plugin**, so the BTPS scope, risks and fork steps in P5-02 and P5-03 no longer apply; the DYL-198 ticket holds the current scope. All feasibility statements come from the research document; nothing in this phase has in-game evidence.
 
 ## Outcome
 
