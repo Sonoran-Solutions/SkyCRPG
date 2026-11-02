@@ -3,6 +3,11 @@
 #include <cassert>
 using namespace skycrpg::camera;
 int main() {
+    // The policy is equipment-agnostic; engine drawn-state reporting requires runtime verification.
+    Context combat{}; combat.enabled = combat.prerequisites = combat.world = true;
+    combat.precision = precisionSuppressesObstruction(true);
+    assert(select(combat) == State::precision);
+    assert(!precisionSuppressesObstruction(false));
     Context c{};
     c.prerequisites = c.world = true;
     c.firstPerson = true;
