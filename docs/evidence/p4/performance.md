@@ -1,6 +1,10 @@
 # DYL-172 — performance measurement tooling
 
-**Offline implementation complete; runtime acceptance NOT_RUN.** Base
+**Runtime result (2026-11-02, probe `5a38199`): frame cost PASS, warm inventory
+latency PASS, memory FAIL with the optional minimap stack installed.** The memory
+growth also occurs in the baseline without SkyCRPG modules and disappears when the
+minimap stack is omitted; see [Final rerun](#final-rerun-dyl172-proton-01). Owner
+acceptance is DYL-175. Base
 `c7333c7c13284ad9d228e6f15213bc8465bd6e19`; merged probe head `ac28d3c` (#30);
 Windows CI [run 41211742722](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41211742722);
 probe DLL `4f993c30b020cf6f8f61b2b0222758a3085adf8f47941c3cb240e8de76dbf997`. The
@@ -43,14 +47,70 @@ route `perf-probe-diag`, run `session-p4/autotest/runs/dyl172-proton-diag-01`, P
 
 The corrected probe and the four-profile rerun are recorded below.
 
+### Final rerun `dyl172-proton-01`
+
+Probe `5a38199`, [CI 41402535451](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41402535451),
+DLL `613e3c7a73fe68d828b1a54ea2ad52848ab3f76a8140531638a1ee94419546bd`, INI
+`ecb5da66d9c9b2b4df215f160afd2893f9483c4d619ce6ab7ae385bb562e57bf`; rc1 archives
+UI `f508a0e1…d940cb`, Camera `e3f6d61e…c86838` from `6b4c0fc`. Host: Proton Experimental
+`experimental-11.0-20261027b-x86_64`, Skyrim SE 1.7.104.0, SKSE 2.3.1, i9-11900K,
+RTX 3080 (595.99.02), 1920×1080 windowed, keyboard/mouse, controller off.
+
+- **Gate:** diagnostic `session-p4/autotest/runs/dyl172-proton-diag-02` PASS:
+  three correlated opens, t_settled 181/181/183 ms; 88 complete commit samples.
+- **Batch:** `session-p4/logs/perf/dyl172-proton-01/summary.md`, runs
+  `autotest/runs/batch-dyl172-proton-01-0{0,1,2,3}` (baseline, camera-only,
+  ui-only, combined): 4/4 routes PASS, every restore PASS. The baseline's
+  SmoothCam-generated `Data/SKSE/Plugins/SmoothCam.json` (sha256 `68a8d3ff…`)
+  was moved to that run's evidence by the leftover rule.
+- **Comparison:** `session-p4/logs/perf/dyl172-proton-01/comparison.md` (sha256
+  `9d3cf263…217745`), `perf_compare.py` sha256 `45b3a4b9…a58365`. All sixteen
+  anchors VALID, ratios 1.00–1.01.
+
+| Profile | Standing p95 ms (Δ) | Turn p95 ms (Δ) | Warm t_settled max ms | Cold event / settled ms | Memory MiB/min (private commit) |
+| --- | --- | --- | --- | --- | --- |
+| Baseline | 16.65 | 16.84 | 61.02 | 53.65 / 57.55 | 43.37, FAIL |
+| Camera-only | 16.64 (−0.07%) | 16.76 (−0.48%) | 173.69 | 267.14 / 356.80 | 1.30, PASS |
+| UI-only | 16.76 (+0.63%) | 16.88 (+0.22%) | 203.11 | 80.47 / 177.84 | 43.01, FAIL |
+| Combined | 16.75 (+0.58%) | 16.96 (+0.72%) | 188.03 | 80.30 / 178.56 | 42.58, FAIL |
+
+| Budget | Result |
+| --- | --- |
+| Combined p95 ≤1.10× baseline, standing and turn | **PASS** (+0.58%, +0.72%) |
+| Warm opens 2–10 t_settled ≤250 ms, 500 rows | **PASS** in all four profiles (max 203.11 ms) |
+| Memory: latter-half slope >1 MiB/min and last quartile >105% of first | **FAIL** for combined (also baseline and UI-only); camera-only PASS |
+
+Every inventory capture saw 20 downs and accepted 10 edges; each resource
+capture accepted 30. The commit walk covered 803–1,014 regions, median
+497–526 µs, max 5.68 ms on the timer thread. Over the window, baseline, UI-only
+and combined grew from about 1,400 to 2,010 MiB of private commit; camera-only
+stayed at 1,396–1,431 MiB.
+
+**Attribution diagnostic.** The three growing profiles all load the optional
+external minimap stack (Dragon's Eye 1.7.5, Infinity UI NG 2.1.3, LMU 1.3.4);
+the baseline loads it without any SkyCRPG module. Camera-only does not load it.
+Route `perf-combined-no-minimap` (perf-combined with the `dyl173-ui-minimap-absent`
+omit list), run `session-p4/autotest/runs/dyl172-proton-nomap-01` (report sha256
+`a8a05bd0…dc55fb0`): PASS, restore PASS, installed DLLs SkyCRPG Camera/UI, probe,
+SmoothCam, TDM and MCM Helper only. Memory 1.35 MiB/min, not flagged (about
+1,403→1,438 MiB); standing/turn p95 16.60/16.62 ms; anchors VALID; warm t_settled
+max 193.81 ms. This is a diagnostic, not a fifth budget profile.
+
+The growth therefore follows the external minimap stack under this route's
+alternating `coc` cell loads, independent of SkyCRPG modules. The bounded window
+cannot say whether it plateaus, and the stack's own retention was not
+investigated. The combined memory budget stays **FAIL**; no budget was relaxed.
+Accepting it as an external-provider limitation, or deferring the minimap stack,
+is an owner decision.
+
 | Requirement / existing evidence | Change / offline disposition | New runtime |
 | --- | --- | --- |
-| rc1 baseline `batch-dyl172-rc1-00`, camera/UI/combined `batch-dyl172-rc1b-00/01/02`; sixteen anchors 1.00–1.01 | Old frame table reproduced unchanged: combined standing p95 16.81 vs 16.86 ms; turn 16.93 vs 17.03 ms, both PASS | New probe requires all four fresh profiles |
-| Forty inventory opens lack a correlated edge; old private bytes always zero | Old latency and memory remain NOT_RUN in all four profiles; no invented replacement for old samples | NOT_RUN |
-| Late appended observer, no input diagnostics | Verified prepend API; bounded scalar input buffer, timer emission and stop counters; portable PASS | NOT_RUN |
-| PrivateUsage and working set only | Timer-thread private-commit walk with cost/completeness fields; whole-window comparer fallback; portable/unit PASS | NOT_RUN |
-| SmoothCam creates an undeployed config in a newly deployed directory | Runner journals pre-prepare names, moves generated leftovers into evidence after restore, hashes them, removes empty new directories; fake baseline/MO2 tests PASS | NOT_RUN |
-| Full route is too long for initial diagnosis | Combined rc1 `perf-probe-diag`: same copied save/500-form fixture, 3 opens, 15-second resource capture, 360-second watchdog | NOT_RUN |
+| rc1 baseline `batch-dyl172-rc1-00`, camera/UI/combined `batch-dyl172-rc1b-00/01/02`; sixteen anchors 1.00–1.01 | Old frame table reproduced unchanged: combined standing p95 16.81 vs 16.86 ms; turn 16.93 vs 17.03 ms, both PASS | PASS: fresh four-profile rerun `dyl172-proton-01` |
+| Forty inventory opens lack a correlated edge; old private bytes always zero | Old latency and memory remain NOT_RUN in all four profiles; no invented replacement for old samples | Superseded by the rerun: latency PASS, memory FAIL (combined) |
+| Late appended observer, no input diagnostics | Verified prepend API; bounded scalar input buffer, timer emission and stop counters; portable PASS | PASS: probe index 0; 10 of 10 edges accepted per profile |
+| PrivateUsage and working set only | Timer-thread private-commit walk with cost/completeness fields; whole-window comparer fallback; portable/unit PASS | PASS: complete on every sample; median walk ≤526 µs |
+| SmoothCam creates an undeployed config in a newly deployed directory | Runner journals pre-prepare names, moves generated leftovers into evidence after restore, hashes them, removes empty new directories; fake baseline/MO2 tests PASS | PASS: baseline SmoothCam.json moved; all restores PASS |
+| Full route is too long for initial diagnosis | Combined rc1 `perf-probe-diag`: same copied save/500-form fixture, 3 opens, 15-second resource capture, 360-second watchdog | PASS: `dyl172-proton-diag-02` gate |
 
 ### Input diagnosis, supported correction and limits
 
@@ -196,7 +256,7 @@ hashes: `session-p4/logs/perf/final-probe-proton.md`.
 | Diagnostic simulation / full batch simulation | PASS / 4 PASS, fake control flow and clean restoration only |
 | Diagnostic / four batch dry runs | BLOCKED: Steam not running in the sandbox-visible process table; schema/plans valid, no launch attempted |
 | Four old reports re-compared | PASS: frame table byte-identical; sixteen VALID anchors; combined p95 PASS both; latency/memory NOT_RUN all four |
-| New Windows /W4 /WX /permissive- build, actual sink order/key delivery, commit-walk cost, new live diag/batch | NOT_RUN |
+| New Windows /W4 /WX /permissive- build (CI 41402535451), actual sink order/key delivery, commit-walk cost, live diag/batch | PASS; budgets as in [Final rerun](#final-rerun-dyl172-proton-01) |
 
 Initial offline failures remain in logs: diagnostic wait_s=1 violated the existing
 minimum (fixed to 3); relative simulation roots duplicated fixture paths (rerun
@@ -429,13 +489,13 @@ made to hide encumbrance.
 
 | Runtime route / required observation | Keyboard/mouse | Controller |
 | --- | --- | --- |
-| Final hashes, host/settings/load order, disposable copy and native row count | NOT_RUN | NOT_RUN |
-| UI/main cadence standing/turn and pause/menu; probe/engine medians/p95 and anchor_ratio in [0.9,1.1]; invalid capture NOT_RUN | NOT_RUN | NOT_RUN |
+| Final hashes, host/settings/load order, disposable copy and native row count | PASS, except native row count (owner check, NOT_RUN) | NOT_RUN |
+| UI/main cadence standing/turn and pause/menu; probe/engine medians/p95 and anchor_ratio in [0.9,1.1]; invalid capture NOT_RUN | PASS, sixteen anchors VALID (`dyl172-proton-01`) | NOT_RUN |
 | Stop/restart during either pending hop: one chain only; stopped hop drains and ends; no runaway log in ordinary captures | NOT_RUN | NOT_RUN |
-| Bound input, cold open, warm opens 2–10, raw periods and grid-scroll behavior | NOT_RUN | NOT_RUN |
-| Cell destinations and full 10-minute memory window | NOT_RUN | NOT_RUN |
-| Normal console quit, no save and verified restoration | NOT_RUN | NOT_RUN |
-| Baseline/camera-only/UI-only/combined budget comparison and acceptance | NOT_RUN | NOT_RUN |
+| Bound input, cold open, warm opens 2–10, raw periods and grid-scroll behavior | PASS for input, cold/warm opens and periods; grid-scroll visuals not reviewed | NOT_RUN |
+| Cell destinations and full 10-minute memory window | PASS: complete window in all four profiles (memory budget result below) | NOT_RUN |
+| Normal console quit, no save and verified restoration | PASS in every live run | NOT_RUN |
+| Baseline/camera-only/UI-only/combined budget comparison and acceptance | Comparison: frame PASS, warm latency PASS, memory FAIL ([Final rerun](#final-rerun-dyl172-proton-01)); acceptance is DYL-175 | NOT_RUN |
 
 Automated routes currently target keyboard/mouse with Inventory=I/Back=TAB and
 physical controller off. The input adapter supports mapped devices; the separate
@@ -515,11 +575,12 @@ unchanged failing retry loop was used.
 
 ## Remaining gates and decisions
 
-No owner decision or module integration patch is needed for this implementation.
-The selected UI-drain CPU period, engine anchor and settle design are implemented
-without a new painted-grid dependency. Re-audit changed module sources after
-DYL-170, build the probe in Windows CI, stage the final artifacts, and let the orchestrator run the routes.
-Owner runtime acceptance and any explicit budget tradeoff remain pending; no
-performance acceptance is claimed here. No SWFs were built. Post-MVP candidates:
+The probe was built in Windows CI and the routes ran on the rc1 archives
+(see [Final rerun](#final-rerun-dyl172-proton-01)). One owner decision remains:
+the combined memory budget FAILs with the optional external minimap stack and
+passes without it. Accept this as an external-provider limitation, defer the
+minimap stack, or investigate the provider. Owner runtime acceptance is DYL-175;
+no performance acceptance is claimed here. The stop/restart-during-hop route and
+the controller column remain NOT_RUN. No SWFs were built. Post-MVP candidates:
 broader hardware/settings coverage, a separately bounded multi-hour soak and an
 optional native painted-grid endpoint.
