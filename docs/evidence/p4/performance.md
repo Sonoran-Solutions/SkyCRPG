@@ -3,7 +3,9 @@
 **Runtime result (2026-11-02, probe `5a38199`): frame cost PASS, warm inventory
 latency PASS, memory FAIL with the optional minimap stack installed.** The memory
 growth also occurs in the baseline without SkyCRPG modules and disappears when the
-minimap stack is omitted; see [Final rerun](#final-rerun-dyl172-proton-01). Owner
+minimap stack is omitted; see [Final rerun](#final-rerun-dyl172-proton-01). The
+owner accepted it as an external-provider limitation on 2026-11-02 (D024 in
+[DECISIONS](../../DECISIONS.md)); it remains a FAIL, not a pass. Owner
 acceptance is DYL-175. Base
 `c7333c7c13284ad9d228e6f15213bc8465bd6e19`; merged probe head `ac28d3c` (#30);
 Windows CI [run 41211742722](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41211742722);
@@ -100,8 +102,8 @@ The growth therefore follows the external minimap stack under this route's
 alternating `coc` cell loads, independent of SkyCRPG modules. The bounded window
 cannot say whether it plateaus, and the stack's own retention was not
 investigated. The combined memory budget stays **FAIL**; no budget was relaxed.
-Accepting it as an external-provider limitation, or deferring the minimap stack,
-is an owner decision.
+On 2026-11-02 the owner accepted it as an external-provider limitation (D024 in
+[DECISIONS](../../DECISIONS.md)); the FAIL stays recorded.
 
 | Requirement / existing evidence | Change / offline disposition | New runtime |
 | --- | --- | --- |
@@ -576,10 +578,11 @@ unchanged failing retry loop was used.
 ## Remaining gates and decisions
 
 The probe was built in Windows CI and the routes ran on the rc1 archives
-(see [Final rerun](#final-rerun-dyl172-proton-01)). One owner decision remains:
-the combined memory budget FAILs with the optional external minimap stack and
-passes without it. Accept this as an external-provider limitation, defer the
-minimap stack, or investigate the provider. Owner runtime acceptance is DYL-175;
+(see [Final rerun](#final-rerun-dyl172-proton-01)). The combined memory budget
+FAILs with the optional external minimap stack and passes without it; the owner
+accepted this as an external-provider limitation on 2026-11-02 (D024 in
+[DECISIONS](../../DECISIONS.md)). Whether the growth plateaus in longer play is
+NOT_RUN. Owner runtime acceptance is DYL-175;
 no performance acceptance is claimed here. The stop/restart-during-hop route and
 the controller column remain NOT_RUN. No SWFs were built. Post-MVP candidates:
 broader hardware/settings coverage, a separately bounded multi-hour soak and an
