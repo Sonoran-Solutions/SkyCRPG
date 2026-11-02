@@ -40,6 +40,10 @@ int main()
 		.Numeric("count_delta", -2).Null("new_count");
 	assert(EventLine(1234, "2026-10-28T00:00:00Z", "container", fields) ==
 		"{\"t\":1234,\"wall\":\"2026-10-28T00:00:00Z\",\"ev\":\"container\",\"name\":\"Sword\\n\",\"opening\":false,\"count_delta\":-2,\"new_count\":null}\n");
+	const Object magic = Object{}.String("selected_name", "Dragonrend").Numeric("selected_filter_flag", 1).Boolean("selected_favorite", true);
+	assert(Object{}.Raw("magic", magic.Json()).Json() == "{\"magic\":{\"selected_name\":\"Dragonrend\",\"selected_filter_flag\":1,\"selected_favorite\":true}}");
+	assert(Object{}.Null("magic").Json() == "{\"magic\":null}");
+	assert(Object{}.Null("selected_name").Null("selected_filter_flag").Null("selected_favorite").Json() == "{\"selected_name\":null,\"selected_filter_flag\":null,\"selected_favorite\":null}");
 	assert(EventLine(0, "", "data_loaded") == "{\"t\":0,\"wall\":\"\",\"ev\":\"data_loaded\"}\n");
 	assert(ParseRequest("").value().empty());
 	const std::string tag = "  checkpoint \"雪\"\\\r\n";

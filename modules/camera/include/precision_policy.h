@@ -3,6 +3,9 @@
 #include "policy.h"
 
 namespace skycrpg::camera {
+// All drawn weapons and spells, including crossbows and concentration spells,
+// suppress automatic obstruction framing without classifying the equipment.
+constexpr bool precisionSuppressesObstruction(bool weaponDrawn) { return weaponDrawn; }
 // Claim only an immediately observed transition from an eligible third-person
 // state. A late, unrelated first-person transition cannot claim a session.
 constexpr bool claimPrecisionOwnership(Context before, Context after) {

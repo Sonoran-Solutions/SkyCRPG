@@ -4,6 +4,59 @@
 #include <cassert>
 using namespace skycrpg::camera;
 int main() {
+    assert(!leaseWanted(false,false,false)); // disabled at startup
+    assert(leaseWanted(true,false,false)); // enabled at startup
+    assert(leaseWanted(false,true,false)); // runtime enable
+    assert(!enableAfterLease(false)); // refusal keeps Camera disabled
+    assert(enableAfterLease(true));
+    assert(!leaseWanted(false,true,true)); // F6 precision retains its lease
+    FailureDebounce failure;
+    assert(!failure.observe(true,10.0));
+    assert(!failure.observe(true,10.9));
+    assert(!failure.observe(false,11.0)); // menu, load, recovery or no world resets
+    assert(!failure.observe(true,12.0));
+    assert(failure.observe(true,13.0));
+    // Input may allow a lease attempt for toggle handling, but an absent lease
+    // remains a failure observation after a refused request.
+    assert(prerequisiteFailure(true,false,true));
+    assert(!prerequisiteFailure(true,true,true));
+    assert(!prerequisiteFailure(true,false,false)); // deliberately disabled provider
+    EnableIntent intent{false};
+    FailureDebounce noticeDebounce;
+    bool notified = false;
+    unsigned notices = 0;
+    const auto observeNotice = [&](bool failed, bool normalGameplay, double now) {
+        if (!notified && noticeDebounce.observe(intent.failureEligible(failed) && normalGameplay,now)) {
+            notified = true; ++notices;
+        }
+    };
+    observeNotice(true,true,0.0);
+    observeNotice(true,true,2.0);
+    assert(notices == 0); // disabled at startup without an enable request
+    intent.request(ToggleRequest::firstPerson);
+    assert(!intent.wanted);
+    intent.request(ToggleRequest::enableOnly);
+    bool enabled = enableAfterLease(false);
+    assert(intent.wanted && !enabled);
+    observeNotice(prerequisiteFailure(true,false,true),true,3.0);
+    observeNotice(true,true,3.9);
+    assert(notices == 0);
+    observeNotice(true,false,4.0); // menu interrupts the debounce
+    observeNotice(true,true,5.0);
+    observeNotice(true,true,6.0);
+    assert(notices == 1);
+    intent.request(ToggleRequest::thirdPerson); // another refused press
+    enabled = enableAfterLease(false);
+    observeNotice(true,true,7.0);
+    observeNotice(true,true,8.0);
+    assert(!enabled && notices == 1);
+    EnableIntent successful{false};
+    successful.request(ToggleRequest::thirdPerson);
+    enabled = enableAfterLease(true);
+    FailureDebounce successDebounce;
+    assert(enabled && successful.wanted);
+    assert(!successDebounce.observe(successful.failureEligible(prerequisiteFailure(true,true,true)),10.0));
+    assert(!successDebounce.observe(successful.failureEligible(prerequisiteFailure(true,true,true)),11.0));
     bool owned = true, recenter = true, pending = false;
     std::array<FreshPress,4> keys{};
     keys[1].down = true; // held across the reset
