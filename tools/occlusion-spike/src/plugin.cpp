@@ -523,7 +523,12 @@ bool CheckGap(void* physics, RE::bhkWorld* world, policy::Point next, const Hit&
 	std::memcpy(&wrapper, physics, sizeof(wrapper));
 	if (wrapper) std::memcpy(&phantom, static_cast<const std::byte*>(wrapper) + 0x10, sizeof(phantom));
 	const auto havok = world->GetWorld1();
-	if (!phantom || !havok || phantom->world != havok) { Inconclusive("gap_phantom_world_mismatch"); return false; }
+	// The caster's own sweep (5576BF) takes GetWorld1 and this collidable without
+	// reading phantom->world. Run l-* suggests the cast phantom isn't in a world, so
+	// only a different non-null world refuses. The log records which case occurred.
+	if (!phantom || !havok || (phantom->world && phantom->world != havok)) { Inconclusive("gap_phantom_world_mismatch"); return false; }
+	static std::atomic_flag reportedWorld = ATOMIC_FLAG_INIT;
+	if (!reportedWorld.test_and_set()) Emit("gap_phantom_world", json::Object{}.Boolean("phantom_world_null", phantom->world == nullptr));
 	GapCollector collector; collector.vtable = &gapVTable;
 	RE::hkpLinearCastInput input{};
 	const float scale = RE::bhkWorld::GetWorldScale();
@@ -610,7 +615,8 @@ void TickFromCaster()
 {
 	static thread_local bool ticking{};
 	static double last{};
-	if (ticking || !g->enabled || !OnMain()) return;
+	// Not !enabled: Tick is what restores a fade after a log failure disables the plugin.
+	if (ticking || g->killed || !OnMain()) return;
 	const double now = Now();
 	if (now - last < 8) return;
 	last = now;

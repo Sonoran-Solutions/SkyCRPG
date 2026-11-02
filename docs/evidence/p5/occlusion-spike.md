@@ -289,3 +289,12 @@ Routes `p5-spike-baseline`, `-baseline-turning`, `-observe` and `-observe-turnin
 **PASS, observation only:** in the turning observe run, the caster ran on the main thread for all 569 recorded calls: 361 from SmoothCam and 208 from the engine caller `0x1408FA963`. 109 of those calls hit `WRIntBeam768.nif`, reference `0x000E7A7B`, base `0x000602A6`, in cell `0x0001605E`, layer 1, with normal z = -1 where a normal was logged. The diagnostic classifier flagged 96 of the 109 as overhead candidates. Other contacts included `WRIntRoofCorL01`, `WRIntCeilMid01` and `WRIntCeilChimney01`, which must stay as enclosure.
 
 **FAIL:** the arm key reached the sink, but `MayArm` was never true. SKSE tasks rarely landed on the main thread, with about 74 s between effective ticks, so requests merged with menu and POV flags. The same starvation overflowed the hit queue. The tick now runs from the caster hook on the main thread, at most every 8 ms, in all modes. The task chain stays as the fallback. The log now starts fresh each run, because appending mixed earlier sessions into the analyzer's verdict.
+
+## In-game run l-* — 2026-11-02
+
+`p5-spike-filter`, `-filter-material` and `-filter-alphaprop` on `c7fcd74`, no crash, clean restores. **Transparency is still not shown.**
+
+- **PASS:** private per-geometry material clones: `local_write=true`, `private_clone_attached_shader_scan`, on the parts checked. Fades no longer depend on writing the material shared with 70 other geometries.
+- **FAIL:** the filter rolled back on `gap_phantom_world_mismatch`, so the camera stayed compressed and `above-beam-armed` can't judge the fade. The guard compared `phantom->world` with `GetWorld1`, which the native sweep doesn't do. The binary confirms the caster's world comes from slot 0x27 (`GetWorld1`). That the phantom's world is null is a hypothesis, logged by the next run as `gap_phantom_world`.
+
+Reading rules from independent review for the next run: judge only `above-beam-armed`, against the opaque `p5-spike-filter` control. `beam-forward-armed` can't judge this beam. Trim parts with alpha test may vanish rather than fade, so judge them apart from the body. Timing from filter runs isn't matched against baseline, so it can't give a 10% budget result.
