@@ -15,6 +15,16 @@ constexpr bool leaseWanted(bool startEnabled, bool runtimeEnableRequested, bool 
     return (startEnabled || runtimeEnableRequested) && !haveLease;
 }
 constexpr bool enableAfterLease(bool haveLease) { return haveLease; }
+constexpr bool prerequisiteFailure(bool baseReady, bool leaseReady, bool reportable) {
+    return !(baseReady && leaseReady) && reportable;
+}
+struct EnableIntent {
+    bool wanted = true;
+    void request(ToggleRequest request) {
+        if (request == ToggleRequest::enableOnly || request == ToggleRequest::thirdPerson) wanted = true;
+    }
+    constexpr bool failureEligible(bool failure) const { return wanted && failure; }
+};
 struct FailureDebounce {
     bool pending = false;
     double since = 0;

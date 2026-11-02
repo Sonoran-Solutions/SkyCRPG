@@ -32,7 +32,7 @@ let allowed = true;
 const entry = {enabled:true, count:8, itemIndex:0};
 global.skse = {plugins:{SkyCRPGUI:{
   hudEnabled:true,
-  getInventorySnapshot() { snapshots++; return {token:snapshots,selectedIndex:menu.inventoryLists.itemList.selectedEntry.itemIndex}; },
+  getInventorySnapshot() { snapshots++; return {token:1,selectedIndex:menu.inventoryLists.itemList.selectedEntry.itemIndex}; },
   validateItemAction(token, action, amount, phase) { validations++; assert.ok(token > 0); return allowed; },
   inventoryInputEdge(){}, cancelInventoryAction(){cancels++;}, inventoryViewChanged(){views++;},
 }}};
@@ -116,9 +116,13 @@ function fixture() {
     getInventorySnapshot() {
       state.snapshotCalls++;
       if (state.updating) return undefined; // Native rebuild guard, not a list observation.
-      step('snapshot'); // Observe retires only a completed non-modal action.
-      state.selectedIndex=instance.inventoryLists.itemList.selectedEntry.itemIndex;
-      return {token:++state.snapshots,selectedIndex:instance.inventoryLists.itemList.selectedEntry.itemIndex};
+      const entry=instance.inventoryLists.itemList.selectedEntry;
+      const identity=JSON.stringify([entry.itemIndex,entry.formId,entry.count]);
+      if (identity !== state.identity) {
+        step('snapshot'); state.identity=identity; state.snapshots++;
+      }
+      state.selectedIndex=entry.itemIndex;
+      return {token:state.snapshots,selectedIndex:entry.itemIndex};
     },
     inventoryInputEdge(key,down) {
       step(`edge ${key} ${Number(down)}`);
@@ -132,7 +136,7 @@ function fixture() {
       if (result === 'allow') return true;
       state.refusals.push(result); step('cancel'); return false;
     },
-    cancelInventoryAction(){step('cancel');}, inventoryViewChanged(){step('view');},
+    cancelInventoryAction(){step('cancel');}, inventoryViewChanged(){step('view'); state.identity=undefined;},
   };
   gfx.io.GameDelegate.call = name => { if (name === 'ItemDrop') state.drops++; if (name === 'ItemSelect') state.activates++; };
   function highlight(entry) {
@@ -145,6 +149,31 @@ function fixture() {
     refresh(){lists.InvalidateListData.call(instance.inventoryLists);}};
 }
 
+// Search may replace a row with a different form at the same native index.
+{
+  const f=fixture(); f.a.formId=1; f.b.formId=2; f.b.itemIndex=f.a.itemIndex;
+  f.highlight(f.a); f.edge('keyDown'); native.AttemptEquip.call(f.instance,1,false); f.edge('keyUp');
+  f.highlight(f.b); f.edge('keyDown'); native.AttemptEquip.call(f.instance,1,false); f.edge('keyUp');
+  assert.equal(f.state.activates,2,'different form at reused index must activate');
+  native.AttemptEquip.call(f.instance,1,false);
+  assert.equal(f.state.activates,2,'repeated callback must not redispatch');
+}
+// Selection can be sampled from the engine when the AS item index is absent.
+{
+  const f=fixture(); delete f.a.itemIndex;
+  f.highlight(f.a); f.edge('keyDown'); native.AttemptEquip.call(f.instance,1,false); f.edge('keyUp');
+  assert.equal(f.state.activates,1,'missing AS index must still attempt capture');
+}
+// Search takes focus after its down; the corresponding up may never reach the menu.
+{
+  const f=fixture(); f.instance.inventoryLists._searchKey=57;
+  native.handleInput.call(f.instance,{skseKeycode:57,value:'keyDown'},[{handleInput(){return true;}}]);
+  f.highlight(f.a); f.edge('keyDown'); native.AttemptEquip.call(f.instance,1,false); f.edge('keyUp');
+  f.highlight(f.b); f.edge('keyDown'); native.AttemptEquip.call(f.instance,1,false); f.edge('keyUp');
+  assert.equal(f.state.activates,2,'lost search up must not block the next action');
+  native.AttemptEquip.call(f.instance,1,false);
+  assert.equal(f.state.activates,2,'repeated callback must not redispatch');
+}
 // A native rebuild can re-enter highlight acquisition. The actual AS must
 // retain undefined, then reacquire on the first explicit action after Update.
 for (const callbackFirst of [false,true]) {

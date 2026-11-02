@@ -50,7 +50,8 @@ SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
 bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
 bool precisionTraceEnabled = false, lifecycleTraceEnabled = false;
-bool badSettings = false, prerequisiteFailed = false, failureNotified = false, requestedEnabled = true;
+bool badSettings = false, prerequisiteFailed = false, failureNotified = false;
+EnableIntent enableIntent;
 unsigned lifecycleLogCount = 0;
 LifecycleTraceDebounce lifecycleTrace;
 PrecisionTraceBudget precisionTraceBudget;
@@ -139,7 +140,7 @@ void loadSettings() {
     Settings s;
     s.schema = number("Camera","iSchemaVersion",1);
     s.enabled = flag("Camera","bEnabled",1);
-    requestedEnabled = s.enabled;
+    enableIntent.wanted = s.enabled;
     s.pitch = number("Camera","fPitchDegrees",55.0f);
     s.pitchSpeed = number("Camera","fPitchSpeedDegrees",90.0f);
     s.recenterSpeed = number("Camera","fRecenterSpeedDegrees",180.0f);
@@ -192,10 +193,11 @@ bool acquireMovementLease() {
     const auto lease = movement->RequestDisableTargetLock(SKSE::GetPluginHandle());
     movementLease = lease == TDM_API::APIResult::OK || lease == TDM_API::APIResult::AlreadyGiven;
     if (!movementLease) { prerequisiteFailed = true; log("TDM target-lock-disable lease refused; controller suspended."); }
+    else log("TDM target-lock-disable lease acquired.");
     return movementLease;
 }
 void notifyFailure() {
-    if (!failureNotified && prerequisiteFailed && requestedEnabled) {
+    if (!failureNotified && enableIntent.failureEligible(prerequisiteFailed)) {
         RE::SendHUDMessage::ShowHUDMessage("SkyCRPG Camera inactive: check SkyCRPG_Camera.log");
         failureNotified = true;
     }
@@ -234,7 +236,8 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     const bool leaseReady = movement && movementLease && !movement->GetTargetLockState();
     c.prerequisites = baseReady && (leaseReady || (allowLeaseRequest && !movementLease));
     // An intentionally disabled SmoothCam (F8) is not a failure.
-    if (failure) *failure = !c.prerequisites && (!provider || providerEnabled || !ready || !compatibleSettings || !movementConfigSafe || !movement);
+    if (failure) *failure = prerequisiteFailure(baseReady,leaseReady,
+        !provider || providerEnabled || !ready || !compatibleSettings || !movementConfigSafe || !movement);
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto camera = RE::PlayerCamera::GetSingleton();
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
@@ -279,7 +282,7 @@ bool noActiveMenus() {
 void observePrerequisiteFailure(Context c, bool failure) {
     if (failureNotified) return;
     const auto now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    if (failureDebounce.observe(requestedEnabled && c.world && !c.menu && !loading && failure && noActiveMenus(),now)) {
+    if (failureDebounce.observe(enableIntent.failureEligible(failure) && c.world && !c.menu && !loading && noActiveMenus(),now)) {
         if (!prerequisiteFailed) log("Camera prerequisite or third-person ownership unavailable; policy suspended.");
         prerequisiteFailed = true;
         notifyFailure();
@@ -512,6 +515,7 @@ public:
                 if (i == 0) {
                     auto camera = RE::PlayerCamera::GetSingleton();
                     const auto request = toggleRequest(c,ownFirstPerson);
+                    enableIntent.request(request);
                     tracePrecision(PrecisionTraceEvent::toggleDecision,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,true,true,static_cast<unsigned>(request));
                     if (request == ToggleRequest::firstPerson) {
                         settings.enabled = false; ownFirstPerson = false; suspend();
@@ -533,7 +537,11 @@ public:
                         if (!enableAfterLease(movementLease)) continue;
                         settings.enabled = true; ownFirstPerson = false; suspend(); applyZoom = true; static_cast<void>(camera->ForceThirdPerson()); savePreferences();
                     }
-                } else if (obstructionFramingAllowed(c)) recenter = true;
+                } else if (obstructionFramingAllowed(c)) {
+                    recenter = true;
+                    if (const auto* camera = RE::PlayerCamera::GetSingleton(); camera && camera->currentState)
+                        lifecycleLog("recenter",c,static_cast<unsigned>(camera->currentState->id));
+                }
             }
         }
         return RE::BSEventNotifyControl::kContinue;

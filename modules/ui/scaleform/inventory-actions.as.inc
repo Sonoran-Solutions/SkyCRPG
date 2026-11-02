@@ -19,10 +19,7 @@
    {
       if(this._skycrpgInventoryQuantity) return;
       var entry = this.inventoryLists.itemList.selectedEntry;
-      if(entry == undefined || entry.itemIndex == undefined) return;
-      // A repeated highlight or fresh key edge on the same native entry must
-      // not mint another token for a refused/consumed selection.
-      if(this._skycrpgInventoryToken != undefined && this._skycrpgInventoryIndex == entry.itemIndex) return;
+      if(entry == undefined) return;
       var bridge = this.skycrpgInventoryBridge();
       if(bridge == undefined) return;
       var snapshot = bridge.getInventorySnapshot();
@@ -37,6 +34,10 @@
       if(this._skycrpgInventoryHeld == undefined) this._skycrpgInventoryHeld = {};
       var key = details.skseKeycode;
       if(key == undefined) return;
+      // Search consumes this key and moves focus to a text field; its up may
+      // never return to this menu. It cannot dispatch an inventory action.
+      if(key == this.inventoryLists._searchKey ||
+         (this.inventoryLists._platform != 0 && key == 273)) return;
       if(details.value == "keyDown")
       {
          if(this._skycrpgInventoryHeld[key] != true)
@@ -56,11 +57,9 @@
    {
       var bridge = this.skycrpgInventoryBridge();
       if(bridge == undefined) return true;
-      // Native callbacks can precede handleInput or highlight notification.
-      // Renew only for a different native entry, never the same spent token.
-      var entry = this.inventoryLists.itemList.selectedEntry;
-      if(this._skycrpgInventoryToken == undefined ||
-         (entry != undefined && entry.itemIndex != this._skycrpgInventoryIndex)) this.skycrpgInventoryCapture();
+      // Sample engine identity even when SkyUI reuses a native list index.
+      // The bridge retains the token for the same selection and generation.
+      if(!this._skycrpgInventoryQuantity) this.skycrpgInventoryCapture();
       var allowed = bridge.validateItemAction(this._skycrpgInventoryToken,action,amount,phase) == true;
       if(allowed && phase == "quantity") this._skycrpgInventoryQuantity = true;
       if(phase == "confirm") this._skycrpgInventoryQuantity = false;
