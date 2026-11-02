@@ -186,3 +186,24 @@ Cause: the log shows `current=620 Main=368 TDM=620`. `GetTDMThreadId` returns th
 `p5-lock-main` on Camera DLL `9a5a2278…` from `82b2121` was **FAIL**: the lease was still never released, with no refusal logged, so no lock happened and it failed closed. The update hook reached the normal state, so the likely cause is the release-input tracker, which only advanced on the main thread and counted input dispatches. Probe records show menu events running on several worker threads as well as main; the input sink's thread had not been logged.
 
 The tracker now uses atomics and a 0.25 s quiet window, because a held key emits an event on every poll, and works from any sink thread. Off-main `context()` reuses the last main-thread decision, so F6/F7/F8 aren't affected. A bounded line logs each lock state change and the sink's thread. Whether this cause is right is **not yet confirmed in game**.
+
+## Owner hands-on run owner-lock-1 — 2026-11-02
+
+Camera DLL `8be698a5…` from `63e992e`, camera-only, keyboard, Bleak Falls Barrow save with placed bandits, isolated profile; restore PASS, no leftover processes. The owner said: "The lock worked, I'm satisfied with the implementation". This is owner feedback on the lock, not the P5-06 gate.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| U locks a hostile from the elevated view | **PASS, keyboard** | `locked=1`, decision 9, target handle `0010FBEF`, one lock of 18.8 s. |
+| Lease released only after acknowledgement, retaken after | **PASS, bounded** | State log; retaken after the lock ended. |
+| Stable world pitch while locked | **PASS** | 1148 locked trace rows, all at 55.0 degrees. |
+| Stable yaw with no look input | **PASS** | 0.0001 degree drift over 18.8 s, confirming the zero-speed hypothesis for this window. |
+| Visible indicator in Camera-only | **PASS, owner** | Owner: visible, looks fine. Shader `LifeDetectedUndead`. |
+| Target death ends lock | **PASS, owner** | Owner: the enemy died; no stale target in the log. Auto-retarget with a second hostile **NOT_RUN**. |
+| Nothing wrong while locked | **PASS, owner** | Owner: all normal. |
+| User yaw and wheel zoom while locked | **NOT_RUN** | No mouse input logged during the lock. |
+| Bow and aimed-spell hits while locked | **NOT_RUN** | |
+| Target switching | **NOT_RUN** | No binding yet. |
+| Menu, dialogue, load, F6, F8 interrupting a real lock | **NOT_RUN** | The handoff across these passed in unattended routes with no lock held. |
+| Controller R3 short press and hold | **NOT_RUN** | |
+
+Unattended runs `p5-f`, `p5-g`, `p5-h` and `p5-i` reported runner PASS but never locked (`locked=1` absent), so they are not lock evidence. Their setups gave no confirmed valid target: the Whiterun exterior had locals in the way, and spawned bandits weren't seen in QASmoke. `session-p5/routes/check_lock_log.py` now guards against counting such a run. A correction to run p5-d above: the input sink ran on the main thread here, so the off-main sink theory didn't hold. The dispatch-counting tracker was replaced anyway, and the lease has released since.
