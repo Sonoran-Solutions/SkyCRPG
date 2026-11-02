@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 #include <type_traits>
+#include <thread>
 
 using namespace skycrpg::selection;
 Context active() {
@@ -208,15 +209,110 @@ void configurationAndBudget() {
 }
 void accessGate() {
     AccessGate gate;
-    assert(!gate.enter(0) && !gate.enter(7));
-    gate.bind(7);
-    assert(!gate.enter(8));
-    assert(gate.enter(7));
-    assert(!gate.enter(7)); // reentrant native/API callback
-    assert(!gate.enter(8)); // another callback cannot acquire or mutate state
+    assert(gate.enter());
+    assert(!gate.enter()); // reentrant callback refuses without waiting
+    std::thread input([&] { assert(!gate.enter()); });
+    input.join();
     gate.leave();
-    assert(gate.enter(7));
-    gate.leave();
+    std::thread job([&] { assert(gate.enter()); gate.leave(); });
+    job.join(); // pool threads can acquire; there is no Main-thread requirement
+}
+void requestsAndLazyValidation() {
+    CycleRequests requests;
+    assert(!requests.post(0));
+    std::thread input([&] { assert(requests.post(1)); assert(requests.post(-1)); assert(requests.post(-1)); });
+    input.join();
+    auto batch = requests.take();
+    assert(requests.take() == 0);
+    assert(CycleRequests::pop(batch) == 1 && CycleRequests::pop(batch) == -1 && CycleRequests::pop(batch) == -1);
+    assert(batch == 0 && CycleRequests::pop(batch) == 0);
+    for (unsigned i = 0; i < 16; ++i) assert(requests.post(i % 2 ? -1 : 1));
+    assert(!requests.post(1)); // bounded mailbox does not overwrite old edges
+    batch = requests.take();
+    for (unsigned i = 0; i < 16; ++i) assert(CycleRequests::pop(batch) == (i % 2 ? -1 : 1));
+    assert(batch == 0);
+    assert(requests.post(1)); requests.take(); // lifecycle discards pending edges
+    assert(requests.take() == 0);
+
+    std::vector<Candidate> refs{Candidate{30,{30,0,0}},Candidate{10,{10,0,0}},Candidate{20,{20,0,0}}};
+    std::vector<std::uint32_t> calls;
+    auto validate = [&](const Candidate& c) { calls.push_back(c.id); return c.id == 10 ? Validation::invalid : Validation::valid; };
+    auto checked = lazyValidate(refs,{},180,false,2,validate);
+    assert(calls == std::vector<std::uint32_t>({10,20}));
+    assert(checked.exhausted && checked.accepted.size() == 1 && checked.accepted[0].id == 20);
+    Policy p;
+    assert(p.acceptScan(active(),checked,{},180,0,{},true));
+    assert(p.current() == 20);
+    calls.clear();
+    checked = lazyValidate(refs,{},180,false,8,validate);
+    assert(calls == std::vector<std::uint32_t>({10,20,30}));
+    assert(p.acceptScan(active(),checked,{},180,1,{},true));
+    assert(requests.post(1) && requests.post(-1));
+    batch = requests.take();
+    while (batch) assert(p.cycle(CycleRequests::pop(batch),{},1));
+    assert(p.current() == 20 && p.latched());
+    const auto frozen = p.order();
+    // A refused first ray is unknown, not an occlusion; neither it nor a
+    // contended scan may clear the latch or permit a farther nearest candidate.
+    checked = lazyValidate(refs,{},180,false,8,[](const Candidate&) { return Validation::unknown; });
+    assert(checked.unknown && checked.evaluated.size() == 1);
+    assert(!p.acceptScan(active(),checked,{},180,2,{},true));
+    assert(p.latched() && p.current() == 20 && p.order() == frozen);
+    assert(!p.acceptScan(active(),{}, {},180,2,{},false));
+    assert(p.latched());
+    // Definitive invalidation prunes just that target and keeps the neighbour.
+    p.invalidate(20);
+    assert(!p.latched() && p.current() == 30 && p.order().size() == 1);
+    p.invalidate(900); assert(p.current() == 30);
+    p.invalidate(30); assert(p.current() == 0);
+
+    // Native seed was inspected but rejected. It is not a new native pick.
+    const std::array<std::uint32_t,3> scanned{10,20,30};
+    assert(!nativeIsNew(10,scanned,false));
+    assert(nativeIsNew(40,scanned,false));
+    assert(!nativeIsNew(40,scanned,true)); // crosshair sweep cannot break latch
+    assert(!nativeIsNew(0,scanned,false));
+    // Frozen member outside the eight nearest remains valid, but cannot skip
+    // an unvalidated gap and become nearest after its latch ends.
+    p.refresh(active(),refs,{},180,3,{});
+    assert(p.push(30,{},3,true));
+    LazyResult retained;
+    retained.accepted = {refs[0]}; retained.evaluated = {10,20}; retained.exhausted = true;
+    assert(p.acceptScan(active(),retained,{},180,4,{},true) && p.current() == 30);
+    assert(p.expire({},13,{}) == "timeout" && !p.latched());
+    assert(!p.acceptScan(active(),retained,{},180,13,{},true));
+    // Expiry is observable even for a single candidate and unchanged target ID.
+    p.refresh(active(),std::span<const Candidate>(refs.data(),1),{},180,14,{});
+    assert(p.cycle(1,{},14));
+    assert(p.expire({},24,{}) == "timeout" && p.current() == 30);
+    assert(p.expire({},25,{}).empty());
+    assert(p.cycle(1,{},25));
+    assert(p.expire({65,0,0},26,{}) == "movement");
+
+    Candidate bench{44,{150,0,0}};
+    bench.bounds = {{150,0,0},{-140,-10,-20},{140,10,30}};
+    bench.bounds.available = true;
+    const auto probes = losPoints(bench,{0,0,40});
+    assert(probes[0].x == 10 && probes[0].z == 30); // nearest surface, not distant origin
+    assert(probes[1].z == 17.5 && probes[2].z == 5); // includes low.z
+    bench.bounds.low = multiply(bench.bounds.low,2); bench.bounds.high = multiply(bench.bounds.high,2);
+    const auto scaled = losPoints(bench,{0,0,80});
+    assert(scaled[0].x == 0 && scaled[0].z == 60 && scaled[1].z == 35 && scaled[2].z == 10);
+    assert(boundsCentre(bench.bounds).z == 10);
+    // Repeated external pushes cannot grow or reshuffle a frozen cycle list.
+    p.refresh(active(),refs,{},180,30,{});
+    assert(p.cycle(1,{},30));
+    const auto beforePush = p.order();
+    refs[0].position.x = 1;
+    p.refresh(active(),refs,{},180,31,{});
+    assert(p.push(10,{},31,true) && p.order() == beforePush);
+    std::vector<Candidate> crowded;
+    for (std::uint32_t i = 1; i <= 20; ++i) crowded.push_back({i,{static_cast<double>(i),0,0}});
+    Policy boundedCycle;
+    boundedCycle.refresh(active(),crowded,{},180,0,{});
+    assert(boundedCycle.cycle(1,{},0) && boundedCycle.order().size() == 8);
+    assert(!boundedCycle.push(9,{},0,true));
+    assert(boundedCycle.order().size() == 8 && boundedCycle.current() == 2);
 }
 void nativeSafety() {
     Candidate npc{10,{5,0,0}}, corpse{20,{10,0,0}}, ownedItem{30,{15,0,0}};
@@ -245,44 +341,31 @@ void nativeSafety() {
 }
 void eventDiagnostics() {
     EventLog events;
-    assert(events.observe(EventKind::choose,0,EventSource::nearest,"none") == EventEmission::none);
     assert(events.observe(EventKind::choose,10,EventSource::nearest,"none") == EventEmission::row);
-    // Choice rows track identity, while accepted cycles always get a row, even
-    // with one candidate. Pick rows independently track identity/source/reason.
-    assert(events.observe(EventKind::choose,10,EventSource::external,"none") == EventEmission::none);
+    assert(events.observe(EventKind::choose,10,EventSource::external,"none") == EventEmission::row);
     assert(events.observe(EventKind::cycle,10,EventSource::cycle,"next") == EventEmission::row);
-    assert(events.observe(EventKind::cycle,10,EventSource::cycle,"next") == EventEmission::row);
+    assert(events.observe(EventKind::cycle,10,EventSource::cycle,"next") == EventEmission::none);
     assert(events.observe(EventKind::pick,10,EventSource::nearest,"none") == EventEmission::row);
+    assert(events.observe(EventKind::pick,20,EventSource::nearest,"none") == EventEmission::row);
     for (unsigned i = 0; i < 10000; ++i)
-        assert(events.observe(EventKind::pick,10,EventSource::nearest,"none") == EventEmission::none);
-    assert(events.sequence() == 4);
-    assert(events.observe(EventKind::pick,10,EventSource::cycle,"none") == EventEmission::row);
-    assert(events.observe(EventKind::pick,10,EventSource::external,"none") == EventEmission::row);
-    assert(events.observe(EventKind::pick,10,EventSource::native,"none") == EventEmission::row);
+        assert(events.observe(EventKind::pick,i % 2 ? 10 : 20,EventSource::nearest,"none") == EventEmission::none);
+    assert(events.sequence() == 5 && events.suppressed() == 10001);
     assert(events.observe(EventKind::pick,10,EventSource::native,"menu") == EventEmission::row);
-    assert(events.observe(EventKind::pick,20,EventSource::native,"menu") == EventEmission::row);
-    assert(events.observe(EventKind::choose,0,EventSource::nearest,"menu") == EventEmission::row);
-    assert(events.observe(EventKind::choose,0,EventSource::nearest,"loading") == EventEmission::none);
-    assert(events.observe(EventKind::pick,0,EventSource::native,"loading") == EventEmission::row);
-    assert(events.sequence() == 11);
+    assert(events.observe(EventKind::latch,10,EventSource::nearest,"timeout") == EventEmission::row);
+    assert(events.observe(EventKind::latch,10,EventSource::nearest,"movement") == EventEmission::row);
+    assert(events.observe(EventKind::latch,10,EventSource::nearest,"timeout") == EventEmission::none);
     EventLog emptyPick;
     assert(emptyPick.observe(EventKind::pick,0,EventSource::native,"no_candidate") == EventEmission::row);
     assert(emptyPick.observe(EventKind::pick,0,EventSource::native,"no_candidate") == EventEmission::none);
-
     EventLog budget;
     for (std::uint32_t i = 1; i <= EventLog::limit; ++i) {
         assert(budget.observe(EventKind::pick,i,EventSource::nearest,"none") == EventEmission::row);
         assert(budget.sequence() == i);
     }
-    assert(budget.observe(EventKind::pick,EventLog::limit,EventSource::nearest,"none") == EventEmission::none);
     assert(budget.observe(EventKind::choose,7,EventSource::nearest,"none") == EventEmission::dropped);
     assert(budget.sequence() == EventLog::limit+1);
-    for (unsigned i = 0; i < 10000; ++i) {
-        assert(budget.observe(EventKind::cycle,7,EventSource::cycle,"next") == EventEmission::none);
-        assert(budget.observe(EventKind::choose,0,EventSource::nearest,"loading") == EventEmission::none);
-        assert(budget.observe(EventKind::pick,i,EventSource::native,"menu") == EventEmission::none);
-    }
-    assert(budget.sequence() == EventLog::limit+1);
+    assert(budget.observe(EventKind::cycle,7,EventSource::cycle,"next") == EventEmission::none);
+    assert(budget.suppressed() == 2);
 
     const std::array names{"none","disabled","unsupported","read_failure","conflict","loading","invalid_world",
         "dead","menu","dialogue","first_person","special","incomplete_scan","no_candidate","armed","combat",
@@ -318,6 +401,6 @@ void eventDiagnostics() {
         "selection event=dropped seq=2001 ms=13000 reason=budget limit=2000");
 }
 int main() {
-    ranking(); latches(); passthroughTable(); inputEdges(); configurationAndBudget(); accessGate(); nativeSafety(); eventDiagnostics();
-    std::cout << "PASS selection: surface rank/ties/long rotated bench, latch/wrap/invalidation, passthrough, edges, config/budget/API layout, thread/reentrancy gate, sneak/combat/telekinesis/collider safety, event changes/budget/format\n";
+    ranking(); latches(); passthroughTable(); inputEdges(); configurationAndBudget(); accessGate(); nativeSafety(); requestsAndLazyValidation(); eventDiagnostics();
+    std::cout << "PASS selection: surface rank/ties/long rotated bench, latch/wrap/invalidation, passthrough, edges, config/budget/API layout, pool-thread/reentrancy gate, atomic FIFO, lazy validation/unknown rays/native seeding/body probes, sneak/combat/telekinesis/collider safety, event keys/suppression/budget/format\n";
 }

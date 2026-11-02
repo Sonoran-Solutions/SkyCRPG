@@ -3,9 +3,9 @@
 #include <cstdint>
 
 namespace skycrpg::selection::api {
-inline constexpr std::uint32_t version = 1;
+inline constexpr std::uint32_t version = 2;
 inline constexpr char exportName[] = "SkyCRPGSelection_GetAPI";
-enum class Result : std::uint32_t { ok, unavailable, wrongThread, disabled, invalidTarget, invalidArgument };
+enum class Result : std::uint32_t { ok, unavailable, wrongThread, disabled, invalidTarget, invalidArgument, queued };
 struct Snapshot {
     std::uint32_t size = sizeof(Snapshot);
     std::uint32_t apiVersion = version;
@@ -15,6 +15,9 @@ struct Snapshot {
     std::uint32_t inspectedLast = 0, cappedScans = 0;
     std::uint32_t visitedLast = 0, scanRaysLast = 0;
     double radius = 0;
+    std::uint32_t available = 0, validatedLast = 0;
+    std::uint32_t externalTarget = 0, externalResult = static_cast<std::uint32_t>(Result::unavailable);
+    std::uint64_t cyclesTotal = 0, eventSuppressed = 0, requestDrops = 0;
 };
 struct Interface {
     std::uint32_t size;
@@ -26,25 +29,33 @@ struct Interface {
 };
 using GetAPI = const Interface* (*)(std::uint32_t requestedVersion);
 // Resolve via GetModuleHandleW(L"SkyCRPG_Selection.dll") / GetProcAddress;
-// no link dependency. Never LoadLibrary it. Request exactly version 1 after
-// kDataLoaded. All methods require the game thread (wrongThread otherwise).
+// no link dependency. Never LoadLibrary it. Request exactly version 2 after
+// kDataLoaded. Version 1 is rejected: it promised synchronous main-thread work.
+// All methods now support any thread and never initiate a scan or call engine
+// functions. Snapshot/list reads return unavailable on contention/reentrancy.
+// wrongThread is a reserved legacy enum value and is never returned by v2.
 // Buffers belong to the caller; no engine pointers or STL types cross the ABI.
-// getSnapshot/copyCandidates refresh when due (100ms default); genuine state
-// or cell changes force revalidation. Native passthrough clears the snapshot.
-// Check target before acting; it is the validated policy target, not a promise
-// that a subsequent native pick will be substituted.
+// Snapshots describe the most recent Pick job. available=0 means no injection
+// is currently permitted, even if a retained target/latch is nonzero (e.g. a
+// refused ray). Reads do not refresh stale state. Check availability and age by
+// observing refreshes; this interface never promises a future native pick.
 // copyCandidates reports total count; a short buffer receives the leading IDs.
-// setTarget uses a complete bounded scan (<=100ms old with defaults), then
-// rechecks the pushed reference's native eligibility/range/body LOS immediately,
-// then latches. Default [Selection] bAllowExternalTargets=0 refuses mutations.
-// Pushes are rate limited to fRefreshSeconds (unavailable: retry later).
-// Invalid pushes preserve the existing selection. clearTarget returns nearest.
-// Latches clear on unsafe states or invalidation; incidental menus/cells preserve them.
-// Nothing is saved. No cursor is built.
-// Reentrant methods return unavailable. lastCostMicros measures a full scan;
-// lastPickCostMicros measures the adapter after native Pick (including any due
-// scan and the selected target's immediate LOS, up to three rays). raysTotal includes both paths.
-// SmoothCam use3DPicker can call twice per frame: each pick is counted and
-// freshly validated; scans share one refresh gate. visitedLast is cheap broad
-// phase work; inspectedLast counts nearby references; scanRaysLast is capped.
+// setTarget/clearTarget post one atomic request. queued means accepted into the
+// mailbox, NOT validated/applied. A busy mailbox returns unavailable; callers
+// must not spin. Default bAllowExternalTargets=0 returns disabled.
+// Pick consumes external requests at most once per refresh interval, checks
+// membership in its validated bounded list and fresh eligibility/range/body LOS,
+// and only then latches. Invalid/unknown pushes preserve the existing selection.
+// externalTarget/externalResult report the last consumed request (zero=clear).
+// The mailbox is single-caller coordination, not a multi-client arbitration API.
+// Lifecycle invalidation discards pending requests. No request is serialized.
+// Cycling is an atomic FIFO; Pick applies each physical edge once, in order.
+// Candidate order is a validated nearest prefix (up to eight), frozen for a latch.
+// visitedLast counts cheap callbacks; inspectedLast counts nearby geometry;
+// validatedLast counts expensive predicate/LOS attempts (<=16 per refresh,
+// including <=8 retained latch members). lastCostMicros measures the scan;
+// lastPickCostMicros includes due scans and fresh selected/external validation.
+// raysTotal includes all paths. SmoothCam's second Pick shares the refresh gate.
+// eventSuppressed counts duplicate/budget-suppressed event keys; requestDrops
+// counts full/contended cycle mailboxes. No cursor or activation action is built.
 } // namespace skycrpg::selection::api

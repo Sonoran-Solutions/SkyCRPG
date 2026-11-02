@@ -47,6 +47,10 @@ inline Point closestPoint(const Bounds& b, Point p) {
         result = add(result,multiply(b.axes[i],std::clamp(dot(offset,b.axes[i]),low[i],high[i])));
     return result;
 }
+inline Point localToWorld(const Bounds& b, Point local) {
+    return add(add(add(b.origin,multiply(b.axes[0],local.x)),multiply(b.axes[1],local.y)),multiply(b.axes[2],local.z));
+}
+inline Point boundsCentre(const Bounds& b) { return localToWorld(b,multiply(add(b.low,b.high),.5)); }
 inline bool inBroadPhase(Point player, Point origin, double radius, double padding) {
     return finite(origin) && distanceSquared(player,origin) <= (radius+padding)*(radius+padding);
 }
@@ -55,7 +59,7 @@ struct Settings {
     bool enabled = true, allowExternal = false;
     double radius = 0; // zero reads native fActivatePickLength:Interface; never extends it
     double refreshSeconds = .1, latchSeconds = 10, moveThreshold = 64;
-    std::uint32_t inspectLimit = 4096, rayLimit = 192, visitLimit = 65536;
+    std::uint32_t inspectLimit = 4096, rayLimit = 48, visitLimit = 65536;
     double boundsPadding = 2048;
     int nextKey = 26, previousKey = 27; // DIK_LBRACKET / DIK_RBRACKET, unapproved test defaults
     int nextGamepad = -1, previousGamepad = -1;
@@ -125,6 +129,14 @@ struct Candidate {
     Bounds bounds{};
     bool liveActor = false;
 };
+inline std::array<Point,3> losPoints(const Candidate& c, Point body) {
+    if (!validBounds(c.bounds)) return {c.position,c.position,c.position};
+    const auto& b = c.bounds;
+    const auto centre = multiply(add(b.low,b.high),.5);
+    return {closestPoint(b,body),
+        localToWorld(b,{centre.x,centre.y,b.low.z+(b.high.z-b.low.z)*.75}),
+        boundsCentre(b)};
+}
 inline double surfaceDistanceSquared(const Candidate& c, Point player) {
     return distanceSquared(player,validBounds(c.bounds) ? closestPoint(c.bounds,player) : c.position);
 }
@@ -164,6 +176,55 @@ struct FreshPress {
         return step;
     }
 };
+// A bounded FIFO of physical edges. One exchange consumes a batch exactly once;
+// opposing presses retain order. Producers never wait on the Pick job.
+class CycleRequests {
+public:
+    bool post(int direction) {
+        if (!direction) return false;
+        auto old = pending_.load();
+        for (unsigned attempt = 0; attempt < 8; ++attempt) {
+            unsigned shift = 0;
+            while (shift < 32 && ((old >> shift) & 3u)) shift += 2;
+            if (shift == 32) return false;
+            const auto next = old | ((direction > 0 ? 1u : 2u) << shift);
+            if (pending_.compare_exchange_strong(old,next)) return true;
+        }
+        return false;
+    }
+    std::uint32_t take() { return pending_.exchange(0); }
+    static int pop(std::uint32_t& batch) {
+        const auto code = batch & 3u; batch >>= 2;
+        return code == 1 ? 1 : code == 2 ? -1 : 0;
+    }
+private:
+    std::atomic<std::uint32_t> pending_{0};
+};
+enum class Validation { valid, invalid, unknown };
+struct LazyResult {
+    std::vector<Candidate> accepted;
+    std::vector<std::uint32_t> evaluated;
+    bool unknown = false, exhausted = false;
+};
+// Input is cheap geometry only. Expensive native predicates run nearest outward.
+// An unknown result prevents a strict-nearest claim and preserves prior state.
+template<class Validate> LazyResult lazyValidate(std::span<const Candidate> candidates,
+    Point player, double radius, bool sneaking, std::uint32_t limit, Validate validateCandidate) {
+    LazyResult result;
+    const auto sorted = rank(candidates,player,radius,sneaking);
+    for (const auto& entry : sorted) {
+        if (result.evaluated.size() == limit) { result.exhausted = true; break; }
+        const auto it = std::find_if(candidates.begin(),candidates.end(),[&](const auto& c) { return c.id == entry.id; });
+        result.evaluated.push_back(entry.id);
+        const auto status = validateCandidate(*it);
+        if (status == Validation::unknown) { result.unknown = true; break; }
+        if (status == Validation::valid) result.accepted.push_back(*it);
+    }
+    return result;
+}
+inline bool nativeIsNew(std::uint32_t id, std::span<const std::uint32_t> scanned, bool latched) {
+    return id && !latched && std::find(scanned.begin(),scanned.end(),id) == scanned.end();
+}
 class Policy {
 public:
     void reset() { sorted_.clear(); clearLatch(); current_ = 0; reason_ = Pass::noCandidate; }
@@ -176,19 +237,38 @@ public:
         if (reason_ != Pass::none) { sorted_.clear(); clearLatch(); current_ = 0; return; }
         sorted_ = rank(candidates,player,radius,context.sneaking);
         if (sorted_.empty()) { clearLatch(); current_ = 0; reason_ = Pass::noCandidate; return; }
-        if (latched_ && (now < latchStart_ || now-latchStart_ >= settings.latchSeconds ||
-            distanceSquared(player,latchOrigin_) > settings.moveThreshold*settings.moveThreshold || !contains(latched_))) clearLatch();
+        expire(player,now,settings);
+        if (latched_ && !contains(latched_)) clearLatch();
         if (latched_) {
             // Freeze order/membership for this latch, pruning invalid neighbours only.
             std::erase_if(frozen_,[&](auto id) { return !contains(id); });
         }
         current_ = latched_ ? latched_ : sorted_.front().id;
     }
+    bool acceptScan(Context context, const LazyResult& checked, Point player,
+        double radius, double now, const Settings& settings, bool complete) {
+        if (!complete || checked.unknown) return false;
+        const bool validLatch = latched_ && std::any_of(checked.accepted.begin(),checked.accepted.end(),
+            [&](const auto& value) { return value.id == latched_; });
+        const auto inPrefix = [&](std::uint32_t id) {
+            return std::find(checked.evaluated.begin(),checked.evaluated.end(),id) != checked.evaluated.end();
+        };
+        const bool prefixAccepted = std::any_of(checked.accepted.begin(),checked.accepted.end(),
+            [&](const auto& value) { return inPrefix(value.id); });
+        if (checked.exhausted && !prefixAccepted && !validLatch) return false;
+        auto candidates = checked.accepted;
+        if (!validLatch) std::erase_if(candidates,[&](const auto& value) { return !inPrefix(value.id); });
+        refresh(context,candidates,player,radius,now,settings);
+        return reason_ == Pass::none;
+    }
     bool cycle(int direction, Point player, double now) {
         if (reason_ != Pass::none || sorted_.empty() || !finite(player) || !std::isfinite(now) || direction == 0) return false;
         if (!latched_) {
             frozen_.clear();
-            for (const auto& c : sorted_) frozen_.push_back(c.id);
+            for (const auto& c : sorted_) {
+                if (frozen_.size() == 8) break;
+                frozen_.push_back(c.id);
+            }
             latchOrigin_ = player;
         }
         const auto it = std::find(frozen_.begin(),frozen_.end(),current_);
@@ -201,10 +281,34 @@ public:
     }
     bool push(std::uint32_t id, Point player, double now, bool allowed) {
         if (!allowed || reason_ != Pass::none || !contains(id) || !finite(player) || !std::isfinite(now)) return false;
-        frozen_.clear();
-        for (const auto& c : sorted_) frozen_.push_back(c.id);
+        auto next = frozen_;
+        if (!latched_) {
+            next.clear();
+            for (const auto& c : sorted_) {
+                if (next.size() == 8) break;
+                next.push_back(c.id);
+            }
+        }
+        if (std::find(next.begin(),next.end(),id) == next.end()) return false;
+        frozen_ = std::move(next);
         current_ = latched_ = id; latchOrigin_ = player; latchStart_ = now;
         return true;
+    }
+    std::string_view expire(Point player, double now, const Settings& settings) {
+        std::string_view reason;
+        if (latched_) {
+            if (now < latchStart_ || now-latchStart_ >= settings.latchSeconds) reason = "timeout";
+            else if (distanceSquared(player,latchOrigin_) > settings.moveThreshold*settings.moveThreshold) reason = "movement";
+        }
+        if (!reason.empty()) release();
+        return reason;
+    }
+    void invalidate(std::uint32_t id) {
+        std::erase_if(sorted_,[&](const auto& c) { return c.id == id; });
+        std::erase(frozen_,id);
+        if (id == latched_) clearLatch();
+        current_ = latched_ ? latched_ : sorted_.empty() ? 0 : sorted_.front().id;
+        reason_ = current_ ? Pass::none : Pass::noCandidate;
     }
     void release() {
         clearLatch(); current_ = sorted_.empty() ? 0 : sorted_.front().id;
@@ -247,14 +351,9 @@ struct RefreshGate {
 };
 class AccessGate {
 public:
-    void bind(std::uint32_t ownerThread) { thread_.store(ownerThread); }
-    [[nodiscard]] std::uint32_t thread() const { return thread_.load(); }
-    bool enter(std::uint32_t callerThread) {
-        return callerThread && callerThread == thread_.load() && !active_.test_and_set();
-    }
-    void leave() { active_.clear(); }
+    bool enter() { return !active_.test_and_set(std::memory_order_acquire); }
+    void leave() { active_.clear(std::memory_order_release); }
 private:
-    std::atomic<std::uint32_t> thread_{0};
     std::atomic_flag active_ = ATOMIC_FLAG_INIT;
 };
 constexpr std::string_view passName(Pass reason) {
@@ -280,7 +379,7 @@ constexpr std::string_view passName(Pass reason) {
     }
     return "unknown";
 }
-enum class EventKind { choose, cycle, pick };
+enum class EventKind { choose, cycle, pick, latch };
 enum class EventSource { nearest, cycle, native, external };
 enum class EventEmission { none, row, dropped };
 constexpr std::string_view sourceName(EventSource source) {
@@ -308,23 +407,34 @@ class EventLog {
 public:
     static constexpr std::uint32_t limit = 2000;
     EventEmission observe(EventKind kind, std::uint32_t id, EventSource source, std::string_view reason) {
-        if (dropped_) return EventEmission::none;
-        if (kind == EventKind::choose) {
-            if (chosen_ == id) return EventEmission::none;
-            chosen_ = id;
-        } else if (kind == EventKind::pick) {
-            if (hasPick_ && pick_ == id && source_ == source && reason_ == reason) return EventEmission::none;
-            hasPick_ = true; pick_ = id; source_ = source; reason_ = reason;
+        for (std::uint32_t i = 0; i < used_; ++i) {
+            auto& key = keys_[i];
+            if (key.kind == kind && key.id == id && key.source == source && key.reason == reason) {
+                ++key.suppressed; ++suppressed_; return EventEmission::none;
+            }
         }
-        if (sequence_ == limit) { dropped_ = true; ++sequence_; return EventEmission::dropped; }
+        if (used_ == limit) {
+            ++suppressed_;
+            if (dropped_) return EventEmission::none;
+            dropped_ = true; ++sequence_; return EventEmission::dropped;
+        }
+        keys_[used_++] = {kind,id,source,reason,0};
         ++sequence_; return EventEmission::row;
     }
     [[nodiscard]] std::uint32_t sequence() const { return sequence_; }
+    [[nodiscard]] std::uint64_t suppressed() const { return suppressed_; }
 private:
-    std::uint32_t sequence_ = 0, chosen_ = 0, pick_ = 0;
-    EventSource source_ = EventSource::native;
-    std::string_view reason_;
-    bool hasPick_ = false, dropped_ = false;
+    struct Key {
+        EventKind kind{};
+        std::uint32_t id = 0;
+        EventSource source{};
+        std::string_view reason;
+        std::uint64_t suppressed = 0;
+    };
+    std::array<Key,limit> keys_{};
+    std::uint32_t used_ = 0, sequence_ = 0;
+    std::uint64_t suppressed_ = 0;
+    bool dropped_ = false;
 };
 inline std::string formatEvent(const SelectionEvent& event, EventEmission emission,
     std::uint32_t sequence, std::uint64_t milliseconds) {
@@ -336,7 +446,7 @@ inline std::string formatEvent(const SelectionEvent& event, EventEmission emissi
             << " reason=budget limit=" << EventLog::limit;
         return out.str();
     }
-    const auto kind = event.kind == EventKind::choose ? "choose" : event.kind == EventKind::cycle ? "cycle" : "pick";
+    const auto kind = event.kind == EventKind::choose ? "choose" : event.kind == EventKind::cycle ? "cycle" : event.kind == EventKind::latch ? "latch" : "pick";
     out << "selection event=" << kind << " seq=" << sequence << " ms=" << milliseconds
         << " form_id=" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << event.id
         << std::dec << " distance_units=";
