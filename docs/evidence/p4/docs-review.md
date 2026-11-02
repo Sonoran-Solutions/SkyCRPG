@@ -1,6 +1,6 @@
 # DYL-174 documentation review
 
-Base `c7333c7`, worktree base `8f1dc119b6abc648205c8f0714a3217dfaf41631`; head `<head SHA>`, CI `<CI run>`, DLL hashes `<DLL sha256>`, archives `<candidate archive hashes>`. Owner: docs worker. No game, Steam or Proton launch; new runtime acceptance **NOT_RUN**. Candidate files must be rebuilt from a clean committed source before final assembly.
+Base `c7333c7`. On 2026-11-01 this branch was rebuilt on main after #30, #26, #27 and #28 merged, so its UI, Camera, probe and packaging sources are the merged ones. Final candidate head, CI run, DLL and archive hashes: **pending DYL-171 final-package generation**. Owner: docs worker. No game, Steam or Proton launch; new runtime acceptance **NOT_RUN**. Candidate files must be rebuilt from a clean committed source before final assembly.
 
 | Item | Audit and result |
 | --- | --- |

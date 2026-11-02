@@ -1,6 +1,6 @@
 # Internal candidate notes
 
-Phase 4 is in progress. These are internal candidates, not a public release or owner acceptance. Final candidate source `<candidate SHA>`, CI `<candidate CI run>`, Camera `<candidate Camera archive hash>`, UI `<candidate UI archive hash>`. [Install](INSTALLATION.md) · [controls](CONTROLS.md) · [playtest](PLAYTEST.md).
+Phase 4 is in progress. These are internal candidates, not a public release or owner acceptance. Final candidate source, CI run and Camera/UI archive hashes: **pending DYL-171 final-package generation**. [Install](INSTALLATION.md) · [controls](CONTROLS.md) · [playtest](PLAYTEST.md).
 
 ## Known limitations
 

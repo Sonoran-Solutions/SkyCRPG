@@ -2,8 +2,8 @@
 
 2026-10-28. **Tooling PASS; final candidate and runtime acceptance NOT_RUN.**
 Base `c7333c7c13284ad9d228e6f15213bc8465bd6e19`, worktree
-`phase4/dyl-171-package`. Source for final candidates: `<head SHA>`;
-Windows native build: `<CI run>`; final DLLs: `<DLL sha256>`.
+`phase4/dyl-171-package`. Source, Windows native build and DLL hashes for final candidates:
+**pending DYL-171 final-package generation**.
 The assigned [ticket](https://linear.app/devils17/issue/DYL-171) and
 [Phase 4](../../phases/PHASE_4.md) were read before implementation.
 No commit, push, branch creation, game launch, live deployment or provider edit
