@@ -18,6 +18,7 @@
 #include <bcrypt.h>
 #include <array>
 #include <charconv>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <type_traits>
@@ -75,7 +76,12 @@ RE::FormID indicatorShaderForm = 0xAAEB3;
 RE::TESEffectShader* indicatorShader = nullptr;
 RE::ObjectRefHandle indicatorTarget;
 LockIndicatorAttempt indicatorAttempt;
-LockInputRelease lockInputRelease;
+// Written by the input sink (any thread) and read by the main-thread lease path.
+std::atomic<double> lockInputLast{0};
+std::atomic<bool> lockInputSeen{false};
+// Last main-thread decision, read when context() runs on another thread.
+std::atomic<bool> publishedLockPrerequisites{false}, publishedTargetLock{false};
+unsigned lockStateLogs = 0;
 std::optional<bool> observedLock;
 RE::ActorHandle observedTarget;
 bool precisionTraceEnabled = false, lifecycleTraceEnabled = false;
@@ -306,10 +312,21 @@ void stopIndicator() {
     }
     indicatorAttempt.reset(); indicatorTarget = {};
 }
+double lockClock() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+void noteLockInputActivity() {
+    lockInputLast.store(lockClock()); lockInputSeen.store(true);
+}
+bool lockInputIdle() {
+    LockInputIdle idle;
+    if (lockInputSeen.load()) idle.activity(lockInputLast.load());
+    return idle.ready(lockClock());
+}
 void consumeLockInterrupt() {
     if (!ready || !lockHooksReady || !onTargetLockThread()) return;
     if (lockInterrupt.consume()) {
-        lockInputRelease.interrupt();
+        noteLockInputActivity();
         lockRetargetWindow.started.reset();
         stopIndicator();
         if (!movementLease) static_cast<void>(acquireMovementLease());
@@ -344,15 +361,43 @@ void observeTargetLock() {
     lockRetargetWindow.started.reset();
     observedLock = locked;
 }
+void checkLockBindings() {
+    const auto map = RE::ControlMap::GetSingleton();
+    // U is a test default, never a second consumer of a native/Camera binding.
+    const bool bindingsSafe = map && map->GetUserEventName(22,RE::INPUT_DEVICE::kKeyboard).empty() &&
+        map->GetMappedKey("Toggle POV",RE::INPUT_DEVICE::kGamepad) == 128 &&
+        settings.toggleKey != 22 && settings.recenterKey != 22 &&
+        settings.toggleGamepad != 128 && settings.recenterGamepad != 128;
+    if (!bindingsSafe) {
+        lockConfigSafe = false;
+        if (!lockConfigLogged) {
+            log("Target lock refused: U conflicts or gamepad POV is not R3; lease held, bindings unchanged.");
+            lockConfigLogged = true;
+        }
+    }
+}
+void updateTargetLockMain(Context& c);
 void updateTargetLock(Context& c) {
-    if (!ready || !lockHooksReady || !onTargetLockThread()) {
+    if (!ready || !lockHooksReady) {
         interruptTargetLock();
-        if (movement && !movementLease) static_cast<void>(acquireMovementLease());
+        if (onTargetLockThread() && movement && !movementLease) static_cast<void>(acquireMovementLease());
         c.prerequisites = false; return;
     }
+    if (!onTargetLockThread()) {
+        // Input and menu callbacks can run on other threads: use the last main-thread
+        // decision so F6/F7/F8 keep working, and leave all lease work to the main thread.
+        c.prerequisites = c.prerequisites && publishedLockPrerequisites.load();
+        c.targetLock = publishedTargetLock.load();
+        return;
+    }
+    updateTargetLockMain(c);
+    publishedLockPrerequisites.store(c.prerequisites);
+    publishedTargetLock.store(c.targetLock);
+}
+void updateTargetLockMain(Context& c) {
     observeTargetLock();
     consumeLockInterrupt();
-    if (lockConfigRefresh.consume()) movementConfigSafe = checkLockMovementConfig();
+    if (lockConfigRefresh.consume()) { movementConfigSafe = checkLockMovementConfig(); checkLockBindings(); }
     c.prerequisites = c.prerequisites && movementConfigSafe;
     const bool eligible = c.enabled && c.prerequisites && c.world && !c.special && !c.menu &&
         !c.firstPerson && !c.precision && !c.slide;
@@ -360,7 +405,20 @@ void updateTargetLock(Context& c) {
     if (!eligible || !safe || !observedLock) interruptTargetLock();
     consumeLockInterrupt();
     const auto decision = targetLockLease({targetLockEnabled,eligible,lockConfigSafe,indicatorReady(),
-        movement != nullptr,movementLease,observedLock,lockInputRelease.ready});
+        movement != nullptr,movementLease,observedLock,lockInputIdle()});
+    {
+        // One bounded line per change, so a refusal can never be silent.
+        static std::uint32_t lastState = UINT32_MAX;
+        const std::uint32_t state = (eligible?1u:0u)|(lockConfigSafe?2u:0u)|(indicatorReady()?4u:0u)|(observedLock?8u:0u)|
+            (observedLock.value_or(false)?16u:0u)|(movementLease?32u:0u)|(lockInputIdle()?64u:0u)|(static_cast<unsigned>(decision.action)<<8);
+        if (state != lastState && lockStateLogs < 256) {
+            lastState = state; ++lockStateLogs;
+            char line[192]{};
+            std::snprintf(line,sizeof(line),"Target lock state eligible=%u config=%u indicator=%u observed=%u locked=%u lease=%u input_idle=%u action=%u",
+                state&1u,(state>>1)&1u,(state>>2)&1u,(state>>3)&1u,(state>>4)&1u,(state>>5)&1u,(state>>6)&1u,state>>8);
+            log(line);
+        }
+    }
     if (decision.action == LockLeaseAction::acquire) {
         if (movement && !movementLease) static_cast<void>(acquireMovementLease());
     } else if (decision.action == LockLeaseAction::release) {
@@ -373,7 +431,7 @@ void updateTargetLock(Context& c) {
             if (result == TDM_API::APIResult::OK)
                 log("TDM target-lock-disable lease released after unlocked acknowledgement and idle input.");
             else {
-                lockInputRelease.interrupt();
+                noteLockInputActivity();
                 static_cast<void>(acquireMovementLease());
             }
         })) consumeLockInterrupt();
@@ -677,6 +735,7 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
     const auto c = context(&hard,false,&failure);
     observeLifecycle(c,hard);
     observePrerequisiteFailure(c,failure);
+    if (targetLockEnabled) traceLockFrame(c);
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (!heldFramingAllowed(c) || !camera || camera->currentState.get() != state || (next && next.get() != state)) {
         resetObstruction(); return;
@@ -695,34 +754,22 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
 }
 void pollLockInput(RE::InputEvent* input) {
     if (!targetLockEnabled) return;
-    if (!onTargetLockThread()) { interruptTargetLock(); return; }
-    consumeLockInterrupt();
-    const auto map = RE::ControlMap::GetSingleton();
-    // U is a test default, never a second consumer of a native/Camera binding.
-    const bool bindingsSafe = map && map->GetUserEventName(22,RE::INPUT_DEVICE::kKeyboard).empty() &&
-        map->GetMappedKey("Toggle POV",RE::INPUT_DEVICE::kGamepad) == 128 &&
-        settings.toggleKey != 22 && settings.recenterKey != 22 &&
-        settings.toggleGamepad != 128 && settings.recenterGamepad != 128;
-    if (!bindingsSafe) {
-        lockConfigSafe = false;
-        if (!lockConfigLogged) {
-            log("Target lock refused: U conflicts or gamepad POV is not R3; lease held, bindings unchanged.");
-            lockConfigLogged = true;
-        }
+    static std::atomic_flag reported = ATOMIC_FLAG_INIT;
+    if (!reported.test_and_set()) {
+        const auto main = RE::Main::GetSingleton();
+        char line[96]{};
+        std::snprintf(line,sizeof(line),"Target lock input sink thread=%lu main=%lu",
+            static_cast<unsigned long>(GetCurrentThreadId()),static_cast<unsigned long>(main ? main->threadID : 0));
+        log(line);
     }
-    bool pressed = false, released = false;
-    // Held seconds can be zero on the first down event. Include this dispatch
-    // explicitly and do not release the lease on a POV-up dispatch.
     for (auto event = input; event; event = event->next) {
         const auto button = event->AsButtonEvent();
         if (!button) continue;
         if ((event->GetDevice() == RE::INPUT_DEVICE::kKeyboard && button->GetIDCode() == 22) ||
             (event->GetDevice() == RE::INPUT_DEVICE::kGamepad && button->GetIDCode() == 128)) {
-            if (button->IsPressed()) pressed = true;
-            else released = true;
+            noteLockInputActivity();
         }
     }
-    lockInputRelease.dispatch(pressed,released);
 }
 void traceLockFrame(Context c) {
     if (!targetLockEnabled || !lockFrameTraceEnabled || lockTraceWindow.budget.lines >= LockFrameTraceBudget::limit || !onTargetLockThread()) return;
@@ -750,7 +797,7 @@ void traceLockFrame(Context c) {
     std::snprintf(line.data(),line.size(),"TargetLock event=frame frame=%llu us=%llu decision=%u lease=%u lock=%d target=%08X fresh=%u worldPitch=%.7f worldYaw=%.7f netPitch=%.7f netYaw=%.7f forward=%.7f,%.7f,%.7f look=%.7f,%.7f lookCalls=%u sample=last-rendered",
         static_cast<unsigned long long>(++frame),static_cast<unsigned long long>(now),static_cast<unsigned>(select(c)),
         static_cast<unsigned>(movementLease),observedLock ? (*observedLock ? 1 : 0) : -1,
-        observedTarget.native_handle(),static_cast<unsigned>(lockInputRelease.ready),worldPitch,worldYaw,netPitch,netYaw,
+        observedTarget.native_handle(),static_cast<unsigned>(lockInputIdle()),worldPitch,worldYaw,netPitch,netYaw,
         forward.x,forward.y,forward.z,lockLookInput.x,lockLookInput.y,lockLookCalls);
     lockTraceWindow.sample(line,observedLock.value_or(false),[](const LockTraceRow& row) { lockFrameWriter.append(row); });
     lockLookInput = {}; lockLookCalls = 0;
@@ -803,7 +850,6 @@ public:
         const auto c = context(&hardSpecial,!settings.enabled && !movementLease,&failure);
         observePrerequisiteFailure(c,failure);
         if (targetLockEnabled) notifyLockRefusal(c);
-        if (targetLockEnabled) traceLockFrame(c);
         const bool ownedBefore = ownFirstPerson;
         ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hardSpecial);
         if (precisionTraceEnabled && ownedBefore != ownFirstPerson) {

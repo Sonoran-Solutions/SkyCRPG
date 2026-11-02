@@ -180,3 +180,9 @@ Camera DLL `3b6ff9cf…` from `6b42f35`, camera-only, keyboard/mouse, unattended
 | `p5-lock-main`, bEnabled=1 | **FAIL** | The lease was never released, so no lock happened. It failed closed. |
 
 Cause: the log shows `current=620 Main=368 TDM=620`. `GetTDMThreadId` returns the thread that first requested TDM's API (data load), while TDM logs its updates on 368, the main thread. Requiring all three IDs to match could never pass. The gate now requires only `Main::threadID`. Runs `batch-p5-a-00` and `-01` failed because of a stage builder bug that deployed JSON as the DLL; they tested no plugin code.
+
+## In-game run p5-d — 2026-11-02
+
+`p5-lock-main` on Camera DLL `9a5a2278…` from `82b2121` was **FAIL**: the lease was still never released, with no refusal logged, so no lock happened and it failed closed. The update hook reached the normal state, so the likely cause is the release-input tracker, which only advanced on the main thread and counted input dispatches. Probe records show menu events running on several worker threads as well as main; the input sink's thread had not been logged.
+
+The tracker now uses atomics and a 0.25 s quiet window, because a held key emits an event on every poll, and works from any sink thread. Off-main `context()` reuses the last main-thread decision, so F6/F7/F8 aren't affected. A bounded line logs each lock state change and the sink's thread. Whether this cause is right is **not yet confirmed in game**.

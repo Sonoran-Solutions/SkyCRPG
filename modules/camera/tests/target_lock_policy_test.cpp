@@ -62,26 +62,13 @@ int main() {
         assert(trace.take(true,true) == (row < LockFrameTraceBudget::limit));
     }
     assert(trace.lines == LockFrameTraceBudget::limit);
-    LockInputRelease input;
-    input.observe(std::nullopt); assert(!input.ready);
-    input.observe(true); assert(!input.ready); // held through menu
-    input.observe(false); assert(!input.ready); // release stays under lease
-    input.observe(true); assert(!input.ready); // press before a complete idle dispatch
-    input.observe(false); input.observe(false); assert(input.ready);
-    input.observe(true); assert(input.ready); // a genuinely fresh press is permitted
-    input.interrupt(); assert(!input.ready);
-    input.observe(false); input.observe(std::nullopt); input.observe(false); assert(!input.ready);
-    input.observe(false); assert(input.ready);
-    // A null event head is an idle poll; release is not an idle poll.
-    input.interrupt();
-    input.dispatch(true,false); assert(!input.ready);
-    input.dispatch(false,true); assert(!input.ready && input.idleDispatches == 0);
-    input.dispatch(false,false); assert(!input.ready);
-    input.dispatch(false,false); assert(input.ready);
-    input.interrupt();
-    input.dispatch(true,true); assert(!input.ready && input.idleDispatches == 0);
-    input.dispatch(false,false); input.dispatch(true,false); assert(!input.ready);
-    input.dispatch(false,false); input.dispatch(false,false); assert(input.ready);
+    LockInputIdle input;
+    assert(!input.ready(100)); // nothing observed yet: the lease stays held
+    input.activity(10); assert(!input.ready(10) && !input.ready(10.2) && input.ready(10.25));
+    input.activity(10.2); assert(!input.ready(10.3)); // a key held through a menu keeps renewing
+    assert(input.ready(10.45));
+    input.activity(11); assert(!input.ready(11.1)); // an interruption restarts the window
+    assert(input.ready(11.3));
     LockIndicatorAttempt indicator;
     indicator.begin({10,11},5.0);
     assert(!indicator.isNew(10) && !indicator.isNew(11) && indicator.isNew(12));
@@ -116,25 +103,24 @@ int main() {
     std::thread callback([&] { interrupt.request(); });
     callback.join();
     assert(!interrupt.releaseIfClear(release) && releases == 0);
-    if (interrupt.consume()) input.interrupt();
-    i = {true,true,true,true,true,true,false,input.ready};
+    if (interrupt.consume()) input.activity(20);
+    i = {true,true,true,true,true,true,false,input.ready(20)};
     assert(targetLockLease(i).action == LockLeaseAction::keep);
-    input.observe(false); input.observe(false); i.inputReleased = input.ready;
+    i.inputReleased = input.ready(20.3);
     assert(targetLockLease(i).action == LockLeaseAction::release);
     // Callback between policy observation and side effect must still win.
     interrupt.request();
     assert(!interrupt.releaseIfClear(release) && releases == 0);
-    assert(interrupt.consume()); input.interrupt();
-    assert(!input.ready && !interrupt.consume());
-    input.observe(false); input.observe(false);
-    i.inputReleased = input.ready;
+    assert(interrupt.consume()); input.activity(21);
+    assert(!input.ready(21) && !interrupt.consume());
+    i.inputReleased = input.ready(21.3);
     assert(targetLockLease(i).action == LockLeaseAction::release);
     assert(interrupt.releaseIfClear(release) && releases == 1);
     // A transient indicator refusal uses the same interruption/barrier. The
     // next fresh lock remains possible; there is no session failure latch.
-    input.interrupt(); i.haveLease = true; i.locked = true; i.inputReleased = false;
+    input.activity(22); i.haveLease = true; i.locked = true; i.inputReleased = false;
     assert(targetLockLease(i).action == LockLeaseAction::keep);
-    i.locked = false; input.observe(false); input.observe(false); i.inputReleased = input.ready;
+    i.locked = false; i.inputReleased = input.ready(22.3);
     assert(targetLockLease(i).action == LockLeaseAction::release);
     i.haveLease = false; i.locked = true;
     assert(targetLockLease(i).lockStateAllowed);

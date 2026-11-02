@@ -63,21 +63,14 @@ constexpr LockLeaseDecision targetLockLease(LockLeaseInput i) {
     if (i.haveLease) return {*i.locked || !i.inputReleased ? LockLeaseAction::keep : LockLeaseAction::release,false};
     return {LockLeaseAction::keep,*i.locked};
 }
-// Sample once per input dispatch. Two idle observations keep TDM's POV release
-// event under the lease for a complete dispatch before it can be released.
-struct LockInputRelease {
-    unsigned idleDispatches = 0;
-    bool ready = false;
-    void interrupt() { idleDispatches = 0; ready = false; }
-    void observe(std::optional<bool> pressed) {
-        if (ready) return;
-        if (!pressed || *pressed) { idleDispatches = 0; return; }
-        if (++idleDispatches >= 2) ready = true;
-    }
-    void dispatch(bool pressed, bool released) {
-        if (released && !ready) { interrupt(); return; }
-        observe(pressed);
-    }
+// A held key emits an event on every input poll, so a quiet window means it is
+// up. Time-based because the input sink may not run on the main thread.
+struct LockInputIdle {
+    static constexpr double window = 0.25;
+    double lastActivity = 0;
+    bool started = false;
+    void activity(double now) { lastActivity = now; started = true; }
+    bool ready(double now) const { return started && now-lastActivity >= window; }
 };
 struct LockRetargetWindow {
     std::optional<double> started;
