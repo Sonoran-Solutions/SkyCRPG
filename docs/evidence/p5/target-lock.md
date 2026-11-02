@@ -223,4 +223,4 @@ Same build, profile and location as `owner-lock-1`, keyboard/mouse; restore PASS
 | Auto-retarget on target death | **NOT_RUN** | Only one bandit was available. |
 | Controller R3 | **NOT_RUN** | Separate run. |
 
-The owner left a quicksave next to the bandit in the isolated camera-only profile for repeat tests.
+The owner made a quicksave next to the bandit for repeat tests. Restore moved it to the run's preserved outputs, and it's backed up as `session-p5/owner-saves/Quicksave0_…_20261102205255_1_1` outside the repository. In that session yaw moved only 0.06 degrees overall, locked or not, so the mouse may not have reached the game at all; Deskflow is known to block mouse look on this host.
