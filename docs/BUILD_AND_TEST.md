@@ -13,7 +13,7 @@ Status (2026-10-25, P1-01 / DYL-150): Windows x64 build, packaging and isolated 
 | UI/minimap/follower providers | None installed (DYL-151 desk candidates: SkyUI Community 6.11, Dragon's Eye fork 1.7.5, Infinity UI NG 2.1.3, LMU fork 1.3.4, Party Sheet 3.7) | Pending P1-02/P1-04 |
 | CommonLib fork/commit | Not used by the skeletons (DYL-151 conditional candidate: alandtse/CommonLibSSE-NG 7.2.0 `7a60f4de`). If adopted, it replaces the hand-written ABI subset in `skeleton.h`. | Pending ADR-001 |
 | Compiler / generator | GitHub-hosted `windows-2022`: Visual Studio 2022 Enterprise 17.14.42 (MSVC), CMake 3.31.6, Visual Studio 17 2022 generator, Python 3.12.10 | Verified in CI |
-| Game host / Proton | Ubuntu 26.04.1, Proton Experimental `experimental-11.0-20261014` (DXVK v3.1.1-97), Steam Linux Runtime 4 | Tested (load only) |
+| Game host / Proton | Ubuntu 26.04.1, Proton Experimental `experimental-11.0-20261027b` from Phase 4 (owner-accepted 2026-10-31; Phase 1–3 used `experimental-11.0-20261014`), DXVK v3.1.1-97, Steam Linux Runtime 4 | Tested (load only) |
 | Mod manager and profiles | No mod manager; `tools/profile.py` manifest-tracked profiles | Verified |
 | Fixture saves | Copied Whiterun exterior/Breezehome pair (2021 saves); load on 1.7.104 unverified | Route NOT_RUN |
 

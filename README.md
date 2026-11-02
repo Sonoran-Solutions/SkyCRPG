@@ -2,7 +2,7 @@
 
 A modular attempt to make Skyrim feel like a classic CRPG while retaining real-time action combat.
 
-**Status: playable Phase 1 feasibility prototypes merged; architecture contracts reviewed and merged. No public MVP release exists yet.** The first four phases target two independently installable MVPs:
+**Status: Phase 4 is in progress. Internal candidates only; no public MVP release or owner acceptance exists.** The first four phases target two independently installable MVPs:
 
 | Module | Intended result |
 | --- | --- |
@@ -33,7 +33,9 @@ Installing either module must not require the other. External dependencies are a
 - [Runtime matrix](docs/compatibility/runtime-matrix.md)
 - [Dependency selection record](docs/compatibility/dependency-lock.md)
 - [Controls](docs/CONTROLS.md)
-- [Installation planning](docs/INSTALLATION.md)
+- [Installation and recovery](docs/INSTALLATION.md)
+- [Known limitations](docs/RELEASE_NOTES.md)
+- [Owner playtest route](docs/PLAYTEST.md)
 - [Release checklist](docs/RELEASE_CHECKLIST.md)
 - [Third-party attribution policy](docs/THIRD_PARTY.md)
 

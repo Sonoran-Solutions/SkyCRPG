@@ -1,6 +1,6 @@
 # DYL-170 / P4-01 UI blocker resolution
 
-Base `c7333c7`; head `<head SHA>`; CI `<CI run>`; DLL SHA-256 `<DLL sha256>`. Target: Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, Address Library 13, CommonLibSSE-NG 7.2.0, SkyUI Community 6.11, SmoothCam 1.8.1, TDM 2.3.1, MCM Helper 1.6.3, Proton host. The worker did not deploy or run Skyrim. All new in-game acceptance is **NOT_RUN**. Record actual host, device, executable, dependencies, source and package hashes with each future route.
+Base `c7333c7`; head `2d39d30` (merged as #26); Windows CI [run 40808884302](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40808884302); DLL SHA-256 `ba9ba9610365ba9320b8cbf788e8b52a8411a07c04fa723b47fefa3f6b9336fe`; package `SkyCRPG_UI-0.0.1-2d39d30.zip` `1c1bf9f06bcdb912de4a7c1a82e58640d7f5dc8899f015030782181c645d687d`. Target: Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, Address Library 13, CommonLibSSE-NG 7.2.0, SkyUI Community 6.11, SmoothCam 1.8.1, TDM 2.3.1, MCM Helper 1.6.3, Proton host. The worker did not deploy or run Skyrim. All new in-game acceptance is **NOT_RUN**. Record actual host, device, executable, dependencies, source and package hashes with each future route.
 
 ## Audit and acceptance ledger
 
@@ -27,9 +27,22 @@ Owner DYL-170, Linux. Plans, exact per-command logs and results are in `/srv/sto
 - `timeout 900 python3 -I /srv/storage/Projects/SkyCRPG/session-p4/logs/ui/run-checks.py`: **PASS** final `runner-3.log`. Initial runner failed because mock bridges omitted the newly required readiness flag; `runner-2` exposed a second fixture with the same omission. Both fixtures were corrected before final run.
 - `bash /srv/storage/Projects/SkyCRPG/session-p4/logs/ui/jobs-final.sh`: **PASS** subject to final result log: runs `timeout 600` on `SKYCRPG_SKYUI_SOURCE=... python3 -I -m unittest discover -s modules/ui/tests -p '*.py'`, every JS test with the pinned Node and provider (inventory actions uses prepared `InventoryMenu.as`), and every `*_test.cpp` with `g++ -std=c++20 -Wall -Wextra -Werror -pedantic -Imodules/ui/src`, then executes each binary. Exact arguments in `*.command`.
 - `timeout 900 python3 modules/ui/tools/build_scaleform.py --skyui /srv/storage/Projects/SkyCRPG/session-20261026/ui-skyui-v6.11 --nexus-interface /srv/storage/Projects/SkyCRPG/session-20261026/ui-nexus-bsa/interface --java /srv/storage/Projects/SkyCRPG/session-20261026/ui-toolchain/jdk-17.0.21+9-jre/bin/java --owner DYL-170 --out /srv/storage/Projects/SkyCRPG/session-p4/logs/ui/swf-1`: **PASS COMPILED_NOT_RUN**. `inventorymenu.swf` `eb6e09b7918c3879ae6824027f1fe3bf91804153a4db0bcf958fdcd6e8e442cc`; `skyui/inventorylists.swf` `34e32f04521a28acf16b00e263a479ca233a0814e986a8e0d91bcc46b4024518`; `hudmenu.swf` `54937d9d48d9a5de4c757ca2ce874fff4a41ed72b39048ad2eabd98292a31628`. The latter two match the Phase 3 approved hashes; the inventory movie changed for fallback gating. The 16:9 layout code is unchanged, but actual output requires owner observation.
-- Windows DLL build and in-game route: **NOT_RUN**. `git diff --check`: **PASS**.
+- Windows DLL build: **PASS** (run above). In-game: see the runtime result below. `git diff --check`: **PASS**.
 
-## Runtime route checklist — all NOT_RUN
+## DYL-170 runtime result (2026-11-01)
+
+Scoped automated runtime **PASS** on Proton Experimental `experimental-11.0-20261027b-x86_64`, Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, test probe `ac28d3c` (#30), with this head's package. Restore passed and the probe was absent after every route. Runs are kept in the session autotest tree (`session-p4/autotest/runs/`).
+
+| Route | Run | Sections |
+| --- | --- | --- |
+| ui-main | `batch-dyl170-last-two-00` | 19/19: load HUD, eight hotbar slots, reload, weapon/helmet/shout/potion recovery, native once, grid, two-hand/robes/ring/necklace/dagger equipment, drop count and weight, door transition, reload, minimap hide/show |
+| ui-disabled, ui-dll-absent, ui-iversion, ui-resetlayout | `batch-dyl170-runtime-p20261027b-01`..`04` | 4/4 each: load HUD, grid or native fallback, variant policy |
+| ui-minimap-absent, ui-no-compass-replace, ui-aspect-4x3, ui-aspect-16x10, ui-scale115 | `batch-dyl170-runtime-p20261027b-05`..`09` | 3/3 each |
+| combined-main, combined-cam-disabled, combined-ui-disabled | `-19`, `batch-dyl170-last-two-01`, `-21` | 5/5, 4/4, 4/4: UI and Camera independence |
+
+ui-main and combined-cam-disabled first failed in the full batch for runner reasons (a dropped shout F press during setup; a focus loss reported as FAIL), were fixed in the runner and passed in rerun `dyl170-last-two`; the owner decided that rerun completes the batch. The owner approved all 40 review screenshots on 2026-11-01. Still **NOT_RUN**: controller hotbar play, follower death/unload/reload and multiple teammates, the CC missing-icon fixture and marker travel accuracy. Rows above that say **NOT_RUN** describe the pre-run audit; this section records what the routes covered.
+
+## Runtime route checklist (pre-run plan)
 
 Use isolated profiles and a disposable copy of `SkyCRPG_Fixture_CombinedAcceptance`. Record the actual input device; controller-on blocks keyboard/mouse gameplay on this host. Run separate keyboard/mouse (controller off) and controller passes for input-dependent steps. Keep exact package/movie hashes, CI, logs, executable/dependencies and cleanup records. **auto** means probe/log-verifiable; **owner** requires eyes.
 

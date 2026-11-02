@@ -1,9 +1,12 @@
 # DYL-172 — performance measurement tooling
 
 **Offline implementation complete; runtime acceptance NOT_RUN.** Base
-`c7333c7c13284ad9d228e6f15213bc8465bd6e19`; candidate `<head SHA>` plus this
-uncommitted diff; Windows CI `<CI run>`; probe `<DLL sha256>`. No commit, push,
-Skyrim/Steam/Proton launch, live runner, module change or public release occurred.
+`c7333c7c13284ad9d228e6f15213bc8465bd6e19`; merged probe head `ac28d3c` (#30);
+Windows CI [run 41211742722](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41211742722);
+probe DLL `4f993c30b020cf6f8f61b2b0222758a3085adf8f47941c3cb240e8de76dbf997`. The
+same probe drove the DYL-170 automated routes; no performance capture has run yet.
+The comparison runner (`perf_compare.py`) lives in the session autotest tree outside
+Git; record its exact version and outputs with the final captures.
 
 Pinned target: Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, Address Library 13,
 CommonLibSSE-NG 7.2.0, SkyUI Community 6.11, SmoothCam 1.8.1, TDM 2.3.1,

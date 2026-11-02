@@ -1,6 +1,6 @@
 # DYL-170 — Camera blocker resolution
 
-**Provenance:** base `c7333c7c13284ad9d228e6f15213bc8465bd6e19`; candidate `<head SHA>`; Windows CI `<CI run>`; Camera DLL `<DLL sha256>`; package hash `<package sha256>`. Planned runtime: Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, Address Library 13, CommonLibSSE-NG 7.2.0, SmoothCam 1.8.1, TDM 2.3.1, MCM Helper 1.6.3, SkyUI Community 6.11, Proton host. Record exact host, executable, dependency and profile hashes for every eventual run. No game or Windows build was run by this worker.
+**Provenance:** base `c7333c7c13284ad9d228e6f15213bc8465bd6e19`; runtime-tested head `1d95915` (Windows CI [run 40773296811](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40773296811), DLL `73a8ff6874a284037c14c2e6bc21635dc0237bf192cf0c349d56a60be6a08080`, package `SkyCRPG_Camera-0.0.1-1d95915.zip` `fd4d02369e61ca11d2b6bd15658a63f420794d85bfa73db8a5117d6102d66db8`); merged head `1daf2aa` (#27) adds the notice-intent fix (Windows CI [run 41371612285](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41371612285) PASS, DLL `1eae1696cc5597613bfd11a23a0df43c0a63e6b809de05d23633bb88301b620c`, package `SkyCRPG_Camera-0.0.1-1daf2aa.zip` `d59ed7417dc4041d6f43f0c103342f1c3d75a9cea75f390edd68a19a207f8736`). Planned runtime: Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, Address Library 13, CommonLibSSE-NG 7.2.0, SmoothCam 1.8.1, TDM 2.3.1, MCM Helper 1.6.3, SkyUI Community 6.11, Proton host. Record exact host, executable, dependency and profile hashes for every eventual run. No game or Windows build was run by this worker.
 
 ## Audit
 
@@ -45,7 +45,18 @@ timeout 600 python3 modules/camera/tools/check_preset.py --smoothcam-source /srv
 | Overhead aim / target lock | **FAIL / BLOCKED — accepted MVP limitation (owner decision 2026-10-28, see DECISIONS.md)**; prior evidence; no new feature |
 | Critical crash, capture and gameplay defects | **NOT_RUN** final candidate |
 
-## Runtime route checklist — NOT_RUN
+## DYL-170 runtime result (2026-11-01)
+
+Scoped automated runtime **PASS** on Proton Experimental `experimental-11.0-20261027b-x86_64`, Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, test probe `ac28d3c` (#30), Camera `1d95915`. Restore passed and the probe was absent after every route. Runs are kept in the session autotest tree (`session-p4/autotest/runs/`).
+
+| Route | Run | Result |
+| --- | --- | --- |
+| cam-main, cam-disabled, cam-no-smoothcam, cam-no-tdm, cam-no-mcmhelper, cam-malformed-ini, cam-schema, cam-obstruction, cam-unsafe-tdm | `batch-dyl170-runtime-p20261027b-10`..`18` | 2/2 sections each: load and camera controls (F6 first-person claim via `precision_trace event=11 camera=9/0`, F7 recenter, or the expected refusal/notice for the variant) |
+| combined-main, combined-cam-disabled, combined-ui-disabled | `-19`, `batch-dyl170-last-two-01`, `-21` | 5/5, 4/4, 4/4: Camera and UI independence |
+
+The owner approved all review screenshots on 2026-11-01. `1daf2aa` (senior review P2) makes the failure notice follow the user's enable intent, so a refused runtime enable after a `bEnabled=0` launch warns once; it is covered by portable tests and Windows CI, and its in-game delivery is **NOT_RUN**. Still **NOT_RUN**: controller play, combat and activation, special native states (mount, kill move, swimming, sitting) and the lease-refusal fixture of item 6. Overhead aim FAIL and target lock BLOCKED remain accepted MVP limitations, not passes. The acceptance ledger above records the pre-run audit.
+
+## Runtime route checklist (pre-run plan)
 
 Orchestrator: use isolated camera-only profile and copied save, record provenance and hashes above, bound each launch to 20 minutes, retain process handle/log/deadline and clean up only that process. All rows below **NOT_RUN**. Owner records actual device for each input check; repeat controls separately on keyboard/mouse and controller (controller custom binding only where configured and unmapped).
 
