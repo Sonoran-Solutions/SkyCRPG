@@ -141,7 +141,7 @@ class JournalTests(unittest.TestCase):
         rows[1]["installed_material"] = 123
         self.assertEqual(analyze.inspect(rows)["journal"], "FAIL")
         rows[1]["local_write"] = False
-        self.assertEqual(analyze.inspect(rows)["journal"], "PASS")
+        self.assertEqual(analyze.inspect(rows)["journal"], "FAIL")
 
     def test_culled_zero_counts_are_recorded_without_visual_claim(self):
         rows = [{"event": "session", "mode": "app_culled"},
@@ -152,6 +152,93 @@ class JournalTests(unittest.TestCase):
         for key in ("overflow", "off_thread", "unresolved"):
             rows[1][key] = 1
             self.assertEqual(analyze.inspect(rows)["conclusion"], "INCONCLUSIVE")
+
+
+class FinalEvidenceTests(unittest.TestCase):
+    def height_rows(self, values):
+        return [{"t_ms": i*100, "camera": {"z": h+50}, "player": {"z": 50},
+                 "filter_committed": i % 2 == 0} for i, h in enumerate(values)]
+
+    def test_height_reversals_threshold_and_steady(self):
+        r = analyze.height_metrics(self.height_rows([10, 10.2, 10, 10.3, 10]))
+        self.assertEqual(r["direction_reversals"], 0)
+        self.assertEqual(r["longest_steady_ms"], 400)
+        r = analyze.height_metrics(self.height_rows([10, 12, 14, 12, 10, 12, 14]))
+        self.assertEqual(r["direction_reversals"], 2)
+        self.assertEqual(r["range_units"], 4)
+        self.assertEqual(r["filter_committed_samples"], 4)
+        r = analyze.height_metrics(self.height_rows([1, 2, 3, 4]))
+        self.assertEqual(r["direction_reversals"], 0)
+
+    def test_height_missing_invalid_and_gaps(self):
+        self.assertEqual(analyze.height_metrics([])["status"], "NOT_RUN")
+        rows = self.height_rows([1, 1, 1]); rows[2]["t_ms"] = 1000
+        r = analyze.height_metrics(rows)
+        self.assertEqual(r["gaps"], 1)
+        self.assertEqual(r["longest_steady_ms"], 100)
+        rows[2]["camera"]["z"] = float("nan")
+        self.assertEqual(analyze.height_metrics(rows)["status"], "FAIL")
+
+    def quiet_rows(self, discards=10):
+        rows = [{"event": "session", "mode": "filter", "quiet_journal": True}]
+        for metric in ("engine_frame", "ui_interval", "hook_inclusive"):
+            rows.append({"event": "timing", "capture_id": 1, "capture_label": "standing",
+                         "metric": metric, "reason": "stop", "discards": discards, "matched_hits": discards,
+                         "completed_chains": discards, "rollbacks": 0, "kept_behind": discards,
+                         "count": 100, "total": 100, "overwritten": 0, "median_ms": 10, "p95_ms": 12,
+                         "elapsed_ms": 60010, "sum_ms": 1000 if metric != "hook_inclusive" else 20})
+        return rows
+
+    def test_quiet_summary_counts_and_no_double_count(self):
+        rows = self.quiet_rows()
+        rows.insert(1, {**rows[1], "reason": "periodic", "discards": 5})
+        r = analyze.inspect(rows)
+        self.assertEqual(r["discards"], 10)
+        self.assertEqual(r["discard_records"], 0)
+        self.assertEqual(r["journal_detail"], "summary_counters_only")
+        cost = r["captures"]["1"]["hook_cost"]
+        self.assertEqual(cost["hook_ms_per_frame"], .2)
+        self.assertEqual(cost["share_of_frame_time_percent"], 2)
+        rows[2].pop("completed_chains")
+        self.assertEqual(analyze.inspect(rows)["conclusion"], "INCONCLUSIVE")
+
+    def test_negative_control_zero_is_expected_and_nonzero_fails(self):
+        r = analyze.inspect(self.quiet_rows(0), expect_no_discards=True)
+        self.assertEqual(r["negative_control"], "PASS")
+        self.assertEqual(analyze.inspect(self.quiet_rows(), expect_no_discards=True)["negative_control"], "FAIL")
+        self.assertEqual(analyze.inspect(self.quiet_rows(0))["conclusion"], "INCONCLUSIVE")
+        rows = self.quiet_rows(); rows[0]["quiet_journal"] = False
+        self.assertEqual(analyze.inspect(rows, expect_no_discards=True)["negative_control"], "FAIL")
+
+    def test_classifier_distinct_models_and_mixed_verdict(self):
+        rows = self.quiet_rows()
+        for candidates in (0, 3, 2):
+            rows.append({"event": "caster_counts", "reference": "0x00000042", "hits": 5,
+                         "candidate_hits": candidates, "smoothcam_candidate_hits": candidates,
+                         "model": "ceiling.nif"})
+        r = analyze.inspect(rows)
+        self.assertEqual(r["classifier_distinct_would_discard"], 1)
+        self.assertEqual(r["classifier_by_reference"]["0x00000042"]["smoothcam_candidate_hits"], 5)
+        self.assertEqual(r["classifier_by_reference"]["0x00000042"]["models"], ["ceiling.nif"])
+
+    def test_miss_only_classifier_window_reports_numeric_zero(self):
+        rows = self.quiet_rows(0) + [{"event": "caster_counts", "reference": "0x00000000",
+                                    "hits": 0, "candidate_hits": 0, "calls": 50, "misses": 50}]
+        r = analyze.inspect(rows, expect_no_discards=True)
+        self.assertEqual(r["classifier_distinct_would_discard"], 0)
+        self.assertEqual(r["classifier_by_reference"], {})
+
+    def test_matched_fading_delta_and_unmatched_baseline(self):
+        base = analyze.inspect(self.quiet_rows())
+        rows = self.quiet_rows(); rows[1]["p95_ms"] = 13.5
+        experiment = analyze.inspect(rows)
+        pair = analyze.compare(experiment, base, matched=True)["1"]
+        self.assertEqual(pair["status"], "FAIL")
+        self.assertEqual(pair["p95_difference_ms"], 1.5)
+        self.assertEqual(pair["p95_overhead_percent"], 12.5)
+        self.assertFalse(analyze.compare(experiment, base)["1"]["matched"])
+        rows[1]["elapsed_ms"] = 59000
+        self.assertTrue(analyze.compare(analyze.inspect(rows), base, matched=True)["1"]["status"].startswith("NOT_RUN"))
 
 
 if __name__ == "__main__":

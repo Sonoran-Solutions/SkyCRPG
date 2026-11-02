@@ -25,13 +25,16 @@ template<std::size_t Capacity>
 class FrameRing {
 	std::vector<double> values_ = std::vector<double>(Capacity);
 	std::size_t next_{}, count_{}, total_{};
+	double sum_{};
 public:
-	void clear() { next_ = count_ = total_ = 0; }
+	void clear() { next_ = count_ = total_ = 0; sum_ = 0; }
 	void push(double ms) {
 		if (!std::isfinite(ms) || ms < 0) return;
+		sum_ += ms;
 		values_[next_] = ms; next_ = (next_ + 1) % Capacity;
 		count_ = std::min(count_ + 1, Capacity); ++total_;
 	}
+	double sum() const { return sum_; }
 	std::size_t total() const { return total_; }
 	skycrpg::testprobe::FrameSummary summary() const {
 		skycrpg::testprobe::FrameSummary result{};
@@ -46,6 +49,11 @@ public:
 	}
 };
 inline constexpr unsigned maxRecasts = 8;
+inline bool ZeroLengthProbe(const std::array<float, 4>& start, const std::array<float, 4>& goal)
+{
+	return Finite({start[0], start[1], start[2]}) && Finite({goal[0], goal[1], goal[2]}) &&
+		start[0] == goal[0] && start[1] == goal[1] && start[2] == goal[2];
+}
 // A jump is authorized only after an all-contact hull sweep covers the skipped
 // prefix, including start overlaps. A closest-hit ray cannot certify that gap.
 inline bool ContinueRay(Point start, Point goal, Point contact, float hull, Point& next)

@@ -46,6 +46,8 @@ static_assert(offsetof(RE::NiAlphaProperty, alphaFlags) == 0x30);
 
 struct Config {
 	Mode mode{ Mode::observe };
+	bool quiet{};
+	unsigned roomSeed{};
 	std::string name{ "observe" };
 	policy::IDs refs{}, bases{};
 	std::uint32_t selected{}, maxRecords{ 100000 };
@@ -99,7 +101,11 @@ struct Fade {
 	std::vector<FadePart> parts;
 	bool culled{}, applied{};
 };
-struct ContactCount { std::uint32_t ref{}; std::uint64_t hits{}, smoothHits{}; };
+struct ContactCount {
+	std::uint32_t ref{};
+	std::uint64_t hits{}, smoothHits{}, candidates{}, smoothCandidates{};
+	char model[260]{};
+};
 struct ContactCounts {
 	std::array<ContactCount, 64> refs{};
 	std::uint64_t calls{}, misses{}, unresolved{}, overflow{};
@@ -125,10 +131,17 @@ struct State {
 	std::mutex queueMutex, perfMutex, logMutex;
 	std::array<Hit, 256> queue{};
 	std::size_t pending{};
-	policy::FrameRing<65536> frames, intervals, hooks, originals, adapters;
+	policy::FrameRing<65536> frames, intervals;
+	policy::FrameRing<262144> hooks, originals, adapters;
 	json::FrameChain chain;
 	std::atomic<std::shared_ptr<const RoomSnapshot>> room;
 	Fade fade;
+	// Never destroyed: retain private renderer allocations even after swap-back.
+	std::vector<std::shared_ptr<RE::BSLightingShaderMaterialBase>> retainedMaterials;
+	std::vector<RE::NiPointer<RE::NiAlphaProperty>> retainedAlpha;
+	std::uint64_t heightFrame{}, heightRecords{}, zeroLengthProbes{}, completedChains{}, rollbacks{};
+	bool heightFrameKnown{}, frameCommitted{};
+	double lastHeight{}, captureStart{}, captureDuration{};
 	ContactCounts contacts;
 	std::atomic_uint64_t contactOffThread{};
 	SmoothCamAPI::IVSmoothCam3* provider{};
@@ -164,7 +177,8 @@ void Emit(std::string_view event, json::Object fields = {})
 	fields.String("event", event).String("mode", g->config.name).Numeric("frame", g->frame.load())
 		.Numeric("t_ms", Now() - g->origin).Numeric("capture_id", g->capture.load()).Numeric("thread_id", GetCurrentThreadId());
 	const auto line = fields.Json() + "\n";
-	if (std::fwrite(line.data(), 1, line.size(), g->output) != line.size()) {
+	const bool urgent = event == "refused" || event == "restore" || event == "filter_rollback" || event == "inconclusive";
+	if (std::fwrite(line.data(), 1, line.size(), g->output) != line.size() || (urgent && std::fflush(g->output) != 0)) {
 		g->enabled = false; g->armed = false; g->inconclusive = true;
 		OutputDebugStringA("SkyCRPG_OcclusionSpike: log failure; mutations disabled\n");
 	}
@@ -175,6 +189,10 @@ bool Flush()
 	if (std::fflush(g->output) == 0 && g->enabled) return true;
 	g->enabled = false; g->armed = false; g->inconclusive = true;
 	return false;
+}
+bool JournalFlush()
+{
+	return g->config.quiet ? g->enabled.load() : Flush();
 }
 void Inconclusive(std::string_view reason)
 {
@@ -226,6 +244,12 @@ bool LoadConfig()
 	policy::IDs selected{};
 	if (!policy::ParseIDs(Setting("sSelectedReference", ""), selected) || selected[1]) return false;
 	c.selected = selected[0];
+	const auto quiet = Setting("bQuietJournal", "0");
+	const auto seed = Setting("iRoomSeedMode", "0");
+	if ((quiet != "0" && quiet != "1") || (seed != "0" && seed != "2")) return false;
+	c.quiet = quiet == "1";
+	c.roomSeed = seed == "2" ? 2u : 0u;
+	if (c.roomSeed && c.mode != Mode::filter) return false;
 	if (!policy::CombinedTarget(c.mode, c.selected, c.refs, c.bases)) return false;
 	auto number = [](const std::string& text, float& value) {
 		const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
@@ -270,7 +294,7 @@ void Restore(std::string_view reason)
 {
 	if (!OnMain()) { Request(policy::stopRequest); return; }
 	ReportContacts(g->fade.applied || g->capturing || g->armed ? reason : "periodic");
-	if (g->capturing.exchange(false)) { Drain(); Summary(reason); }
+	if (g->capturing.exchange(false)) { g->captureDuration = Now() - g->captureStart; Drain(); Summary(reason); }
 	g->armed = false;
 	g->roomActive = false;
 	auto& f = g->fade;
@@ -341,6 +365,7 @@ void ApplyFade()
 				part.installedAlpha.reset(factory());
 				if (!part.installedAlpha) { valid = false; return RE::BSVisit::BSVisitControl::kStop; }
 				part.appliedFlags = static_cast<std::uint16_t>((part.flags & ~0x03ffu) | 1u | (6u << 1) | (7u << 5));
+				g->retainedAlpha.push_back(part.installedAlpha);
 				part.installedAlpha->alphaFlags = part.appliedFlags;
 				part.installedAlpha->alphaThreshold = part.threshold;
 			}
@@ -392,6 +417,7 @@ void ApplyFade()
 				const auto cloned = part.shader->material;
 				if (cloned && cloned != part.material.get() && cloned->GetType() == RE::BSShaderMaterial::Type::kLighting) {
 					part.installedMaterial = RetainMaterial(static_cast<RE::BSLightingShaderMaterialBase*>(cloned));
+					g->retainedMaterials.push_back(part.installedMaterial);
 					part.local = true;
 				} else AttachMaterial(part.shader.get(), part.material.get());
 			}
@@ -447,6 +473,7 @@ void RecordTime(double start, double beforeOriginal, double originalEnd, double 
 json::Object Vector(const std::array<float, 4>& value);
 void LogHit(const Hit& hit, std::string_view event)
 {
+	if (g->config.quiet) return;
 	Emit(event, json::Object{}.Numeric("sequence", hit.sequence).Numeric("contact_frame", hit.frame)
 		.Numeric("contact_capture_id", hit.capture).Numeric("calling_thread_id", hit.callingThread).Numeric("main_thread_id", hit.mainThread)
 		.Numeric("depth", hit.depth).Numeric("caller", hit.caller).Boolean("smoothcam_caller", hit.smooth).Boolean("hit", hit.hit).Numeric("collision", hit.collision)
@@ -536,72 +563,77 @@ bool CheckGap(void* physics, RE::bhkWorld* world, policy::Point next, const Hit&
 	input.maxExtraPenetration = input.startPointTolerance = 0x1p-23f;
 	using Sweep = void(*)(const RE::hkpWorld*, const RE::hkpCollidable*, const RE::hkpLinearCastInput&, GapCollector&, GapCollector*);
 	const REL::Relocation<Sweep> sweep{ REL::ID(61402) };
+	policy::GapGuard guard;
+	unsigned nativeIgnored{};
+	bool originalSeen = false;
 	const double begin = Now();
 	{
 		RE::BSReadLockGuard lock(world->worldLock);
 		// Same hull, filter and start-overlap collector as the engine's caster.
 		// All contacts are visited: an allowed beam cannot mask a wall in the gap.
 		sweep(havok, &phantom->collidable, input, collector, &collector);
-	}
-	nativeTime += Now() - begin;
-	policy::GapGuard guard;
-	if (collector.invalid) guard.invalid();
-	unsigned nativeIgnored{};
-	bool originalSeen = false;
-	for (unsigned i = 0; i < collector.count; ++i) {
-		originalSeen = originalSeen || reinterpret_cast<std::uintptr_t>(collector.roots[i]) == record.collision;
-		const auto ref = RE::TESHavokUtilities::FindCollidableRef(*collector.roots[i]);
-		const auto base = ref ? ref->GetBaseObject() : nullptr;
-		const auto object = RE::TESHavokUtilities::FindCollidableObject(*collector.roots[i]);
-		const auto layer = static_cast<unsigned>(collector.roots[i]->GetCollisionLayer());
-		if (policy::NativeIgnoredContact(layer, object && object->GetAppCulled(), ref && ref == RE::PlayerCharacter::GetSingleton())) { ++nativeIgnored; continue; }
-		guard.contact(StaticReference(ref), ref && base && policy::Allowlisted(ref->GetFormID(), base->GetFormID(), g->config.refs, g->config.bases));
+		nativeTime += Now() - begin;
+		if (collector.invalid) guard.invalid();
+		// Collector roots are borrowed: resolve and consume while the world is locked.
+		for (unsigned i = 0; i < collector.count; ++i) {
+			originalSeen = originalSeen || reinterpret_cast<std::uintptr_t>(collector.roots[i]) == record.collision;
+			const auto ref = RE::TESHavokUtilities::FindCollidableRef(*collector.roots[i]);
+			const auto base = ref ? ref->GetBaseObject() : nullptr;
+			const auto object = RE::TESHavokUtilities::FindCollidableObject(*collector.roots[i]);
+			const auto layer = static_cast<unsigned>(collector.roots[i]->GetCollisionLayer());
+			if (policy::NativeIgnoredContact(layer, object && object->GetAppCulled(), ref && ref == RE::PlayerCharacter::GetSingleton())) { ++nativeIgnored; continue; }
+			guard.contact(StaticReference(ref), ref && base && policy::Allowlisted(ref->GetFormID(), base->GetFormID(), g->config.refs, g->config.bases));
+		}
 	}
 	if (!originalSeen) guard.invalid();
-	Emit("recast_gap", json::Object{}.Numeric("sequence", record.sequence).Numeric("depth", record.depth)
+	if (!g->config.quiet) Emit("recast_gap", json::Object{}.Numeric("sequence", record.sequence).Numeric("depth", record.depth)
 		.Numeric("contacts", collector.count).Numeric("native_ignored", nativeIgnored).Boolean("original_contact_seen", originalSeen).Boolean("complete", !collector.invalid).Boolean("safe", guard.safe())
 		.Raw("next", Vector({ next.x, next.y, next.z, 0 }).Json()).String("method", "all_contacts_same_hull_including_start_overlaps"));
 	if (!guard.safe()) Inconclusive("recast_gap_contains_enclosure_unknown_or_cap");
 	return guard.safe();
 }
-void CountContact(bool hit, const RE::hkpRootCdPoint* result, bool smooth)
+void CountContact(const Hit& record)
 {
-	if (!policy::FadeMode(g->config.mode)) return;
 	if (!OnMain()) { ++g->contactOffThread; return; }
 	auto& counts = g->contacts;
 	++counts.calls;
-	if (!hit) { ++counts.misses; return; }
-	const auto ref = result && result->rootCollidableB ? RE::TESHavokUtilities::FindCollidableRef(*result->rootCollidableB) : nullptr;
-	if (!ref) { ++counts.unresolved; return; }
-	for (auto& item : counts.refs) if (!item.ref || item.ref == ref->GetFormID()) {
-		item.ref = ref->GetFormID(); ++item.hits; item.smoothHits += smooth; return;
+	if (!record.hit) { ++counts.misses; return; }
+	if (!record.ref) { ++counts.unresolved; return; }
+	for (auto& item : counts.refs) if (!item.ref || item.ref == record.ref) {
+		item.ref = record.ref; ++item.hits; item.smoothHits += record.smooth;
+		item.candidates += record.candidate; item.smoothCandidates += record.smooth && record.candidate;
+		strncpy_s(item.model, record.model, _TRUNCATE); return;
 	}
 	++counts.overflow;
 }
 void ReportContacts(std::string_view reason)
 {
-	if (!policy::FadeMode(g->config.mode) || !OnMain()) return;
+	if (!policy::CasterMode(g->config.mode) || !OnMain()) return;
 	auto& counts = g->contacts;
 	const double now = Now();
 	if (reason == "periodic" && now - counts.since < 500) return;
 	if (!counts.calls && !g->contactOffThread) { counts.since = now; return; }
 	const auto offThread = g->contactOffThread.exchange(0);
-	bool selectedSeen = false;
+	bool selectedSeen = false, anyReference = false;
 	auto emit = [&](const ContactCount& item) {
 		Emit("caster_counts", json::Object{}.String("reference", json::FormID(item.ref)).Numeric("hits", item.hits)
-			.Numeric("smoothcam_hits", item.smoothHits).Numeric("calls", counts.calls).Numeric("misses", counts.misses)
+			.Numeric("smoothcam_hits", item.smoothHits).Numeric("candidate_hits", item.candidates)
+			.Numeric("smoothcam_candidate_hits", item.smoothCandidates).String("model", item.model)
+			.Boolean("would_discard", item.smoothCandidates != 0).String("classifier_status", "Hypothesis_only_never_filters").Numeric("calls", counts.calls).Numeric("misses", counts.misses)
 			.Numeric("unresolved", counts.unresolved).Numeric("off_thread", offThread).Numeric("overflow", counts.overflow)
 			.Numeric("window_ms", now-counts.since).String("reason", reason).Boolean("fade_applied", g->fade.applied)
 			.Boolean("app_culled", g->fade.applied && g->config.mode == Mode::appCulled)
 			.String("scope", "original_entry_results_before_filter_no_sampling"));
 	};
-	for (const auto& item : counts.refs) if (item.ref) { emit(item); selectedSeen = selectedSeen || item.ref == g->config.selected; }
+	for (const auto& item : counts.refs) if (item.ref) { emit(item); anyReference = true; selectedSeen = selectedSeen || item.ref == g->config.selected; }
 	// Explicit zero is necessary to distinguish disappearance from omitted logging.
 	if (!selectedSeen && g->config.selected) emit({ g->config.selected, 0, 0 });
+	else if (!anyReference && !g->config.selected) emit({});
 	counts = {}; counts.since = now;
 }
 void QueueHit(const Hit& record)
 {
+	if (g->config.quiet) return;
 	std::unique_lock lock(g->queueMutex, std::try_to_lock);
 	if (lock.owns_lock() && g->pending < g->queue.size() && g->records < g->config.maxRecords) {
 		g->queue[g->pending++] = record; ++g->records;
@@ -624,17 +656,45 @@ void TickFromCaster()
 	try { Tick(); } catch (...) { g->enabled = false; g->killed = true; Restore("caster_tick_exception"); }
 	ticking = false;
 }
+void SampleHeight(std::uintptr_t caller)
+{
+	// The native Update collision call precedes its position write and SmoothCam's
+	// final transform. Sample the previous rendered root here, never at the later
+	// SmoothCam probe (where the native provisional root may already be installed).
+	if (!OnMain() || !g->config.quiet || caller != REL::Module::get().base() + 0x8fa963) return;
+	const double now = Now();
+	const auto camera = RE::PlayerCamera::GetSingleton();
+	const auto player = RE::PlayerCharacter::GetSingleton();
+	if (g->heightFrameKnown && g->capturing && now - g->lastHeight >= 100 && camera && camera->cameraRoot && player) {
+		if (g->heightRecords == 12000) { Inconclusive("height_series_cap"); return; }
+		const auto position = camera->cameraRoot->world.translate;
+		const auto eye = player->GetPosition();
+		Emit("camera_height", json::Object{}.Numeric("sample_frame", g->heightFrame)
+			.Raw("player", Vector({ eye.x, eye.y, eye.z, 0 }).Json())
+			.Raw("camera", Vector({ position.x, position.y, position.z, 0 }).Json())
+			.Boolean("filter_committed", g->frameCommitted).String("source", "cameraRoot_world_before_native_collision"));
+		g->lastHeight = now; ++g->heightRecords;
+	}
+	++g->heightFrame; g->heightFrameKnown = true; g->frameCommitted = false;
+}
 bool HookCaster(void* physics, RE::bhkWorld* world, float* start, float* end,
 	RE::hkpRootCdPoint* result, RE::TESObjectREFR** character, float hull)
 {
+	const double begin = Now();
 	const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+	SampleHeight(caller);
 	TickFromCaster();
-	if (!g->enabled || !policy::CasterMode(g->config.mode)) return originalCaster(physics, world, start, end, result, character, hull);
+	if (!g->enabled || !policy::CasterMode(g->config.mode)) {
+		const double before = Now();
+		const bool hit = originalCaster(physics, world, start, end, result, character, hull);
+		const double after = Now();
+		if (g->enabled) { ++g->hookCalls; RecordTime(begin, before, after, after); }
+		return hit;
+	}
 	static thread_local bool inCaster{};
 	if (inCaster) return originalCaster(physics, world, start, end, result, character, hull);
 	struct Guard { bool& active; ~Guard() { active = false; } } guard{ inCaster };
 	inCaster = true;
-	const double begin = Now();
 	Hit record;
 	record.caller = caller; record.frame = g->frame.load(); record.hull = hull; record.capture = g->capture;
 	record.callingThread = GetCurrentThreadId();
@@ -648,18 +708,25 @@ bool HookCaster(void* physics, RE::bhkWorld* world, float* start, float* end,
 	std::memcpy(record.end.data(), end, 16);
 	MEMORY_BASIC_INFORMATION memory{};
 	record.smooth = VirtualQuery(reinterpret_cast<void*>(caller), &memory, sizeof(memory)) && memory.AllocationBase == g->smooth;
-	CountContact(firstHit, result, record.smooth);
-	// Observe sampling happens before resolving scene names/models; no Eligible()
-	// or BSFixedString menu work on the observe hot path.
-	const bool filtering = policy::FilterMode(g->config.mode) && g->armed && g->eligible && OnMain() && record.smooth && Eligible();
+	bool isStatic = false;
+	if (world && OnMain()) {
+		RE::BSReadLockGuard lock(world->worldLock);
+		isStatic = Metadata(record, result);
+	}
+	CountContact(record);
+	// All original contacts feed classifier counts; detailed observe journals
+	// remain sampled. No Eligible/menu work on the observe hot path.
+	const bool filtering = world && policy::FilterMode(g->config.mode) && g->armed && g->eligible && OnMain() && record.smooth && Eligible();
 	if (!filtering && (calls & 15) != 0) {
 		++g->sampledOut; RecordTime(begin, beforeOriginal, beforeOriginal + originalTime, Now()); return firstHit;
 	}
-	bool isStatic = Metadata(record, result);
+	// Metadata and classifier counts were resolved under the world read lock.
 	if (filtering && record.matched) ++g->matched;
 	if (filtering && (calls & 15) == 0) QueueHit(record);
 	bool hit = firstHit;
-	if (filtering && firstHit && result && character) {
+	const bool zeroLength = policy::ZeroLengthProbe(record.start, record.goal);
+	if (zeroLength && OnMain()) ++g->zeroLengthProbes;
+	if (filtering && !zeroLength && firstHit && result && character) {
 		const auto firstEnd = record.end;
 		const auto firstContact = *result;
 		const auto firstCharacter = *character;
@@ -677,9 +744,9 @@ bool HookCaster(void* physics, RE::bhkWorld* world, float* start, float* end,
 				Inconclusive(step == policy::Continuation::Step::depthLimit ? "recast_depth_cap" : "recast_no_forward_progress"); valid = false; break;
 			}
 			LogHit(record, "recast_step");
-			if (!Flush()) { valid = false; break; }
+			if (!JournalFlush()) { valid = false; break; }
 			const bool gapSafe = CheckGap(physics, world, next, record, originalTime);
-			if (!gapSafe || !Flush()) { valid = false; break; }
+			if (!gapSafe || !JournalFlush()) { valid = false; break; }
 			removed[count++] = record;
 			alignas(16) std::array<float, 4> from{ next.x, next.y, next.z, record.start[3] };
 			alignas(16) auto to = record.goal;
@@ -694,10 +761,11 @@ bool HookCaster(void* physics, RE::bhkWorld* world, float* start, float* end,
 			nextRecord.caller = caller; nextRecord.smooth = record.smooth; nextRecord.hull = hull;
 			nextRecord.callingThread = record.callingThread; nextRecord.mainThread = record.mainThread; nextRecord.depth = count;
 			nextRecord.start = from; nextRecord.goal = record.goal; nextRecord.end = hit ? to : record.goal; nextRecord.hit = hit;
-			record = nextRecord; isStatic = Metadata(record, &contact);
+			record = nextRecord;
+			{ RE::BSReadLockGuard lock(world->worldLock); isStatic = Metadata(record, &contact); }
 			if (record.matched) ++g->matched;
 			LogHit(record, "recast_result");
-			if (!Flush()) { valid = false; break; }
+			if (!JournalFlush()) { valid = false; break; }
 			std::memcpy(end, to.data(), 16);
 			if (hit) *result = contact;
 			else { *result = RE::hkpRootCdPoint{}; std::memcpy(end, record.goal.data(), 16); }
@@ -710,25 +778,25 @@ bool HookCaster(void* physics, RE::bhkWorld* world, float* start, float* end,
 			const double resetBegin = Now();
 			const bool resetHit = originalCaster(physics, world, resetStart.data(), resetEnd.data(), &resetContact, &resetCharacter, hull);
 			originalTime += Now() - resetBegin;
-			Emit("recast_context_reset", json::Object{}.Numeric("sequence", record.sequence).Boolean("hit", resetHit)
+			if (!g->config.quiet) Emit("recast_context_reset", json::Object{}.Numeric("sequence", record.sequence).Boolean("hit", resetHit)
 				.Numeric("hull", hull).Raw("start", Vector(resetStart).Json()).String("method", "gateway_original_inputs_outputs_ignored"));
-			valid = Flush() && valid;
+			valid = JournalFlush() && valid;
 			// A lifecycle stop or incomplete journal rolls back the whole chain.
 			valid = valid && g->enabled && g->armed && !g->requests.pending() && !g->inconclusive;
 			if (valid) {
-				for (unsigned i = 0; i < count; ++i) { LogHit(removed[i], "discard"); if (!Flush()) { valid = false; break; } }
-				if (valid) Emit("filter_complete", json::Object{}.Numeric("sequence", record.sequence).Numeric("steps", count).Numeric("gateway_calls", count + 2).Numeric("gap_sweeps", count)
+				for (unsigned i = 0; i < count; ++i) { LogHit(removed[i], "discard"); if (!JournalFlush()) { valid = false; break; } }
+				if (valid && !g->config.quiet) Emit("filter_complete", json::Object{}.Numeric("sequence", record.sequence).Numeric("steps", count).Numeric("gateway_calls", count + 2).Numeric("gap_sweeps", count)
 					.Boolean("returned_hit", hit).Boolean("kept_behind", hit && record.metadata && record.ref && !record.matched)
 					.Boolean("returned_allowlist_match", record.matched).String("returned_reference", json::FormID(record.ref)));
-				valid = Flush() && valid;
+				valid = JournalFlush() && valid;
 			}
 			if (!valid) {
 				std::memcpy(end, firstEnd.data(), 16); *result = firstContact; *character = firstCharacter; hit = firstHit;
-				Emit("filter_rollback", json::Object{}.Numeric("sequence", record.sequence)); Flush();
-			} else { g->discarded += count; if (hit && record.metadata && record.ref && !record.matched) ++g->keptBehind; }
+				++g->rollbacks; Emit("filter_rollback", json::Object{}.Numeric("sequence", record.sequence)); Flush();
+			} else { ++g->completedChains; g->frameCommitted = true; g->discarded += count; if (hit && record.metadata && record.ref && !record.matched) ++g->keptBehind; }
 		} else {
 			LogHit(record, "caster");
-			if (!valid) { Emit("filter_rollback", json::Object{}.Numeric("sequence", record.sequence)); Flush(); }
+			if (!valid) { ++g->rollbacks; Emit("filter_rollback", json::Object{}.Numeric("sequence", record.sequence)); Flush(); }
 		}
 	} else QueueHit(record);
 	RecordTime(begin, beforeOriginal, beforeOriginal + originalTime, Now());
@@ -746,7 +814,7 @@ bool HookRoom(RE::BSMultiBoundRoom* room, const RE::NiPoint3& point)
 	if (!vanilla && g->armed && g->eligible) {
 		const auto snapshot = g->room.load();
 		if (g->roomActive && snapshot) {
-			const unsigned mode = static_cast<unsigned>(g->config.mode) - static_cast<unsigned>(Mode::roomSeed1) + 1;
+			const unsigned mode = g->config.roomSeed ? g->config.roomSeed : static_cast<unsigned>(g->config.mode) - static_cast<unsigned>(Mode::roomSeed1) + 1;
 			claim = policy::Seed(mode, Point(point), snapshot->eye, Point(room->worldBound.center), room->worldBound.radius,
 				g->config.seedDistance, [&](policy::Point p) { return originalRoom(room, Native(p)); });
 		}
@@ -763,6 +831,10 @@ std::array<std::uint8_t, 14> AbsoluteJump(std::uintptr_t destination)
 bool InstallMechanism()
 {
 	const auto base = REL::Module::get().base();
+	constexpr std::array<std::uint8_t, 5> nativeCall{ 0xe8,0x8d,0xcb,0xc5,0xff };
+	if (g->config.quiet && std::memcmp(reinterpret_cast<const void*>(base + 0x8fa95e), nativeCall.data(), nativeCall.size()) != 0) {
+		Emit("refused", json::Object{}.String("reason", "height_native_callsite_mismatch")); return false;
+	}
 	if (policy::FilterMode(g->config.mode)) {
 		const auto sweep = REL::ID(61402).address();
 		constexpr std::array<std::uint8_t, 15> expected{ 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18 };
@@ -803,7 +875,7 @@ bool InstallMechanism()
 		FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<void*>(target), jump.size());
 		Emit("installed", json::Object{}.Numeric("id", 33007).Numeric("rva", 0x5574f0));
 	}
-	if (policy::SeedMode(g->config.mode)) {
+	if (policy::SeedMode(g->config.mode) || g->config.roomSeed) {
 		REL::Relocation<std::uintptr_t> table{ RE::VTABLE_BSMultiBoundRoom[0] };
 		const auto target = reinterpret_cast<const std::uintptr_t*>(table.address())[0x3f];
 		if (table.address() != base + 0x1a69ac8 || target != base + 0xfce0c0 ||
@@ -885,16 +957,19 @@ void Drain()
 }
 void Summary(std::string_view reason)
 {
+	if (!g->capturing && reason == "periodic") return;
 	if (!OnMain()) { Request(policy::stopRequest); return; }
 	std::scoped_lock lock(g->perfMutex);
 	auto emit = [&](const char* label, const auto& ring) {
 		const auto s = ring.summary();
 		Emit("timing", json::Object{}.String("reason", reason).String("capture_label", g->captureLabel).String("metric", label).Numeric("count", s.count).Numeric("total", ring.total())
+			.Numeric("sum_ms", ring.sum()).Numeric("elapsed_ms", g->capturing ? Now() - g->captureStart : g->captureDuration)
+			.Numeric("completed_chains", g->completedChains).Numeric("rollbacks", g->rollbacks).Numeric("zero_length_probes", g->zeroLengthProbes)
 			.Numeric("overwritten", ring.total() - s.count).Numeric("median_ms", s.median).Numeric("p95_ms", s.p95)
 			.Numeric("p99_ms", s.p99).Numeric("maximum_ms", s.maximum).Numeric("missed", g->captureMissed.load()).Numeric("session_missed", g->missed.load())
 			.Numeric("matched_hits", g->matched.load()).Numeric("discards", g->discarded.load()).Numeric("kept_behind", g->keptBehind.load())
 			.Boolean("inconclusive", g->inconclusive).Numeric("observe_sampled_out", g->sampledOut.load()).Numeric("caster_calls", g->hookCalls.load()).Numeric("room_calls", g->seedCalls.load()).Numeric("room_claims", g->seedClaims.load())
-			.Boolean("capture_active", g->capturing).Numeric("hook_sample_stride", policy::SeedMode(g->config.mode) ? 64 : 1));
+			.Boolean("room_hook_sampled", policy::SeedMode(g->config.mode) || g->config.roomSeed != 0).Boolean("capture_active", g->capturing).Numeric("hook_sample_stride", policy::SeedMode(g->config.mode) ? 64 : 1));
 	};
 	emit("engine_frame", g->frames); emit("ui_interval", g->intervals); emit("hook_inclusive", g->hooks);
 	emit("original_inclusive", g->originals); emit("adapter_exclusive", g->adapters);
@@ -916,11 +991,14 @@ void ConsumeRequests()
 	Drain();
 	ReportContacts("before_apply");
 	++g->capture;
+	g->captureStart = Now(); g->captureDuration = 0; g->lastHeight = g->captureStart; g->heightFrameKnown = false;
+	g->completedChains = g->rollbacks = g->zeroLengthProbes = 0;
 	g->captureLabel = Setting("sCaptureLabel", "unlabeled");
 	{
 		std::scoped_lock lock(g->perfMutex);
 		g->frames.clear(); g->intervals.clear(); g->hooks.clear(); g->originals.clear(); g->adapters.clear(); g->lastFrame = 0; g->captureMissed = 0;
 		g->matched = 0; g->discarded = 0; g->keptBehind = 0;
+		g->hookCalls = 0; g->sampledOut = 0; g->seedCalls = 0; g->seedClaims = 0;
 	}
 	if (policy::FadeMode(g->config.mode)) {
 		ApplyFade();
@@ -950,7 +1028,7 @@ void Tick()
 	if (!g->eligible) Restore("ineligible_state");
 	CheckFade();
 	ConsumeRequests();
-	if (policy::SeedMode(g->config.mode) && g->armed && g->eligible && player) {
+	if ((policy::SeedMode(g->config.mode) || g->config.roomSeed) && g->armed && g->eligible && player) {
 		auto snapshot = std::make_shared<RoomSnapshot>();
 		snapshot->eye = Point(player->GetPosition()); snapshot->eye.z += 64;
 		g->room.store(snapshot); g->roomActive = !g->requests.pending();
@@ -1116,7 +1194,7 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const SKSE::LoadInterface*
 	std::setvbuf(g->output, nullptr, _IOFBF, 65536);
 
 	if (!LoadConfig()) { Emit("refused", json::Object{}.String("reason", "invalid_ini")); std::fflush(g->output); return true; }
-	Emit("session", json::Object{}.String("source_commit", SKYCRPG_SOURCE_COMMIT).String("filter_policy", "hull_step_guard_v1").String("runtime", "1.7.104.0")
+	Emit("session", json::Object{}.String("source_commit", SKYCRPG_SOURCE_COMMIT).String("filter_policy", "hull_step_guard_v1").String("runtime", "1.7.104.0").Boolean("quiet_journal", g->config.quiet).Numeric("room_seed_mode", g->config.roomSeed)
 		.String("expected_exe_sha256", exeHash).String("expected_library_sha256", libraryHash).String("expected_smoothcam_sha256", smoothHash).String("status", "NOT_RUN_until_game_evidence_review"));
 	if (!HashModule(GetModuleHandleW(nullptr), exeHash) || !HashFile(std::filesystem::path(skycrpg::ThisModuleDirectory()) / L"versionlib-1-7-104-0.bin", libraryHash)) {
 		Emit("refused", json::Object{}.String("reason", "executable_or_address_library_hash_mismatch")); std::fflush(g->output); return true;

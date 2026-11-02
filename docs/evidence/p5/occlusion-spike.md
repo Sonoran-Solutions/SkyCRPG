@@ -301,7 +301,7 @@ Reading rules from independent review for the next run: judge only `above-beam-a
 
 ## In-game run m-* — 2026-11-02: fixed height with a transparent beam, on one fixture
 
-`p5-spike-filter`, `-filter-material` and `-filter-alphaprop` on `210422a` (DLL `129fb72e…`), Bannered Mare, reference `0x000E7A7B` (`WRIntBeam768.nif`), camera-only, keyboard/mouse, unattended; no crash, runner restore PASS. **Outcome: pending the rows below.** Judged by matched `above-beam-armed` screenshots against the opaque filter control, by the orchestrator; owner review pending.
+`p5-spike-filter`, `-filter-material` and `-filter-alphaprop` on `210422a` (DLL `129fb72e…`), Bannered Mare, reference `0x000E7A7B` (`WRIntBeam768.nif`), camera-only, keyboard/mouse, unattended; no crash, runner restore PASS. **Outcome: pending the rows below.** Judged by matched `above-beam-armed` screenshots against the opaque filter control, by the orchestrator; the owner approved the see-through look in the subsequent final-evidence task. Broader gate approval remains pending.
 
 | Row | Result | Evidence |
 | --- | --- | --- |
@@ -324,3 +324,98 @@ Reading rules from independent review for the next run: judge only `above-beam-a
 - **Trim parts.** Two of five parts carry an alpha test (flags `0x12EC`). Crops show no missing trim at this viewpoint, but they were not judged part by part.
 
 Reviewer limits still open: the clone is freed in the same call as the swap back (no crash observed, not proven safe), and a permanent inconclusive latch can come from a zero-length probe.
+
+## DYL-199 final evidence preparation — 2026-11-02
+
+**Current handoff over `b13a228b5dcc59f78097b017cb7b441dc8e0bd33`, uncommitted.** The owner approved the m-* see-through look in this task. That approval does not establish the remaining performance, classification, boundary or culling rows. This section supersedes earlier implementation/run-plan descriptions where they differ. No commit, push, PR, game/Proton launch, dependency download or shared-file edit was performed.
+
+### Instrumentation and reviewer corrections
+
+**Source: this original spike diff.** `[Spike] bQuietJournal=1` suppresses caster/recast/gap/context-reset/discard/filter-completion records and their per-chain flushes, including outside captures. It retains all counters, 500 ms contact/classifier windows, 5 s timing summaries, and immediate flushes on refusal, rollback, inconclusive abort and restoration. Original/apply/material-scope journals remain intact. Quiet analysis explicitly says `summary_counters_only`; it does not pretend to have independently audited each chain. Zero-length finite probes, including hull 30 / L=0, return the native result without starting continuation or setting the inconclusive latch. Other failed progress still refuses.
+
+Cloned materials and private alpha properties now receive an owning reference in the never-destroyed `State` allocation when created. Swap-back restores the original pointer but does not release the private allocation. This intentional process-lifetime retention is confined to the disposable plugin. Every `local_write=false` record downgrades the analyzer journal to **FAIL**, including legacy logs. Gap-collector roots are resolved and consumed while the *same* `BSReadLockGuard` used for the sweep remains held; only copied scalar verdicts leave the lock. Initial/recast contact metadata also resolves under the world read lock.
+
+Classifier summaries cover every original caster result, without the detailed-journal 1/16 sampling. Each reference has model, total hits, overhead-candidate hits and SmoothCam-candidate hits; the analyzer unions references across windows and prints a numeric distinct `would_discard` count. Mixed candidate/non-candidate contacts remain visible in counts. A miss-only window explicitly reports zero; old logs without this telemetry report **NOT_RUN**, not invented zero. The classifier remains **Hypothesis / report-only** and never authorizes a discard. Allowlist and conservative gap checks still own filtering.
+
+Quiet captures include main-thread `camera_height` records at most once per 100 ms, capped at 12000/session. They contain player position, camera-root world position, `sample_frame` (previous native camera-update sequence), current UI frame, and whether any filter chain committed during that completed native update. Sampling occurs only at the native caster return-address **RVA 8FA963**, before its new collision result is applied; it never samples at a later SmoothCam probe. The plugin verifies the call bytes at **8FA95E** (`E8 8D CB C5 FF`) in quiet mode. This reads the last rendered root, not the pre-collision SmoothCam API goal or a lateral hull-30 endpoint.
+
+**Source:** local pinned [SmoothCam `camera.cpp`](https://github.com/mwilsnd/SkyrimSE-SmoothCam/blob/e0afd09aff26e5849dac461252e5bffbd5b69d62/SmoothCam/source/camera.cpp), [`thirdperson.cpp`](https://github.com/mwilsnd/SkyrimSE-SmoothCam/blob/e0afd09aff26e5849dac461252e5bffbd5b69d62/SmoothCam/source/camera_states/thirdperson/thirdperson.cpp) and [`base_third.cpp`](https://github.com/mwilsnd/SkyrimSE-SmoothCam/blob/e0afd09aff26e5849dac461252e5bffbd5b69d62/SmoothCam/source/camera_states/base_third.cpp), revision `e0afd09aff26e5849dac461252e5bffbd5b69d62`: the post-collision position is installed in both root and NiCamera world translation; the API's stored interpolated position is pre-collision. The native binary call site and following position stores were inspected (`/tmp/dyl199-final/camera-callsite.asm`). No provider implementation was copied. Exact runtime sample cadence/ordering and oscillation remain **NOT_RUN** until the new series is captured.
+
+Per capture, `analyze.py` reports camera height relative to player Z: min/max/range, **numeric direction reversals** after at least 1 world unit of travel from an extremum, and the longest contiguous stretch with total range ≤1 unit. Gaps >250 ms split the reversal history and steady window and make continuous coverage **NOT_RUN**. These are measurements, not an automatic stability verdict. No rows means NOT_RUN with zero observed reversals, not proof of stability.
+
+Timing rings now retain sums and freeze elapsed capture duration at stop. Periodic summaries after stop cannot inflate it. Hook rings hold 262144 samples (frame rings 65536); overflow remains inconclusive. The analyzer reports inclusive hook milliseconds/frame and `100 * sum(hook_ms) / sum(engine_frame_ms)`, including native caster work and instrumentation run inside the hook. This is a CPU-time share, **not** the p95 overhead or GPU/draw-call cost. Mixed room-hook 1/64 samples do not produce a claimed complete hook share. Baseline now measures its pass-through hook too.
+
+### Verified fixture and INI inputs
+
+**PASS, offline source identities only.** Reused `scan_vanilla.py` with the requested cell filter expanded in a scratch helper. Exact Skyrim.esm SHA-256: `e198c3b85e5e48e0c92a6580d8f66e644256b68d812ee32b61735cf9b753df73`. The compact record extract, bounds, poses, exact source path and generated route hashes are in `session-p5/routes/gen/final/final-fixtures.provenance`.
+
+| EDID | CELL FormID | Fixture anchor |
+| --- | --- | --- |
+| WhiterunBanneredMare | `0001605E` | Proven beam `000E7A7B` / `000602A6` / WRIntBeam768; ceiling `0005D68E` / `0005D1AA` / WRIntCeilMid01; doorway `000616C4` / WRIntFreeWallStrDoor01 |
+| BleakFallsBarrow01 | `000371DE` | Corridor `00038D68` / NorHallSm1way01 at `(2048,-9216,-2560)` |
+| WhiterunExterior01 | `0000961B` | Open exterior stable overhead structure `000627E3` / WRStableStr01 at approximately `(18825,-11005,-4584)` |
+| WhiterunDragonsreach | `000165A3` | Large hall COC marker `00020961` at `(-448,-128,-320)` |
+| QASmoke | `00032AE7` | Verified for completeness; no final route uses it |
+
+New corridor/doorway/exterior/hall/ceiling player poses are **Hypothesis**, derived from placements/bounds; screenshots and contact models must establish actual walkable clearance and framing. Only the budget/boundary beam pose reuses the proven m-* pose `(-117.110,-640,68)`.
+
+**PASS, offline setting/support check:** exact executable SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f` contains `iVSyncPresentInterval` at file offset `0x1A73398`; `iPresentInterval` was absent. The existing host INI uses `[Display] iVSyncPresentInterval`. Runner `schema.INI_FILES`, `Host.config_path` and `Executor.apply_overrides` accept `SkyrimPrefs.ini`, back it up, record effective before/after values and restore it. Budget routes set **`SkyrimPrefs.ini [Display] iVSyncPresentInterval=0` through `ini_overrides`**; other fixtures set 1. No runner edits. Driver/compositor/external limits and actual uncapped behavior remain NOT_RUN; do not accept a pinned 16.6 ms comparison merely because the override says 0. Camera `[Obstruction] bEnabled=0` is an existing real key and stays off.
+
+**PASS, offline ABI regression:** provided Address Library SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842`; IDs/prologues 33007, 61402, 105544, 105545, 107720, 70687 and singleton 403555 match existing guards. Native sweep call `5576BF` resolves to `B59D80`; room vtable RVA `1A69AC8`, slot `3F`, resolves to `FCE0C0` with the expected prologue. The new native-height call-site guard also matches. These checks are not Windows linking or runtime safety evidence.
+
+### Final serialized run plan — every new game row NOT_RUN
+
+Generator: `session-p5/routes/write_final_routes.py`. JSON output: **`session-p5/routes/gen/final/`**. All eleven routes are camera-only, keyboard/mouse, unattended, one copied save/process, **900 s route budget**. No UI DLL, no collision toggles, no camera transform writes and no crosshair hook. Every capture explicitly arms KP0 and stops KP9. In-capture screenshots use `xwd_window`, avoiding PrintScreen input fallback.
+
+| Route suffix after `p5-final-` | Capture / comparison purpose | Required result, still NOT_RUN |
+| --- | --- | --- |
+| `budget-filter` | Quiet opaque filter, beam allowlist, cap off; 60 s standing | Nonzero committed chains; valid frame anchors; height/scene control |
+| `budget-filter-material` | Identical pose/actions/settings, only mode changes; 60 s standing | Local fade/restore; matched fading cost = material p95 − filter p95; `(material_p95/filter_p95−1)*100` **≤10%** |
+| `budget-baseline` | Same pose/settings/cap, baseline mode; 60 s standing | **Unmatched rendered scene:** native compression changes camera/visible scene. Report deltas descriptively; never call this the matched fading budget |
+| `boundary` | Quiet beam filter-material; 10 × W1.5 s/S1.5 s at disposable speedmult 35, then 10 s slow turn | ≥30 s walking capture; start/end screenshots demonstrate crossing; print height range, numeric reversals and longest steady stretch |
+| `corridor` | Observe, quiet off; ~25 s short forward/back and slow turn at verified Nordic corridor | Classifier reference/models versus enclosure; **native collision unchanged** |
+| `doorway` | Same observe path at Bannered Mare low doorway | Classifier lintel versus enclosing wall; **native collision unchanged** |
+| `exterior` | Same observe path under Whiterun stable structure | Classifier roof/post/floor distinction; **native collision unchanged** |
+| `hall` | Same observe path at Dragonsreach hall | Large-room enclosure verdicts; **native collision unchanged** |
+| `corridor-filter` | Exact corridor observe actions/poses, filter mode, allowlist only Bannered Mare beam | **Discards must be 0; any discard FAIL.** Analyze with `--expect-no-discards`; compare native-control screenshots |
+| `culling` | Quiet filter on real ceiling `0005D68E`, player Y −800 to avoid proven beam; screenshots before/above/restored | **Diagnostic only**, actual ceiling discards/rise required before judging room loss; does not expand Stage 1 |
+| `culling-seed2` | Same ceiling pose/actions, `[Spike] iRoomSeedMode=2` | **Diagnostic only**, compare room visibility with seed 0. Original existing room hook, no render hook. No Stage 2 authorization |
+
+Observe routes keep detailed sampling at 1/16 and iMaxHitRecords=100000, with short captures and vsync on; quiet budget routes skip detailed queuing entirely. No cap is disabled silently. Any real overflow/lost contact still invalidates the evidence.
+
+`iRoomSeedMode` defaults 0; only 0 or 2 is accepted, and 2 is accepted only with `sMode=filter`. It composes the existing sightline room-seeding implementation with this disposable ceiling diagnostic. Other modes/settings remain unchanged. Real ceiling filtering may be conservatively refused by adjacent enclosure: no actual camera rise means the above-ceiling subcheck is **NOT_RUN**, not a culling success.
+
+Orchestrator command after reviewed Windows CI and staging the new DLL/INI:
+
+```bash
+bash /srv/storage/Projects/SkyCRPG/session-p5/routes/run_final.sh final-<unique-label>
+python3 -B /srv/storage/Projects/SkyCRPG/session-p5/routes/summarize_final.py --prefix final-<unique-label>
+```
+
+`run_final.sh` records purpose/owner/profile command/log/deadline/completion/cleanup and PID before each job, runs one route at a time, and calls existing `collect_logs.py` before the next route. Unique batch/collection labels preserve each log. A failed route does not end the batch. Existing/residual Skyrim or loader processes block further launches while present; the script does not kill foreign processes. Runner owns quit/restore; external timeout sends INT at 1170 s with 30 s cleanup grace (1200 s outer bound). A timeout with residual game processes requires orchestrator cleanup, and subsequent rows stay BLOCKED. Each collection has `invocation.json` with launch time, route, exit status and runner-summary path; summarization rejects stale/changed/unrelated logs and retains partial measurements without admitting them to comparisons.
+
+Summary output includes per-route commit, journal conclusion/status, discards, restores, per-capture height/timing/hook-share metrics, classifier by reference/models, and comparisons. Matched design is explicitly separated from matched recorded settings, host/source and package/probe/save content hashes; mode/seed mismatch, failed runner, missing data or invalid anchors prevents a budget pass. Screenshot matching and exclusion of external caps still require review. No new result files or hashes for a DLL/game run are invented.
+
+### Actual offline validation and limits
+
+Jobs recorded before execution in `/tmp/dyl199-final/jobs.md`; worker owns those jobs, deadlines and logs. All job handles returned and child work completed; synthetic artifacts used TemporaryDirectory or `/tmp`. No Skyrim/Proton/Windows build was run. Logs and exact command/result JSON remain under `/tmp/dyl199-final/`.
+
+| Command / evidence | Actual result |
+| --- | --- |
+| `timeout 120s python3 -B /tmp/dyl199-final/verify_sources.py` | **PASS**, ESM CELL/reference/bounds extraction and exact executable string/hash checks; `sources.log` |
+| `timeout 120s python3 -B /tmp/dyl199-final/check_abi.py` + `objdump -d` bounded call-site reads | **PASS**, reused address/prologue/slot/call-site assertions; `abi.log`, `camera-callsite.asm` |
+| `g++ -std=c++20 -Wall -Wextra -Werror -pedantic <test> -o /tmp/dyl199-final/bin/<test>` then execute; add `-Imodules/camera/include` or `-Imodules/ui/src` for module tests | **PASS**, **28/28 standalone C++ executables**, including all 3 spike tests. First full invocation failed 11 module compilations because the manual harness omitted include paths; changed command, retried only those 11, all compile/run exit 0. `all.log`, `include-retry.log` and matching result JSON |
+| `timeout 120s python3 -B -m unittest discover -s tools/occlusion-spike/tests -p 'test_*.py' -v` | **PASS**, **23/23** final analyzer tests; `analyzer-final.log` |
+| `python3 -B /srv/storage/Projects/SkyCRPG/session-p5/routes/test_route_tools.py` | **PASS**, **23/23**. First attempt caught a duplicate fixture section/state tag; corrected tag/regenerated owned JSON, rerun passed. Tests include all 11 schemas, budget-pose/action equality, 60 s standing windows, ≥30 s boundary holds, no-match allowlist, seed settings and missing-log behavior. `routes-final.log` |
+| `python3 -B -m unittest discover -s tools/tests -p '*test*.py' -v` | **PASS**, **24/24** package/CI-scope tests; `all.log` |
+| UI portable Python/JS suites, read-only UI source, existing pinned SkyUI/Node | **PASS**, **19/19 Python tests** total (3 initially skipped were rerun with existing source env and passed), **7/7 JS scripts**, including their portable action-intent C++ adapter. `ui-sources.log`, `ui-sources-results.json`; no UI edits |
+| `timeout 120s python3 -B /tmp/dyl199-final/check_reports.py`; `bash -n .../run_final.sh`; `git diff --check` | **PASS**, missing-final evidence remains 11/11 NOT_RUN; shell syntax/whitespace clean; old m-* raw journals parse without invented classifier/height/timing sums |
+| MSVC `/W4 /WX`, native DLL linking, new DLL hash, all eleven final game routes, actual uncapped p95, sampling stability, ceiling visibility and classifier quality | **NOT_RUN**; orchestrator builds through CI and serializes game execution |
+
+Re-reading the existing m-* journals (source `210422ae6362b0027db86ffbe34d573d022bef1e`) preserves raw journal **PASS only**: filter 4670 committed discards, material 4650, alpha-property 4651; material/property each have six PASS restore records. These are reused historical measurements, not new runs or a final budget/classifier pass.
+
+Engineering decisions made: default-OFF quiet journaling; persistent private renderer allocations; exact-zero probe passthrough only; 1-unit/250 ms height thresholds; short capped observe fixtures; explicitly diagnostic filter + seed2 composition; matched fading comparison against opaque filter, compressed baseline descriptive only. No owner scope/dependency/product decisions changed. **Questions for the owner: none needed for this implementation.** P5-05/GO and any broader scope remain with the owner after the outstanding evidence.
+
+### Proposed shared-file changes (final pass)
+
+For orchestrator review only: update `docs/STATUS.md` and DYL-199 to record the owner's bounded m-* visual approval, this prepared final evidence suite, offline PASS versus all new runtime rows NOT_RUN, and the continuing ≤10%/classifier/boundary/culling gates. If diagnostic controls are documented, describe `bQuietJournal`, KP0/KP9 and default-0 `iRoomSeedMode=2` as disposable-only. No production Camera/UI contract, dependency, packaging/build setting or owner decision changes are proposed. Earlier batch-k-only proposed status text above is historical and superseded by this paragraph.

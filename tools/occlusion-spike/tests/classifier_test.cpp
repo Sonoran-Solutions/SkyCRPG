@@ -83,6 +83,9 @@ int main()
 	CHECK(ContinueRay({0,0,0}, {200,0,0}, {20,0,0}, 30, next)); CHECK(next.x == 80);
 	CHECK(ContinueRay({20,0,0}, {100,0,0}, {19.953f,0,0}, 15, next)); CHECK(next.x == 50);
 	CHECK(!ContinueRay({}, {}, {}, 15, next));
+	CHECK(ZeroLengthProbe({1,2,3,0}, {1,2,3,1}));
+	CHECK(!ZeroLengthProbe({1,2,3,0}, {1,2,4,0}));
+	CHECK(!ZeroLengthProbe({0,0,std::numeric_limits<float>::infinity(),0}, {0,0,std::numeric_limits<float>::infinity(),0}));
 	CHECK(!ContinueRay({}, {100,0,0}, {101,0,0}, 15, next));
 	CHECK(!ContinueRay({}, {100,0,0}, {70,0,0}, 15, next));
 	CHECK(!ContinueRay({}, {100,0,0}, {100,0,0}, 15, next));

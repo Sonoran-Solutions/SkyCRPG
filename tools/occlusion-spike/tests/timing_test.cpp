@@ -8,7 +8,8 @@ int main()
 	for (unsigned i = 1; i <= 100; ++i) ring.push(i);
 	auto s = ring.summary();
 	CHECK(s.count == 100 && s.p95 == 95 && s.p99 == 99 && s.median == 50.5 && s.maximum == 100);
-	ring.push(101); CHECK(ring.total() == 101 && ring.summary().count == 100);
+	ring.push(101); CHECK(ring.total() == 101 && ring.summary().count == 100 && ring.sum() == 5151);
+	ring.clear(); CHECK(ring.sum() == 0);
 	skycrpg::occlusion::FrameRing<65536> large;
 	static_assert(sizeof(large) < 128);
 	for (unsigned i = 0; i < 70000; ++i) large.push(i);
