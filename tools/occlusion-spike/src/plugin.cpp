@@ -1,5 +1,6 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 // Disposable instrumentation. SmoothCam owns all normal camera transforms.
+#define NOMINMAX // before CommonLib's Windows headers; matches skycrpg/skeleton.h
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
 #include <skycrpg/skeleton.h>
