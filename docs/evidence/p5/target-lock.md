@@ -224,3 +224,15 @@ Same build, profile and location as `owner-lock-1`, keyboard/mouse; restore PASS
 | Controller R3 | **NOT_RUN** | Separate run. |
 
 The owner made a quicksave next to the bandit for repeat tests. Restore moved it to the run's preserved outputs, and it's backed up as `session-p5/owner-saves/Quicksave0_…_20261102205255_1_1` outside the repository. In that session yaw moved only 0.06 degrees overall, locked or not, so the mouse may not have reached the game at all; Deskflow is known to block mouse look on this host.
+
+## Owner hands-on run owner-lock-3 — 2026-11-02
+
+Same build, camera-only, controller on, from the owner's quicksave next to the bandit; restore PASS. The owner said: "It worked and felt right, I approve". Recorded as owner ruling D027.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| R3 short press toggles lock; hold reaches native POV at 0.4 s | **PASS, owner** | Owner approval; lock segments in the trace. |
+| No double fire from one R3 press | **PASS, owner** | Owner report; not independently traced. |
+| Right-stick look turns the camera while locked, pitch held | **PASS** | 114 locked rows with look input; yaw range 240.4 degrees; pitch 55.0 degrees throughout. |
+
+This shows user look works while locked on controller. Mouse look uses the same look hook but was not exercised while locked (owner-lock-2 logged no look input), so the mouse row stays **NOT_RUN** rather than PASS. **Still NOT_RUN:** wheel or controller zoom while locked, target switching, auto-retarget, and dialogue, load and F8 interrupting a held lock.
