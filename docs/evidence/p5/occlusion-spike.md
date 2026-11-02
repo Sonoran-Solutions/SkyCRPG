@@ -298,3 +298,29 @@ Routes `p5-spike-baseline`, `-baseline-turning`, `-observe` and `-observe-turnin
 - **FAIL:** the filter rolled back on `gap_phantom_world_mismatch`, so the camera stayed compressed and `above-beam-armed` can't judge the fade. The guard compared `phantom->world` with `GetWorld1`, which the native sweep doesn't do. The binary confirms the caster's world comes from slot 0x27 (`GetWorld1`). That the phantom's world is null is a hypothesis, logged by the next run as `gap_phantom_world`.
 
 Reading rules from independent review for the next run: judge only `above-beam-armed`, against the opaque `p5-spike-filter` control. `beam-forward-armed` can't judge this beam. Trim parts with alpha test may vanish rather than fade, so judge them apart from the body. Timing from filter runs isn't matched against baseline, so it can't give a 10% budget result.
+
+## In-game run m-* — 2026-11-02: fixed height with a transparent beam, on one fixture
+
+`p5-spike-filter`, `-filter-material` and `-filter-alphaprop` on `210422a` (DLL `129fb72e…`), Bannered Mare, reference `0x000E7A7B` (`WRIntBeam768.nif`), camera-only, keyboard/mouse, unattended; no crash, runner restore PASS. **Outcome: pending the rows below.** Judged by matched `above-beam-armed` screenshots against the opaque filter control, by the orchestrator; owner review pending.
+
+| Row | Result | Evidence |
+| --- | --- | --- |
+| Fixed height past the beam | **PASS, this fixture** | About 4650 committed discards a run. The camera holds full height, where it is compressed without the filter. |
+| Enclosure kept behind the beam | **PASS, this fixture** | Every completed chain, about 4250 a run, returned ceiling `0x0005D68E`. |
+| Material alpha at 0.35 | **Transparent** | Fire, floor and NPC visible through the beam, whose outline stays readable. |
+| Alpha property at 0.35 | **Transparent** | Same visual result. |
+| Local write | **PASS** | All 30 parts used private clones, `local_write=true`, of a material shared with 70 others. |
+| Restore on each exit tested | **PASS** | All 6 restores PASS: 4 `ineligible_state`, 2 `main_thread_request`. The beam was opaque and the camera compressed afterward. |
+| Phantom world | **Confirmed** | `phantom_world_null=true`, so the earlier guard was wrong. |
+| `app_culled` | **Hidden** | Comparison only. It does not meet the requested transparency. |
+| Near-plane clip | **Refused** | Unresolved helper argument; not needed for this result. |
+
+**Not established:**
+- **Budget: NOT_RUN as a valid comparison.** Frame p95 was 16.5 ms with and without the filter, but that is pinned near the 60 fps cap and the scene differs, so it can't detect overhead. Hook p95 was about 0.125 ms per call, with journalling on. A matched uncapped or no-journal capture is needed.
+- **Positive classification: NOT established.** This run used an explicit reference allowlist. The diagnostic classifier also flags chandelier `0x000616F6`, so a general filter can't rely on it. This is the main open design question for P5-05.
+- **Other fixtures: NOT_RUN.** Dungeon corridor, doorway, low ceiling, exterior, large hall and interior culling.
+- **30-second boundary route for oscillation: NOT_RUN.** Turning-mode runs were not repeated on this build.
+- **Other beams.** Only one reference was tested. Other overhead pieces and the chandelier still pull the camera in.
+- **Trim parts.** Two of five parts carry an alpha test (flags `0x12EC`). Crops show no missing trim at this viewpoint, but they were not judged part by part.
+
+Reviewer limits still open: the clone is freed in the same call as the swap back (no crash observed, not proven safe), and a permanent inconclusive latch can come from a zero-length probe.
