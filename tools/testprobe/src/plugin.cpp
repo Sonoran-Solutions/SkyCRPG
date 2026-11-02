@@ -11,9 +11,11 @@
 #include <RE/G/GFxMovieView.h>
 #include <RE/G/GFxValue.h>
 #include <RE/M/Main.h>
+#include <RE/M/MenuControls.h>
 #include <RE/M/MenuOpenCloseEvent.h>
 #include <RE/P/PlayerCamera.h>
 #include <RE/P/PlayerCharacter.h>
+#include <RE/P/PlayerControls.h>
 #include <RE/S/ScriptEventSourceHolder.h>
 #include <RE/T/TESAmmo.h>
 #include <RE/T/TESBoundObject.h>
@@ -34,6 +36,7 @@
 #include "snapshot_policy.h"
 #include "observation_policy.h"
 #include "perf_policy.h"
+#include "proton_policy.h"
 #include "cursor_policy.h"
 #include "magic_policy.h"
 
@@ -66,6 +69,7 @@ struct Probe {
 	json::FrameRing<16384> frames, engineFrames;
 	json::FrameChain frameChain;
 	json::InventoryWindow inventory;
+	json::InputDiagnostics inputDiagnostics;
 	std::string captureLabel;
 	bool hasInventoryKey{}, inventoryMenuOpen{}, inventoryEverOpened{};
 	double previousFrameMs{}, captureStartMs{}, inventoryKeyMs{}, preOpenMedian{};
@@ -79,6 +83,7 @@ struct Probe {
 	std::atomic_bool timerBusy{ false };
 	std::atomic_bool timerPending{ false };
 	std::atomic_bool memoryFailureLogged{ false };
+	std::atomic_bool commitWalkFailureLogged{ false };
 	std::uint32_t interval{ 1000 };
 	HANDLE timer{};
 };
@@ -585,7 +590,11 @@ void AbortFrameCapture(const char* reason)
 	g_probe->inventory = {};
 	g_probe->hasInventoryKey = false;
 	Emit("perf_capture", json::Object{}.String("label", g_probe->captureLabel)
-		.String("phase", "abort").Boolean("available", false).String("reason", reason));
+		.String("phase", "abort").Boolean("available", false).String("reason", reason)
+		.Numeric("input_buttons_seen", g_probe->inputDiagnostics.buttons)
+		.Numeric("input_downs_seen", g_probe->inputDiagnostics.downs)
+		.Numeric("input_accepted", g_probe->inputDiagnostics.accepted)
+		.Numeric("input_diag_count", g_probe->inputDiagnostics.count));
 }
 
 class FrameUITask final : public SKSE::detail::UIDelegate_v1 {
@@ -666,14 +675,45 @@ void QueueFrameHop(json::FrameChain::Hop hop) noexcept
 	Log("SkyCRPG_TestProbe: frame enqueue failed\n");
 }
 
+void EmitInputDiagnostics(const json::InputDiagnostics& diagnostics, std::string_view label)
+{
+	for (std::size_t i = diagnostics.emitted; i < diagnostics.count; ++i) {
+		const auto& d = diagnostics.records[i];
+		Emit("input_diag", json::Object{}.String("label", label)
+			.Numeric("device", d.device).Numeric("idCode", d.idCode)
+			.Numeric("value", d.value).Numeric("heldDownSecs", d.heldDownSecs)
+			.String("userEvent", d.userEvent.data()).Boolean("userEvent_truncated", d.userEventTruncated)
+			.Numeric("inventory_key", d.inventoryKey).Numeric("quick_inventory_key", d.quickInventoryKey).Numeric("tween_key", d.tweenKey)
+			.Numeric("qpc_ms", d.qpcMs).Boolean("down", d.down).Boolean("mapped", d.mapped)
+			.Boolean("inventory_menu_open", d.menuOpen).Boolean("capture_active", true).Boolean("accepted", d.accepted));
+	}
+}
+
+void FlushInputDiagnostics()
+{
+	json::InputDiagnostics diagnostics;
+	std::string label;
+	{
+		std::scoped_lock lock(g_probe->perfMutex);
+		if (g_probe->inputDiagnostics.emitted == g_probe->inputDiagnostics.count) return;
+		diagnostics = g_probe->inputDiagnostics;
+		label = g_probe->captureLabel;
+		g_probe->inputDiagnostics.emitted = diagnostics.count;
+	}
+	EmitInputDiagnostics(diagnostics, label);
+}
+
 void PerfRequest(const std::string& tag)
 {
 	const auto request = json::ParsePerfRequest(tag);
 	std::unique_lock lock(g_probe->perfMutex);
 	bool queueUI = false;
 	bool available = false;
+	json::InputDiagnostics diagnostics;
+	std::string diagnosticLabel;
 	if (request.command == json::PerfCommand::start && !g_probe->frameChain.active() && g_probe->loaded.load()) {
 		g_probe->captureLabel = request.label;
+		g_probe->inputDiagnostics = {};
 		g_probe->frames.clear();
 		g_probe->engineFrames.clear();
 		g_probe->inventory = {};
@@ -686,6 +726,9 @@ void PerfRequest(const std::string& tag)
 		if (available && request.label == "resource") Emit("resource_check", json::Object{}.String("phase", "start"));
 	} else if (request.command == json::PerfCommand::stop && g_probe->frameChain.active() && request.label == g_probe->captureLabel) {
 		g_probe->frameChain.stop();
+		diagnostics = g_probe->inputDiagnostics;
+		g_probe->inputDiagnostics.emitted = diagnostics.count;
+		diagnosticLabel = g_probe->captureLabel;
 		EmitInventory();
 		const auto summary = g_probe->frames.summary();
 		const auto engine = g_probe->engineFrames.summary();
@@ -703,9 +746,17 @@ void PerfRequest(const std::string& tag)
 		if (request.label == "resource") Emit("resource_check", json::Object{}.String("phase", "stop"));
 		available = true;
 	}
-	Emit("perf_capture", json::Object{}.String("tag", tag).String("label", request.label)
-		.String("phase", request.command == json::PerfCommand::start ? "start" : "stop").Boolean("available", available));
 	lock.unlock();
+	// The timer drains during capture; stop writes any remaining records.
+	// No input callback formats JSON or writes output, or holds an engine pointer.
+	EmitInputDiagnostics(diagnostics, diagnosticLabel);
+	json::Object acknowledgement;
+	acknowledgement.String("tag", tag).String("label", request.label)
+		.String("phase", request.command == json::PerfCommand::start ? "start" : "stop").Boolean("available", available);
+	if (available && request.command == json::PerfCommand::stop)
+		acknowledgement.Numeric("input_buttons_seen", diagnostics.buttons).Numeric("input_downs_seen", diagnostics.downs)
+			.Numeric("input_accepted", diagnostics.accepted).Numeric("input_diag_count", diagnostics.count);
+	Emit("perf_capture", acknowledgement);
 	if (queueUI) QueueFrameHop(json::FrameChain::Hop::ui);
 }
 
@@ -728,6 +779,25 @@ void InventoryMenuEvent(bool opening, double now)
 	}
 }
 
+std::array<std::uint32_t, 3> InventoryMappings(const RE::ControlMap* controls, RE::INPUT_DEVICE device) noexcept
+{
+	std::array<std::uint32_t, 3> keys{ RE::ControlMap::kInvalid, RE::ControlMap::kInvalid, RE::ControlMap::kInvalid };
+	if (!controls || static_cast<std::int32_t>(device) < 0 || device >= RE::INPUT_DEVICE::kTotal) return keys;
+	const auto* context = controls->controlMap[RE::ControlMap::InputContextID::kGameplay];
+	if (!context) return keys;
+	std::array<bool, 3> found{};
+	constexpr std::array<std::string_view, 3> names{ "Inventory", "Quick Inventory", "Tween Menu" };
+	// Same first-match/context/device lookup as GetMappedKey, without its
+	// temporary BSFixedString intern operation on the input hot path.
+	for (const auto& mapping : context->deviceMappings[device]) {
+		const std::string_view name{ mapping.eventID.c_str(), mapping.eventID.size() };
+		for (std::size_t i = 0; i < names.size(); ++i)
+			if (!found[i] && name == names[i]) { keys[i] = mapping.inputKey; found[i] = true; }
+		if (found[0] && found[1] && found[2]) break;
+	}
+	return keys;
+}
+
 class InputEvents final : public RE::BSTEventSink<RE::InputEvent*> {
 public:
 	RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,
@@ -741,26 +811,62 @@ public:
 			}
 			for (auto* event = *events; event; event = event->next) {
 				const auto* button = event->AsButtonEvent();
-				if (!button || !button->IsDown()) continue;
-				const double now = PerfNow();
-				const auto* controls = RE::ControlMap::GetSingleton();
-				if (!controls) continue;
+				if (!button) continue;
+				json::InputDiagnostic d;
+				d.qpcMs = PerfNow();  // precedes mapping, sorting and all output
 				const auto device = event->GetDevice();
-				const auto key = button->GetIDCode();
-				const auto inventoryKey = controls->GetMappedKey("Inventory", device);
-				const auto tweenKey = controls->GetMappedKey("Tween Menu", device);
-				if ((inventoryKey == RE::ControlMap::kInvalid || key != inventoryKey) &&
-					(tweenKey == RE::ControlMap::kInvalid || key != tweenKey)) continue;
+				d.device = static_cast<std::int32_t>(device);
+				d.idCode = button->GetIDCode();
+				d.value = button->Value();
+				d.heldDownSecs = button->HeldDuration();
+				d.down = button->IsDown();
+				const auto keys = InventoryMappings(RE::ControlMap::GetSingleton(), device);
+				d.inventoryKey = keys[0];
+				d.quickInventoryKey = keys[1];
+				d.tweenKey = keys[2];
+				d.mapped = json::AcceptInventoryKey(true, false, true, d.idCode, keys, RE::ControlMap::kInvalid);
 				std::scoped_lock lock(g_probe->perfMutex);
-				if (!g_probe->frameChain.active() || g_probe->inventoryMenuOpen) continue;
-				g_probe->inventoryKeyMs = now;
-				g_probe->preOpenMedian = g_probe->frames.summary().median;
-				g_probe->hasInventoryKey = true;
+				if (!g_probe->frameChain.active()) continue;
+				d.menuOpen = g_probe->inventoryMenuOpen;
+				d.accepted = json::AcceptInventoryKey(true, d.menuOpen, d.down, d.idCode, keys, RE::ControlMap::kInvalid);
+				if (d.accepted) {
+					g_probe->inventoryKeyMs = d.qpcMs;
+					g_probe->preOpenMedian = g_probe->frames.summary().median;
+					g_probe->hasInventoryKey = true;
+				}
+				g_probe->inputDiagnostics.observe(d, button->GetUserEvent().c_str());
 			}
 		} catch (...) { Log("SkyCRPG_TestProbe: input timestamp failed\n"); }
 		return RE::BSEventNotifyControl::kContinue;
 	}
 };
+
+void RegisterInputObserver(InputEvents* observer)
+{
+	auto* input = RE::BSInputDeviceManager::GetSingleton();
+	if (!input) { Log("SkyCRPG_TestProbe: input event source unavailable\n"); return; }
+	// Verified CommonLib 7.2.0 API, not an assumed input-initialization order.
+	input->PrependEventSink(observer);
+	auto* menu = static_cast<RE::BSTEventSink<RE::InputEvent*>*>(RE::MenuControls::GetSingleton());
+	auto* player = static_cast<RE::BSTEventSink<RE::InputEvent*>*>(RE::PlayerControls::GetSingleton());
+	std::int64_t ownIndex = -1, menuIndex = -1, playerIndex = -1, count = 0;
+	bool notifying = false;
+	{
+		RE::BSSpinLockGuard lock(input->lock);
+		notifying = input->notifying;
+		for (const auto* sink : input->sinks) {
+			if (sink == observer) ownIndex = count;
+			if (sink == menu) menuIndex = count;
+			if (sink == player) playerIndex = count;
+			++count;
+		}
+	}
+	// Once per process; scalar indices only, no retained engine pointers.
+	Emit("input_registration", json::Object{}.String("method", "PrependEventSink")
+		.Numeric("sink_count", count).Numeric("probe_index", ownIndex)
+		.Numeric("menu_controls_index", menuIndex).Numeric("player_controls_index", playerIndex)
+		.Boolean("notifying", notifying));
+}
 
 struct Handle {
 	HANDLE value{ INVALID_HANDLE_VALUE };
@@ -849,14 +955,39 @@ bool PollRequest()
 
 void SampleMemory()
 {
+	// Timer thread only. No engine/UI access and no perfMutex.
+	const auto started = Clock::now();
+	SYSTEM_INFO system{};
+	GetSystemInfo(&system);
+	const auto maximum = reinterpret_cast<std::uintptr_t>(system.lpMaximumApplicationAddress);
+	const auto walk = json::WalkPrivateCommit(static_cast<std::uint64_t>(maximum),
+		[](std::uint64_t address, json::MemoryRegion& region) {
+			MEMORY_BASIC_INFORMATION info{};
+			if (VirtualQuery(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), &info, sizeof(info)) != sizeof(info)) return false;
+			region = { static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(info.BaseAddress)),
+				static_cast<std::uint64_t>(info.RegionSize), info.State == MEM_COMMIT && info.Type == MEM_PRIVATE };
+			return true;
+		}, [&started] { return Clock::now() - started >= std::chrono::milliseconds(100); });
+	const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count();
+	json::Object fields;
+	fields.Numeric("private_commit_regions", walk.regions).Numeric("private_commit_matching_regions", walk.privateRegions)
+		.Numeric("private_commit_walk_us", elapsed).Boolean("private_commit_complete", walk.complete);
+	if (walk.complete) fields.Numeric("private_commit_bytes", walk.bytes);
+	else {
+		fields.Null("private_commit_bytes");
+		if (!g_probe->commitWalkFailureLogged.exchange(true))
+			Log("SkyCRPG_TestProbe: private commit walk incomplete (query, range or 100ms/region limit); bytes unavailable\n");
+	}
 	PROCESS_MEMORY_COUNTERS_EX counters{};
 	counters.cb = static_cast<DWORD>(sizeof(counters));
 	if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), counters.cb)) {
-		Emit("process_memory", json::Object{}.Numeric("private_bytes", static_cast<std::uint64_t>(counters.PrivateUsage))
-			.Numeric("working_set_bytes", static_cast<std::uint64_t>(counters.WorkingSetSize)));
-	} else if (!g_probe->memoryFailureLogged.exchange(true)) {
-		Log("SkyCRPG_TestProbe: process memory sample unavailable\n");
+		fields.Numeric("private_bytes", static_cast<std::uint64_t>(counters.PrivateUsage))
+			.Numeric("working_set_bytes", static_cast<std::uint64_t>(counters.WorkingSetSize));
+	} else {
+		fields.Null("private_bytes").Null("working_set_bytes");
+		if (!g_probe->memoryFailureLogged.exchange(true)) Log("SkyCRPG_TestProbe: process memory sample unavailable\n");
 	}
+	Emit("process_memory", fields);
 }
 
 void CALLBACK TimerTick(void*, BOOLEAN) noexcept
@@ -864,6 +995,7 @@ void CALLBACK TimerTick(void*, BOOLEAN) noexcept
 	if (g_probe->timerBusy.exchange(true)) return;
 	try {
 		if (g_probe->loaded.load()) SampleMemory();
+		FlushInputDiagnostics();
 		if (!g_probe->timerPending.load() && !PollRequest() && g_probe->loaded.load())
 			QueueSnapshot(false, {}, true);
 	} catch (...) {
@@ -991,8 +1123,7 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 			static bool registered = false;
 			if (registered) return;
 			registered = true;
-			if (auto* input = RE::BSInputDeviceManager::GetSingleton()) input->AddEventSink(inputs);
-			else Log("SkyCRPG_TestProbe: input event source unavailable\n");
+			RegisterInputObserver(inputs);
 			if (auto* ui = RE::UI::GetSingleton()) ui->AddEventSink<RE::MenuOpenCloseEvent>(events);
 			else Log("SkyCRPG_TestProbe: menu event source unavailable\n");
 			if (auto* source = RE::ScriptEventSourceHolder::GetSingleton()) {
