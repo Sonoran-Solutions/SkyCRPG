@@ -6,12 +6,16 @@ using namespace skycrpg::testprobe;
 int main()
 {
 	constexpr std::uint32_t invalid = 0xFFFFFFFF;
-	assert(AcceptInventoryKey(true, false, true, 23, 23, invalid, invalid));
-	assert(AcceptInventoryKey(true, false, true, 15, invalid, 15, invalid));
-	assert(!AcceptInventoryKey(false, false, true, 23, 23, invalid, invalid));
-	assert(!AcceptInventoryKey(true, true, true, 23, 23, invalid, invalid));
-	assert(!AcceptInventoryKey(true, false, false, 23, 23, invalid, invalid));
-	assert(!AcceptInventoryKey(true, false, true, invalid, invalid, invalid, invalid));
+	using Keys = std::array<std::uint32_t, 3>;
+	assert(AcceptInventoryKey(true, false, true, 23, Keys{ 23, invalid, invalid }, invalid));
+	// Live 2026-11-02 keyboard map: Inventory unbound, I = Quick Inventory, TAB = Tween Menu.
+	assert(AcceptInventoryKey(true, false, true, 23, Keys{ invalid, 23, 15 }, invalid));
+	assert(AcceptInventoryKey(true, false, true, 15, Keys{ invalid, 23, 15 }, invalid));
+	assert(!AcceptInventoryKey(true, false, true, 24, Keys{ invalid, 23, 15 }, invalid));
+	assert(!AcceptInventoryKey(false, false, true, 23, Keys{ 23, invalid, invalid }, invalid));
+	assert(!AcceptInventoryKey(true, true, true, 23, Keys{ 23, invalid, invalid }, invalid));
+	assert(!AcceptInventoryKey(true, false, false, 23, Keys{ 23, invalid, invalid }, invalid));
+	assert(!AcceptInventoryKey(true, false, true, invalid, Keys{ invalid, invalid, invalid }, invalid));
 	InputDiagnostics diagnostics;
 	InputDiagnostic d;
 	d.down = d.accepted = true;

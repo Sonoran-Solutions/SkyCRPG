@@ -9,7 +9,7 @@
 namespace skycrpg::testprobe {
 struct InputDiagnostic {
 	std::int32_t device{};
-	std::uint32_t idCode{}, inventoryKey{}, tweenKey{};
+	std::uint32_t idCode{}, inventoryKey{}, quickInventoryKey{}, tweenKey{};
 	float value{}, heldDownSecs{};
 	double qpcMs{};
 	bool down{}, accepted{}, menuOpen{}, mapped{}, userEventTruncated{};
@@ -32,11 +32,15 @@ struct InputDiagnostics {
 	}
 };
 
+// Keys are the gameplay mappings for Inventory, Quick Inventory and Tween Menu.
+// The default keyboard map binds I to Quick Inventory and leaves Inventory unbound.
 inline bool AcceptInventoryKey(bool active, bool menuOpen, bool down, std::uint32_t key,
-	std::uint32_t inventoryKey, std::uint32_t tweenKey, std::uint32_t invalid) noexcept
+	const std::array<std::uint32_t, 3>& keys, std::uint32_t invalid) noexcept
 {
-	return active && !menuOpen && down &&
-		((inventoryKey != invalid && key == inventoryKey) || (tweenKey != invalid && key == tweenKey));
+	if (!active || menuOpen || !down || key == invalid) return false;
+	for (const auto mapped : keys)
+		if (mapped != invalid && key == mapped) return true;
+	return false;
 }
 
 struct MemoryRegion {

@@ -683,7 +683,7 @@ void EmitInputDiagnostics(const json::InputDiagnostics& diagnostics, std::string
 			.Numeric("device", d.device).Numeric("idCode", d.idCode)
 			.Numeric("value", d.value).Numeric("heldDownSecs", d.heldDownSecs)
 			.String("userEvent", d.userEvent.data()).Boolean("userEvent_truncated", d.userEventTruncated)
-			.Numeric("inventory_key", d.inventoryKey).Numeric("tween_key", d.tweenKey)
+			.Numeric("inventory_key", d.inventoryKey).Numeric("quick_inventory_key", d.quickInventoryKey).Numeric("tween_key", d.tweenKey)
 			.Numeric("qpc_ms", d.qpcMs).Boolean("down", d.down).Boolean("mapped", d.mapped)
 			.Boolean("inventory_menu_open", d.menuOpen).Boolean("capture_active", true).Boolean("accepted", d.accepted));
 	}
@@ -779,20 +779,21 @@ void InventoryMenuEvent(bool opening, double now)
 	}
 }
 
-std::array<std::uint32_t, 2> InventoryMappings(const RE::ControlMap* controls, RE::INPUT_DEVICE device) noexcept
+std::array<std::uint32_t, 3> InventoryMappings(const RE::ControlMap* controls, RE::INPUT_DEVICE device) noexcept
 {
-	std::array<std::uint32_t, 2> keys{ RE::ControlMap::kInvalid, RE::ControlMap::kInvalid };
+	std::array<std::uint32_t, 3> keys{ RE::ControlMap::kInvalid, RE::ControlMap::kInvalid, RE::ControlMap::kInvalid };
 	if (!controls || static_cast<std::int32_t>(device) < 0 || device >= RE::INPUT_DEVICE::kTotal) return keys;
 	const auto* context = controls->controlMap[RE::ControlMap::InputContextID::kGameplay];
 	if (!context) return keys;
-	bool inventoryFound = false, tweenFound = false;
+	std::array<bool, 3> found{};
+	constexpr std::array<std::string_view, 3> names{ "Inventory", "Quick Inventory", "Tween Menu" };
 	// Same first-match/context/device lookup as GetMappedKey, without its
 	// temporary BSFixedString intern operation on the input hot path.
 	for (const auto& mapping : context->deviceMappings[device]) {
 		const std::string_view name{ mapping.eventID.c_str(), mapping.eventID.size() };
-		if (!inventoryFound && name == "Inventory") { keys[0] = mapping.inputKey; inventoryFound = true; }
-		if (!tweenFound && name == "Tween Menu") { keys[1] = mapping.inputKey; tweenFound = true; }
-		if (inventoryFound && tweenFound) break;
+		for (std::size_t i = 0; i < names.size(); ++i)
+			if (!found[i] && name == names[i]) { keys[i] = mapping.inputKey; found[i] = true; }
+		if (found[0] && found[1] && found[2]) break;
 	}
 	return keys;
 }
@@ -821,12 +822,13 @@ public:
 				d.down = button->IsDown();
 				const auto keys = InventoryMappings(RE::ControlMap::GetSingleton(), device);
 				d.inventoryKey = keys[0];
-				d.tweenKey = keys[1];
-				d.mapped = json::AcceptInventoryKey(true, false, true, d.idCode, d.inventoryKey, d.tweenKey, RE::ControlMap::kInvalid);
+				d.quickInventoryKey = keys[1];
+				d.tweenKey = keys[2];
+				d.mapped = json::AcceptInventoryKey(true, false, true, d.idCode, keys, RE::ControlMap::kInvalid);
 				std::scoped_lock lock(g_probe->perfMutex);
 				if (!g_probe->frameChain.active()) continue;
 				d.menuOpen = g_probe->inventoryMenuOpen;
-				d.accepted = json::AcceptInventoryKey(true, d.menuOpen, d.down, d.idCode, d.inventoryKey, d.tweenKey, RE::ControlMap::kInvalid);
+				d.accepted = json::AcceptInventoryKey(true, d.menuOpen, d.down, d.idCode, keys, RE::ControlMap::kInvalid);
 				if (d.accepted) {
 					g_probe->inventoryKeyMs = d.qpcMs;
 					g_probe->preOpenMedian = g_probe->frames.summary().median;

@@ -18,12 +18,30 @@ Windows adapter or establish game behavior.
 
 ## DYL-172 Proton evidence correction — 2026-11-02
 
-**Offline PASS; new Windows adapter and live correction NOT_RUN.** Worktree base
-`6b4c0fc6a6da4effd9faeafc9a2c59874a612271`; no commit, push, branch creation,
-provider/pin change or game launch. New candidate: `<head SHA>`, `<CI run>`,
-`<DLL sha256>`. This section supersedes earlier statements about missing captures.
-The assigned Linear ticket currently reads Done; that does not establish the
-missing latency/memory measurements or owner acceptance.
+Branch `phase4/dyl-172-probe-proton` from main `6b4c0fc`. This section
+supersedes earlier statements about missing captures. Linear DYL-172 had closed
+automatically when #30 merged; it was reopened, because the latency and memory
+measurements were still missing.
+
+**Live diagnostic** (`c900b66`, [CI 41400377165](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41400377165),
+probe DLL `ffc047d80db70c7301a41a3deadd680b1751493b5e77e0250277e20521c418d0`;
+route `perf-probe-diag`, run `session-p4/autotest/runs/dyl172-proton-diag-01`, PASS, restore PASS):
+
+- **Input root cause found.** The prepended observer was first (`probe_index` 0
+  of 8; MenuControls 2, PlayerControls 3) and saw every key edge: 24 button
+  events, 6 downs. The keyboard `I` (idCode 23) arrived with user event
+  **Quick Inventory**, and the gameplay keyboard mapping for **Inventory** was
+  unbound (`kInvalid` 255). The old lookup accepted only Inventory and Tween
+  Menu, so no edge matched. Sink order was not the cause, and neither was IsDown:
+  the down edge had value 1 and heldDownSecs 0.
+- **Fix:** accept the gameplay mappings for Inventory, Quick Inventory and Tween
+  Menu (`proton_policy.h` `AcceptInventoryKey`, with a test of the live map).
+  `input_diag` adds `quick_inventory_key`. The prepend is kept; it does no harm.
+- **Memory:** `private_bytes` stayed 0 on every sample, while
+  `private_commit_bytes` was complete on all 87 samples: 1,410–1,472 MiB,
+  990 regions, walk 474–897 µs (median 524 µs) on the timer thread.
+
+The corrected probe and the four-profile rerun are recorded below.
 
 | Requirement / existing evidence | Change / offline disposition | New runtime |
 | --- | --- | --- |
@@ -100,7 +118,7 @@ There is no JSON formatting, file I/O, retained event/string pointer or new
 probe allocation in the input callback. Mapping and QPC happen outside
 perfMutex; the existing fixed-array pre-open median runs only on accepted edges.
 Each `input_diag` includes device, idCode, value, heldDownSecs, userEvent,
-Inventory/Tween mappings, QPC, down/mapped/menu-open gates and accepted. The
+Inventory/Quick Inventory/Tween mappings, QPC, down/mapped/menu-open gates and accepted. The
 successful stop record adds `input_buttons_seen`, `input_downs_seen`,
 `input_accepted` and `input_diag_count`. Counters continue after the 32-record cap;
 missing counters in old evidence stay unknown in the comparer.
