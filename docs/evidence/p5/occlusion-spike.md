@@ -190,3 +190,9 @@ Pre-existing second-pass edits, preserved without further changes in this third 
 Proposed for the orchestrator only (not edited): `docs/STATUS.md` and DYL-199 should say instrumentation is written, portable/offline verification PASS, Windows/game evidence NOT_RUN, outcome pending, `near_clip` refuses because of the concrete 77258 ABI discrepancy. Architecture/controls could note the independent diagnostic artifact boundary and, after owner resolution, the diagnostic arm/restore pair; these are not shipping controls. Current KP7/KP9 has a confirmed stock Hotkey7 conflict; KP0/KP9 is the unmapped alternative proposal. No shared files were edited in this correction. No new owner decision or eventual GO/REVISE/HOLD is proposed in `docs/DECISIONS.md`; record only after runtime evidence and owner ruling. Do not replace D026 or the other 2026-11-02 rulings with old planning assumptions.
 
 **Key correction, 2026-11-02:** the arm key is KP0 (DIK 0x52), not KP7. KP7 is mapped to native Hotkey7 in the stock controlmap, so any KP7 mention above is superseded. KP0 and KP9 are unmapped there and supported by the runner.
+
+## In-game run p5-d — 2026-11-02
+
+Routes `p5-spike-baseline`, `-baseline-turning`, `-observe` and `-observe-turning` on `b401929` reported runner PASS, but **they are not evidence**. The plugin stopped itself about 20 s into each run with `main_task_wrong_thread`, because an SKSE task landed on a worker thread, and it recorded zero hits and zero captures. The analyzer's verdict is INCONCLUSIVE. Only the last run's log survives, because the plugin truncates its log and the batch runner doesn't collect it.
+
+Fix: an off-main tick now skips and retries. Each route must run on its own, with `session-p5/routes/collect_logs.py` between runs, and a run counts only if the analyzer shows real captures.

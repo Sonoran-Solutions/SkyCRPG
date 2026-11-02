@@ -707,7 +707,13 @@ void ConsumeRequests()
 }
 void Tick()
 {
-	if (!OnMain()) { Inconclusive("main_task_wrong_thread"); g->enabled = false; g->killed = true; return; }
+	// SKSE tasks can land on worker threads (seen in run p5-d). Scene work stays
+	// main-only, so skip this tick; the task chain retries next frame.
+	if (!OnMain()) {
+		static std::atomic<std::uint32_t> skipped{};
+		if (skipped.fetch_add(1) == 0) Emit("main_task_off_thread", json::Object{}.String("action", "skip_and_retry"));
+		return;
+	}
 	const double now = Now();
 	if (!g->enabled) { Restore("disabled_or_log_failure"); g->killed = true; }
 	const auto player = RE::PlayerCharacter::GetSingleton();
