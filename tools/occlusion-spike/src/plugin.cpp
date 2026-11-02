@@ -30,6 +30,7 @@ namespace policy = skycrpg::occlusion;
 namespace json = skycrpg::testprobe;
 using policy::Mode;
 constexpr REL::Version runtime{ 1, 7, 104, 0 };
+constexpr std::uint32_t armKey = 0x47, stopKey = 0x49; // KP7 / KP9
 constexpr char exeHash[] = "846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f";
 constexpr char libraryHash[] = "8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842";
 constexpr char smoothHash[] = "b20bf8a276bf76fbe35277dd9b25c64c57d17bfdcc20daa74a5f941c90f563da";
@@ -685,11 +686,11 @@ void ConsumeRequests()
 	Restore("main_thread_request");
 	if (!policy::MayArm(flags)) return;
 	const auto map = RE::ControlMap::GetSingleton();
-	if (!map || !map->GetUserEventName(100, RE::INPUT_DEVICE::kKeyboard).empty() ||
-		!map->GetUserEventName(101, RE::INPUT_DEVICE::kKeyboard).empty()) {
+	if (!map || !map->GetUserEventName(armKey, RE::INPUT_DEVICE::kKeyboard).empty() ||
+		!map->GetUserEventName(stopKey, RE::INPUT_DEVICE::kKeyboard).empty()) {
 		Emit("refused", json::Object{}.String("reason", "diagnostic_key_has_native_mapping")); return;
 	}
-	if (g->killed || g->inconclusive || !Eligible()) { Emit("refused", json::Object{}.String("reason", "F13_ineligible_or_killed")); return; }
+	if (g->killed || g->inconclusive || !Eligible()) { Emit("refused", json::Object{}.String("reason", "KP7_ineligible_or_killed")); return; }
 	Drain();
 	++g->capture;
 	g->captureLabel = Setting("sCaptureLabel", "unlabeled");
@@ -699,7 +700,7 @@ void ConsumeRequests()
 		g->matched = 0; g->discarded = 0; g->keptBehind = 0;
 	}
 	if (policy::FadeMode(g->config.mode)) ApplyFade();
-	else { g->armed = true; Emit("armed", json::Object{}.String("reason", "fresh_F13")); }
+	else { g->armed = true; Emit("armed", json::Object{}.String("reason", "fresh_KP7")); }
 	g->capturing = g->fade.applied || g->armed;
 	Emit("capture", json::Object{}.Boolean("active", g->capturing).String("label", g->captureLabel));
 	if (g->requests.pending()) Restore("request_during_arm");
@@ -803,11 +804,11 @@ public:
 			const bool keyboard = event->GetDevice() == RE::INPUT_DEVICE::kKeyboard;
 			const auto id = button->GetIDCode();
 			if ((keyboard && (id == 66 || id == 64)) || button->QUserEvent() == "Toggle POV") { Request(policy::povRequest); continue; }
-			if (!keyboard || (id != 100 && id != 101)) continue;
+			if (!keyboard || (id != armKey && id != stopKey)) continue;
 			if (!button->QUserEvent().empty()) {
 				Emit("refused", json::Object{}.String("reason", "diagnostic_key_has_native_mapping").Numeric("key", id)); continue;
 			}
-			Request(id == 100 ? policy::armRequest : policy::stopRequest);
+			Request(id == armKey ? policy::armRequest : policy::stopRequest);
 		}
 		// Passive observer: never remove/consume native or SmoothCam input.
 		return RE::BSEventNotifyControl::kContinue;
@@ -829,11 +830,12 @@ void Message(SKSE::MessagingInterface::Message* message)
 {
 	switch (message->type) {
 	case SKSE::MessagingInterface::kPostLoad:
-		SmoothCamAPI::RegisterInterfaceLoaderCallback(SKSE::GetMessagingInterface(), [](void* api, SmoothCamAPI::InterfaceVersion version) {
+		// Missing registration/dispatch is refused by the provider check at data load.
+		static_cast<void>(SmoothCamAPI::RegisterInterfaceLoaderCallback(SKSE::GetMessagingInterface(), [](void* api, SmoothCamAPI::InterfaceVersion version) {
 			if (version == SmoothCamAPI::InterfaceVersion::V3) g->provider = static_cast<SmoothCamAPI::IVSmoothCam3*>(api);
-		}); break;
+		})); break;
 	case SKSE::MessagingInterface::kPostPostLoad:
-		SmoothCamAPI::RequestInterface(SKSE::GetMessagingInterface()); break;
+		static_cast<void>(SmoothCamAPI::RequestInterface(SKSE::GetMessagingInterface())); break;
 	case SKSE::MessagingInterface::kDataLoaded: {
 		if (g->initialized) break;
 		g->initialized = true;
@@ -848,7 +850,7 @@ void Message(SKSE::MessagingInterface::Message* message)
 		RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(&events);
 		RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(&events);
 		g->enabled = true;
-		Emit("ready", json::Object{}.String("mutation", "requires_fresh_F13").String("restore", "F14_F8_F6_POV_menu_load_cell_exit_kill")
+		Emit("ready", json::Object{}.String("mutation", "requires_fresh_KP7").String("restore", "KP9_F8_F6_POV_menu_load_cell_exit_kill")
 			.String("room_seed_3_policy", "standalone_armed_no_reference_clip_gate"));
 		{ std::scoped_lock lock(g->perfMutex); g->chain.start(); }
 		QueueUI(); break;
