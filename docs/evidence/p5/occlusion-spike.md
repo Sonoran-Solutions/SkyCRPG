@@ -419,3 +419,23 @@ Engineering decisions made: default-OFF quiet journaling; persistent private ren
 ### Proposed shared-file changes (final pass)
 
 For orchestrator review only: update `docs/STATUS.md` and DYL-199 to record the owner's bounded m-* visual approval, this prepared final evidence suite, offline PASS versus all new runtime rows NOT_RUN, and the continuing ≤10%/classifier/boundary/culling gates. If diagnostic controls are documented, describe `bQuietJournal`, KP0/KP9 and default-0 `iRoomSeedMode=2` as disposable-only. No production Camera/UI contract, dependency, packaging/build setting or owner decision changes are proposed. Earlier batch-k-only proposed status text above is historical and superseded by this paragraph.
+
+## Final run final2-2204 and recommendation — 2026-11-02
+
+Eleven routes on `6667bf5` (DLL `abff6b40…`), camera-only, keyboard/mouse, unattended. Every runner exit was 0 with no crash. An earlier batch, `final-2154`, was BLOCKED by a harness fade check and tested nothing.
+
+| Row | Result | Evidence |
+| --- | --- | --- |
+| Height held, standing, 60 s | **PASS** | 471.6 units with the filter against 221.4 at baseline; range 0, 0 reversals. Height measured by the plugin's camera series. |
+| Hook CPU cost | **PASS** | About 0.10 ms per frame, 0.59 to 0.64% of frame time, with quiet logging. |
+| Fade cost | **PASS at the frame cap** | Matched opaque against faded: p95 16.5 ms both, 0.0% difference. Uncapped is **NOT_RUN**: `iVSyncPresentInterval=0` did not uncap the game. GPU headroom is not measured. |
+| Filter inactive with no allowlist match | **PASS** | `p5-final-corridor-filter`: 0 discards in a real Nordic corridor. |
+| Walking across the beam boundary | **PARTIAL** | Four passes with camera z 540 to 552 as the filter engaged and disengaged, no bouncing. At 14.8 s the guard found other geometry in the swept path and failed closed: camera z fell to 347. Short of the 30 s target. |
+| Automatic classifier as a safety check | **FAIL** | It would discard real enclosure: `NorHallSm1way01` and `NorHallSm1wayEndCap01` corridor pieces, `WRIntLoftMid01`, `WRIntCeilMid01`, `WRIntRoofStr01`, and exterior `WRStableStr01`. It must not choose what to pass through. |
+| Doorway, exterior, large hall observation | **PASS, observe only** | Runs complete. No filter acted, so these measure the classifier and do not prove filtered behaviour there. |
+| Culling above a real ceiling | **NOT_RUN** | `p5-final-culling` and `-seed2` never hit the target ceiling at that pose: 0 discards. Stage 1 keeps ceilings as collision, so the camera stays below them; room culling above a ceiling stays untested, and is Stage 2 work. |
+| Camera Studio and Disocclusion reference runs | **NOT_RUN** | Binaries not acquired. Own near-plane clip refused. |
+
+**Orchestrator recommendation: GO for Stage 1, on the condition that thin occluders are chosen by a curated list of base forms rather than by geometry detection.** This meets the GO test on the tested beam: fixed height and genuine transparency, restored safely, with enclosure behind it kept. If the owner requires automatic detection, the recommendation is **HOLD**, because the classifier failed. The condition is a scope decision for the owner, and P5-05 must not start without it.
+
+P5-05 must also resolve: the camera drop when other geometry is in the swept path, a 30 s boundary route, private clones per affected geometry, covering neighbouring pieces (`WRIntBeam512` appears next to this beam), and a frame budget measurement that isn't at the cap if one can be obtained. Linked commits: runs `m-*` on `210422a` and `final2-2204` on `6667bf5`.
