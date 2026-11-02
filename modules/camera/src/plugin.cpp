@@ -6,6 +6,7 @@
 #include "precision_policy.h"
 #include "precision_trace.h"
 #include "lifecycle_policy.h"
+#include "target_lock_policy.h"
 #include "obstruction_policy.h"
 #pragma warning(push)
 #pragma warning(disable: 4191) // permitted external API FARPROC conversion
@@ -37,6 +38,11 @@ static_assert(offsetof(RE::PlayerControlsData,fovSlideMode) == 0x27);
 static_assert(offsetof(RE::PlayerControlsData,povScriptMode) == 0x28);
 static_assert(offsetof(RE::PlayerControlsData,povBeastMode) == 0x29);
 static_assert(offsetof(RE::ControlMap::RUNTIME_DATA,enabledControls) == 0x30);
+static_assert(offsetof(RE::Main,threadID) == 0x28);
+static_assert(offsetof(RE::ShaderReferenceEffect,effectID) == 0x28);
+static_assert(offsetof(RE::ShaderReferenceEffect,target) == 0x38);
+static_assert(offsetof(RE::ShaderReferenceEffect,finished) == 0x40);
+static_assert(offsetof(RE::ShaderReferenceEffect,effectData) == 0x108);
 Settings settings;
 ObstructionSettings obstructionSettings;
 ObstructionPolicy obstructionPolicy;
@@ -49,6 +55,19 @@ bool ready = false, loading = true, ownFirstPerson = false, recenter = false;
 SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
 bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
+bool targetLockEnabled = false, lockConfigSafe = false, lockConfigLogged = false;
+bool lockHooksReady = false;
+bool lockFrameTraceEnabled = false;
+LockFrameTraceBudget lockFrameTraceBudget;
+LockInterrupt lockInterrupt, lockConfigRefresh;
+float lockHoldSeconds = .4f;
+RE::FormID indicatorShaderForm = 0xDC209;
+RE::TESEffectShader* indicatorShader = nullptr;
+RE::ObjectRefHandle indicatorTarget;
+std::optional<std::uint32_t> indicatorEffect;
+LockInputRelease lockInputRelease;
+std::optional<bool> observedLock;
+RE::ActorHandle observedTarget;
 bool precisionTraceEnabled = false, lifecycleTraceEnabled = false;
 bool badSettings = false, prerequisiteFailed = false, failureNotified = false;
 EnableIntent enableIntent;
@@ -130,6 +149,38 @@ bool checkMovementConfig() {
     }
     return yaw == 0;
 }
+bool checkLockMovementConfig() {
+    // Match TDM Settings::ReadSettings precedence: provider config, then user MCM.
+    wchar_t executable[32768]{};
+    if (!GetModuleFileNameW(nullptr,executable,32768)) { lockConfigSafe = false; return false; }
+    const auto root = std::filesystem::path(executable).parent_path()/L"Data"/L"MCM";
+    const std::array paths{root/L"Config"/L"TrueDirectionalMovement"/L"settings.ini",
+        root/L"Settings"/L"TrueDirectionalMovement.ini"};
+    auto effective = [&](const char* section,const char* key) {
+        std::string result;
+        for (const auto& path : paths) {
+            char value[128]{};
+            GetPrivateProfileStringA(section,key,"<missing>",value,128,path.string().c_str());
+            if (std::strcmp(value,"<missing>") != 0) result = value;
+        }
+        return result;
+    };
+    lockConfigSafe = true;
+    for (const auto& setting : lockSettings) {
+        if (!lockSettingMatches(setting,effective(setting.section,setting.key),lockHoldSeconds)) {
+            lockConfigSafe = false;
+            if (targetLockEnabled && !lockConfigLogged) {
+                char line[192]{};
+                std::snprintf(line,sizeof(line),"Target lock refused: live TDM [%s] %s differs from Camera contract; lease held, file unchanged.",
+                    setting.section,setting.key);
+                log(line); lockConfigLogged = true;
+            }
+        }
+    }
+    // The opt-in yaw guard uses the same strict parser as the lock keys.
+    return lockSettingMatches({"DirectionalMovement","uAdjustCameraYawDuringMovement",0},
+        effective("DirectionalMovement","uAdjustCameraYawDuringMovement"));
+}
 bool flag(const char* section, const char* key, int fallback) {
     const int value = number(section,key,fallback);
     if (value != 0 && value != 1) { badSettings = true; return fallback == 1; }
@@ -151,6 +202,15 @@ void loadSettings() {
     s.recenterKey = number("Controls","iRecenterKey",65);
     s.toggleGamepad = number("Controls","iToggleGamepad",-1);
     s.recenterGamepad = number("Controls","iRecenterGamepad",-1);
+    targetLockEnabled = flag("TargetLock","bEnabled",0);
+    if (targetLockEnabled) {
+        indicatorShaderForm = number<RE::FormID>("TargetLock","iIndicatorShaderFormID",0xDC209);
+        lockHoldSeconds = number("TargetLock","fPOVHoldSeconds",.4f);
+        lockFrameTraceEnabled = flag("TargetLock","iLockFrameTrace",0);
+        if (lockHoldSeconds < .2f || lockHoldSeconds > 1.5f) {
+            badSettings = true; lockHoldSeconds = .4f;
+        }
+    }
     precisionTraceEnabled = flag("Debug","iPrecisionTrace",0);
     lifecycleTraceEnabled = flag("Debug","iLifecycleTrace",0);
     compatibleSettings = s.schema == 1;
@@ -188,13 +248,134 @@ void savePreferences() {
         !WritePrivateProfileStringA("Camera","bEnabled",settings.enabled?"1":"0",path.c_str()) ||
         !WritePrivateProfileStringA("Camera","fZoom",zoom.c_str(),path.c_str())) log("Preferences write failed; session remains usable, disk settings unchanged or partial.");
 }
+bool onTargetLockThread() {
+    if (!movement) return false;
+    const auto main = RE::Main::GetSingleton();
+    const auto thread = GetCurrentThreadId();
+    return main && main->threadID == thread && movement->GetTDMThreadId() == thread;
+}
 bool acquireMovementLease() {
     if (!movement) return false;
+    if (targetLockEnabled && !onTargetLockThread()) { lockInterrupt.request(); return false; }
     const auto lease = movement->RequestDisableTargetLock(SKSE::GetPluginHandle());
     movementLease = lease == TDM_API::APIResult::OK || lease == TDM_API::APIResult::AlreadyGiven;
     if (!movementLease) { prerequisiteFailed = true; log("TDM target-lock-disable lease refused; controller suspended."); }
     else log("TDM target-lock-disable lease acquired.");
     return movementLease;
+}
+void stopIndicator() {
+    if (!onTargetLockThread()) { lockInterrupt.request(); return; }
+    if (indicatorEffect) {
+        const auto processes = RE::ProcessLists::GetSingleton();
+        if (!processes) return; // retry cleanup when process lists return
+        processes->ForEachShaderEffect([](RE::ShaderReferenceEffect* effect) {
+            if (effect->effectID == *indicatorEffect && effect->target == indicatorTarget && effect->effectData == indicatorShader)
+                effect->finished = true;
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
+    }
+    indicatorEffect.reset(); indicatorTarget = {};
+}
+void consumeLockInterrupt() {
+    if (!ready || !lockHooksReady || !onTargetLockThread()) return;
+    if (lockInterrupt.consume()) {
+        lockInputRelease.interrupt();
+        stopIndicator();
+        if (!movementLease) static_cast<void>(acquireMovementLease());
+    }
+}
+void interruptTargetLock() {
+    if (!targetLockEnabled) return;
+    lockInterrupt.request();
+    if (onTargetLockThread()) consumeLockInterrupt();
+}
+bool indicatorReady() {
+    return indicatorShader && RE::ProcessLists::GetSingleton();
+}
+void observeTargetLock() {
+    observedLock.reset(); observedTarget = {};
+    if (!ready || !movement || !onTargetLockThread()) return;
+    const auto owner = movement->GetDisableTargetLockOwner();
+    movementLease = owner == SKSE::GetPluginHandle();
+    if (!movementLease && owner != SKSE::kInvalidPluginHandle) return;
+    const bool locked = movement->GetTargetLockState();
+    observedTarget = movement->GetCurrentTarget();
+    if (locked) {
+        const auto actor = observedTarget.get();
+        if (!actor || actor->IsDead() || !actor->Is3DLoaded()) return;
+    }
+    observedLock = locked;
+}
+void updateTargetLock(Context& c) {
+    if (!ready || !lockHooksReady || !onTargetLockThread()) { interruptTargetLock(); c.prerequisites = false; return; }
+    observeTargetLock();
+    consumeLockInterrupt();
+    if (lockConfigRefresh.consume()) movementConfigSafe = checkLockMovementConfig();
+    c.prerequisites = c.prerequisites && movementConfigSafe;
+    const bool eligible = c.enabled && c.prerequisites && c.world && !c.special && !c.menu &&
+        !c.firstPerson && !c.precision && !c.slide;
+    const bool safe = lockConfigSafe && indicatorReady();
+    if (!eligible || !safe || !observedLock) interruptTargetLock();
+    consumeLockInterrupt();
+    const auto decision = targetLockLease({targetLockEnabled,eligible,lockConfigSafe,indicatorReady(),
+        movement != nullptr,movementLease,observedLock,lockInputRelease.ready});
+    if (decision.action == LockLeaseAction::acquire) {
+        if (movement && !movementLease) static_cast<void>(acquireMovementLease());
+    } else if (decision.action == LockLeaseAction::release) {
+        // Serialize the final pending check with cross-thread interrupt requests.
+        // An interrupt arriving after observation must win before this release.
+        if (!lockInterrupt.releaseIfClear([&] {
+            const auto result = movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle());
+            movementLease = false;
+            if (result == TDM_API::APIResult::OK)
+                log("TDM target-lock-disable lease released after unlocked acknowledgement and idle input.");
+            else {
+                lockInputRelease.interrupt();
+                static_cast<void>(acquireMovementLease());
+            }
+        })) consumeLockInterrupt();
+    }
+    c.targetLock = decision.lockStateAllowed && !movementLease;
+    if (!c.targetLock) stopIndicator();
+    else {
+        const auto actor = observedTarget.get();
+        if (!actor || actor->IsDead() || !actor->Is3DLoaded()) {
+            c.targetLock = c.prerequisites = false; interruptTargetLock(); return;
+        }
+        const auto target = actor->CreateRefHandle();
+        if (indicatorTarget == target && indicatorEffect) {
+            bool alive = false;
+            RE::ProcessLists::GetSingleton()->ForEachShaderEffect([&](RE::ShaderReferenceEffect* effect) {
+                if (effect->effectID == *indicatorEffect && effect->target == target &&
+                    effect->effectData == indicatorShader && !effect->finished) alive = true;
+                return RE::BSContainer::ForEachResult::kContinue;
+            });
+            if (!alive) {
+                c.targetLock = false; interruptTargetLock();
+                log("Target lock refused: owned indicator ended; retry after a fresh lock.");
+            }
+        } else {
+            stopIndicator();
+            bool existing = false;
+            RE::ProcessLists::GetSingleton()->ForEachShaderEffect([&](RE::ShaderReferenceEffect* effect) {
+                if (!effect->finished && effect->target == target && effect->effectData == indicatorShader) existing = true;
+                return RE::BSContainer::ForEachResult::kContinue;
+            });
+            if (existing) {
+                c.targetLock = false; interruptTargetLock();
+                log("Target lock refused: another effect uses the indicator shader on this actor; retry after a fresh lock.");
+            }
+            const auto effect = existing ? nullptr : actor->ApplyEffectShader(indicatorShader);
+            if (effect) { indicatorEffect = effect->effectID; indicatorTarget = target; }
+            else if (!existing) {
+                c.targetLock = false; interruptTargetLock();
+                log("Target lock refused: ApplyEffectShader failed; retry after a fresh lock.");
+            }
+        }
+    }
+    // A held disable lease may still be awaiting TDM's unpaused update.
+    c.prerequisites = c.prerequisites && observedLock.has_value() &&
+        ((movementLease && (!*observedLock || c.firstPerson)) || (!movementLease && targetLockEnabled && safe));
 }
 void notifyFailure() {
     if (!failureNotified && enableIntent.failureEligible(prerequisiteFailed)) {
@@ -233,15 +414,20 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     const bool providerEnabled = provider && provider->IsCameraEnabled();
     const bool baseReady = compatibleSettings && movementConfigSafe && ready && movement && providerEnabled &&
         provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
-    const bool leaseReady = movement && movementLease && !movement->GetTargetLockState();
-    c.prerequisites = baseReady && (leaseReady || (allowLeaseRequest && !movementLease));
+    const bool lockThread = targetLockEnabled && onTargetLockThread();
+    const bool leaseReady = !targetLockEnabled ? movement && movementLease && !movement->GetTargetLockState() :
+        lockThread && movement && (movementLease ? !movement->GetTargetLockState() : lockConfigSafe && indicatorReady());
+    c.prerequisites = targetLockEnabled ? baseReady : phase4Prerequisites(baseReady,leaseReady,allowLeaseRequest,movementLease);
     // An intentionally disabled SmoothCam (F8) is not a failure.
     if (failure) *failure = prerequisiteFailure(baseReady,leaseReady,
         !provider || providerEnabled || !ready || !compatibleSettings || !movementConfigSafe || !movement);
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto camera = RE::PlayerCamera::GetSingleton();
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
-    if (!c.world) return c;
+    if (!c.world) {
+        if (targetLockEnabled) updateTargetLock(c);
+        return c;
+    }
     c.firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
     c.tween = camera->currentState->id == RE::CameraState::kTween;
     const bool stateSpecial = !c.firstPerson && camera->currentState->id != RE::CameraState::kThirdPerson;
@@ -264,6 +450,7 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     c.menu = focused();
     // DYL-158 supplies precision/targeting intervention; select() reserves their priority.
     c.obstruction = obstructionFrame.obstructed;
+    if (targetLockEnabled) updateTargetLock(c);
     return c;
 }
 bool noActiveMenus() {
@@ -323,13 +510,21 @@ void tracePrecision(PrecisionTraceEvent event, PrecisionTraceState before, Preci
 void lifecycleLog(const char* event, Context c, unsigned stateId) {
     if (!lifecycleTraceEnabled || lifecycleLogCount >= 128) return;
     ++lifecycleLogCount;
-    char line[160]{};
-    std::snprintf(line,sizeof(line),"Lifecycle event=%s hook=%s state=%u decision=%u owned=%u",event,
-        std::strcmp(event,"observe") == 0 ? "update" : "event",stateId,
-        static_cast<unsigned>(select(c)),static_cast<unsigned>(ownFirstPerson));
+    char line[256]{};
+    if (!targetLockEnabled) {
+        std::snprintf(line,sizeof(line),"Lifecycle event=%s hook=%s state=%u decision=%u owned=%u",event,
+            std::strcmp(event,"observe") == 0 ? "update" : "event",stateId,
+            static_cast<unsigned>(select(c)),static_cast<unsigned>(ownFirstPerson));
+    } else if (onTargetLockThread()) {
+        std::snprintf(line,sizeof(line),"Lifecycle event=%s hook=%s state=%u decision=%u owned=%u lease=%u lock=%d target=%08X",event,
+            std::strcmp(event,"observe") == 0 ? "update" : "event",stateId,
+            static_cast<unsigned>(select(c)),static_cast<unsigned>(ownFirstPerson),static_cast<unsigned>(movementLease),
+            observedLock ? (*observedLock ? 1 : 0) : -1,observedTarget.native_handle());
+    } else return;
     log(line);
 }
 void resetLifecycle(const char* event) {
+    interruptTargetLock();
     resetTransient(ownFirstPerson,recenter,applyZoom,keys);
     resetObstruction();
     lifecycleTrace.resetCandidate();
@@ -341,7 +536,8 @@ void observeLifecycle(Context c, bool hard) {
     const unsigned id = camera && camera->currentState ? static_cast<unsigned>(camera->currentState->id) : UINT32_MAX;
     if (lifecycleTraceEnabled && lifecycleTrace.observe(select(c),id)) lifecycleLog("observe",c,id);
     // Obstruction is a normal-framing sub-state; suspending on it would reset its latch.
-    if (!obstructionFramingAllowed(c)) suspend();
+    if (!heldFramingAllowed(c)) suspend();
+    else if (c.targetLock) resetObstruction();
 }
 void sampleObstruction(RE::ThirdPersonState* state) {
     auto c = context();
@@ -382,7 +578,7 @@ void sampleObstruction(RE::ThirdPersonState* state) {
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     const auto c = context();
     const auto camera = RE::PlayerCamera::GetSingleton();
-    if (!obstructionFramingAllowed(c) || !camera || camera->currentState.get() != state || !state->freeRotationEnabled) {
+    if (!heldFramingAllowed(c) || !camera || camera->currentState.get() != state || !state->freeRotationEnabled) {
         suspend(); previousLook(state,input); return;
     }
     if (pauseCorrection(c)) { previousLook(state,input); return; }
@@ -394,7 +590,7 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
         suspend(); previousLook(state,input); return;
     }
     const auto player = RE::PlayerCharacter::GetSingleton();
-    if (player->IsWeaponDrawn()) resetObstruction();
+    if (player->IsWeaponDrawn() || c.targetLock) resetObstruction();
     const float currentPitch = player->GetAngleX()-state->freeRotation.y;
     RE::NiPoint2 filtered = input;
     const float pitch = obstructionPitch(settings.pitch,obstructionFrame.blend,obstructionSettings);
@@ -407,7 +603,7 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     previousLook(state,filtered); // exactly once, retaining provider input lock + native update
 }
 void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>& next) {
-    if (next && next.get() != state) resetObstruction();
+    if (next && next.get() != state) { interruptTargetLock(); resetObstruction(); }
     else sampleObstruction(state);
     previousUpdate(state,next); // native first; outer SmoothCam wrapper performs transforms AFTER us
     bool hard = true;
@@ -416,7 +612,7 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
     observeLifecycle(c,hard);
     observePrerequisiteFailure(c,failure);
     const auto camera = RE::PlayerCamera::GetSingleton();
-    if (!obstructionFramingAllowed(c) || !camera || camera->currentState.get() != state || (next && next.get() != state)) {
+    if (!heldFramingAllowed(c) || !camera || camera->currentState.get() != state || (next && next.get() != state)) {
         resetObstruction(); return;
     }
     if (RE::PlayerCharacter::GetSingleton()->IsWeaponDrawn()) resetObstruction();
@@ -431,6 +627,76 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
     adjustedZoomWritten = obstructionFrame.blend > 0;
     applyZoom = false;
 }
+void pollLockInput(RE::InputEvent* input) {
+    if (!targetLockEnabled) return;
+    if (!onTargetLockThread()) { interruptTargetLock(); return; }
+    consumeLockInterrupt();
+    const auto map = RE::ControlMap::GetSingleton();
+    const auto devices = RE::BSInputDeviceManager::GetSingleton();
+    // U is a test default, never a second consumer of a native/Camera binding.
+    const bool bindingsSafe = map && map->GetUserEventName(22,RE::INPUT_DEVICE::kKeyboard).empty() &&
+        map->GetMappedKey("Toggle POV",RE::INPUT_DEVICE::kGamepad) == 128 &&
+        settings.toggleKey != 22 && settings.recenterKey != 22 &&
+        settings.toggleGamepad != 128 && settings.recenterGamepad != 128;
+    if (!bindingsSafe) {
+        lockConfigSafe = false;
+        if (!lockConfigLogged) {
+            log("Target lock refused: U conflicts or gamepad POV is not R3; lease held, bindings unchanged.");
+            lockConfigLogged = true;
+        }
+    }
+    std::optional<bool> pressed;
+    if (devices && devices->GetKeyboard() && devices->GetKeyboard()->IsEnabled()) {
+        pressed = devices->GetKeyboard()->IsPressed(22);
+        if (devices->IsGamepadConnected()) {
+            const auto pad = devices->GetGamepad();
+            if (!pad || !pad->IsEnabled()) pressed.reset();
+            else *pressed = *pressed || pad->IsPressed(128);
+        }
+    }
+    // Held seconds can be zero on the first down event. Include this dispatch
+    // explicitly and do not release the lease on a POV-up dispatch.
+    for (auto event = input; event; event = event->next) {
+        const auto button = event->AsButtonEvent();
+        if (!button) continue;
+        if ((event->GetDevice() == RE::INPUT_DEVICE::kKeyboard && button->GetIDCode() == 22) ||
+            (event->GetDevice() == RE::INPUT_DEVICE::kGamepad && button->QUserEvent() == "Toggle POV")) {
+            if (button->IsPressed()) pressed = true;
+            else if (!lockInputRelease.ready) { lockInputRelease.interrupt(); return; }
+        }
+    }
+    lockInputRelease.observe(pressed);
+}
+void traceLockFrame(Context c) {
+    if (!targetLockEnabled || !onTargetLockThread() ||
+        !lockFrameTraceBudget.take(targetLockEnabled,lockFrameTraceEnabled)) return;
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    float worldPitch = NAN, worldYaw = NAN, netPitch = NAN, netYaw = NAN;
+    // Input dispatch sees the last completed SmoothCam render, outside our
+    // inner native-update hook. Trace its world forward axis as well as angles.
+    RE::NiPoint3 forward{NAN,NAN,NAN};
+    if (camera && camera->cameraRoot) {
+        const auto& rotation = camera->cameraRoot->world.rotate;
+        forward = {rotation.entry[0][1],rotation.entry[1][1],rotation.entry[2][1]};
+        worldPitch = std::atan2(-forward.z,std::hypot(forward.x,forward.y));
+        worldYaw = std::atan2(-forward.x,forward.y);
+    }
+    if (player && camera && camera->currentState && camera->currentState->id == RE::CameraState::kThirdPerson) {
+        const auto state = static_cast<RE::ThirdPersonState*>(camera->currentState.get());
+        netPitch = player->GetAngleX()-state->freeRotation.y;
+        netYaw = wrap(player->GetAngleZ()+state->freeRotation.x);
+    }
+    char line[512]{};
+    static std::uint64_t frame = 0;
+    const auto now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::snprintf(line,sizeof(line),"TargetLock event=frame frame=%llu us=%llu decision=%u lease=%u lock=%d target=%08X fresh=%u worldPitch=%.7f worldYaw=%.7f netPitch=%.7f netYaw=%.7f forward=%.7f,%.7f,%.7f sample=last-rendered",
+        static_cast<unsigned long long>(++frame),static_cast<unsigned long long>(now),static_cast<unsigned>(select(c)),
+        static_cast<unsigned>(movementLease),observedLock ? (*observedLock ? 1 : 0) : -1,
+        observedTarget.native_handle(),static_cast<unsigned>(lockInputRelease.ready),worldPitch,worldYaw,netPitch,netYaw,
+        forward.x,forward.y,forward.z);
+    log(line);
+}
 class Events final : public RE::BSTEventSink<RE::InputEvent*>, public RE::BSTEventSink<RE::MenuOpenCloseEvent>,
     public RE::BSTEventSink<RE::TESLoadGameEvent>, public RE::BSTEventSink<RE::TESCellAttachDetachEvent> {
 public:
@@ -444,10 +710,15 @@ public:
         return RE::BSEventNotifyControl::kContinue;
     }
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
+        // Queue before any context() can consider releasing the lease.
+        if (targetLockEnabled) {
+            interruptTargetLock();
+            lockConfigRefresh.request();
+        }
         bool hard = true;
         const auto c = precisionTraceEnabled ? context(&hard) : Context{};
         const auto before = traceState(c,hard,0);
-        movementConfigSafe = checkMovementConfig();
+        if (!targetLockEnabled) movementConfigSafe = checkMovementConfig();
         failureDebounce.observe(false,0);
         suspend();
         if (precisionTraceEnabled && event && (c.world || ownFirstPerson)) {
@@ -460,10 +731,23 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
         if (!events) return RE::BSEventNotifyControl::kContinue;
+        if (targetLockEnabled && !onTargetLockThread()) {
+            interruptTargetLock();
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        if (targetLockEnabled) {
+            pollLockInput(*events);
+            for (auto event = *events; event; event = event->next) {
+                const auto button = event->AsButtonEvent();
+                if (button && button->IsDown() && event->GetDevice() == RE::INPUT_DEVICE::kKeyboard && button->GetIDCode() == 66)
+                    interruptTargetLock();
+            }
+        }
         bool hardSpecial = true;
         bool failure = false;
         const auto c = context(&hardSpecial,!settings.enabled && !movementLease,&failure);
         observePrerequisiteFailure(c,failure);
+        if (targetLockEnabled) traceLockFrame(c);
         const bool ownedBefore = ownFirstPerson;
         ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hardSpecial);
         if (precisionTraceEnabled && ownedBefore != ownFirstPerson) {
@@ -518,7 +802,7 @@ public:
                     enableIntent.request(request);
                     tracePrecision(PrecisionTraceEvent::toggleDecision,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,true,true,static_cast<unsigned>(request));
                     if (request == ToggleRequest::firstPerson) {
-                        settings.enabled = false; ownFirstPerson = false; suspend();
+                        settings.enabled = false; ownFirstPerson = false; interruptTargetLock(); suspend();
                         static_cast<void>(camera->ForceFirstPerson());
                         // Do not claim a late or unrelated first-person transition.
                         bool afterHard = true;
@@ -537,7 +821,7 @@ public:
                         if (!enableAfterLease(movementLease)) continue;
                         settings.enabled = true; ownFirstPerson = false; suspend(); applyZoom = true; static_cast<void>(camera->ForceThirdPerson()); savePreferences();
                     }
-                } else if (obstructionFramingAllowed(c)) {
+                } else if (heldFramingAllowed(c)) {
                     recenter = true;
                     if (const auto* camera = RE::PlayerCamera::GetSingleton(); camera && camera->currentState)
                         lifecycleLog("recenter",c,static_cast<unsigned>(camera->currentState->id));
@@ -573,21 +857,35 @@ void messages(SKSE::MessagingInterface::Message* message) {
         if (!movementConfigSafe) { prerequisiteFailed = true; log("TDM camera-yaw config absent/unsafe; custom policy suspended until corrected and a menu closes."); }
         movement = static_cast<TDM_API::IVTDM5*>(TDM_API::RequestPluginAPI());
         if (!movement) { prerequisiteFailed = true; ready = false; log("TDM V5 API absent; controller suspended."); break; }
-        if (leaseWanted(settings.enabled,false,movementLease)) {
-            if (!acquireMovementLease()) { ready = false; break; }
-        } else if (!settings.enabled) log("TDM target-lock-disable lease not requested because Camera is disabled.");
+        if (!targetLockEnabled) {
+            if (leaseWanted(settings.enabled,false,movementLease)) {
+                if (!acquireMovementLease()) { ready = false; break; }
+            } else if (!settings.enabled) log("TDM target-lock-disable lease not requested because Camera is disabled.");
+        } else {
+            // Data-loaded callbacks need not run on TDM's thread. First eligible
+            // main-thread observation takes the lease before considering release.
+            interruptTargetLock();
+            lockConfigRefresh.request();
+        }
+        if (targetLockEnabled) {
+            const auto data = RE::TESDataHandler::GetSingleton();
+            indicatorShader = data ? data->LookupForm<RE::TESEffectShader>(indicatorShaderForm,"Skyrim.esm") : nullptr;
+            if (!indicatorShader) log("Target lock refused: configured Skyrim.esm indicator form is not an EFSH; lease held.");
+        }
         REL::Relocation<std::uintptr_t> table{RE::VTABLE_ThirdPersonState[0]};
         const auto slots = reinterpret_cast<const std::uintptr_t*>(table.address());
         const REL::Relocation<std::uintptr_t> nativeUpdate{REL::ID(50896)};
         const REL::Relocation<std::uintptr_t> nativeLook{REL::ID(50914)};
         if (slots[3] != nativeUpdate.address() || slots[15] != nativeLook.address()) {
-            if (movementLease) static_cast<void>(movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle()));
+            // Opt-in acquisition is deferred until after hook installation.
+            if (!targetLockEnabled && movementLease) static_cast<void>(movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle()));
             movementLease = false; ready = false; prerequisiteFailed = true;
             log("Unexpected camera hook order/owner before SmoothCam deferred attach; policy left inert.");
             return;
         }
         previousLook = reinterpret_cast<Look>(table.write_vfunc(0xF,look));
         previousUpdate = reinterpret_cast<Update>(table.write_vfunc(3,update));
+        lockHooksReady = targetLockEnabled;
         if (const auto source = RE::ScriptEventSourceHolder::GetSingleton()) {
             source->AddEventSink<RE::TESLoadGameEvent>(&events);
             source->AddEventSink<RE::TESCellAttachDetachEvent>(&events);
@@ -598,7 +896,7 @@ void messages(SKSE::MessagingInterface::Message* message) {
     case SKSE::MessagingInterface::kPreLoadGame: loading = true; failureDebounce.observe(false,0); resetLifecycle("pre-load"); break;
     case SKSE::MessagingInterface::kNewGame:
     case SKSE::MessagingInterface::kPostLoadGame: loading = false; resetLifecycle("post-load-or-new-game"); break;
-    case SKSE::MessagingInterface::kSaveGame: savePreferences(); break;
+    case SKSE::MessagingInterface::kSaveGame: interruptTargetLock(); savePreferences(); break;
     default: break;
     }
 }

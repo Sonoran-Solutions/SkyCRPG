@@ -59,6 +59,6 @@ inline void resetTransient(bool& owned, bool& recenter, bool& applyZoom, std::ar
     for (auto& key : keys) key.suspend();
 }
 constexpr bool applyDeferredPreferences(Context c, bool pending, bool currentState) {
-    return pending && currentState && select(c) == State::normal;
+    return pending && currentState && (select(c) == State::normal || select(c) == State::targetLock);
 }
 } // namespace skycrpg::camera
