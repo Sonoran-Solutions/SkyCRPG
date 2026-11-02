@@ -207,3 +207,20 @@ Camera DLL `8be698a5…` from `63e992e`, camera-only, keyboard, Bleak Falls Barr
 | Controller R3 short press and hold | **NOT_RUN** | |
 
 Unattended runs `p5-f`, `p5-g`, `p5-h` and `p5-i` reported runner PASS but never locked (`locked=1` absent), so they are not lock evidence. Their setups gave no confirmed valid target: the Whiterun exterior had locals in the way, and spawned bandits weren't seen in QASmoke. `session-p5/routes/check_lock_log.py` now guards against counting such a run. A correction to run p5-d above: the input sink ran on the main thread here, so the off-main sink theory didn't hold. The dispatch-counting tracker was replaced anyway, and the lease has released since.
+
+## Owner hands-on run owner-lock-2 — 2026-11-02
+
+Same build, profile and location as `owner-lock-1`, keyboard/mouse; restore PASS. The owner reported: "All checks passed except the last one because there was only one bandit."
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Arrows hit the locked enemy from the elevated view | **PASS, owner** | Owner report; hits are not independently logged. Locked case only: unlocked overhead aim is not fixed, and F6 remains that fallback. |
+| Firebolt hits the locked enemy | **PASS, owner** | Owner report; not independently logged. |
+| Menu interrupts a held lock; only a new U re-locks | **PASS, owner** | Three locks on one target (5.9, 12.0, 4.6 s), with lease cycles in the state log. |
+| F6 interrupts a held lock; only a new U re-locks | **PASS, owner** | As above. |
+| Stable pitch across all locks | **PASS** | 1372 locked rows at 55.0 degrees. |
+| Mouse yaw and wheel zoom while locked | **UNRESOLVED** | The owner reported all checks passed, but the trace shows no look input and no meaningful yaw change while locked. Zoom isn't traced. To be confirmed. |
+| Auto-retarget on target death | **NOT_RUN** | Only one bandit was available. |
+| Controller R3 | **NOT_RUN** | Separate run. |
+
+The owner left a quicksave next to the bandit in the isolated camera-only profile for repeat tests.
