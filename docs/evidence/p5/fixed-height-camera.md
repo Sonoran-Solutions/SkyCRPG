@@ -167,3 +167,25 @@ Engineering decisions: retain a correctly chained all-state update for lifecycle
 Unverified: MSVC/link; live guard chain/TDM pitch retention; live shader ownership count; fade sorting/depth/alpha appearance; precise gap endpoint response through SmoothCam; Havok completeness; lifecycle timing; longer-session pool pressure; preparation burst cost; both optional features together; all route outcomes. OFF source equivalence and portable PASS do not establish visual/runtime equivalence.
 
 **Question for owner:** accept the native column pop and ceiling-limited height as expected, and amend the literal configured-height/no-pop criterion to “no additional beam-induced pull-in, subject to enclosure”? No answer was required to implement these safety-preserving fixes.
+
+## In-game runs fx1-2359 and fx2-0002 — 2026-11-02
+
+Eleven routes on `50a3dd2` (Camera DLL `28de1800…`), camera-only, keyboard/mouse, unattended; no crash, every runner exit 0, and restores clean. `check_fixed_log.py` shows engagement only, not acceptance, so the table below comes from traces and screenshots.
+
+| Row | Result | Evidence |
+| --- | --- | --- |
+| Hooks on the pinned stack | **PASS** | Every guard PASS in live memory, including TDM's patched call. |
+| Standing under the beam, 60 s | **PASS** | z=539.639 with zero change at the end of the hold, alpha 0.35, one reference faded (5 parts), cap 0, unknown 0. |
+| Transparent beam | **PASS, orchestrator read** | Fire, floor and NPC visible through it. Owner approved the spike look; production look awaits the owner. |
+| Listed beams only, enclosure kept | **PASS on these routes** | Corridor, rock ceiling, stairs and hall ended with 0 discards and no fades. |
+| Rooms not blank or blind | **PASS on the shots checked** | Rock ceiling and hall end shots; not every location was viewed. |
+| F8, POV and menu restores | **PASS on counters** | F8 screenshot shows the beam opaque under the native camera. Restores by cause recorded. |
+| Load, cell and unload restores | **NOT_RUN as a distinct test** | Console runs first, so the beam is restored as menu; `restoresUnload` nonzero. |
+| Feature off | **PASS, bounded** | `p5-fixed-off` passes with no trace rows; this is the Phase 4 route set, not a byte-level comparison. |
+| Frame budget | **PASS at the frame cap** | Off against on at the same pose: p95 +1.04%, no frames over 33 ms; hook about 30 µs and tick about 64 µs per frame. Framing can differ; uncapped NOT_RUN. |
+| No pull-in or oscillation walking | **FAIL as written** | z varies from about 288 to 552 walking this room, with about two jumps per pass (up to 236 units) landing on real geometry: columns, ceiling corners and neighbouring pieces. Standing is steady. |
+| Menu close under a beam | **Defect** | Every menu restore clears admission, so the camera drops to the beam (z≈289) for about 100 ms and returns, a jump of about 250 units. Console use in routes shows it repeatedly. |
+| Target lock with this feature | **NOT_RUN** | |
+| Controller | **NOT_RUN** | |
+
+Open for the owner: the literal "height equals preference" can't hold where real geometry is nearer, since z≈540 here is a kept ceiling hit. Whether the remaining walking jumps are acceptable needs a hands-on judgement.
