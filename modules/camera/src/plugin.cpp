@@ -857,7 +857,6 @@ public:
         return RE::BSEventNotifyControl::kContinue;
     }
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
-        if (thin::enabled() && lockBlockingMenu(event)) thin::requestRestore(thin::Exit::menu);
         // Queue before any context() can consider releasing the lease.
         if (targetLockEnabled) {
             lockConfigRefresh.request();

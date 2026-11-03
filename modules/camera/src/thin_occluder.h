@@ -52,6 +52,8 @@ struct Runtime {
     float targetAlpha{.35f};
     std::array<Part,maxPool> pool;
     std::array<Reference,maxReferences> refs;
+    std::array<RE::ObjectRefHandle,maxReferences> carried;
+    unsigned carriedCount{};
     Budget budget;
     std::array<std::uint64_t,10> totals{};
     std::array<std::uint64_t,10> restores{};
@@ -130,7 +132,12 @@ inline void restore(Reference& ref,Exit cause = Exit::unload) {
     ref = {};
 }
 inline void restoreAll(Exit cause = Exit::special) {
-    for (auto& ref : runtime->refs) if (ref.used) restore(ref,cause);
+    if (cause != Exit::menu) runtime->carriedCount = 0;
+    for (auto& ref : runtime->refs) if (ref.used) {
+        if (carriesAdmission(cause,ref.prepared && ref.fade.admitted && ref.fade.alpha < .999f) &&
+            runtime->carriedCount < maxReferences) runtime->carried[runtime->carriedCount++] = ref.handle;
+        restore(ref,cause);
+    }
     runtime->haveOrigin = false; runtime->nextScan = 0;
     runtime->allowed = false;
 }
@@ -403,6 +410,15 @@ inline void tick() {
     // Exactly one eligibility/context computation per tick, never inside a cast.
     runtime->allowed = runtime->enabled && runtime->resolved && runtime->eligibleNow();
     if (!runtime->allowed) { restoreAll(runtime->ineligibleCause); return; }
+    // Before this frame's casts, or the kept beam hit pulls the camera in on menu close.
+    for (unsigned i = 0;i < runtime->carriedCount;++i) {
+        const auto live = runtime->carried[i].get();
+        const auto ref = live ? remember(live.get(),false) : nullptr;
+        if (!ref) continue;
+        if (!ref->prepared && !prepare(*ref)) { restore(*ref,Exit::conflict); ++runtime->budget.refused; continue; }
+        ref->fade.resume(runtime->now);
+    }
+    runtime->carriedCount = 0;
     scanSightline();
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (!camera || !camera->cameraRoot) { restoreAll(); return; }

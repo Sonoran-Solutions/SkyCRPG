@@ -137,6 +137,8 @@ struct FadeState {
     bool admitted{};
     void touch(double now) { if (first < 0 || now-last > .4) first = now; last = now; }
     void reset() { *this = {}; }
+    // Already admitted before a ticking menu restored it; skip the enter dwell.
+    void resume(double now) { first = now-.10; last = now; admitted = true; }
     bool step(double now,double dt,float target,bool valid,bool opacityOnly = false) {
         if (!valid || !std::isfinite(now) || !std::isfinite(dt) || dt < 0) { reset(); return false; }
         const bool recent = last >= 0 && now-last <= .4;
@@ -150,6 +152,8 @@ struct FadeState {
 };
 enum class Exit { disable, f8, menu, firstPerson, special, load, cell, unload, shutdown, conflict };
 constexpr bool immediateRestore(Exit) { return true; }
+// A menu leaves the camera where it was, so a faded beam is still valid on close.
+constexpr bool carriesAdmission(Exit cause,bool faded) { return cause == Exit::menu && faded; }
 struct RestoreCheck {
     bool geometryShader{}, installedMaterial{}, installedProperty{}, alphaUnchanged{}, flagsUnchanged{};
     constexpr bool material() const { return geometryShader && installedMaterial && alphaUnchanged; }

@@ -121,6 +121,15 @@ int main() {
     prepared.touch(.12);
     assert(prepared.step(.12,.01,.35f,true,false) && prepared.alpha < 1); // Only narrow/contact fades.
     assert(prepared.step(.13,2,.35f,true,false)); // Hitch clamps ramp, never restores.
+    FadeState resumed; resumed.resume(5);
+    assert(resumed.admitted && resumed.alpha == 1);
+    assert(resumed.step(5,.01,.35f,true,true) && resumed.admitted && resumed.alpha == 1);
+    assert(resumed.step(5.3,.01,.35f,true,false) && resumed.admitted && resumed.alpha < 1);
+    assert(!resumed.step(9,.05,.35f,true) || !resumed.admitted); // Stale contact still loses admission.
+    assert(carriesAdmission(Exit::menu,true));
+    assert(!carriesAdmission(Exit::menu,false)); // Prepared but opaque beams stay unadmitted.
+    for (const auto exit : {Exit::disable,Exit::f8,Exit::firstPerson,Exit::special,
+        Exit::load,Exit::cell,Exit::unload,Exit::shutdown,Exit::conflict}) assert(!carriesAdmission(exit,true));
     HeightWindow heights;
     heights.observe(552); heights.observe(347); heights.observe(552);
     assert(heights.minimum == 347 && heights.maximum == 552 && heights.maxDelta == 205);
