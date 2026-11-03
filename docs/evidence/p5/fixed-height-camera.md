@@ -184,8 +184,28 @@ Eleven routes on `50a3dd2` (Camera DLL `28de1800…`), camera-only, keyboard/mou
 | Feature off | **PASS, bounded** | `p5-fixed-off` passes with no trace rows; this is the Phase 4 route set, not a byte-level comparison. |
 | Frame budget | **PASS at the frame cap** | Off against on at the same pose: p95 +1.04%, no frames over 33 ms; hook about 30 µs and tick about 64 µs per frame. Framing can differ; uncapped NOT_RUN. |
 | No pull-in or oscillation walking | **FAIL as written** | z varies from about 288 to 552 walking this room, with about two jumps per pass (up to 236 units) landing on real geometry: columns, ceiling corners and neighbouring pieces. Standing is steady. |
-| Menu close under a beam | **Defect** | Every menu restore clears admission, so the camera drops to the beam (z≈289) for one trace sample (about 115 ms between samples) and returns, a jump of about 250 units. Console use in routes shows it repeatedly. |
 | Target lock with this feature | **NOT_RUN** | |
 | Controller | **NOT_RUN** | |
 
 Open for the owner: the literal "height equals preference" can't hold where real geometry is nearer, since z≈540 here is a kept ceiling hit. Whether the remaining walking jumps are acceptable needs a hands-on judgement.
+
+## Menu-close fix, run fx4-1850 — 2026-11-02
+
+`c10e6bc`, Camera DLL `5409d1bd…`, camera-only, keyboard/mouse, unattended: beam-hold, restores and boundary, all runner exit 0, no crash.
+
+Cause: the menu event queued a restore that cleared admission, so the beam hit was kept for the 0.1 s enter dwell. Paused menus run no camera tick (frame numbers stop while the console is open), so that restore only ran on the first frame after close. The event no longer queues a restore. A menu that ticks still restores through eligibility, and beams that were faded are re-admitted on the first eligible frame.
+
+| Row | Result | Evidence |
+| --- | --- | --- |
+| Closing the console under a beam | **PASS** | No drop in any of these routes; the old build dropped on each close. |
+| Closing the Tab menu under a beam | **PASS** | z stays 539.639 with `resumes=1` while alpha returns from 1.0 to 0.35. |
+| Beam during the Tab menu | **PASS** | Opaque behind the menu; `restoresMenu=4`. |
+| Beam during the console | **Limitation** | It stays faded, because no tick runs while paused. The old build did this too, so `menu` restore doesn't hold for paused menus. Owner decision. |
+| Standing hold on this build | **PASS** | z range zero over the last 200 samples, alpha 0.35, one beam faded. |
+| Clone pool | **PASS on these routes** | 23-27 at the end of each route, no refusal for the cap. |
+| Return from F8 under a beam | **Defect, not fixed** | Still drops 521.737 to 289.418 for one sample. F8 still clears admission on purpose. |
+| Walking | **FAIL as written, unchanged** | Three jumps over 150 units in boundary, all kept hits on `00060339` or `0005D67D`, one after the route repositions the player. |
+| Closing dialogue | **NOT_RUN** | A special frame after close is covered by the carry, but no route exercises it. |
+| Frame budget on this build | **NOT_RUN** | The +1.04% figure is from `50a3dd2`. |
+
+An earlier build of this fix, `2f02dfc`, exited at the main menu once in beam-hold before any save loaded, with no crash log found. It didn't recur on `c10e6bc`, and the cause is unknown.
