@@ -59,7 +59,7 @@ struct Runtime {
     std::array<std::uint64_t,10> restores{};
     HeightWindow heights;
     double hookSeconds{},nativeSeconds{},tickSeconds{},maxHookSeconds{},maxFrameSeconds{};
-    std::uint64_t framesOverBudget{},samples{};
+    std::uint64_t framesOverBudget{},samples{},resumes{};
     Point castOrigin{};
     bool haveOrigin{};
     double now{},last{},nextTrace{},nextScan{};
@@ -132,7 +132,7 @@ inline void restore(Reference& ref,Exit cause = Exit::unload) {
     ref = {};
 }
 inline void restoreAll(Exit cause = Exit::special) {
-    if (cause != Exit::menu) runtime->carriedCount = 0;
+    if (!keepsCarried(cause)) runtime->carriedCount = 0;
     for (auto& ref : runtime->refs) if (ref.used) {
         if (carriesAdmission(cause,ref.prepared && ref.fade.admitted && ref.fade.alpha < .999f) &&
             runtime->carriedCount < maxReferences) runtime->carried[runtime->carriedCount++] = ref.handle;
@@ -360,7 +360,7 @@ inline void traceFrame(double dt) {
     char line[1600]{};
     const auto& h = runtime->heights; const auto& t = runtime->totals; const auto& r = runtime->restores;
     std::snprintf(line,sizeof(line),
-        "ThinOccluder frame=%llu seconds=%.3f engaged=%u z=%.3f minZ=%.3f maxZ=%.3f maxDeltaZ=%.3f goalZ=%.3f playerX=%.3f playerY=%.3f alpha=%.3f refs=%u parts=%u fadedRefs=%u fadedParts=%u casts=%llu gaps=%llu fades=%llu scans=%llu discarded=%llu kept=%llu refused=%llu unknown=%llu overlap=%llu cap=%llu pool=%u keptRef=%08X gapRef=%08X reason=%u restoresDisable=%llu restoresF8=%llu restoresMenu=%llu restoresPOV=%llu restoresSpecial=%llu restoresLoad=%llu restoresCell=%llu restoresUnload=%llu restoresConflict=%llu hookUs=%.3f nativeUs=%.3f adapterUs=%.3f maxHookUs=%.3f tickUs=%.3f maxFrameMs=%.3f framesOverBudget=%llu frames=%llu sample=cumulative",
+        "ThinOccluder frame=%llu seconds=%.3f engaged=%u z=%.3f minZ=%.3f maxZ=%.3f maxDeltaZ=%.3f goalZ=%.3f playerX=%.3f playerY=%.3f alpha=%.3f refs=%u parts=%u fadedRefs=%u fadedParts=%u casts=%llu gaps=%llu fades=%llu scans=%llu discarded=%llu kept=%llu refused=%llu unknown=%llu overlap=%llu cap=%llu pool=%u keptRef=%08X gapRef=%08X reason=%u restoresDisable=%llu restoresF8=%llu restoresMenu=%llu restoresPOV=%llu restoresSpecial=%llu restoresLoad=%llu restoresCell=%llu restoresUnload=%llu restoresConflict=%llu hookUs=%.3f nativeUs=%.3f adapterUs=%.3f maxHookUs=%.3f tickUs=%.3f maxFrameMs=%.3f framesOverBudget=%llu frames=%llu resumes=%llu sample=cumulative",
         static_cast<unsigned long long>(runtime->frame),runtime->now,static_cast<unsigned>(runtime->allowed),
         h.previous,h.minimum,h.maximum,h.maxDelta,goal.z,pos.x,pos.y,alpha,active,parts,fadedRefs,fadedParts,
         static_cast<unsigned long long>(t[0]),static_cast<unsigned long long>(t[1]),static_cast<unsigned long long>(t[2]),
@@ -371,7 +371,8 @@ inline void traceFrame(double dt) {
         static_cast<unsigned long long>(r[3]),static_cast<unsigned long long>(r[4]),static_cast<unsigned long long>(r[5]),
         static_cast<unsigned long long>(r[6]),static_cast<unsigned long long>(r[7]),static_cast<unsigned long long>(r[9]),
         runtime->hookSeconds*1e6,runtime->nativeSeconds*1e6,(runtime->hookSeconds-runtime->nativeSeconds)*1e6,runtime->maxHookSeconds*1e6,runtime->tickSeconds*1e6,runtime->maxFrameSeconds*1e3,
-        static_cast<unsigned long long>(runtime->framesOverBudget),static_cast<unsigned long long>(runtime->samples));
+        static_cast<unsigned long long>(runtime->framesOverBudget),static_cast<unsigned long long>(runtime->samples),
+        static_cast<unsigned long long>(runtime->resumes));
     runtime->logger(line); ++runtime->traceLines;
     runtime->heights.sampled(); runtime->nextTrace = runtime->now+.1;
 }
@@ -417,6 +418,7 @@ inline void tick() {
         if (!ref) continue;
         if (!ref->prepared && !prepare(*ref)) { restore(*ref,Exit::conflict); ++runtime->budget.refused; continue; }
         ref->fade.resume(runtime->now);
+        ++runtime->resumes;
     }
     runtime->carriedCount = 0;
     scanSightline();

@@ -154,6 +154,8 @@ enum class Exit { disable, f8, menu, firstPerson, special, load, cell, unload, s
 constexpr bool immediateRestore(Exit) { return true; }
 // A menu leaves the camera where it was, so a faded beam is still valid on close.
 constexpr bool carriesAdmission(Exit cause,bool faded) { return cause == Exit::menu && faded; }
+// Special frames can trail a menu close; a stale carry only skips the enter dwell.
+constexpr bool keepsCarried(Exit cause) { return cause == Exit::menu || cause == Exit::special; }
 struct RestoreCheck {
     bool geometryShader{}, installedMaterial{}, installedProperty{}, alphaUnchanged{}, flagsUnchanged{};
     constexpr bool material() const { return geometryShader && installedMaterial && alphaUnchanged; }

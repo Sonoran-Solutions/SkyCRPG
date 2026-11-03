@@ -130,6 +130,10 @@ int main() {
     assert(!carriesAdmission(Exit::menu,false)); // Prepared but opaque beams stay unadmitted.
     for (const auto exit : {Exit::disable,Exit::f8,Exit::firstPerson,Exit::special,
         Exit::load,Exit::cell,Exit::unload,Exit::shutdown,Exit::conflict}) assert(!carriesAdmission(exit,true));
+    assert(keepsCarried(Exit::menu) && keepsCarried(Exit::special));
+    assert(!carriesAdmission(Exit::special,true)); // Keeps an existing carry, never starts one.
+    for (const auto exit : {Exit::disable,Exit::f8,Exit::firstPerson,
+        Exit::load,Exit::cell,Exit::unload,Exit::shutdown,Exit::conflict}) assert(!keepsCarried(exit));
     HeightWindow heights;
     heights.observe(552); heights.observe(347); heights.observe(552);
     assert(heights.minimum == 347 && heights.maximum == 552 && heights.maxDelta == 205);
