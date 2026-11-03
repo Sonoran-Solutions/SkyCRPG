@@ -177,14 +177,14 @@ Eleven routes on `50a3dd2` (Camera DLL `28de1800…`), camera-only, keyboard/mou
 | Hooks on the pinned stack | **PASS** | Every guard PASS in live memory, including TDM's patched call. |
 | Standing under the beam, 60 s | **PASS** | z=539.639 with zero change at the end of the hold, alpha 0.35, one reference faded (5 parts), cap 0, unknown 0. |
 | Transparent beam | **PASS, orchestrator read** | Fire, floor and NPC visible through it. Owner approved the spike look; production look awaits the owner. |
-| Listed beams only, enclosure kept | **PASS on these routes** | Corridor, rock ceiling, stairs and hall ended with 0 discards and no fades. |
-| Rooms not blank or blind | **PASS on the shots checked** | Rock ceiling and hall end shots; not every location was viewed. |
+| Listed beams only, enclosure kept | **PASS on these routes** | Corridor, rock ceiling, stairs and hall ended with 0 discards and no fades. The shots show cave floors and rock, so whether the corridor and rock-ceiling poses are the intended fixtures is unconfirmed; the stairs start shot does show steps. |
+| Character stays in view | **FAIL as captured** | Hall: fully visible. Stairs start: visible. Doorway end and corridor start: only the top of the head at the bottom edge. Corridor end, stairs end, rock ceiling start and end: not in frame. In these spots the camera sits about 460-480 units below its goal on a kept native hit. Feature-off comparison pending. These routes also set `[Obstruction] bEnabled=0`. |
 | F8, POV and menu restores | **PASS on counters** | F8 screenshot shows the beam opaque under the native camera. Restores by cause recorded. |
 | Load, cell and unload restores | **NOT_RUN as a distinct test** | Console runs first, so the beam is restored as menu; `restoresUnload` nonzero. |
 | Feature off | **PASS, bounded** | `p5-fixed-off` passes with no trace rows; this is the Phase 4 route set, not a byte-level comparison. |
 | Frame budget | **PASS at the frame cap** | Off against on at the same pose: p95 +1.04%, no frames over 33 ms; hook about 30 µs and tick about 64 µs per frame. Framing can differ; uncapped NOT_RUN. |
 | No pull-in or oscillation walking | **FAIL as written** | z varies from about 288 to 552 walking this room, with about two jumps per pass (up to 236 units) landing on real geometry: columns, ceiling corners and neighbouring pieces. Standing is steady. |
-| Menu close under a beam | **Defect** | Every menu restore clears admission, so the camera drops to the beam (z≈289) for about 100 ms and returns, a jump of about 250 units. Console use in routes shows it repeatedly. |
+| Menu close under a beam | **Defect** | Every menu restore clears admission, so the camera drops to the beam (z≈289) for one trace sample (about 115 ms between samples) and returns, a jump of about 250 units. Console use in routes shows it repeatedly. |
 | Target lock with this feature | **NOT_RUN** | |
 | Controller | **NOT_RUN** | |
 
