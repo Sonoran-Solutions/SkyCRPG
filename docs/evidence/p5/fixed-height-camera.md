@@ -212,7 +212,7 @@ An earlier build of this fix, `2f02dfc`, exited at the main menu once in beam-ho
 
 ## Owner hands-on run owner-fixed-1 — 2026-11-03
 
-`c10e6bc`, Camera DLL `5409d1bd…`, camera-only, compression off, target lock off, Bannered Mare. Profile restore PASS. Camera log `7f57bc7d…` in `session-p5/logs/owner-fixed-1/`. Input device not yet confirmed by the owner.
+`c10e6bc`, Camera DLL `5409d1bd…`, camera-only, compression off, target lock off, Bannered Mare. Profile restore PASS. Camera log `7f57bc7d…` in `session-p5/logs/owner-fixed-1/`. Keyboard/mouse, confirmed by the owner after the run.
 
 The owner walked under the beams and columns, closed the console, Tab and dialogue under a beam, pressed F8 twice and F6, then reported: "everything passed and I approve". They skipped the optional low-space check.
 
