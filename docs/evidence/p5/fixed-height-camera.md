@@ -209,3 +209,21 @@ Cause: the menu event queued a restore that cleared admission, so the beam hit w
 | Frame budget on this build | **NOT_RUN** | The +1.04% figure is from `50a3dd2`. |
 
 An earlier build of this fix, `2f02dfc`, exited at the main menu once in beam-hold before any save loaded, with no crash log found. It didn't recur on `c10e6bc`, and the cause is unknown.
+
+## Owner hands-on run owner-fixed-1 — 2026-11-03
+
+`c10e6bc`, Camera DLL `5409d1bd…`, camera-only, compression off, target lock off, Bannered Mare. Profile restore PASS. Camera log `7f57bc7d…` in `session-p5/logs/owner-fixed-1/`. Input device not yet confirmed by the owner.
+
+The owner walked under the beams and columns, closed the console, Tab and dialogue under a beam, pressed F8 twice and F6, then reported: "everything passed and I approve". They skipped the optional low-space check.
+
+| Row | Result | Evidence |
+| --- | --- | --- |
+| Walking feel under beams and columns | **PASS, owner** | Owner approval. The trace still shows 27 height changes over 150 units while engaged, from kept hits on unlisted geometry (for example `0005D65A`, `0005D67C`, `00060339`), including a 523 to 1004 alternation near the bar before any beam faded. The owner accepted this as felt; the literal "no pull-in" row stays FAIL as written. |
+| Console, Tab and dialogue close under a beam | **PASS, owner** | `restoresMenu=11`, `resumes=3`; the camera stayed at height on each resume. Dialogue isn't separable from other menus in the counters. |
+| Beam during the paused console | **Accepted limitation, owner** | Seen by the owner and passed. |
+| F8 off and on | **PASS, owner** | `restoresF8=5`. The one-sample drop on return is the known defect; the owner passed it. |
+| F6 first person | **PASS, owner** | `restoresPOV=5`. |
+| Low-space framing | **NOT_RUN** | Optional step skipped. |
+| Frame budget | **NOT_RUN as a measurement** | 104 of 6013 ticked frames over budget, worst 2212 ms (a load hitch). Not a controlled comparison. |
+| Controller, target lock with this feature | **NOT_RUN** | |
+
