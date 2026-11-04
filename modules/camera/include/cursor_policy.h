@@ -77,6 +77,24 @@ inline std::uint32_t choose(std::span<const Candidate> candidates, Point pointer
     }
     return id;
 }
+inline bool within(std::span<const Candidate> candidates, std::uint32_t id, Point point, float radius) {
+    return id && std::any_of(candidates.begin(),candidates.end(),[&](const auto& c) {
+        return c.id == id && distance2(c.point,point) <= radius*radius;
+    });
+}
+inline bool inFront(const float row[4], float x, float y, float z) {
+    const float w = row[0]*x+row[1]*y+row[2]*z+row[3];
+    return std::isfinite(w) && w > 1e-5f;
+}
+struct Freshness {
+    std::uint64_t refresh = 0;
+    double at = 0;
+    bool seen = false;
+    void observe(std::uint64_t value, double now) {
+        if (value && (!seen || refresh != value)) { refresh = value; at = now; seen = true; }
+    }
+    bool usable(double now, bool sessionLost) const { return !sessionLost && seen && now >= at && now-at < .5; }
+};
 struct Latch {
     std::uint32_t id = 0;
     Point origin;

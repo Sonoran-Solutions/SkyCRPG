@@ -127,7 +127,7 @@ inline Settings validate(Settings s) {
 }
 inline double searchRadius(double nativeRadius, const Settings& s) {
     if (!std::isfinite(nativeRadius) || nativeRadius <= 0 || nativeRadius > 4096) return 0;
-    return s.radius > 0 ? std::min(s.radius,nativeRadius) : nativeRadius;
+    return s.radius > 0 ? (std::min)(s.radius,nativeRadius) : nativeRadius;
 }
 struct Context {
     bool enabled = false, runtime = false, reads = false, world = false;
@@ -320,10 +320,10 @@ public:
         latched_ = current_; latchStart_ = now;
         return true;
     }
-    bool push(std::uint32_t id, Point player, double now, bool allowed) {
+    bool push(std::uint32_t id, Point player, double now, bool allowed, bool rebind = false) {
         if (!allowed || reason_ != Pass::none || !contains(id) || !finite(player) || !std::isfinite(now)) return false;
         auto next = frozen_;
-        if (!latched_) {
+        if (!latched_ || rebind) {
             next.clear();
             for (const auto& c : sorted_) {
                 if (next.size() == 8) break;
@@ -357,8 +357,8 @@ public:
     [[nodiscard]] std::uint32_t current() const { return current_; }
     [[nodiscard]] bool latched() const { return latched_ != 0; }
     [[nodiscard]] Pass reason() const { return reason_; }
-    [[nodiscard]] std::vector<std::uint32_t> order() const {
-        if (latched_) return frozen_;
+    [[nodiscard]] std::vector<std::uint32_t> order(bool prefix = false) const {
+        if (latched_ && !prefix) return frozen_;
         std::vector<std::uint32_t> ids;
         for (const auto& c : sorted_) ids.push_back(c.id);
         return ids;

@@ -885,7 +885,8 @@ public:
         return RE::BSEventNotifyControl::kContinue;
     }
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
-        if (cursorSettings.enabled && event && event->opening && event->menuName != cursorMode::menuName &&
+        if (event && event->menuName == cursorMode::menuName) return RE::BSEventNotifyControl::kContinue;
+        if (cursorSettings.enabled && event && event->opening &&
             event->menuName != "HUD Menu" && event->menuName != "Fader Menu" && event->menuName != "Mist Menu")
             cursorMode::requestExit(cursor::Exit::menu);
         // Queue before any context() can consider releasing the lease.
@@ -1096,7 +1097,7 @@ void messages(SKSE::MessagingInterface::Message* message) {
             source->AddEventSink<RE::TESLoadGameEvent>(&events);
             source->AddEventSink<RE::TESCellAttachDetachEvent>(&events);
         }
-        if (cursorSettings.enabled) cursorMode::dataReady.store(true);
+        if (cursorSettings.enabled) { cursorMode::registerOverlay(); cursorMode::dataReady.store(true); }
         log("Camera input policy installed: one chained native look call; SmoothCam sole transform writer.");
         break;
     }

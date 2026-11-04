@@ -49,7 +49,7 @@ void measurements() {
             }
         }
     }
-    const double max = std::numeric_limits<double>::max();
+    const double max = (std::numeric_limits<double>::max)();
     assert(!cameraCompression({max,0,0},{100,0,0},{-max,0,0}));
 }
 void hysteresis() {
@@ -84,7 +84,7 @@ void closedLoop() {
     // compression again. Hold there instead of retracting/expanding endlessly.
     for (int i=0; i<4000; ++i) {
         const float goal = 1000-650*frame.blend;
-        const float compression = std::max(0.0f,1-500/goal);
+        const float compression = (std::max)(0.0f,1-500/goal);
         frame = policy.step(normal,compression,dt,config);
         if (sawTight) {
             assert(frame.obstructed && frame.blend <= previous);

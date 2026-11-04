@@ -27,7 +27,8 @@ def select_modules(paths, requested=""):
     # Shared changes take precedence even when a target also changed.
     if any(p in SHARED_FILES or p.startswith(SHARED_PREFIXES) or p.startswith("tools/tests/test_package") for p in paths):
         return list(TARGETS)
-    changed = [t for t in TARGETS if any(p.startswith(LEAF_PREFIXES[t]) for p in paths)]
+    changed = [t for t in TARGETS if any(p.startswith(LEAF_PREFIXES[t]) or
+               (t == "camera" and p == "modules/selection/include/skycrpg/SelectionAPI.h") for p in paths)]
     return changed or list(TARGETS)
 
 

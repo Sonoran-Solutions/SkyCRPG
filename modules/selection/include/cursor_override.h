@@ -26,6 +26,19 @@ public:
     static std::uint32_t target(std::uint64_t value) { return static_cast<std::uint32_t>(value); }
     void begin() { change(true); }
     void end() { change(false); }
+    // Change generation even when already empty: cancel an in-flight publication.
+    std::uint64_t clear() {
+        auto old = read();
+        const auto generation = next_.fetch_add(generationStep)+generationStep;
+        while (active(old)) {
+            const auto empty = generation | activeBit;
+            if (state_.compare_exchange_weak(old,empty)) return empty;
+        }
+        return 0; // a concurrent lifecycle exit must never be resurrected
+    }
+    static bool permits(std::uint64_t before, std::uint64_t after, std::uint32_t id) {
+        return before == after && active(after) && id && target(after) == id;
+    }
     bool publish(std::uint64_t token, std::uint32_t id) {
         if (!active(token)) return false;
         return state_.compare_exchange_strong(token,(token & ~std::uint64_t{0xffffffff}) | id);
@@ -40,4 +53,31 @@ private:
     }
     std::atomic<std::uint64_t> state_{0}, next_{0};
 };
+// Short independent mailbox/publication gate. Pick never waits for readers.
+// A failed try leaves the last complete value untouched; no racy seqlock copies.
+template<class T> class CursorExchange {
+public:
+    bool write(const T& value) {
+        if (gate_.test_and_set(std::memory_order_acquire)) return false;
+        value_ = value;
+        gate_.clear(std::memory_order_release);
+        return true;
+    }
+    bool read(T& value) {
+        if (gate_.test_and_set(std::memory_order_acquire)) return false;
+        value = value_;
+        gate_.clear(std::memory_order_release);
+        return true;
+    }
+    bool take(T& value) {
+        if (gate_.test_and_set(std::memory_order_acquire)) return false;
+        value = value_; value_ = {};
+        gate_.clear(std::memory_order_release);
+        return true;
+    }
+private:
+    std::atomic_flag gate_ = ATOMIC_FLAG_INIT;
+    T value_{};
+};
+struct CursorRequest { std::uint64_t token = 0, cycles = 0; std::uint32_t id = 0; };
 } // namespace skycrpg::selection

@@ -1,5 +1,99 @@
 # DYL-200 / P5-03 — world cursor mode candidate
 
+## Second pass — independent review fixes (2026-11-03)
+
+**Implementation and portable/offline verification PASS; Windows build and all runtime behavior NOT_RUN.** This section supersedes the first-pass design descriptions below. Reviewed base: `958ef77eb9aefb1eafe4db7938ffc01d05003ad9` (first pass `6c9f94c`, then the MSVC min-macro fix). Current changes are uncommitted on `phase5/dyl-200-cursor-mode`. Host: `dq-MEG-Z590-Trident-X-MS-B926`, Linux; g++ Ubuntu 15.2.0-16ubuntu1, Python 3.14.4. No game/Proton launch, deployment, binary/archive download, third-party contact, commit, push or PR. No UI files, shared documentation, build or packaging configuration changed. The specifically authorized CI scope files changed.
+
+Read the assigned Linear DYL-200 issue through the connected read-only tool. Its BTPS/upstream/fork text is obsolete and superseded by the supplied owner rulings/D026 and second-pass brief. No finding was dismissed.
+
+### Finding resolution
+
+| Finding | Implemented resolution; runtime status is NOT_RUN throughout |
+| --- | --- |
+| M1 — busy versus lost; poll contention | Added append-only `Result::busy` and `getCursorFrame`. Snapshot plus candidate IDs are published together through a short independent try-gate. Readers never acquire Pick's `StateAccess`; a contended publisher skips publication, not native Pick/injection. Camera reads this publication only in ThirdPersonState update, guarded by the verified engine update counter. Look, input, AdvanceMovie and PostDisplay no longer read snapshots. One atomic session query at that same service detects loss. Busy/incomplete scans keep cached state until 500 ms without a **completed** refresh; busy pushes retry on later services with no busy-result loop. Request-gate contention defers request consumption, not ordinary Pick validation. Actual non-injecting/contended Picks still suppress activation/grab. |
+| M2 — empty sessions | `sessionViable`/`CursorFrame.viable` describe world eligibility independently of `scanReady`, `available` and candidate count. Entry uses viability. Completed empty scans advance `completedRefreshes`; count zero produces no hover, not an exit. Walking away from the last reference preserves the cursor session. Incomplete/unknown validation does not refresh the 500-ms deadline. |
+| M3 — immediate empty authorization | Every service re-evaluates cached projected points; look also checks immediately after integrating deltas. Leaving the authorized/pending target radius synchronously sends zero, except while a valid explicit cycle latch is retained. Zero revokes the atomic generation even when the request/publication/Pick gates are busy. Entry starts an empty generation. Added a Selection-owned, byte-checked guard at ActivatePickRef's handle-resolution call; it refuses an old crosshair handle before E can use it, without racing a main-thread write to CrosshairPickData. See ordering below. |
+| Minor 1 | Camera's menu event sink returns immediately for exactly `SkyCRPGCameraWorldPointer`, before movement-config checks, debounce, suspension or lock-config refresh. |
+| Minor 2 | Private CursorMenu uses native `kShowAll`. |
+| Minor 3 | Queued hover is tracked separately from authorization. Camera reconciles `replies`, `externalTarget`, `externalResult` and live `authorizedTarget`; rejected/unknown pushes retry, and a missing acknowledgement retries after 200 ms. A new cycle is checked under the separate request gate before nonzero revocation and again on consumption. |
+| Minor 4 | `leave()` calls only `setCursorMode(0)`; it cannot queue a legacy external release after Selection ended the session. |
+| Minor 5 | Exact own-menu checks require `kOnStack` and `menuSystemVisible` before capture/paint. Missing stack/visibility refuses or exits. Pending creation waits at most 500 ms. |
+| Minor 6 | Selection module/API resolution occurs once and is cached for process lifetime; no per-frame GetModuleHandleW in `apiLive`. Live DLL unload remains unsupported. |
+| Minor 7 | Nonzero viewport origin is accepted. Projection maps normalized buffer coordinates to viewport-local pixels by subtracting left/top; drawing maps those local pixels through GetVisibleFrameRect. Bounds are checked against buffer dimensions. |
+| Minor 8 | SelectionAPI.h changes select both Camera and Selection CI jobs. Added focused mapping tests; explicit dispatch and independent UI/testprobe behavior remain unchanged. |
+| Minor 9 | Register once at main-thread kDataLoaded under `UI::processMessagesLock`; no session-time registration. Wrong-thread registration refuses. |
+| Minor 10 | `leave()` never clears the toggle atomic, preserving a press posted concurrently. Main look can consume an already-posted exit toggle before capturing deltas. Only right-stick events select controller visuals. Cursor hover exposes a refreshed candidate pool, releases the previous external latch before scanning, and explicitly rebinds a new eight-item latch on direct candidate hops; manual cycles retain frozen ordering and their movement threshold. |
+| Behind-camera guard | Test signed homogeneous `w` from matrix row 3 before native projection. Native divides by **abs(w)**; reject nonpositive/nonfinite w without using a 0..1 depth assumption. Portable front/behind/plane/nonfinite cases PASS; live reversed-Z alignment NOT_RUN. |
+| Windows macros | `(std::min)` / `(std::max)` and parenthesized numeric_limits min/max throughout owned code, including the remaining existing Selection and obstruction-test calls. |
+
+### Authorization and ordering
+
+1. Camera enters an empty cursor generation. A Pick from before entry cannot publish to it, and an old native crosshair handle has no matching cursor permit.
+2. A nonzero hover request first checks observed cycle count under a separate nonblocking request gate, revokes the old generation, then posts `{generation, cycles, id}`. The latest request replaces older pending intent. A newer cycle wins. Pick's state gate is never taken by these API calls. Zero does not wait for either gate; its atomic CAS revocation cannot resurrect an inactive session. The CAS only retries a racing atomic publication, never an API `busy` response or a held gate.
+3. Pick consumes hover at its next eligible opportunity (the legacy external mailbox's 100-ms throttle is not used for cursor intent), checks membership and fresh native range/body LOS, rebinds the hover latch, and publishes only if the generation still matches. Every successful injection records its exact cursor token as an activation permit. Non-injecting Pick invalidates that permit and clears native activation/grab data as before.
+4. Camera detects pointer departure on every update and after look integration using cached projection. Zero cancels queued/in-flight authorization immediately. Projection itself remains refresh/cycle driven. A manual cycle's explicit small-motion latch is intentionally preserved.
+5. At `ActivatePickRef+0x7E`, Selection's wrapper checks the active token and last valid Pick permit, then resolves through the **original call destination**. It checks token/permit again and requires the resolved FormID to equal the cursor target. A mismatch clears the local output NiPointer. Native code subsequently tests that pointer and cannot activate the old reference. This also covers ActivatePickRef's native command fallback before that lookup. The wrapper does not invoke activation, synthesize E, or mutate shared CrosshairPickData. Outside cursor mode it calls the original resolver unchanged. If hook bytes/allocation/protection/cache-flush verification fails, cursor entry is unavailable while ordinary Selection remains available.
+
+The authorization decision linearizes at the guarded resolver. Input not yet delivered/integrated cannot affect an already executing native action. Thread scheduling, real input-to-activation timing and native menu gating require the serialized runtime route; this is not a runtime PASS. Native prompt removal can await Pick, but activation permission cannot rely on that visual delay.
+
+### Offline evidence
+
+**Source:** CommonLibSSE-NG 7.2.0 pinned revision [`7a60f4de794095d7b0f8928d1b930a52e9a7da83`](https://github.com/alandtse/CommonLibSSE-NG/tree/7a60f4de794095d7b0f8928d1b930a52e9a7da83), read locally at `/srv/storage/Projects/SkyCRPG/session-p2-20261026/commonlib-7.2.0`. Checked `UI`, `GPtr`, `NiSmartPointer`, `GViewport`, `ThumbstickEvent::IsRight`, `BSGraphics::State::GetFrameState1799`, NiCamera projection signature and native resolver ABI. No provider/GPL implementation copied.
+
+**Source (offline executable, no public binary URL):** `/home/dq/.local/share/Steam/steamapps/common/Skyrim Special Edition/SkyrimSE.exe`, SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`; Address Library `versionlib-1-7-104-0.bin`, SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842`.
+
+- **PASS:** ID40548 → RVA751580, prologue `40 53 55 56 57 41 56 48 83 EC 50`; native target load at75159E reads `[rax+4]`. Call at7515FE (`+0x7E`) is exactly `E8 DD D5 A2 FF`, resolving to17EBE0. That resolver reads the uint32 handle through RCX and writes the reference smart pointer through RDX. The native caller uses that output at751604 and branches on null at751609. The guard preserves that exact destination rather than assuming another CommonLib lookup relocation is interchangeable.
+- **PASS:** ID70640 → EF1180 computes row3 dot world + translation, then `andps` with the absolute-value mask atEF11BE before division. Signed w guard prevents behind-camera acceptance independently of depth.
+- **PASS:** State ID411479 →33363A0; update counter at+58 →33363F8. Binary increments found at658D01 and6E4C85. The pinned CommonLib 1.7.99+ accessor exposes that exact field; Camera coalesces repeated services within one update count.
+- Reviewer-verified IMenu/GFx layout, LoadMovie Advance(0), movie origin/depth100, native Pick/menu caller facts and original generation-token results are reused as supplied; they are not new runtime evidence.
+
+Audit script/output: `/tmp/dyl200-pass2/audit.py`, `audit.log`, using the read-only `/tmp/cursor-review/al.py` decoder. No game bytes/assets or helper binaries were added to Git.
+
+### Verification jobs and actual results
+
+Pre-job declarations: `/tmp/dyl200-pass2/jobs.md` (purpose, command, budget, owner, completion/cleanup). Owner: this DYL-200 second-pass worker. All jobs completed; no task-created long-running process remains. Portable shell PID: `portable.pid`; tool handles63894 (initial failure),98686 (corrected PASS); logs retained. Python completed synchronously. No Windows DLL/package hash is claimed; Python packaging tests create disposable **mock fixtures**, not candidate artifacts.
+
+| Command | Result |
+| --- | --- |
+| `timeout 600 bash /tmp/dyl200-pass2/portable.sh` | **PASS**, 10 Camera +2 Selection executables, final `portable.log`. Script uses the exact workflow commands below. |
+| Camera: `g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I modules/camera/include "$test" -o "$RUNNER_TEMP/$name"`, then `"$RUNNER_TEMP/$name"`, each `modules/camera/tests/*_test.cpp` | **PASS**, all10. |
+| Selection: `g++ -std=c++20 -pthread -Wall -Wextra -Wshadow -Werror -pedantic "$test" -o "$RUNNER_TEMP/$name"`, then `"$RUNNER_TEMP/$name"`, each `modules/selection/tests/*_test.cpp` | **PASS**, both2. |
+| First portable attempt | **FAIL**, missing closing brace in the new `within` helper. Corrected code, then the full exact-command run passed. `portable-missing-brace-fail.log` retained; no unchanged retry loop. |
+| `timeout 600 python3 -B -m unittest discover -s tools/tests` | **PASS**,26 tests, `python.log`. |
+| `timeout 120 python3 /tmp/dyl200-pass2/audit.py` | **PASS**, pinned hash/address/call ABI/projection/update-counter inspection; expanded audit after adding update-counter evidence also PASS. |
+| `git diff --check` | **PASS**. |
+| Windows/MSVC compile/link/package; all in-game routes | **NOT_RUN**, orchestrator CI/serialized runtime required. |
+
+New tests exercise freshness through busy/stale/lost states; empty eligible sessions; immediate pointer departure without refreshing projection; direct candidate hopping; signed-w rejection; empty-generation/E authorization and late-Pick rejection; superseded requests; direct latch rebinding from the old eight to a newly ranked ninth; deterministic concurrent publication busy without modifying output; publication while an independent Pick gate is held; and latest-request replacement. These are portable policy/concurrency tests, not an engine-hook execution.
+
+### Reviewer uncertainties and remaining runtime gates
+
+| Uncertainty | Defensive handling and remaining status |
+| --- | --- |
+| Constructor/AdvanceMovie/PostDisplay/ProcessMessage threads | Every callback checks Main thread ID and refuses/post-exits on mismatch. Wrong-thread destructor never reads the main-thread overlay pointer. **NOT_RUN:** actual callback thread identities and usable overlay on this host. |
+| Whether hide destroys the menu | Keep a strong GPtr across hide; replace it only on main-thread construction. The final menu reference is intentionally retained for process lifetime to avoid engine-teardown destruction and dangling raw pointer use. **NOT_RUN:** actual native hide/reopen lifetime behavior. |
+| Mouse.removeListener return | Require successful invocation and Boolean true before marking overlay usable; other result refuses. **NOT_RUN:** runtime return value. |
+| Drawing/Display without Advance | Creation/drawing calls must succeed; PostDisplay checks stack, visibility, native focus and freshness. **NOT_RUN:** live rendered arrow/cross without further Advance and visual fidelity. |
+| Activate with an extra menu on stack | Overlay has only the narrow passive flags; normal native activation dispatch/menu gates remain. Resolver guard only removes stale authority. **NOT_RUN:** native E reaches activation while this overlay is present. |
+| Reversed-Z/behind-camera | Offline abs(w) and portable signed-w checks PASS. **NOT_RUN:** live camera matrix convention/alignment, reversed-Z, viewport origin/letterboxing, native child graph. |
+| Functional/regression/performance | **NOT_RUN:** empty-corridor entry, leaving last chest, live contention, exact E/clear timing, rejected-hover recovery, keyboard/controller direct hops/latches, every interruption and same-frame yaw recovery, camera-only/UI-only/combined, feature-off comparison, actual frame/pick cost and memory. |
+
+Additional concrete runtime checks are in `/srv/storage/Projects/SkyCRPG/session-p5/routes/cursor-review-pass2.md`; all remain NOT_RUN. Existing five JSON route drafts are unchanged. No owner playtest acceptance is inferred.
+
+### Decisions and owner questions
+
+Engineering choices: append-only frame API with an explicit busy result; coherent published list separate from Pick ownership; completed-refresh 500-ms deadline; 200-ms missing-reply retry; latest pending cursor intent; refreshed hover list versus frozen manual cycle list; Selection-owned native resolver guard rather than cross-thread crosshair writes; signed-w rejection; process-lifetime retained private movie; update-counter coalescing. No owner ruling changed. Cursor and external-target defaults remain OFF; keyboard B and controller-unbound proposals remain unchanged.
+
+No new owner answer is needed to review these fixes. Existing questions remain: approve/revise B and the eventual tested controller binding; judge sensitivity/radius/latch/visual feel after the runtime routes. Build/review and runtime evidence belong to the orchestrator; this worker does not commit or launch.
+
+### Proposed shared-file changes (second-pass additions)
+
+- Architecture/API notes: Selection alone owns Pick and the byte-checked ActivatePickRef resolver guard for cursor authorization. Camera reads one published frame and uses an optional size-negotiated extension; no UI DLL dependency. Record busy versus lost, empty session viability and the 500-ms stale deadline.
+- Controls/UX: remove the implication that an empty corridor or a transient busy scan exits mode. Preserve toggle semantics and manual cycle-latch behavior. Record ShowAll, viewport-local pointer coordinates and exact passive overlay visibility/stack requirements.
+- Status/compatibility/dependency notes: both new DLLs require Windows CI and serialized routes; API header changes rebuild both consumers. No runtime result/acceptance or new provider dependency. Consider updating the stale shared CMake option description saying all policy adapters use no trampoline patches; no CMake setting was changed here.
+
+## First-pass record (historical; design statements superseded above)
+
 2026-11-03. **Code/offline checks PASS within the bounds below; Windows build and every in-game criterion NOT_RUN.** This is an uncommitted worker handoff, not owner acceptance. Base `398f4278e96409cbe504f3df7d5d49a9c45d8325`, branch `phase5/dyl-200-cursor-mode`, host `dq-MEG-Z590-Trident-X-MS-B926` (Linux). No Skyrim/Proton launch, deployment, download, third-party contact, commit, push or PR. No UI, shared docs, build or packaging files changed.
 
 D026 replaces the obsolete BTPS dependency/upstream/fork portions of P5-03. The supplied DYL-200 brief supplies the revised implementation contract. D5-3 is toggle mode; D027 reserves R3. This work does not change either ruling or the Stage 1 boundary.

@@ -17,8 +17,17 @@ cursor::Session session;
 std::atomic<bool> dataReady{false}, worldLoaded{false}, padInput{false};
 std::atomic<unsigned> stop{0}, toggle{0}, held{0};
 bool registered = false, pending = false, resolving = false;
-double pendingSince = 0, refreshedAt = 0;
-std::uint64_t refresh = 0, cycles = 0, sentRefresh = UINT64_MAX, pushedRefresh = UINT64_MAX, projections = 0, pushes = 0;
+double pendingSince = 0, submittedAt = 0;
+cursor::Freshness freshness;
+std::uint32_t servicedFrame = 0;
+bool serviced = false;
+api::CursorFrame cachedFrame;
+std::array<cursor::Candidate,16> projected{};
+std::size_t projectedCount = 0;
+bool waiting = false;
+std::uint32_t submittedTarget = 0;
+std::uint64_t submittedReplies = 0;
+std::uint64_t refresh = 0, cycles = 0, sentRefresh = UINT64_MAX, projections = 0, pushes = 0;
 std::uint32_t sentTarget = 0;
 RE::FormID cell = 0;
 unsigned traceLines = 0;
@@ -26,6 +35,7 @@ std::uint64_t framePickMicros = 0;
 std::uint64_t refusalBits = 0;
 class Overlay;
 Overlay* overlay = nullptr;
+RE::GPtr<RE::IMenu>& overlayOwner = *new RE::GPtr<RE::IMenu>; // process lifetime; replace only on main
 bool mainThread() {
     const auto main = RE::Main::GetSingleton();
     return main && main->threadID == GetCurrentThreadId();
@@ -39,20 +49,22 @@ void refuse(Exit reason) {
     std::snprintf(line,sizeof(line),"Cursor refused/exit reason=%s",names[static_cast<unsigned>(reason)]);
     log(line);
 }
-void service(bool allowToggle = true);
+void service();
 void leave(Exit reason);
+bool ownMenu(RE::IMenu* menu);
+bool nativeMenu();
 class Overlay final : public RE::IMenu {
 public:
     RE::GFxValue pointer, reticle;
     bool usable = false;
-    float width = 0, height = 0;
+    float width = 0, height = 0, left = 0, top = 0, bufferWidth = 0, bufferHeight = 0;
     Overlay() {
         if (!mainThread()) { stop.store(static_cast<unsigned>(Exit::thread)); return; }
         overlay = this;
         menuFlags.set(RE::UI_MENU_FLAGS::kRequiresUpdate,RE::UI_MENU_FLAGS::kAllowSaving);
         depthPriority = 2;
         const auto manager = RE::BSScaleformManager::GetSingleton();
-        if (!manager || !manager->LoadMovie(this,uiMovie,"CursorMenu",RE::GFxMovieView::ScaleModeType::kExactFit)) return;
+        if (!manager || !manager->LoadMovie(this,uiMovie,"CursorMenu",RE::GFxMovieView::ScaleModeType::kShowAll)) return;
         hide();
         RE::GFxValue listener, result, root;
         // The vanilla frame-one listener tracks _xmouse/_ymouse. Remove it;
@@ -74,14 +86,21 @@ public:
         usable = dimensions();
         hide();
     }
-    ~Overlay() override { if (overlay == this) overlay = nullptr; }
-    static RE::IMenu* create() { return new Overlay; }
+    ~Overlay() override { if (mainThread() && overlay == this) overlay = nullptr; }
+    static RE::IMenu* create() {
+        auto menu = new Overlay;
+        if (mainThread()) overlayOwner.reset(menu);
+        return menu;
+    }
     bool dimensions() {
         if (!uiMovie) return false;
         RE::GViewport viewport;
         uiMovie->GetViewport(&viewport);
         width = static_cast<float>(viewport.width); height = static_cast<float>(viewport.height);
-        return width > 0 && height > 0 && viewport.left == 0 && viewport.top == 0;
+        left = static_cast<float>(viewport.left); top = static_cast<float>(viewport.top);
+        bufferWidth = static_cast<float>(viewport.bufferWidth); bufferHeight = static_cast<float>(viewport.bufferHeight);
+        return width > 0 && height > 0 && left >= 0 && top >= 0 &&
+            bufferWidth >= left+width && bufferHeight >= top+height;
     }
     void hide() {
         if (uiMovie) static_cast<void>(uiMovie->SetVariable("_root._visible",RE::GFxValue(false)));
@@ -109,12 +128,12 @@ public:
     }
     void AdvanceMovie(float, std::uint32_t) override {
         if (!mainThread()) { stop.store(static_cast<unsigned>(Exit::thread)); return; }
-        service(false);
     }
     void PostDisplay() override {
         if (!mainThread()) { stop.store(static_cast<unsigned>(Exit::thread)); return; }
-        service(false);
-        if (session.active && uiMovie) uiMovie->Display();
+        if (!session.active) return;
+        if (stop.load() || !freshness.usable(lockClock(),false) || !ownMenu(this) || nativeMenu() || !paint()) { leave(Exit::overlay); return; }
+        if (uiMovie) uiMovie->Display();
     }
 };
 bool ownMenu(RE::IMenu* menu) {
@@ -122,8 +141,8 @@ bool ownMenu(RE::IMenu* menu) {
     const auto ui = RE::UI::GetSingleton();
     const auto own = ui ? ui->GetMenu(menuName) : RE::GPtr<RE::IMenu>{};
     const auto allowed = static_cast<std::uint32_t>(flags) | static_cast<std::uint32_t>(RE::UI_MENU_FLAGS::kOnStack);
-    return own.get() == menu && (menu->menuFlags.underlying() & ~allowed) == 0 &&
-        menu->menuFlags.all(RE::UI_MENU_FLAGS::kRequiresUpdate,RE::UI_MENU_FLAGS::kAllowSaving);
+    return ui && ui->menuSystemVisible && own.get() == menu && (menu->menuFlags.underlying() & ~allowed) == 0 &&
+        menu->menuFlags.all(RE::UI_MENU_FLAGS::kRequiresUpdate,RE::UI_MENU_FLAGS::kAllowSaving,RE::UI_MENU_FLAGS::kOnStack);
 }
 bool nativeMenu() {
     const auto ui = RE::UI::GetSingleton();
@@ -136,7 +155,7 @@ bool nativeMenu() {
     }
     return false;
 }
-bool apiLive() { return selection && selectionModule && GetModuleHandleW(L"SkyCRPG_Selection.dll") == selectionModule; }
+bool apiLive() { return selection && selectionModule; } // process-lifetime DLL; no live unload contract
 void resolve() {
     if (resolving || !dataReady.load()) return;
     resolving = true;
@@ -148,21 +167,21 @@ void resolve() {
     std::memcpy(&get,&proc,sizeof(get));
     const auto candidate = get ? get(api::version) : nullptr;
     if (candidate && candidate->apiVersion == api::version && candidate->size >= sizeof(api::Interface) &&
-        candidate->getSnapshot && candidate->copyCandidates && candidate->setTarget && candidate->clearTarget && candidate->setCursorMode && candidate->setCursorTarget)
+        candidate->getSnapshot && candidate->copyCandidates && candidate->setTarget && candidate->clearTarget && candidate->setCursorMode && candidate->setCursorTarget && candidate->getCursorFrame)
         selection = candidate;
     else log("Cursor unavailable: Selection v2 cursor extension missing or invalid size/function table.");
 }
 void leave(Exit reason) {
     const bool wasActive = session.active || pending;
-    session.exit(); pending = false; toggle.store(0);
-    if (wasActive && apiLive()) { static_cast<void>(selection->clearTarget()); static_cast<void>(selection->setCursorMode(0)); }
+    session.exit(); pending = false; waiting = false; projectedCount = 0;
+    if (wasActive && apiLive()) { static_cast<void>(selection->setCursorMode(0)); }
     if (overlay) overlay->hide();
     if (wasActive) {
         const auto queue = RE::UIMessageQueue::GetSingleton();
         if (queue) queue->AddMessage(menuName,RE::UI_MESSAGE_TYPE::kHide,nullptr);
         refuse(reason);
     }
-    cell = 0; sentRefresh = UINT64_MAX; pushedRefresh = UINT64_MAX; sentTarget = 0;
+    cell = 0; sentRefresh = UINT64_MAX; sentTarget = 0;
 }
 void requestExit(Exit reason) {
     if (!cursorSettings.enabled || !dataReady.load()) return;
@@ -199,72 +218,106 @@ bool centre(RE::TESObjectREFR* ref, RE::NiPoint3& result) {
         position.z+(cx*sy*cz+sx*sz)*x+(cx*sy*sz-sx*cz)*y+cx*cy*z};
     return std::isfinite(result.x) && std::isfinite(result.y) && std::isfinite(result.z);
 }
-void pick(const api::Snapshot& snapshot) {
-    if (!overlay || (snapshot.refreshes == sentRefresh && snapshot.cyclesTotal == cycles)) return;
+std::span<const cursor::Candidate> points() { return {projected.data(),projectedCount}; }
+bool retainLatch() {
+    const bool valid = std::any_of(points().begin(),points().end(),[](const auto& c) { return c.id == session.latch.id; });
+    return session.latch.retain(session.pointer.point,cursorSettings.latchPixels,valid);
+}
+void clearAway() {
+    if (!session.active || retainLatch()) return;
+    const auto target = waiting ? submittedTarget : sentTarget;
+    if (target && !cursor::within(points(),target,session.pointer.point,cursorSettings.radius)) {
+        // This gate-free revocation also cancels a queued/in-flight hover. The
+        // Selection activation resolver checks it before resolving native E.
+        static_cast<void>(selection->setCursorTarget(0,cycles)); ++pushes;
+        sentTarget = 0; waiting = false;
+    }
+}
+void pick(const api::CursorFrame& frame, bool fresh, double now) {
+    if (!overlay) return;
     const auto start = std::chrono::steady_clock::now();
-    std::array<std::uint32_t,16> ids{};
-    std::uint32_t count = 0;
-    if (selection->copyCandidates(ids.data(),static_cast<std::uint32_t>(ids.size()),&count) != api::Result::ok || count > ids.size()) {
-        leave(Exit::selection); return;
+    const auto& snapshot = frame.snapshot;
+    if (fresh && (frame.completedRefreshes != sentRefresh || snapshot.cyclesTotal != cycles)) {
+        if (frame.count > projected.size()) { leave(Exit::selection); return; }
+        const auto camera = projectionCamera();
+        const auto player = RE::PlayerCharacter::GetSingleton();
+        if (!camera || !player || !overlay->dimensions()) { leave(Exit::lifecycle); return; }
+        projectedCount = 0;
+        for (std::uint32_t i = 0; i < frame.count; ++i) {
+            const auto ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(frame.ids[i]);
+            RE::NiPoint3 world;
+            if (!centre(ref,world)) continue;
+            // The native projector divides by abs(w). Test signed w first;
+            // this remains correct with reversed Z and uses no depth range.
+            if (!cursor::inFront(camera->GetRuntimeData().worldToCam[3],world.x,world.y,world.z)) continue;
+            float x = 0,y = 0,z = 0;
+            ++projections;
+            if (!camera->WorldPtToScreenPt3(world,x,y,z,1e-5f) || !std::isfinite(x) || !std::isfinite(y)) continue;
+            const cursor::Point screen{x*overlay->bufferWidth-overlay->left,(1-y)*overlay->bufferHeight-overlay->top};
+            if (screen.x < 0 || screen.x > overlay->width || screen.y < 0 || screen.y > overlay->height) continue;
+            const auto delta = world-player->GetPosition();
+            projected[projectedCount++] = {frame.ids[i],screen,delta.SqrLength()};
+        }
+        if (cycles != snapshot.cyclesTotal) {
+            cycles = snapshot.cyclesTotal;
+            session.latch.cycle(snapshot.latched ? snapshot.target : 0,session.pointer.point);
+            waiting = false;
+        }
+        sentRefresh = frame.completedRefreshes;
     }
-    const auto camera = projectionCamera();
-    const auto player = RE::PlayerCharacter::GetSingleton();
-    if (!camera || !player) { leave(Exit::lifecycle); return; }
-    std::array<cursor::Candidate,16> candidates{};
-    std::size_t size = 0;
-    bool latchValid = false, cycleValid = false;
-    for (std::uint32_t i = 0; i < count; ++i) {
-        const auto ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(ids[i]);
-        RE::NiPoint3 world;
-        if (!centre(ref,world)) continue;
-        if (ids[i] == session.latch.id) latchValid = true;
-        if (ids[i] == snapshot.target) cycleValid = true;
-        float x = 0,y = 0,z = 0;
-        ++projections;
-        if (!camera->WorldPtToScreenPt3(world,x,y,z,1e-5f) || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
-            z < 0 || z > 1 || x < 0 || x > 1 || y < 0 || y > 1) continue;
-        const auto delta = world-player->GetPosition();
-        candidates[size++] = {ids[i],{x*overlay->width,(1-y)*overlay->height},delta.SqrLength()};
+    if (fresh) {
+        sentTarget = frame.authorizedTarget;
+        if (waiting && frame.replies != submittedReplies) {
+            // queued is not applied: rejected/unknown hover is retried below.
+            waiting = false;
+            if (snapshot.externalTarget != submittedTarget || snapshot.externalResult != static_cast<std::uint32_t>(api::Result::ok))
+                sentTarget = 0;
+        }
     }
-    // A second read rejects mixed generations and cycle/hover races before posting.
-    api::Snapshot current;
-    if (selection->getSnapshot(&current) != api::Result::ok || !current.available) { leave(Exit::selection); return; }
-    if (current.refreshes != snapshot.refreshes || current.cyclesTotal != snapshot.cyclesTotal) return;
-    if (cycles != current.cyclesTotal) {
-        cycles = current.cyclesTotal;
-        session.latch.cycle(current.latched ? current.target : 0,session.pointer.point);
-        latchValid = session.latch.id && cycleValid;
-        sentTarget = current.target;
-    }
-    const auto id = session.latch.retain(session.pointer.point,cursorSettings.latchPixels,latchValid) ? session.latch.id :
-        cursor::choose(std::span<const cursor::Candidate>(candidates.data(),size),session.pointer.point,cursorSettings.radius);
-    sentRefresh = current.refreshes;
-    if (id != sentTarget && pushedRefresh != current.refreshes) {
-        pushedRefresh = current.refreshes;
-        const auto result = selection->setCursorTarget(id,current.cyclesTotal); ++pushes;
-        if (result == api::Result::invalidTarget) return; // cycle won; observe it next callback
-        if (result == api::Result::queued) sentTarget = id;
-        else { leave(Exit::selection); return; }
+    clearAway();
+    const auto id = retainLatch() ? session.latch.id : cursor::choose(points(),session.pointer.point,cursorSettings.radius);
+    if (id != sentTarget && (!waiting || id != submittedTarget || now-submittedAt >= .2)) {
+        const auto result = selection->setCursorTarget(id,cycles); ++pushes;
+        if (result == api::Result::queued) {
+            waiting = true; submittedTarget = id; submittedReplies = frame.replies; submittedAt = now; sentTarget = 0;
+        } else if (result == api::Result::ok) { sentTarget = 0; waiting = false; }
+        // Busy/invalid requests retry on a later update; only session query or
+        // bounded stale refreshes end capture, never a transient mailbox result.
     }
     framePickMicros += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now()-start).count());
+}
+void registerOverlay() {
+    if (registered || !cursorSettings.enabled || !mainThread()) return;
+    const auto ui = RE::UI::GetSingleton();
+    if (!ui) return;
+    // kDataLoaded only, before sessions and UI message processing for this menu.
+    const RE::BSSpinLockGuard lock(ui->processMessagesLock);
+    if (ui->menuMap.find(std::string_view(menuName)) != ui->menuMap.end()) { refuse(Exit::overlay); return; }
+    ui->Register(menuName,Overlay::create); registered = true;
 }
 void traceFrame() {
     if (!mainThread()) return;
     if (session.active && traceLines < cursorSettings.trace) {
         ++traceLines;
-        char line[256]{};
-        std::snprintf(line,sizeof(line),"Cursor sample=%u refresh=%llu target=%08X latch=%08X x=%.2f y=%.2f projections=%llu pushes=%llu cost_us=%llu",
+        char line[384]{};
+        std::snprintf(line,sizeof(line),"Cursor sample=%u refresh=%llu target=%08X latch=%08X x=%.2f y=%.2f projections=%llu pushes=%llu cost_us=%llu viable=%u available=%u count=%u replies=%llu auth=%08X",
             traceLines,static_cast<unsigned long long>(refresh),sentTarget,session.latch.id,session.pointer.point.x,session.pointer.point.y,
-            static_cast<unsigned long long>(projections),static_cast<unsigned long long>(pushes),static_cast<unsigned long long>(framePickMicros));
+            static_cast<unsigned long long>(projections),static_cast<unsigned long long>(pushes),static_cast<unsigned long long>(framePickMicros),
+            cachedFrame.viable,cachedFrame.snapshot.available,cachedFrame.count,static_cast<unsigned long long>(cachedFrame.replies),cachedFrame.authorizedTarget);
         log(line);
     }
     framePickMicros = 0;
 }
-void service(bool allowToggle) {
+void service() {
     if (!cursorSettings.enabled || !mainThread() || !dataReady.load()) return;
     if (const auto reason = stop.exchange(0)) { leave(static_cast<Exit>(reason)); return; }
-    const unsigned request = allowToggle ? toggle.exchange(0) : 0;
+    const auto graphics = RE::BSGraphics::State::GetSingleton();
+    const auto frameState = graphics ? graphics->GetFrameState1799() : nullptr;
+    if (!frameState) { leave(Exit::lifecycle); return; }
+    if (serviced && servicedFrame == frameState->gUpdateCounter) { clearAway(); return; }
+    serviced = true; servicedFrame = frameState->gUpdateCounter;
+    const unsigned request = toggle.exchange(0);
     if (request && (session.active || pending)) { leave(Exit::toggle); return; }
     if (!request && !session.active && !pending) return;
     resolve();
@@ -272,12 +325,15 @@ void service(bool allowToggle) {
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto parent = player ? player->GetParentCell() : nullptr;
     const auto now = lockClock();
-    api::Snapshot snapshot;
-    const bool available = apiLive() && selection->getSnapshot(&snapshot) == api::Result::ok && snapshot.available;
-    if (available && refresh != snapshot.refreshes) { refresh = snapshot.refreshes; refreshedAt = now; }
+    api::CursorFrame frame;
+    const bool fresh = apiLive() && selection->getCursorFrame(&frame) == api::Result::ok;
+    if (fresh) { cachedFrame = frame; freshness.observe(frame.completedRefreshes,now); }
+    const auto& snapshot = cachedFrame.snapshot;
+    refresh = cachedFrame.completedRefreshes;
+    const bool lost = (session.active && (!apiLive() || selection->setCursorMode(2) != api::Result::ok));
     cursor::Eligibility e{settings.enabled,c.prerequisites && c.world,nativeMenu(),worldLoaded.load() && !loading,player && player->IsDead(),
         !cell || (parent && parent->GetFormID() == cell),c.firstPerson,c.special || c.slide,
-        player && player->IsWeaponDrawn(),c.targetLock,available && now-refreshedAt < .5,true,true};
+        player && player->IsWeaponDrawn(),c.targetLock,apiLive() && freshness.usable(now,lost),true,true};
     // Entry interrupts through the existing lease path; wait for TDM's unlocked
     // acknowledgement, never capture a frame while the lock still owns aim.
     if (request && e.locked) { interruptTargetLock(); e.locked = false; }
@@ -294,18 +350,15 @@ void service(bool allowToggle) {
         const auto ui = RE::UI::GetSingleton();
         const auto queue = RE::UIMessageQueue::GetSingleton();
         if (!ui || !queue) { refuse(Exit::overlay); return; }
-        if (!registered) {
-            if (ui->menuMap.find(std::string_view(menuName)) != ui->menuMap.end()) { refuse(Exit::overlay); return; }
-            ui->Register(menuName,Overlay::create); registered = true;
-        }
+        if (!registered) { refuse(Exit::overlay); return; }
         pending = true; pendingSince = now; cell = parent ? parent->GetFormID() : 0;
         interruptTargetLock();
         queue->AddMessage(menuName,RE::UI_MESSAGE_TYPE::kShow,nullptr);
     }
     if (pending) {
         if (now-pendingSince >= .5) { leave(Exit::overlay); return; }
-        if (c.targetLock || !overlay) return;
-        if (!overlay->usable || !ownMenu(overlay)) { leave(Exit::overlay); return; }
+        if (c.targetLock || !overlay || !ownMenu(overlay)) return;
+        if (!overlay->usable) { leave(Exit::overlay); return; }
         const auto result = selection->setCursorMode(1);
         if (result != api::Result::ok) {
             if (result == api::Result::disabled && !(refusalBits & (std::uint64_t{1} << static_cast<unsigned>(Exit::selection))))
@@ -314,19 +367,20 @@ void service(bool allowToggle) {
         }
         static_cast<void>(session.toggle(e,overlay->width,overlay->height));
         pending = false; recenter = false; cycles = snapshot.cyclesTotal;
-        sentTarget = 0; sentRefresh = UINT64_MAX; pushedRefresh = UINT64_MAX;
+        sentTarget = 0; sentRefresh = UINT64_MAX;
     }
     if (!session.active) return;
-    if (selection->setCursorMode(2) != api::Result::ok) { leave(Exit::selection); return; }
     if (!overlay || !ownMenu(overlay) || !overlay->paint()) { leave(Exit::overlay); return; }
-    pick(snapshot);
+    pick(cachedFrame,fresh,now);
 }
 bool look(const RE::NiPoint2& input) {
     if (!cursorSettings.enabled) return false;
     if (!mainThread()) { requestExit(Exit::thread); return false; }
-    service();
     if (!session.active || !overlay) return false;
+    if (toggle.exchange(0)) { leave(Exit::toggle); return false; }
+    if (stop.load() || !freshness.usable(lockClock(),false) || !ownMenu(overlay) || nativeMenu()) { leave(Exit::overlay); return false; }
     session.pointer.move({input.x,input.y},cursorSettings.sensitivity,overlay->width,overlay->height);
+    clearAway();
     if (!overlay->paint()) { leave(Exit::overlay); return false; }
     return true;
 }
@@ -334,7 +388,7 @@ void input(RE::InputEvent* events) {
     if (!cursorSettings.enabled || !dataReady.load()) return;
     for (auto event = events; event; event = event->next) {
         if (event->AsMouseMoveEvent()) padInput.store(false);
-        if (event->AsThumbstickEvent()) padInput.store(true);
+        if (const auto stick = event->AsThumbstickEvent(); stick && stick->IsRight()) padInput.store(true);
         const auto button = event->AsButtonEvent();
         if (!button) continue;
         const auto device = event->GetDevice();
@@ -352,6 +406,5 @@ void input(RE::InputEvent* events) {
         const unsigned old = button->IsPressed() ? held.fetch_or(mask) : held.fetch_and(~mask);
         if (button->IsDown() && !(old & mask) && button->QUserEvent().empty()) toggle.fetch_or(mask);
     }
-    if (mainThread()) service();
 }
 } // namespace cursorMode

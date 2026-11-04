@@ -46,14 +46,19 @@ Policy policy;
 RefreshGate gate, externalGate;
 CursorOverride cursorOverride;
 std::atomic<bool> cursorRelease{false};
-std::uint64_t cursorRequestCycle = 0; // protected by StateAccess, like counters
+CursorExchange<api::CursorFrame> publication;
+CursorExchange<CursorRequest> cursorRequests;
+std::atomic<bool> sessionViable{false};
+bool activationGuardReady = false;
+std::atomic<std::uint64_t> cursorPickPermit{0};
+std::uint64_t completedRefreshes = 0, cursorReplies = 0;
 std::array<FreshPress,4> keys;
 struct RefIdentity { std::uint32_t id; RE::ObjectRefHandle handle; };
 std::vector<RefIdentity> identities;
 std::vector<RE::NiPointer<RE::TESObjectREFR>> discovered;
 api::Snapshot counters;
 std::filesystem::path iniPath;
-AccessGate accessGate, inputGate, logGate, flushGate;
+AccessGate accessGate, inputGate, logGate, flushGate, cursorGate;
 std::uint64_t worldContentions = 0, worldRetries = 0, cellContentions = 0, discardedEdges = 0, cycleRefusals = 0;
 std::atomic<std::uint64_t> refusedPresses{0};
 bool scanContended = false;
@@ -70,14 +75,18 @@ std::atomic<bool> installed{false}, loading{true}, invalidated{true};
 bool badSettings = false, diagnostics = false;
 EventLog eventLog;
 EventSource latchSource = EventSource::nearest;
-// Pick alone mutates policy/handles/counters. Snapshot readers use this same
-// nonblocking gate. Input owns keys and posts requests; menus post state only.
+// Pick alone mutates policy/handles/counters. API readers use a separate
+// publication gate; input owns keys and posts requests, menus post state only.
 struct StateAccess {
     bool acquired = false;
     StateAccess() {
         acquired = installed.load() && accessGate.enter();
     }
     ~StateAccess() { if (acquired) accessGate.leave(); }
+};
+struct CursorAccess {
+    bool acquired = cursorGate.enter();
+    ~CursorAccess() { if (acquired) cursorGate.leave(); }
 };
 unsigned diagnosticCount = 0, diagnosticLimit = 32, conflictLogs = 0;
 double diagnosticTime = -5;
@@ -232,7 +241,7 @@ void loadSettings() {
         s.moveThreshold != settings.moveThreshold || s.nextKey != settings.nextKey || s.previousKey != settings.previousKey ||
         s.nextGamepad != settings.nextGamepad || s.previousGamepad != settings.previousGamepad;
     diagnostics = flag("Debug","bDiagnostics",0);
-    diagnosticLimit = std::min(number("Debug","iDiagnosticLimit",32u),128u);
+    diagnosticLimit = (std::min)(number("Debug","iDiagnosticLimit",32u),128u);
     if (badSettings) log("Invalid INI values: safe defaults/bounds applied; invalid bindings refused.");
     if (s.schema != 1) log("Unsupported INI schema: staying native.");
     log("Keyboard [ / ] are UNAPPROVED test bindings; gamepad defaults unbound; native mappings always refuse.");
@@ -243,7 +252,7 @@ void selectionEvent(EventKind kind, std::uint32_t id, EventSource source, std::s
     RE::TESObjectREFR* ref = nullptr);
 EventSource selectionSource() { return policy.latched() ? latchSource : EventSource::nearest; }
 void reset() {
-    cursorOverride.end(); cursorRelease.store(false);
+    cursorOverride.end(); cursorRelease.store(false); sessionViable.store(false);
     policy.reset(); identities.clear(); discovered.clear(); scannedIDs.clear(); cellID = 0; gate.reset();
     scanReady = false; inputAllowed.store(false); discardedEdges += CycleRequests::count(cycleRequests.take()); externalRequest.store(0);
     counters.target = 0; counters.candidateCount = 0; counters.latched = 0; counters.available = 0;
@@ -556,6 +565,15 @@ void publish() {
     counters.eventSuppressed = eventLog.suppressed();
     counters.requestDrops = requestDrops.load();
     if (diagnostics) selectionEvent(EventKind::choose,policy.current(),selectionSource(),passName(policy.reason()));
+    api::CursorFrame frame;
+    frame.snapshot = counters;
+    frame.viable = sessionViable.load() ? 1u : 0u;
+    frame.completedRefreshes = completedRefreshes; frame.replies = cursorReplies;
+    const auto ids = policy.order(CursorOverride::active(cursorOverride.read()));
+    frame.count = static_cast<std::uint32_t>((std::min)(ids.size(),std::size(frame.ids)));
+    std::copy_n(ids.begin(),frame.count,frame.ids);
+    // A reader can defer publication, never a Pick or its native prompt.
+    static_cast<void>(publication.write(frame));
 }
 void diagnostic(double now) {
     if (!diagnostics || diagnosticCount >= diagnosticLimit || now-diagnosticTime < 5) return;
@@ -579,6 +597,7 @@ bool refresh(double now) {
     const auto state = passthrough(c);
     if (state != lastState || c.sneaking != lastSneaking) gate.reset();
     lastState = state; lastSneaking = c.sneaking;
+    sessionViable.store(state == Pass::none);
     if (state != Pass::none) {
         cursorOverride.end();
         policy.refresh(c,{}, {},0,now,settings); identities.clear();
@@ -606,6 +625,7 @@ bool refresh(double now) {
     const auto start = std::chrono::steady_clock::now();
     const double radius = nativeRadius();
     ScanBudget budget{settings.inspectLimit}, visits{settings.visitLimit}, rays{settings.rayLimit};
+    if (CursorOverride::active(cursorOverride.read()) && latchSource == EventSource::external) policy.release();
     const auto frozen = policy.latched() ? policy.order() : std::vector<std::uint32_t>{};
     // Preserve discovery of a previously native-seeded large/offset latched ref.
     std::vector<RE::ObjectRefHandle> retained;
@@ -668,6 +688,10 @@ bool refresh(double now) {
     if (complete && !checked.unknown) {
         scanReady = policy.acceptScan(c,checked,body,radius,now,latchSettings,true);
         if (!scanReady) scanReason = checked.exhausted ? "validation_limit" : passName(policy.reason());
+        if (!checked.exhausted || scanReady) ++completedRefreshes;
+        const auto authorized = CursorOverride::target(cursorOverride.read());
+        if (scanReady && authorized && latchSource == EventSource::external)
+            static_cast<void>(policy.push(authorized,body,now,settings.allowExternal,true));
     }
     ++counters.refreshes; counters.inspectedLast = budget.inspected; counters.inspectedTotal += budget.inspected;
     counters.visitedLast = visits.inspected; counters.scanRaysLast = rays.inspected;
@@ -685,6 +709,8 @@ bool refresh(double now) {
     return scanReady;
 }
 void consumeRequests(double now, RE::PlayerCharacter* player) {
+    CursorAccess access;
+    if (!access.acquired) return; // defer requests, never skip normal Pick validation
     const auto body = bodyCentre(player);
     const auto cursorToken = cursorOverride.read();
     bool cycled = false;
@@ -702,8 +728,7 @@ void consumeRequests(double now, RE::PlayerCharacter* player) {
     // A physical cycle wins over a hover already waiting in the mailbox.
     const bool cursorCycle = cycled && CursorOverride::active(cursorToken);
     const auto pending = (cursorCycle || externalGate.due(now,settings.refreshSeconds)) ? externalRequest.exchange(0) : 0;
-    const bool staleHover = !cursorRequestCurrent(CursorOverride::active(cursorOverride.read()),cursorRequestCycle,counters.cyclesTotal);
-    const auto request = cursorCycle || staleHover ? 0 : pending;
+    const auto request = cursorCycle ? 0 : pending;
     if (request) {
         externalGate.last = now;
         const auto id = static_cast<std::uint32_t>(request);
@@ -731,11 +756,34 @@ void consumeRequests(double now, RE::PlayerCharacter* player) {
             }
         }
     }
+    CursorRequest hover;
+    if (cursorRequests.take(hover) && hover.token) {
+        ++cursorReplies;
+        counters.externalTarget = hover.id;
+        counters.externalResult = static_cast<std::uint32_t>(api::Result::invalidTarget);
+        if (!cursorCycle && hover.token == cursorOverride.read() &&
+            cursorRequestCurrent(true,hover.cycles,counters.cyclesTotal)) {
+            const auto order = policy.order(true);
+            const auto ref = reference(hover.id);
+            ScanBudget rays{6};
+            const auto result = std::find(order.begin(),order.end(),hover.id) == order.end() ? Validation::invalid :
+                validateTarget(ref.get(),player,candidate(ref.get(),player),body,nativeRadius(),rays);
+            const bool accepted = result == Validation::valid && !invalidated.load() &&
+                policy.push(hover.id,body,now,settings.allowExternal,true);
+            counters.externalResult = static_cast<std::uint32_t>(accepted ? api::Result::ok :
+                result == Validation::unknown ? api::Result::busy : api::Result::invalidTarget);
+            if (accepted) {
+                latchSource = EventSource::external;
+                static_cast<void>(cursorOverride.publish(hover.token,hover.id));
+            }
+        }
+    }
     publish();
 }
 void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* origin, const RE::NiPoint3* direction) {
     threadLog(true);
     StateAccess access;
+    if (CursorOverride::active(cursorOverride.read())) cursorPickPermit.store(0);
     previousPick(data,world,origin,direction);
     struct CursorPick {
         RE::CrosshairPickData* data;
@@ -745,6 +793,7 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
         ~CursorPick() {
             const auto cursor = cursorOverride.read();
             if (data && ((beganExclusive && (!injected || !CursorOverride::active(cursor))) || CursorOverride::suppress(cursor,injected,id))) {
+                cursorPickPermit.store(0);
                 data->target = {}; data->grabPickRef = {}; data->targetCollider = nullptr;
             }
         }
@@ -810,24 +859,32 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
     if (change.clearCollider) data->targetCollider = nullptr;
     // targetActor and collisionPoint remain native (aim magnetism / SmoothCam).
     cursorPick.injected = true; cursorPick.id = target->GetFormID();
+    cursorPickPermit.store(cursorState);
     selectionEvent(EventKind::pick,target->GetFormID(),selectionSource(),"none",target.get());
+}
+api::Result cursorFrame(api::CursorFrame* out) {
+    if (!out || out->size != sizeof(api::CursorFrame)) return api::Result::invalidArgument;
+    if (!installed.load()) return api::Result::unavailable;
+    if (!publication.read(*out)) return api::Result::busy;
+    out->authorizedTarget = CursorOverride::target(cursorOverride.read());
+    if (invalidated.load() || loading.load() || menuState.load() != 1u) out->viable = out->snapshot.available = 0;
+    return api::Result::ok;
 }
 api::Result snapshot(api::Snapshot* out) {
     if (!out || out->size != sizeof(api::Snapshot)) return api::Result::invalidArgument;
-    StateAccess access;
-    if (!access.acquired) return api::Result::unavailable;
-    *out = counters;
-    if (invalidated.load() || loading.load() || menuState.load() != 1u) out->available = 0;
-    return api::Result::ok;
+    api::CursorFrame frame;
+    const auto result = cursorFrame(&frame);
+    if (result == api::Result::ok) *out = frame.snapshot;
+    return result;
 }
 api::Result copyCandidates(std::uint32_t* ids, std::uint32_t capacity, std::uint32_t* count) {
     if (!count || (!ids && capacity)) return api::Result::invalidArgument;
-    StateAccess access;
-    if (!access.acquired || !scanReady || invalidated.load() || loading.load() || menuState.load() != 1u)
-        return api::Result::unavailable;
-    const auto order = policy.order();
-    *count = static_cast<std::uint32_t>(order.size());
-    for (std::uint32_t i = 0; i < capacity && i < *count; ++i) ids[i] = order[i];
+    api::CursorFrame frame;
+    const auto result = cursorFrame(&frame);
+    if (result != api::Result::ok) return result;
+    if (!frame.viable) return api::Result::unavailable;
+    *count = frame.count;
+    std::copy_n(frame.ids,(std::min)(capacity,*count),ids);
     return api::Result::ok;
 }
 api::Result postTarget(std::uint32_t id) {
@@ -835,32 +892,28 @@ api::Result postTarget(std::uint32_t id) {
     if (!settings.allowExternal) return api::Result::disabled;
     if (invalidated.load() || loading.load() || !inputAllowed.load() || menuState.load() != 1u) return api::Result::unavailable;
     std::uint64_t empty = 0;
-    return externalRequest.compare_exchange_strong(empty,(std::uint64_t{1} << 32) | id) ? api::Result::queued : api::Result::unavailable;
+    return externalRequest.compare_exchange_strong(empty,(std::uint64_t{1} << 32) | id) ? api::Result::queued : api::Result::busy;
 }
 api::Result setCursorTarget(std::uint32_t id, std::uint64_t observedCycles) {
-    StateAccess access;
-    if (!access.acquired) return api::Result::unavailable;
-    const auto token = cursorOverride.read();
-    if (!CursorOverride::active(token)) return api::Result::unavailable;
-    if (observedCycles != counters.cyclesTotal) return api::Result::invalidTarget;
-    const auto result = postTarget(id);
-    if (result == api::Result::queued) {
-        cursorRequestCycle = observedCycles;
-        static_cast<void>(cursorOverride.publish(token,0));
+    if (!CursorOverride::active(cursorOverride.read())) return api::Result::unavailable;
+    if (!id) {
+        if (!cursorOverride.clear()) return api::Result::unavailable;
+        cursorRelease.store(true);
+        return api::Result::ok;
     }
-    return result;
+    CursorAccess access;
+    if (!access.acquired) return api::Result::busy;
+    if (observedCycles != counters.cyclesTotal) return api::Result::invalidTarget;
+    const auto token = cursorOverride.clear();
+    if (!token) return api::Result::unavailable;
+    // Generation tags cancel both an older queued request and an in-flight Pick.
+    return cursorRequests.write({token,observedCycles,id}) ? api::Result::queued : api::Result::busy;
 }
 api::Result setTarget(std::uint32_t id) {
-    const auto token = cursorOverride.read();
-    if (CursorOverride::active(token)) {
-        StateAccess access;
-        if (!access.acquired) return api::Result::unavailable;
-        const auto result = postTarget(id);
-        if (result == api::Result::queued) {
-            cursorRequestCycle = counters.cyclesTotal;
-            static_cast<void>(cursorOverride.publish(token,0));
-        }
-        return result;
+    if (CursorOverride::active(cursorOverride.read())) {
+        api::CursorFrame frame;
+        const auto result = cursorFrame(&frame);
+        return result == api::Result::ok ? setCursorTarget(id,frame.snapshot.cyclesTotal) : result;
     }
     return id ? postTarget(id) : api::Result::invalidArgument;
 }
@@ -878,11 +931,12 @@ api::Result setCursorMode(std::uint32_t enabled) {
     }
     if (!installed.load()) return api::Result::unavailable;
     if (!settings.allowExternal) return api::Result::disabled;
-    if (invalidated.load() || loading.load() || !inputAllowed.load() || menuState.load() != 1u) return api::Result::unavailable;
+    if (!activationGuardReady) return api::Result::unavailable;
+    if (invalidated.load() || loading.load() || !sessionViable.load() || menuState.load() != 1u) return api::Result::unavailable;
     externalRequest.store(0); cursorRelease.store(true); cursorOverride.begin();
     return api::Result::ok;
 }
-const api::Interface interfaceV2{sizeof(api::Interface),api::version,snapshot,copyCandidates,setTarget,clearTarget,setCursorMode,setCursorTarget};
+const api::Interface interfaceV2{sizeof(api::Interface),api::version,snapshot,copyCandidates,setTarget,clearTarget,setCursorMode,setCursorTarget,cursorFrame};
 class Events final : public RE::BSTEventSink<RE::InputEvent*>, public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
 public:
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent*,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
@@ -919,6 +973,56 @@ public:
     }
 };
 Events events;
+using ResolveActivation = bool(*)(RE::RefHandle&,RE::NiPointer<RE::TESObjectREFR>&);
+ResolveActivation previousResolveActivation = nullptr;
+bool resolveActivation(RE::RefHandle& handle, RE::NiPointer<RE::TESObjectREFR>& out) {
+    const auto before = cursorOverride.read();
+    if (!CursorOverride::active(before)) return previousResolveActivation(handle,out);
+    // Runs at ActivatePickRef's one reference resolution, after native target or
+    // command fallback. Never write shared CrosshairPickData from the API thread.
+    if (!CursorOverride::target(before) || cursorPickPermit.load() != before ||
+        invalidated.load() || loading.load() || menuState.load() != 1u) { out.reset(); return false; }
+    const bool result = previousResolveActivation(handle,out);
+    if (!result || !out || cursorPickPermit.load() != before ||
+        !CursorOverride::permits(before,cursorOverride.read(),out->GetFormID())) {
+        out.reset(); return false;
+    }
+    return true;
+}
+bool installActivationGuard() {
+    const REL::Relocation<std::uintptr_t> activate{REL::ID(40548)};
+    const auto call = activate.address()+0x7e;
+    constexpr std::array<unsigned char,5> expected{0xe8,0xdd,0xd5,0xa2,0xff};
+    if (activate.offset() != 0x751580 || std::memcmp(reinterpret_cast<const void*>(call),expected.data(),expected.size()) != 0) {
+        log("Cursor activation guard refused: ActivatePickRef resolver call changed."); return false;
+    }
+    const auto allocator = SKSE::GetTrampolineInterface();
+    auto stub = allocator ? allocator->AllocateFromBranchPool(14) : nullptr;
+    if (!stub) return false;
+    const auto distance = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(stub))-static_cast<std::int64_t>(call+5);
+    if (distance < (std::numeric_limits<std::int32_t>::min)() || distance > (std::numeric_limits<std::int32_t>::max)()) return false;
+    std::array<unsigned char,14> jump{0xff,0x25,0,0,0,0};
+    const auto destination = reinterpret_cast<std::uintptr_t>(resolveActivation);
+    std::memcpy(jump.data()+6,&destination,sizeof(destination));
+    DWORD old = 0, ignored = 0;
+    if (!VirtualProtect(stub,jump.size(),PAGE_EXECUTE_READWRITE,&old)) return false;
+    std::memcpy(stub,jump.data(),jump.size());
+    const bool flushed = FlushInstructionCache(GetCurrentProcess(),stub,jump.size()) != 0;
+    const bool protectedStub = VirtualProtect(stub,jump.size(),old,&ignored) != 0;
+    if (!flushed || !protectedStub) return false;
+    std::int32_t original = 0;
+    std::memcpy(&original,expected.data()+1,sizeof(original));
+    previousResolveActivation = reinterpret_cast<ResolveActivation>(static_cast<std::uintptr_t>(static_cast<std::int64_t>(call+5)+original));
+    std::array<unsigned char,5> replacement{0xe8};
+    const auto relative = static_cast<std::int32_t>(distance);
+    std::memcpy(replacement.data()+1,&relative,sizeof(relative));
+    auto site = reinterpret_cast<void*>(call);
+    if (std::memcmp(site,expected.data(),expected.size()) != 0 || !VirtualProtect(site,replacement.size(),PAGE_EXECUTE_READWRITE,&old)) return false;
+    std::memcpy(site,replacement.data(),replacement.size());
+    const bool patched = FlushInstructionCache(GetCurrentProcess(),site,replacement.size()) != 0;
+    const bool protectedCall = VirtualProtect(site,replacement.size(),old,&ignored) != 0;
+    return patched && protectedCall && std::memcmp(site,replacement.data(),replacement.size()) == 0;
+}
 void install() {
     static bool attempted = false;
     if (attempted) return;
@@ -952,7 +1056,7 @@ void install() {
     if (!stub) { log("REFUSED hook: SKSE branch pool unavailable."); return; }
     const auto displacement = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(stub)) -
         static_cast<std::int64_t>(call+5);
-    if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max()) {
+    if (displacement < (std::numeric_limits<std::int32_t>::min)() || displacement > (std::numeric_limits<std::int32_t>::max)()) {
         log("REFUSED hook: branch pool outside rel32 range."); return;
     }
     std::array<unsigned char,14> jump{0xff,0x25,0,0,0,0};
@@ -994,6 +1098,11 @@ void install() {
     input->AddEventSink(static_cast<RE::BSTEventSink<RE::InputEvent*>*>(&events));
     ui->AddEventSink<RE::MenuOpenCloseEvent>(&events);
     updateMenus();
+    if (settings.allowExternal) {
+        activationGuardReady = installActivationGuard();
+        log(activationGuardReady ? "Cursor activation resolver guard installed: 40548+0x7E." :
+            "Cursor unavailable: activation resolver guard not installed; ordinary Selection remains available.");
+    }
     installed.store(true);
     log("Pick call installed at AE 40620+0x1E7 -> 26127; native first, activation/grab handles and stale collider only; no camera writes.");
 }

@@ -48,6 +48,29 @@ int main() {
     assert(choose(candidates,{0,0},1)==2);
     assert(choose(candidates,{2,0},1)==3);
     assert(choose({}, {}, 10)==0);
+    // Busy/incomplete reads retain the session until a bounded stale window;
+    // a known lost session exits immediately, including on a fresh refresh.
+    Freshness freshness;
+    assert(!freshness.usable(1,false));
+    freshness.observe(1,1);
+    assert(freshness.usable(1.49,false));
+    freshness.observe(1,1.49); // busy/stale reads cannot extend the deadline
+    assert(!freshness.usable(1.5,false));
+    freshness.observe(2,1.5);
+    assert(freshness.usable(1.6,false) && !freshness.usable(1.6,true));
+    // Empty list is pointer over nothing, not an eligibility failure.
+    assert(session.toggle(ready,100,80));
+    assert(session.active && choose({},session.pointer.point,48)==0);
+    session.exit();
+    // Hover is recomputed without a scan refresh: leave A, clear, then bind B.
+    const std::array hover{Candidate{11,{10,10},1},Candidate{22,{90,10},2}};
+    assert(within(hover,11,{10,10},20));
+    assert(!within(hover,11,{40,10},20) && choose(hover,{40,10},20)==0);
+    assert(!within(hover,11,{90,10},20) && choose(hover,{90,10},20)==22);
+    const float row[4]{0,1,0,-10};
+    assert(inFront(row,0,11,0));
+    assert(!inFront(row,0,9,0) && !inFront(row,0,10,0));
+    assert(!inFront(row,NAN,11,0));
     skycrpg::camera::Settings base;
     auto settings=validate(Settings{},base);
     assert(!settings.enabled && settings.toggleKey==48 && settings.toggleGamepad==-1);
