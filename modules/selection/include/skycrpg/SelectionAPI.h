@@ -26,6 +26,9 @@ struct Interface {
     Result (*copyCandidates)(std::uint32_t* ids, std::uint32_t capacity, std::uint32_t* count);
     Result (*setTarget)(std::uint32_t formID);
     Result (*clearTarget)();
+    // Optional append-only v2 extension. Check size before reading this member.
+    Result (*setCursorMode)(std::uint32_t mode); // 0 exit, 1 enter empty, 2 query active
+    Result (*setCursorTarget)(std::uint32_t formID, std::uint64_t observedCycles);
 };
 using GetAPI = const Interface* (*)(std::uint32_t requestedVersion);
 // Resolve via GetModuleHandleW(L"SkyCRPG_Selection.dll") / GetProcAddress;
@@ -47,6 +50,24 @@ using GetAPI = const Interface* (*)(std::uint32_t requestedVersion);
 // membership in its validated bounded list and fresh eligibility/range/body LOS,
 // and only then latches. Invalid/unknown pushes preserve the existing selection.
 // externalTarget/externalResult report the last consumed request (zero=clear).
+// Cursor extension: setCursorMode(1) synchronously enters EMPTY exclusive mode
+// (ok); disabled/unavailable refuses without capturing. setCursorTarget(0,cycles) is an
+// explicit empty target, suppressing native and nearest fallback immediately.
+// setCursorTarget posts through the same setTarget mailbox, binding the request
+// to Snapshot::cyclesTotal. A newer cycle rejects it (invalidTarget), including
+// cycles arriving between enqueue and Pick. Camera waits for a fresh snapshot.
+// Zero AND nonzero queued cursor requests suppress the old target immediately;
+// failed validation cannot activate a previously hovered object instead.
+// Validated cursor pushes and cycling are the only ways to authorize activation.
+// Cycles win over a pending hover request in the same Pick. Latches in this mode
+// do not expire by time/player movement; eligibility/range/LOS still validate.
+// setCursorMode(2) is a read-only active-session check (ok/unavailable).
+// clearTarget or setCursorMode(0) synchronously drops exclusivity and pending
+// requests, even during menus/load; policy latch release occurs on the next Pick.
+// Every non-injecting Pick while exclusive clears activation/grab handles and
+// collider (never targetActor/aim data), including contention and validation failure.
+// Lifecycle invalidation ends the session. Camera must exit on unavailable/stale
+// snapshots. No live DLL unload is supported.
 // The mailbox is single-caller coordination, not a multi-client arbitration API.
 // Lifecycle invalidation discards pending requests. No request is serialized.
 // Cycling is an atomic FIFO; Pick applies each physical edge once, in order.

@@ -4,6 +4,7 @@
 #include <SKSE/SKSE.h>
 #include <skycrpg/skeleton.h>
 #include "selection_policy.h"
+#include "cursor_override.h"
 #include "skycrpg/SelectionAPI.h"
 #include <bcrypt.h>
 #include <array>
@@ -43,6 +44,9 @@ static_assert(0x3e8+offsetof(RE::PlayerCharacter::PLAYER_RUNTIME_DATA,telekinesi
 Settings settings;
 Policy policy;
 RefreshGate gate, externalGate;
+CursorOverride cursorOverride;
+std::atomic<bool> cursorRelease{false};
+std::uint64_t cursorRequestCycle = 0; // protected by StateAccess, like counters
 std::array<FreshPress,4> keys;
 struct RefIdentity { std::uint32_t id; RE::ObjectRefHandle handle; };
 std::vector<RefIdentity> identities;
@@ -239,6 +243,7 @@ void selectionEvent(EventKind kind, std::uint32_t id, EventSource source, std::s
     RE::TESObjectREFR* ref = nullptr);
 EventSource selectionSource() { return policy.latched() ? latchSource : EventSource::nearest; }
 void reset() {
+    cursorOverride.end(); cursorRelease.store(false);
     policy.reset(); identities.clear(); discovered.clear(); scannedIDs.clear(); cellID = 0; gate.reset();
     scanReady = false; inputAllowed.store(false); discardedEdges += CycleRequests::count(cycleRequests.take()); externalRequest.store(0);
     counters.target = 0; counters.candidateCount = 0; counters.latched = 0; counters.available = 0;
@@ -575,6 +580,7 @@ bool refresh(double now) {
     if (state != lastState || c.sneaking != lastSneaking) gate.reset();
     lastState = state; lastSneaking = c.sneaking;
     if (state != Pass::none) {
+        cursorOverride.end();
         policy.refresh(c,{}, {},0,now,settings); identities.clear();
         scanReady = false; inputAllowed.store(false);
         discardedEdges += CycleRequests::count(cycleRequests.take()); externalRequest.store(0);
@@ -582,7 +588,9 @@ bool refresh(double now) {
     }
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto body = bodyCentre(player);
-    const auto expired = policy.expire(body,now,settings);
+    if (cursorRelease.exchange(false)) { policy.release(); gate.reset(); }
+    const auto latchSettings = cursorLatchSettings(settings,CursorOverride::active(cursorOverride.read()));
+    const auto expired = policy.expire(body,now,latchSettings);
     if (!expired.empty()) {
         selectionEvent(EventKind::latch,policy.current(),EventSource::nearest,expired);
         scanReady = false; inputAllowed.store(false);
@@ -658,7 +666,7 @@ bool refresh(double now) {
     scanReady = false;
     scanReason = !complete ? "incomplete_scan" : checked.unknown ? "validation_unknown" : "none";
     if (complete && !checked.unknown) {
-        scanReady = policy.acceptScan(c,checked,body,radius,now,settings,true);
+        scanReady = policy.acceptScan(c,checked,body,radius,now,latchSettings,true);
         if (!scanReady) scanReason = checked.exhausted ? "validation_limit" : passName(policy.reason());
     }
     ++counters.refreshes; counters.inspectedLast = budget.inspected; counters.inspectedTotal += budget.inspected;
@@ -678,22 +686,33 @@ bool refresh(double now) {
 }
 void consumeRequests(double now, RE::PlayerCharacter* player) {
     const auto body = bodyCentre(player);
+    const auto cursorToken = cursorOverride.read();
+    bool cycled = false;
     auto batch = cycleRequests.take();
     while (batch) {
         const auto direction = CycleRequests::pop(batch);
         if (policy.cycle(direction,body,now)) {
             ++counters.cyclesTotal;
+            cycled = true;
             latchSource = EventSource::cycle;
             selectionEvent(EventKind::cycle,policy.current(),latchSource,direction > 0 ? "next" : "previous");
         } else ++cycleRefusals;
     }
-    const auto request = externalGate.due(now,settings.refreshSeconds) ? externalRequest.exchange(0) : 0;
+    if (cycled) static_cast<void>(cursorOverride.publish(cursorToken,policy.current()));
+    // A physical cycle wins over a hover already waiting in the mailbox.
+    const bool cursorCycle = cycled && CursorOverride::active(cursorToken);
+    const auto pending = (cursorCycle || externalGate.due(now,settings.refreshSeconds)) ? externalRequest.exchange(0) : 0;
+    const bool staleHover = !cursorRequestCurrent(CursorOverride::active(cursorOverride.read()),cursorRequestCycle,counters.cyclesTotal);
+    const auto request = cursorCycle || staleHover ? 0 : pending;
     if (request) {
         externalGate.last = now;
         const auto id = static_cast<std::uint32_t>(request);
         counters.externalTarget = id;
         if (!id) {
-            policy.release(); scanReady = false; inputAllowed.store(false); scanReason = "external_release";
+            policy.release();
+            if (!CursorOverride::active(cursorOverride.read())) {
+                scanReady = false; inputAllowed.store(false); scanReason = "external_release";
+            }
             counters.externalResult = static_cast<std::uint32_t>(api::Result::ok);
         }
         else {
@@ -706,7 +725,10 @@ void consumeRequests(double now, RE::PlayerCharacter* player) {
                 policy.push(id,body,now,settings.allowExternal);
             counters.externalResult = static_cast<std::uint32_t>(accepted ? api::Result::ok :
                 result == Validation::unknown ? api::Result::unavailable : api::Result::invalidTarget);
-            if (accepted) latchSource = EventSource::external;
+            if (accepted) {
+                latchSource = EventSource::external;
+                static_cast<void>(cursorOverride.publish(cursorToken,id));
+            }
         }
     }
     publish();
@@ -715,6 +737,18 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
     threadLog(true);
     StateAccess access;
     previousPick(data,world,origin,direction);
+    struct CursorPick {
+        RE::CrosshairPickData* data;
+        bool injected = false;
+        std::uint32_t id = 0;
+        bool beganExclusive = CursorOverride::active(cursorOverride.read());
+        ~CursorPick() {
+            const auto cursor = cursorOverride.read();
+            if (data && ((beganExclusive && (!injected || !CursorOverride::active(cursor))) || CursorOverride::suppress(cursor,injected,id))) {
+                data->target = {}; data->grabPickRef = {}; data->targetCollider = nullptr;
+            }
+        }
+    } cursorPick{data};
     if (!access.acquired || !data) { forwardReason(!data ? "null_pick" : "state_busy_or_reentrant"); return; }
     struct PickCost {
         std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
@@ -728,7 +762,9 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
     const auto nativeRef = nativeTarget.get();
     const auto nativeDecision = [&](std::string_view reason) {
         forwardReason(reason);
-        selectionEvent(EventKind::pick,nativeRef ? nativeRef->GetFormID() : 0,EventSource::native,reason,nativeRef.get());
+        if (cursorPick.beganExclusive || CursorOverride::active(cursorOverride.read()))
+            selectionEvent(EventKind::pick,0,EventSource::external,reason);
+        else selectionEvent(EventKind::pick,nativeRef ? nativeRef->GetFormID() : 0,EventSource::native,reason,nativeRef.get());
     };
     const auto now = seconds();
     if (!refresh(now)) { nativeDecision(scanReason); return; }
@@ -737,6 +773,10 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
     if (!scanReady) { nativeDecision(scanReason); return; }
     if (nativeIsNew(nativeRef ? nativeRef->GetFormID() : 0,scannedIDs,policy.latched())) {
         nativeDecision("new_native_since_scan"); return;
+    }
+    const auto cursorState = cursorOverride.read();
+    if (CursorOverride::active(cursorState) && CursorOverride::target(cursorState) != policy.current()) {
+        publish(); nativeDecision("cursor_empty"); return;
     }
     const auto target = reference(policy.current());
     ScanBudget rays{6};
@@ -769,6 +809,7 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
     }
     if (change.clearCollider) data->targetCollider = nullptr;
     // targetActor and collisionPoint remain native (aim magnetism / SmoothCam).
+    cursorPick.injected = true; cursorPick.id = target->GetFormID();
     selectionEvent(EventKind::pick,target->GetFormID(),selectionSource(),"none",target.get());
 }
 api::Result snapshot(api::Snapshot* out) {
@@ -796,9 +837,52 @@ api::Result postTarget(std::uint32_t id) {
     std::uint64_t empty = 0;
     return externalRequest.compare_exchange_strong(empty,(std::uint64_t{1} << 32) | id) ? api::Result::queued : api::Result::unavailable;
 }
-api::Result setTarget(std::uint32_t id) { return id ? postTarget(id) : api::Result::invalidArgument; }
-api::Result clearTarget() { return postTarget(0); }
-const api::Interface interfaceV2{sizeof(api::Interface),api::version,snapshot,copyCandidates,setTarget,clearTarget};
+api::Result setCursorTarget(std::uint32_t id, std::uint64_t observedCycles) {
+    StateAccess access;
+    if (!access.acquired) return api::Result::unavailable;
+    const auto token = cursorOverride.read();
+    if (!CursorOverride::active(token)) return api::Result::unavailable;
+    if (observedCycles != counters.cyclesTotal) return api::Result::invalidTarget;
+    const auto result = postTarget(id);
+    if (result == api::Result::queued) {
+        cursorRequestCycle = observedCycles;
+        static_cast<void>(cursorOverride.publish(token,0));
+    }
+    return result;
+}
+api::Result setTarget(std::uint32_t id) {
+    const auto token = cursorOverride.read();
+    if (CursorOverride::active(token)) {
+        StateAccess access;
+        if (!access.acquired) return api::Result::unavailable;
+        const auto result = postTarget(id);
+        if (result == api::Result::queued) {
+            cursorRequestCycle = counters.cyclesTotal;
+            static_cast<void>(cursorOverride.publish(token,0));
+        }
+        return result;
+    }
+    return id ? postTarget(id) : api::Result::invalidArgument;
+}
+api::Result clearTarget() {
+    if (!CursorOverride::active(cursorOverride.read())) return postTarget(0);
+    cursorOverride.end(); externalRequest.store(0); cursorRelease.store(true);
+    return api::Result::ok;
+}
+api::Result setCursorMode(std::uint32_t enabled) {
+    if (enabled == 2) return CursorOverride::active(cursorOverride.read()) ? api::Result::ok : api::Result::unavailable;
+    if (enabled > 2) return api::Result::invalidArgument;
+    if (!enabled) {
+        cursorOverride.end(); externalRequest.store(0); cursorRelease.store(true);
+        return api::Result::ok;
+    }
+    if (!installed.load()) return api::Result::unavailable;
+    if (!settings.allowExternal) return api::Result::disabled;
+    if (invalidated.load() || loading.load() || !inputAllowed.load() || menuState.load() != 1u) return api::Result::unavailable;
+    externalRequest.store(0); cursorRelease.store(true); cursorOverride.begin();
+    return api::Result::ok;
+}
+const api::Interface interfaceV2{sizeof(api::Interface),api::version,snapshot,copyCandidates,setTarget,clearTarget,setCursorMode,setCursorTarget};
 class Events final : public RE::BSTEventSink<RE::InputEvent*>, public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
 public:
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent*,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
