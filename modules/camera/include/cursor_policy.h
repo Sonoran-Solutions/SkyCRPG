@@ -22,7 +22,7 @@ inline Settings validate(Settings s, const camera::Settings& camera) {
         s.toggleKey == camera.recenterKey || std::find(reserved.begin(),reserved.end(),s.toggleKey) != reserved.end()) s.toggleKey = -1;
     if (s.toggleGamepad <= 0 || s.toggleGamepad > 65535 || (s.toggleGamepad & (s.toggleGamepad-1)) ||
         s.toggleGamepad == 128 || s.toggleGamepad == camera.toggleGamepad || s.toggleGamepad == camera.recenterGamepad) s.toggleGamepad = -1;
-    s.trace = std::min(s.trace,512u);
+    s.trace = (std::min)(s.trace,512u);
     return s;
 }
 enum class Exit { none, toggle, disabled, lifecycle, menu, load, death, cell, firstPerson, special, precision, lock, f6, f8, selection, overlay, thread };
