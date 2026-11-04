@@ -856,6 +856,8 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
         reset(); nativeDecision(stale ? "invalidated" : passName(state)); return;
     }
     const auto change = pickChanges(data->target != handle,grabbable);
+    // Store before data->target, so an exit racing this write still refuses it.
+    if (CursorOverride::active(cursorState)) cursorPickHandle.store(handle.native_handle());
     if (change.target) {
         data->target = handle;
         data->grabPickRef = change.grab ? handle : RE::ObjectRefHandle{};
@@ -988,7 +990,7 @@ bool resolveActivation(RE::RefHandle& handle, RE::NiPointer<RE::TESObjectREFR>& 
     if (!CursorOverride::active(before)) {
         // Exit cannot write job-owned CrosshairPickData. Refuse its last injected
         // handle until the next Pick completes and clears/replaces the permit.
-        if (handle && handle == cursorPickHandle.load() && cursorPickPermit.load()) { out.reset(); return false; }
+        if (handle && handle == cursorPickHandle.load()) { out.reset(); return false; }
         return previousResolveActivation(handle,out);
     }
     // Runs at ActivatePickRef's one reference resolution, after native target or
@@ -1000,11 +1002,20 @@ bool resolveActivation(RE::RefHandle& handle, RE::NiPointer<RE::TESObjectREFR>& 
     // centre pick. Publish the handle before its token; check token and FormID
     // again after resolving so concurrent changes cannot borrow authorization.
     auto permittedHandle = cursorPickHandle.load();
-    const bool result = permittedHandle && previousResolveActivation(permittedHandle,out);
+    // Substitute only for the crosshair target. Any other incoming handle is the
+    // commanded-actor or furniture fallback, which the pointer never chose.
+    const auto pick = RE::CrosshairPickData::GetSingleton();
+    if (!permittedHandle || (handle != permittedHandle && (!pick || handle != pick->target.native_handle()))) {
+        out.reset(); return false;
+    }
+    const bool result = previousResolveActivation(permittedHandle,out);
     if (!result || !out || cursorPickPermit.load() != before ||
         !CursorOverride::permits(before,cursorOverride.read(),out->GetFormID())) {
         out.reset(); return false;
     }
+    // ActivatePickRef re-resolves this same local handle for perk Activate entry
+    // points (41003); write it back so perks see the chosen reference.
+    handle = permittedHandle;
     return true;
 }
 bool installActivationGuard() {

@@ -1,5 +1,20 @@
 # DYL-200 / P5-03 — world cursor mode candidate
 
+## Fifth pass — fourth review fixes, orchestrator (2026-11-04)
+
+A focused independent review of `531dcd5..3c9e896` found one blocker, one major and four minor issues. The orchestrator fixed them directly. This pass had no independent review of its own; it is covered by portable tests and Windows CI only.
+
+| Finding | Resolution |
+| --- | --- |
+| **B1** ActivatePickRef re-resolves its local handle in 41003 for perk Activate entry points, so substituting only `out` let perks run on the centre pick X | `resolveActivation` writes the permitted handle back. It substitutes only when the incoming handle is the permitted handle or the current crosshair target, and refuses commanded-actor or furniture fallback handles while cursor mode is active. |
+| **M1** Hysteresis kept A when the pointer sat on neighbour B | `cursor::hover` keeps A inside 1.25 × radius unless the chosen candidate is clearly nearer (1.25² × d(B) < d(A)). |
+| m1 A withheld list blocked revocation | `clearAway` runs against the last projections while the list is withheld; only new binds wait for a ready list. |
+| m2 Exit-refusal gap | The cursor handle is stored before `data->target` is written, and the inactive refusal no longer needs a live permit. |
+| m3 Entry could start on aged data | Entry requires `Freshness::fresh`; only a running session gets the three-update grace. |
+| m4 Extra diagnostic `choose` row on reset | Accepted: diagnostics only. |
+
+Tests: all 10 Camera and 2 Selection portable executables PASS with the exact CI flags, including new hover and freshness cases. Game behaviour is NOT_RUN.
+
 ## Fourth pass — third independent review fixes (2026-11-03)
 
 **PASS: focused code, portable tests and offline checks. NOT_RUN: this diff's Windows build and every in-game row below.** This section supersedes conflicting historical pass descriptions. Base `531dcd5` passes Windows CI per the owner's brief; that is not build evidence for this uncommitted diff. Host `dq-MEG-Z590-Trident-X-MS-B926`, Linux, g++15.2.0 (Ubuntu15.2.0-16ubuntu1), Python3.14.4. Read the required project context and connected DYL-200; supplied owner rulings supersede its obsolete BTPS text. No commits, pushes, PRs, game launches, downloads, messages, UI edits, shared-file or build/packaging changes.

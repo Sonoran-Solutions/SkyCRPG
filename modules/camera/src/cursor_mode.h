@@ -247,7 +247,8 @@ bool retainLatch() {
     return session.latch.retain(session.pointer.point,cursorSettings.latchPixels,valid);
 }
 void clearAway() {
-    if (cachedFrame.viable && !cachedFrame.listReady) return;
+    // While a list is withheld, revoke against the last projections; only new
+    // binds wait for a ready list.
     if (!session.active || retainLatch()) return;
     const auto target = waiting ? submittedTarget : sentTarget;
     if (target && !cursor::within(points(),target,session.pointer.point,cursorSettings.radius)) {
@@ -259,7 +260,7 @@ void clearAway() {
 }
 void pick(const api::CursorFrame& frame, bool fresh) {
     if (!overlay) return;
-    if (frame.viable && !frame.listReady) return; // withheld is not an empty hover
+    if (frame.viable && !frame.listReady) { clearAway(); return; } // withheld is not an empty hover
     const auto start = std::chrono::steady_clock::now();
     const auto& snapshot = frame.snapshot;
     { // Re-project cached IDs once per engine update, including while walking.
@@ -302,8 +303,7 @@ void pick(const api::CursorFrame& frame, bool fresh) {
     }
     clearAway();
     const auto id = retainLatch() ? session.latch.id :
-        cursor::within(points(),sentTarget,session.pointer.point,cursorSettings.radius) ? sentTarget :
-        cursor::choose(points(),session.pointer.point,cursorSettings.radius);
+        cursor::hover(points(),sentTarget,session.pointer.point,cursorSettings.radius);
     if (id != sentTarget && (!waiting || id != submittedTarget) && hoverAttempts.allowed(id,frame.aliveRefreshes)) {
         const auto result = selection->setCursorTarget(id,cycles); ++pushes;
         if (result == api::Result::queued) {
@@ -382,7 +382,7 @@ void service() {
     if (request && e.locked) { interruptTargetLock(); e.locked = false; }
     if (pending && e.locked && now-pendingSince < .5) e.locked = false;
     auto reason = cursor::refusal(e);
-    if (reason == Exit::none && !freshness.usable(now,servicedFrame,false)) reason = Exit::stale;
+    if (reason == Exit::none && !(request && !session.active ? freshness.fresh(now) : freshness.usable(now,servicedFrame,false))) reason = Exit::stale;
     if (reason != Exit::none) { refuse(reason); leave(reason); return; }
     if (request) {
         const auto map = RE::ControlMap::GetSingleton();

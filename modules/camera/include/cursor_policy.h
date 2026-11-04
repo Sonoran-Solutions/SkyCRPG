@@ -84,6 +84,19 @@ inline bool within(std::span<const Candidate> candidates, std::uint32_t id, Poin
         return c.id == id && distance2(c.point,point) <= radius*radius;
     });
 }
+// Keep the authorized target inside 1.25x radius unless another candidate is
+// clearly nearer the pointer, so a neighbour can still be chosen directly.
+inline std::uint32_t hover(std::span<const Candidate> candidates, std::uint32_t sent, Point point, float radius) {
+    const auto chosen = choose(candidates,point,radius);
+    if (!within(candidates,sent,point,radius)) return chosen;
+    if (!chosen || chosen == sent) return sent;
+    float dSent = 0, dChosen = 0;
+    for (const auto& c : candidates) {
+        if (c.id == sent) dSent = distance2(c.point,point);
+        if (c.id == chosen) dChosen = distance2(c.point,point);
+    }
+    return 1.5625f*dChosen < dSent ? chosen : sent;
+}
 inline bool inFront(const float row[4], float x, float y, float z) {
     const float w = row[0]*x+row[1]*y+row[2]*z+row[3];
     return std::isfinite(w) && w > 1e-5f;
@@ -123,6 +136,8 @@ struct Freshness {
         deadline = (std::max)(.5,3*(std::isfinite(interval) ? std::clamp(interval,.1,1.0) : .1));
         if (value && (!seen || refresh != value)) { refresh = value; at = now; staleUpdate = frame; seen = true; stalled = false; }
     }
+    // Entry never starts on aged data; only a running session gets the grace.
+    bool fresh(double now) const { return seen && now >= at && now-at < deadline; }
     bool usable(double now, std::uint32_t frame, bool sessionLost) {
         if (sessionLost || !seen || now < at) return false;
         if (now-at < deadline) return true;

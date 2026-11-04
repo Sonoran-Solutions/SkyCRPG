@@ -115,6 +115,15 @@ int main() {
     assert(!within(hover,11,{35.01f,10},20));
     assert(!within(hover,11,{40,10},20) && choose(hover,{40,10},20)==0);
     assert(!within(hover,11,{90,10},20) && choose(hover,{90,10},20)==22);
+    // Hysteresis keeps A near the edge, but a neighbour under the pointer wins.
+    const std::array neighbours{Candidate{11,{10,10},1},Candidate{22,{50,10},2}};
+    assert(skycrpg::camera::cursor::hover(neighbours,11,{28,10},48)==11);
+    assert(skycrpg::camera::cursor::hover(neighbours,11,{50,10},48)==22);
+    assert(skycrpg::camera::cursor::hover(neighbours,0,{12,10},48)==11);
+    assert(skycrpg::camera::cursor::hover(neighbours,11,{200,200},48)==0);
+    Freshness aged; aged.observe(1,0,0);
+    assert(aged.fresh(.1) && !aged.fresh(.6));
+    assert(aged.usable(.6,10,false)); // a running session keeps its update grace
     const float row[4]{0,1,0,-10};
     assert(inFront(row,0,11,0));
     assert(!inFront(row,0,9,0) && !inFront(row,0,10,0));
