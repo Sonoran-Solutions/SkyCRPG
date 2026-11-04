@@ -40,12 +40,28 @@ unsigned traceLines = 0;
 std::uint64_t framePickMicros = 0;
 std::uint64_t refusalBits = 0;
 class Overlay;
-Overlay* overlay = nullptr;
-RE::GPtr<RE::IMenu>& overlayOwner = *new RE::GPtr<RE::IMenu>; // process lifetime; replace only on main
+// Published once by the creator (UI job thread) and never freed while the process runs.
+std::atomic<Overlay*> overlay{nullptr};
+RE::GPtr<RE::IMenu>& overlayOwner = *new RE::GPtr<RE::IMenu>; // process lifetime; set once by create()
+Overlay* current() { return overlay.load(std::memory_order_acquire); }
 bool mainThread() {
     const auto main = RE::Main::GetSingleton();
     return main && main->threadID == GetCurrentThreadId();
 }
+// 1.7.104: in unpaused frames UI::ProcessMessages (AL 82082, which also runs
+// menu creators) and UI::AdvanceMenus (AL 82083) run as the job-system "UI"
+// job (AL 39042), off main, holding UI+0x158. PostDisplay runs on main from the
+// UI draw (AL 82084) after that job signals. Main-side movie and menu-stack
+// access takes the same reentrant lock.
+class UILock {
+public:
+    UILock() : ui(RE::UI::GetSingleton()) { if (ui) ui->processMessagesLock.Lock(); }
+    ~UILock() { if (ui) ui->processMessagesLock.Unlock(); }
+    UILock(const UILock&) = delete;
+    UILock& operator=(const UILock&) = delete;
+private:
+    RE::UI* ui;
+};
 void refuse(Exit reason) {
     const auto bit = std::uint64_t{1} << static_cast<unsigned>(reason);
     if (refusalBits & bit) return;
@@ -65,9 +81,9 @@ public:
     RE::GFxValue pointer, reticle;
     bool usable = false;
     float width = 0, height = 0, left = 0, top = 0, bufferWidth = 0, bufferHeight = 0;
+    // Constructed inside ProcessMessages, normally on the UI job thread with
+    // UI+0x158 held; create() publishes the instance only after construction.
     Overlay() {
-        if (!mainThread()) { stop.store(static_cast<unsigned>(Exit::thread)); return; }
-        overlay = this;
         menuFlags.set(RE::UI_MENU_FLAGS::kRequiresUpdate,RE::UI_MENU_FLAGS::kAllowSaving);
         depthPriority = 2;
         const auto manager = RE::BSScaleformManager::GetSingleton();
@@ -93,13 +109,21 @@ public:
         usable = dimensions();
         hide();
     }
-    ~Overlay() override { if (mainThread() && overlay == this) overlay = nullptr; }
+    ~Overlay() override {
+        auto self = this;
+        overlay.compare_exchange_strong(self,nullptr);
+    }
     static RE::IMenu* create() {
+        // Reuse one instance so main never holds a menu the UI job could free on
+        // a later show. The added reference stands in for the one `new` gives.
+        if (const auto existing = current()) { existing->AddRef(); return existing; }
         auto menu = new Overlay;
-        if (mainThread()) overlayOwner.reset(menu);
+        overlayOwner.reset(menu);
+        overlay.store(menu,std::memory_order_release);
         return menu;
     }
     bool dimensions() {
+        const UILock lock;
         if (!uiMovie) return false;
         RE::GViewport viewport;
         uiMovie->GetViewport(&viewport);
@@ -110,9 +134,11 @@ public:
             bufferWidth >= left+width && bufferHeight >= top+height;
     }
     void hide() {
+        const UILock lock;
         if (uiMovie) static_cast<void>(uiMovie->SetVariable("_root._visible",RE::GFxValue(false)));
     }
     bool paint() {
+        const UILock lock;
         if (!usable || !dimensions()) return false;
         session.pointer.move({},cursorSettings.sensitivity,width,height);
         const auto rect = uiMovie->GetVisibleFrameRect();
@@ -125,19 +151,19 @@ public:
         if (!reticle.SetDisplayInfo(info)) return false;
         return uiMovie->SetVariable("_root._visible",RE::GFxValue(true));
     }
+    // ProcessMessage and AdvanceMovie run on the UI job thread in gameplay; they
+    // touch only this movie (under the engine's UI+0x158) and the atomic stop.
     RE::UI_MESSAGE_RESULTS ProcessMessage(RE::UIMessage& message) override {
-        if (!mainThread()) { stop.store(static_cast<unsigned>(Exit::thread)); return RE::UI_MESSAGE_RESULTS::kPassOn; }
         if (message.type == RE::UI_MESSAGE_TYPE::kHide || message.type == RE::UI_MESSAGE_TYPE::kForceHide) {
             hide(); stop.store(static_cast<unsigned>(Exit::overlay));
         }
         // Never take native Activate, mouse buttons or a Scaleform input event.
         return RE::UI_MESSAGE_RESULTS::kPassOn;
     }
-    void AdvanceMovie(float, std::uint32_t) override {
-        if (!mainThread()) { stop.store(static_cast<unsigned>(Exit::thread)); return; }
-    }
+    void AdvanceMovie(float, std::uint32_t) override {}
     void PostDisplay() override {
-        if (!mainThread()) { stop.store(static_cast<unsigned>(Exit::thread)); return; }
+        // Off main only on the ServingThread during blocking loads: draw nothing.
+        if (!mainThread()) return;
         if (!session.active) return;
         if (const auto reason = captureExit(); reason != Exit::none) { leave(reason); return; }
         if (!ownMenu(this) || !paint()) { leave(Exit::overlay); return; }
@@ -145,7 +171,8 @@ public:
     }
 };
 bool ownMenu(RE::IMenu* menu) {
-    if (!cursorSettings.enabled || !mainThread() || !menu || menu != overlay) return false;
+    if (!cursorSettings.enabled || !mainThread() || !menu || menu != current()) return false;
+    const UILock lock;
     const auto ui = RE::UI::GetSingleton();
     const auto own = ui ? ui->GetMenu(menuName) : RE::GPtr<RE::IMenu>{};
     const auto allowed = static_cast<std::uint32_t>(flags) | static_cast<std::uint32_t>(RE::UI_MENU_FLAGS::kOnStack);
@@ -155,6 +182,7 @@ bool ownMenu(RE::IMenu* menu) {
 bool nativeMenu() {
     const auto ui = RE::UI::GetSingleton();
     if (!ui || focused()) return true;
+    const UILock lock;
     const auto hud = ui->GetMenu("HUD Menu"), fader = ui->GetMenu("Fader Menu"), mist = ui->GetMenu("Mist Menu");
     for (const auto& menu : ui->menuStack) {
         if (ownMenu(menu.get())) continue;
@@ -192,7 +220,7 @@ void leave(Exit reason) {
     const bool wasActive = session.active || pending;
     session.exit(); pending = false; waiting = false; projectedCount = 0;
     if (wasActive && apiLive()) { static_cast<void>(selection->setCursorMode(0)); }
-    if (overlay) overlay->hide();
+    if (const auto o = current()) o->hide();
     if (wasActive) {
         const auto queue = RE::UIMessageQueue::GetSingleton();
         if (queue) queue->AddMessage(menuName,RE::UI_MESSAGE_TYPE::kHide,nullptr);
@@ -259,7 +287,8 @@ void clearAway() {
     }
 }
 void pick(const api::CursorFrame& frame, bool fresh) {
-    if (!overlay) return;
+    const auto o = current();
+    if (!o) return;
     if (frame.viable && !frame.listReady) { clearAway(); return; } // withheld is not an empty hover
     const auto start = std::chrono::steady_clock::now();
     const auto& snapshot = frame.snapshot;
@@ -267,7 +296,7 @@ void pick(const api::CursorFrame& frame, bool fresh) {
         if (frame.count > projected.size()) { leave(Exit::selection); return; }
         const auto camera = projectionCamera();
         const auto player = RE::PlayerCharacter::GetSingleton();
-        if (!camera || !player || !overlay->dimensions()) { leave(Exit::lifecycle); return; }
+        if (!camera || !player || !o->dimensions()) { leave(Exit::lifecycle); return; }
         projectedCount = 0;
         for (std::uint32_t i = 0; i < frame.count; ++i) {
             const auto ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(frame.ids[i]);
@@ -279,8 +308,8 @@ void pick(const api::CursorFrame& frame, bool fresh) {
             float x = 0,y = 0,z = 0;
             ++projections;
             if (!camera->WorldPtToScreenPt3(world,x,y,z,1e-5f) || !std::isfinite(x) || !std::isfinite(y)) continue;
-            const cursor::Point screen{x*overlay->bufferWidth-overlay->left,(1-y)*overlay->bufferHeight-overlay->top};
-            if (screen.x < 0 || screen.x > overlay->width || screen.y < 0 || screen.y > overlay->height) continue;
+            const cursor::Point screen{x*o->bufferWidth-o->left,(1-y)*o->bufferHeight-o->top};
+            if (screen.x < 0 || screen.x > o->width || screen.y < 0 || screen.y > o->height) continue;
             const auto delta = world-player->GetPosition();
             projected[projectedCount++] = {frame.ids[i],screen,delta.SqrLength()};
         }
@@ -399,34 +428,36 @@ void service() {
         interruptTargetLock();
         queue->AddMessage(menuName,RE::UI_MESSAGE_TYPE::kShow,nullptr);
     }
+    const auto o = current();
     if (pending) {
         if (now-pendingSince >= .5) { leave(Exit::overlay); return; }
-        if (c.targetLock || !overlay || !ownMenu(overlay)) return;
-        if (!overlay->usable) { leave(Exit::overlay); return; }
+        if (c.targetLock || !o || !ownMenu(o)) return;
+        if (!o->usable) { leave(Exit::overlay); return; }
         const auto result = selection->setCursorMode(1);
         if (result != api::Result::ok) {
             if (result == api::Result::disabled && !(refusalBits & (std::uint64_t{1} << static_cast<unsigned>(Exit::selection))))
                 log("Cursor unavailable: Selection bAllowExternalTargets=0 (opt-in required).");
             leave(Exit::selection); return;
         }
-        static_cast<void>(session.toggle(e,overlay->width,overlay->height));
+        static_cast<void>(session.toggle(e,o->width,o->height));
         pending = false; recenter = false; cycles = snapshot.cyclesTotal;
         sentTarget = 0; hoverAttempts = {};
     }
     if (!session.active) return;
-    if (!overlay || !ownMenu(overlay) || !overlay->paint()) { leave(Exit::overlay); return; }
+    if (!o || !ownMenu(o) || !o->paint()) { leave(Exit::overlay); return; }
     pick(cachedFrame,fresh);
 }
 bool look(const RE::NiPoint2& input) {
     if (!cursorSettings.enabled) return false;
     if (!mainThread()) { requestExit(Exit::thread); return false; }
-    if (!session.active || !overlay) return false;
+    const auto o = current();
+    if (!session.active || !o) return false;
     if (toggle.exchange(0)) { leave(Exit::toggle); return false; }
     if (const auto reason = captureExit(); reason != Exit::none) { leave(reason); return false; }
-    if (!ownMenu(overlay)) { leave(Exit::overlay); return false; }
-    session.pointer.move({input.x,input.y},cursorSettings.sensitivity,overlay->width,overlay->height);
+    if (!ownMenu(o)) { leave(Exit::overlay); return false; }
+    session.pointer.move({input.x,input.y},cursorSettings.sensitivity,o->width,o->height);
     clearAway();
-    if (!overlay->paint()) { leave(Exit::overlay); return false; }
+    if (!o->paint()) { leave(Exit::overlay); return false; }
     return true;
 }
 void input(RE::InputEvent* events) {

@@ -1,5 +1,30 @@
 # DYL-200 / P5-03 — world cursor mode candidate
 
+## Sixth pass — overlay callback threads, from the first in-game route (2026-11-04)
+
+**Route evidence on `503b27b`** (Camera DLL `fd5e9148…`, Selection DLL `3a12f12f…`, SkyrimSE.exe `846efccf…`):
+
+| Run | Result | Evidence |
+| --- | --- | --- |
+| `route-cursor-1` hover | BLOCKED (harness) | Runner recovery refused the Fader Menu still open after `coc`. Cursor routes now settle for 12 s after `coc`, like the other route sets. |
+| `route-cursor-2` hover | FAIL | All steps ran and restore passed, but cursor mode never stayed active. Each B showed `SkyCRPGCameraWorldPointer`, which closed 17–18 ms later. Camera.log: `Cursor refused/exit reason=thread`. |
+
+**Cause.** An independent binary check of 1.7.104 found the following.
+
+- In unpaused frames, `UI::ProcessMessages` (AL 82082, which also invokes menu creators) and `UI::AdvanceMenus` (AL 82083) run as the job-system "UI" job (AL 39042) on a worker thread, holding UI+0x158.
+- `PostDisplay` runs on main from the UI draw (AL 82084), after main waits for that job's event.
+- `Main::threadID` itself is correct: it is written once by the Main constructor on the WinMain thread.
+
+The Overlay's constructor, `ProcessMessage` and `AdvanceMovie` refused off-main, so every entry ended on the next frame.
+
+**Fix.**
+- The constructor, `ProcessMessage` and `AdvanceMovie` no longer require main. They run under the engine's UI+0x158 and touch only this movie and the atomic stop.
+- `create()` publishes a single process-lifetime instance through an atomic and reuses it, with an added reference, on later shows. Main therefore never holds a menu the UI job could free.
+- Main-side movie and menu-stack access (`dimensions`, `hide`, `paint`, `ownMenu`, `nativeMenu`) takes the same reentrant UI+0x158 lock.
+- `PostDisplay` skips drawing off main, which the binary check found happens only on the ServingThread during blocking loads.
+
+Not verified: the cost of main waiting on UI+0x158 while the UI job holds it, and in-game behaviour.
+
 ## Fifth pass — fourth review fixes, orchestrator (2026-11-04)
 
 A focused independent review of `531dcd5..3c9e896` found one blocker, one major and four minor issues. The orchestrator fixed them directly. This pass had no independent review of its own; it is covered by portable tests and Windows CI only.
