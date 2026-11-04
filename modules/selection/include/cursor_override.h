@@ -39,7 +39,12 @@ public:
     static bool active(std::uint64_t value) { return (value & activeBit) != 0; }
     static std::uint32_t target(std::uint64_t value) { return static_cast<std::uint32_t>(value); }
     void begin() { change(true); }
-    void end() { change(false); }
+    bool end() {
+        auto old = read();
+        const auto generation = next_.fetch_add(generationStep)+generationStep;
+        while (active(old)) if (state_.compare_exchange_weak(old,generation)) return true;
+        return false;
+    }
     // Change generation even when already empty: cancel an in-flight publication.
     std::uint64_t clear() {
         auto old = read();
@@ -66,6 +71,23 @@ private:
         state_.store(generation | (enabled ? activeBit : 0));
     }
     std::atomic<std::uint64_t> state_{0}, next_{0};
+};
+template<class Clear> struct CursorPickScope {
+    CursorOverride& state;
+    std::atomic<std::uint64_t>& permit;
+    std::atomic<std::uint32_t>& handle;
+    Clear clear;
+    bool injected = false;
+    std::uint32_t id = 0;
+    bool beganExclusive = CursorOverride::active(state.read());
+    ~CursorPickScope() {
+        const auto cursor = state.read();
+        if ((beganExclusive && (!injected || !CursorOverride::active(cursor))) || CursorOverride::suppress(cursor,injected,id)) {
+            permit.store(0);
+            clear();
+        }
+        if (!CursorOverride::active(cursor)) { permit.store(0); handle.store(0); }
+    }
 };
 template<class Submit> api::Result replaceCursorTarget(CursorOverride& state, std::uint32_t id, Submit submit) {
     const auto token = state.clear();

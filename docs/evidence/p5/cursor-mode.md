@@ -1,5 +1,38 @@
 # DYL-200 / P5-03 — world cursor mode candidate
 
+## Fourth pass — third independent review fixes (2026-11-03)
+
+**PASS: focused code, portable tests and offline checks. NOT_RUN: this diff's Windows build and every in-game row below.** This section supersedes conflicting historical pass descriptions. Base `531dcd5` passes Windows CI per the owner's brief; that is not build evidence for this uncommitted diff. Host `dq-MEG-Z590-Trident-X-MS-B926`, Linux, g++15.2.0 (Ubuntu15.2.0-16ubuntu1), Python3.14.4. Read the required project context and connected DYL-200; supplied owner rulings supersede its obsolete BTPS text. No commits, pushes, PRs, game launches, downloads, messages, UI edits, shared-file or build/packaging changes.
+
+| Finding | Resolution (code/portable scope only) |
+| --- | --- |
+| M1 | Entry viability always uses `passthrough(cursorContext(rawContext,true))`, matching continuation. Ordinary Selection still uses its unmodified context while cursor mode is off. Definite cursor-eligible combat/sneak passthroughs advance entry liveness even without an ordinary scan. |
+| m1 / m7 | Register at DataLoaded under `processMessagesLock`; only registration loses the main-thread restriction, never creation. One fallback is available on main outside an already-owned lock. A missing UI or nested ProcessMessages tick defers that fallback; a name collision is terminal. Tests exercise deferral, once-only fallback, success and collision, replacing the unused-request assertion. |
+| m2 | Publish the permitted native RefHandle before its token. The guarded resolver uses that stored handle while native Pick may have overwritten the incoming centre target, then rechecks token and FormID. Ordering is documented beside the resolver. |
+| m3 | Append `CursorFrame::listReady`: a withheld viable list skips hover revocation/submission; a complete empty list still clears hover. Transient unknown Pick validation withholds the list. The exact-size API check requires rebuilding Camera and Selection together; legacy snapshot/list behavior is unchanged. |
+| m4 | Only rejected replies/immediate failures enter refresh backoff. Pending identical submissions wait for their reply; successful A→B→A can proceed within one refresh. Authorized hover remains until it leaves 1.25× radius, including when the ordinary nearest choice would differ. |
+| m5 | Time expiry starts a grace of three further `gUpdateCounter` advances without liveness. This handles a hitch even after several ordinary updates since the last scan. Repeated publications cannot renew liveness; counter wrap and actual session loss are tested. |
+| m6 | Atomic `end()` reports whether cursor mode was active. `setCursorMode(0)` releases policy/pending external work only on that transition; failed entry/duplicate exit preserves legacy work. |
+| m8 | A corpse uses its world-bound centre only with positive finite radius and finite XYZ; otherwise it follows the existing OBND centre path. |
+| Exit nit | Inactive-mode activation refuses the last injected handle until the next Pick completes and clears/replaces its permit. No cross-thread CrosshairPickData write. The previously documented native hold-grab window remains: StartGrabObject bypasses this resolver. |
+| Permit-test nit | The runtime Pick scope guard is now the portable-tested destructor itself. Cases exercise successful retention, early-return cleanup, wrong target, exit during Pick and ordinary noncursor behavior. Removed the duplicate permit assertion and the empty-frame initializer assertion. |
+
+**Source:** [CommonLibSSE-NG7.2.0, revision7a60f4de794095d7b0f8928d1b930a52e9a7da83](https://github.com/alandtse/CommonLibSSE-NG/tree/7a60f4de794095d7b0f8928d1b930a52e9a7da83), inspected locally: `RefHandle` is uint32, `native_handle()` supplies it, spin-lock owner is DWORD0, UI lock is158, NiBound radius is0C. **Source (offline binary):** recomputed executable SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f` and Address Library SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842`. Static **PASS**: ProcessMessages1169E77 passes UI+158 to guard199FA0;199FC3 compares owner DWORD0 to current thread and199FC7 increments count+4 on recursion. Message dispatch116A3DA and MapMenu camera-update call99C6AC support the nested-update case. ActivatePickRef75159E reads crosshair+4; guarded call7515FE remains `E8 DD D5 A2 FF`. World-bound aggregationEE2944 clears radiusF0, with centreE4/E8/EC and radiusF0 copied atEE297F..EE29AD. Audit script/log: `/tmp/dyl200-pass4/audit.py`, `audit.log`; preliminary unrelated lock disassembly is retained in `audit-exploratory.log`, superseded by the corrected addresses. No binary material was added to Git and no GPL code was copied.
+
+Jobs were declared before execution in `/tmp/dyl200-pass4/jobs.md`, owner this fourth-pass worker, with logs, PIDs, deadlines and task-only timeout cleanup. Actual results:
+
+| Command | Actual result |
+| --- | --- |
+| `timeout 600 bash /tmp/dyl200-pass4/focused.sh` | **PASS**,2 cursor executables; `focused.log` and final `focused-final.log` after removing the remaining initializer-only assertion. |
+| `timeout 600 bash /tmp/dyl200-pass4/portable.sh` | **PASS**,10 Camera +2 Selection executables; `portable.log`, tool session54348 exited0. |
+| Camera, each `modules/camera/tests/*_test.cpp`: `g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I modules/camera/include "$test" -o "$RUNNER_TEMP/$name"`, then `"$RUNNER_TEMP/$name"` | **PASS**, exact CI commands; `RUNNER_TEMP=/tmp/dyl200-pass4`. |
+| Selection, each `modules/selection/tests/*_test.cpp`: `g++ -std=c++20 -pthread -Wall -Wextra -Wshadow -Werror -pedantic "$test" -o "$RUNNER_TEMP/$name"`, then `"$RUNNER_TEMP/$name"` | **PASS**, exact CI commands. |
+| `timeout 600 python3 -B -m unittest discover -s tools/tests` | **PASS**,26 tests, `OK`; `python.log`. Produced archives are disposable synthetic test fixtures, not DLL/package evidence. |
+| `timeout 120 python3 -B /tmp/dyl200-pass4/audit.py` | **PASS**, hashes/address assertions and inspected disassembly; `audit.log`. |
+| `git diff --check` | **PASS**. |
+
+Unverified: native MSVC /W4 /WX compilation/link, actual registration/callback timing, menuMap reader synchronization on the fallback, Pick/Activate concurrency, corpse projection, hover feel, native hold-grab, all runtime configurations and acceptance routes. No new DLL/package hashes or owner acceptance. Engineering decisions: explicit list readiness, terminal registration failure with one safe fallback, three-update grace after age expiry, atomic permit handle and exit guard; no owner ruling changed. **Owner questions:** none new; existing binding/feel proposals remain pending runtime evidence and owner review. **Proposed shared-file changes:** retain the existing proposals below; additionally document the paired cursor API rebuild and leave runtime gates open.
+
 ## Third pass — second independent review fixes (2026-11-03)
 
 **PASS: implemented review fixes and portable/offline verification. NOT_RUN: this diff's Windows build and every in-game behavior.** This section is the current handoff and supersedes the historical first/second-pass design statements below. Base/head remains `bb86f473a178acbdb6c5827d82118af04faf176c`; the owner reports that base passed Windows CI, which is not build evidence for this uncommitted diff. Host: `dq-MEG-Z590-Trident-X-MS-B926`, Linux, g++ Ubuntu15.2.0-16ubuntu1, Python3.14.4. Read AGENTS, README, STATUS, MVP scope, PHASE_5/P5-03, targeting research, ARCHITECTURE and the connected DYL-200 issue. D026 and the supplied owner brief supersede the ticket's obsolete BTPS text.

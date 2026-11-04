@@ -28,6 +28,7 @@ struct CursorFrame {
     std::uint32_t authorizedTarget = 0; // live atomic authorization, may be newer than snapshot
     std::uint64_t aliveRefreshes = 0; // definite attempts, including exhausted/capped scans
     double refreshSeconds = .1;
+    std::uint32_t listReady = 0; // zero with viable=1 withholds the list; count=0 alone is not empty
 };
 struct Interface {
     std::uint32_t size;
@@ -65,11 +66,14 @@ using GetAPI = const Interface* (*)(std::uint32_t requestedVersion);
 // Cursor extension: require the entire Interface size, including getCursorFrame.
 // CursorFrame uses an exact size check; rebuild both cursor consumers together.
 // Read once per main-thread frame. viable describes world/session eligibility,
-// independently of available (a validated target) or count (zero is valid).
+// independently of available (a validated target). listReady=1,count=0 is empty;
+// listReady=0 withholds the list and must not revoke hover while viable.
 // aliveRefreshes advances on every definite scan attempt, including validation,
 // reference/visit and ray budget exhaustion; contention/indeterminate reads do not
-// advance it. completedRefreshes remains the usable-scan diagnostic counter.
-// Bound staleness by max(0.5, 3*refreshSeconds); available/count describe usability.
+// advance it. Cursor-eligible native passthroughs also advance it before entry.
+// completedRefreshes remains the usable-scan diagnostic counter. Camera bounds
+// age by max(0.5, 3*refreshSeconds), then requires three further engine updates
+// without liveness before ending capture; a single hitch is not session loss.
 // setCursorMode(1) enters EMPTY exclusive mode; (2) queries session, (0) exits.
 // Only query failure or stale alive refreshes imply session loss.
 // setCursorTarget(0,cycles) revokes authorization synchronously, without waiting
@@ -80,6 +84,8 @@ using GetAPI = const Interface* (*)(std::uint32_t requestedVersion);
 // mailbox throttle. replies counts consumed cursor requests, including rejection.
 // The activation-path handle resolver checks the current cursor token, so an E
 // between clear/entry and the next Pick cannot activate an old native handle.
+// Matching permits resolve the stored cursor handle while native Pick is in
+// flight. After exit the last injected handle is refused until Pick completes.
 // Pick also suppresses activation/grab handles on contention or validation failure.
 // StartGrabObject reads the target directly: hold-grab revocation awaits next Pick;
 // the ActivatePickRef resolver guard does not cover that native path.

@@ -99,19 +99,33 @@ int main() {
     policy.refresh(context,{}, {},180,114,settings);
     assert(passthrough(context)==Pass::none && policy.reason()==Pass::noCandidate);
     assert(policy.order().empty());
-    api::CursorFrame empty;
-    empty.viable=1; empty.completedRefreshes=1;
-    assert(empty.viable && !empty.snapshot.available && empty.count==0);
     state.begin();
     assert(state.publish(state.read(),11));
     const auto authorized=state.read();
     assert(CursorOverride::permits(authorized,state.read(),11));
     // A repeated Pick of the same token/handle must retain its permit while
     // validation is in flight; a changed token or resolved ID never permits E.
-    const auto permit = authorized;
-    assert(CursorOverride::permits(permit,state.read(),11));
-    assert(CursorOverride::permits(permit,state.read(),11));
-    assert(!CursorOverride::permits(permit,state.read(),12));
+    std::atomic<std::uint64_t> permit{authorized};
+    std::atomic<std::uint32_t> permittedHandle{111};
+    unsigned clears = 0;
+    const auto clear = [&] { ++clears; };
+    {
+        CursorPickScope pick{state,permit,permittedHandle,clear};
+        assert(permit.load() == authorized && permittedHandle.load() == 111);
+        pick.injected = true; pick.id = 11;
+    }
+    assert(permit.load() == authorized && permittedHandle.load() == 111 && clears == 0);
+    {
+        CursorPickScope pick{state,permit,permittedHandle,clear};
+        // An early-return/refused Pick exercises the real destructor cleanup.
+    }
+    assert(permit.load() == 0 && clears == 1);
+    permit.store(authorized);
+    {
+        CursorPickScope pick{state,permit,permittedHandle,clear};
+        pick.injected = true; pick.id = 12; // wrong injection cannot retain E
+    }
+    assert(permit.load() == 0 && clears == 2);
     const auto cleared=state.clear();
     assert(cleared && !CursorOverride::permits(authorized,state.read(),11)); // E before next Pick
     assert(!state.publish(authorized,11)); // late Pick cannot resurrect authorization
@@ -121,6 +135,19 @@ int main() {
     assert(state.publish(newer,22));
     assert(CursorOverride::permits(state.read(),state.read(),22));
     assert(!CursorOverride::permits(state.read(),state.read(),11));
+    permit.store(state.read()); permittedHandle.store(222);
+    {
+        CursorPickScope pick{state,permit,permittedHandle,clear};
+        pick.injected = true; pick.id = 22;
+        assert(state.end()); // exit while Pick is in flight clears its injection
+    }
+    assert(permit.load() == 0 && permittedHandle.load() == 0 && clears == 3);
+    assert(!state.end()); // failed entry / duplicate exit must not release legacy work
+    {
+        CursorPickScope pick{state,permit,permittedHandle,clear};
+    }
+    assert(clears == 3); // ordinary native Pick remains intact
+    state.begin(); assert(state.publish(state.read(),22));
     const auto oldTarget = state.read();
     AccessGate heldGate;
     assert(heldGate.enter());

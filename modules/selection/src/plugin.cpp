@@ -51,6 +51,7 @@ CursorExchange<CursorRequest> cursorRequests;
 std::atomic<bool> sessionViable{false};
 bool activationGuardReady = false;
 std::atomic<std::uint64_t> cursorPickPermit{0};
+std::atomic<RE::RefHandle> cursorPickHandle{0};
 std::uint64_t completedRefreshes = 0, aliveRefreshes = 0, cursorReplies = 0;
 std::array<FreshPress,4> keys;
 struct RefIdentity { std::uint32_t id; RE::ObjectRefHandle handle; };
@@ -68,7 +69,7 @@ std::atomic<std::uint32_t> menuState{0}; // known / blocking / dialogue
 std::atomic<bool> inputAllowed{false}, conflictPosted{false};
 std::atomic<std::uint64_t> requestDrops{0};
 std::vector<std::uint32_t> scannedIDs;
-bool scanReady = false;
+bool scanReady = false, cursorListReady = false;
 std::string_view scanReason = "no_scan";
 std::uint32_t mainThreadID = 0;
 std::atomic<bool> installed{false}, loading{true}, invalidated{true};
@@ -255,7 +256,7 @@ void publish(bool resetState = false);
 void reset() {
     cursorOverride.end(); cursorRelease.store(false); sessionViable.store(false);
     policy.reset(); identities.clear(); discovered.clear(); scannedIDs.clear(); cellID = 0; gate.reset();
-    scanReady = false; inputAllowed.store(false); discardedEdges += CycleRequests::count(cycleRequests.take()); externalRequest.store(0);
+    scanReady = false; cursorListReady = false; inputAllowed.store(false); discardedEdges += CycleRequests::count(cycleRequests.take()); externalRequest.store(0);
     counters.target = 0; counters.candidateCount = 0; counters.latched = 0; counters.available = 0;
     counters.externalResult = static_cast<std::uint32_t>(api::Result::unavailable);
     counters.passthrough = static_cast<std::uint32_t>(Pass::invalidWorld);
@@ -573,7 +574,8 @@ void publish(bool resetState) {
     frame.completedRefreshes = completedRefreshes; frame.replies = cursorReplies;
     frame.aliveRefreshes = aliveRefreshes; frame.refreshSeconds = settings.refreshSeconds;
     const auto ids = policy.order(CursorOverride::active(cursorOverride.read()));
-    frame.count = scanReady ? static_cast<std::uint32_t>((std::min)(ids.size(),std::size(frame.ids))) : 0u;
+    frame.listReady = cursorListReady ? 1u : 0u;
+    frame.count = cursorListReady ? static_cast<std::uint32_t>((std::min)(ids.size(),std::size(frame.ids))) : 0u;
     std::copy_n(ids.begin(),frame.count,frame.ids);
     // A reader can defer publication, never a Pick or its native prompt.
     static_cast<void>(publication.write(frame));
@@ -596,15 +598,19 @@ void diagnostic(double now) {
 }
 bool refresh(double now) {
     if (invalidated.exchange(false)) reset();
-    const auto c = cursorContext(context(),CursorOverride::active(cursorOverride.read()));
+    const auto rawContext = context();
+    const auto c = cursorContext(rawContext,CursorOverride::active(cursorOverride.read()));
     const auto state = passthrough(c);
     if (state != lastState || c.sneaking != lastSneaking) gate.reset();
     lastState = state; lastSneaking = c.sneaking;
-    sessionViable.store(state == Pass::none);
+    sessionViable.store(passthrough(cursorContext(rawContext,true)) == Pass::none);
     if (state != Pass::none) {
         cursorOverride.end();
         policy.refresh(c,{}, {},0,now,settings); identities.clear();
-        scanReady = false; inputAllowed.store(false);
+        scanReady = false; cursorListReady = false; inputAllowed.store(false);
+        // A definite cursor-eligible context keeps entry fresh even when ordinary
+        // Selection deliberately passes through combat or the sneak actor.
+        if (sessionViable.load()) ++aliveRefreshes;
         discardedEdges += CycleRequests::count(cycleRequests.take()); externalRequest.store(0);
         scanReason = passName(state); publish(); return false;
     }
@@ -615,7 +621,7 @@ bool refresh(double now) {
     const auto expired = policy.expire(body,now,latchSettings);
     if (!expired.empty()) {
         selectionEvent(EventKind::latch,policy.current(),EventSource::nearest,expired);
-        scanReady = false; inputAllowed.store(false);
+        scanReady = false; cursorListReady = false; inputAllowed.store(false);
         scanReason = expired == "timeout" ? "latch_timeout" : "latch_movement";
         forwardReason(scanReason);
     }
@@ -687,10 +693,11 @@ bool refresh(double now) {
         });
     }
     discovered.clear();
-    scanReady = false;
+    scanReady = false; cursorListReady = false;
     scanReason = !complete ? "incomplete_scan" : checked.unknown ? "validation_unknown" : "none";
     if (complete && !checked.unknown) {
         scanReady = policy.acceptScan(c,checked,body,radius,now,latchSettings,true);
+        cursorListReady = !checked.exhausted || scanReady;
         if (!scanReady) scanReason = checked.exhausted ? "validation_limit" : passName(policy.reason());
         if (!checked.exhausted || scanReady) ++completedRefreshes;
         const auto authorized = CursorOverride::target(cursorOverride.read());
@@ -788,19 +795,9 @@ void consumeRequests(double now, RE::PlayerCharacter* player) {
 void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* origin, const RE::NiPoint3* direction) {
     threadLog(true);
     StateAccess access;
-    struct CursorPick {
-        RE::CrosshairPickData* data;
-        bool injected = false;
-        std::uint32_t id = 0;
-        bool beganExclusive = CursorOverride::active(cursorOverride.read());
-        ~CursorPick() {
-            const auto cursor = cursorOverride.read();
-            if ((beganExclusive && (!injected || !CursorOverride::active(cursor))) || CursorOverride::suppress(cursor,injected,id)) {
-                cursorPickPermit.store(0);
-                if (data) { data->target = {}; data->grabPickRef = {}; data->targetCollider = nullptr; }
-            }
-        }
-    } cursorPick{data};
+    CursorPickScope cursorPick{cursorOverride,cursorPickPermit,cursorPickHandle,[&] {
+        if (data) { data->target = {}; data->grabPickRef = {}; data->targetCollider = nullptr; }
+    }};
     // Keep the last matching permit while native Pick/validation runs. Revoke
     // on a refused outcome below; token/ID changes already fail the E guard.
     previousPick(data,world,origin,direction);
@@ -842,6 +839,7 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
         // Unknown rays retain latch/list and retry at the next Pick.
         if (validation == Validation::unknown) gate.reset();
         scanReady = false; scanReason = validation == Validation::unknown ? "validation_unknown" : "target_validation";
+        cursorListReady = validation == Validation::invalid;
         inputAllowed.store(false); publish(); nativeDecision(scanReason); return;
     }
     RE::ObjectRefHandle handle;
@@ -865,6 +863,7 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
     if (change.clearCollider) data->targetCollider = nullptr;
     // targetActor and collisionPoint remain native (aim magnetism / SmoothCam).
     cursorPick.injected = true; cursorPick.id = target->GetFormID();
+    cursorPickHandle.store(CursorOverride::active(cursorState) ? handle.native_handle() : 0);
     cursorPickPermit.store(cursorState);
     selectionEvent(EventKind::pick,target->GetFormID(),selectionSource(),"none",target.get());
 }
@@ -935,7 +934,7 @@ api::Result setCursorMode(std::uint32_t enabled) {
     if (enabled == 2) return CursorOverride::active(cursorOverride.read()) ? api::Result::ok : api::Result::unavailable;
     if (enabled > 2) return api::Result::invalidArgument;
     if (!enabled) {
-        cursorOverride.end(); externalRequest.store(0); cursorRelease.store(true);
+        if (cursorOverride.end()) { externalRequest.store(0); cursorRelease.store(true); }
         return api::Result::ok;
     }
     if (!installed.load()) return api::Result::unavailable;
@@ -986,12 +985,22 @@ using ResolveActivation = bool(*)(RE::RefHandle&,RE::NiPointer<RE::TESObjectREFR
 ResolveActivation previousResolveActivation = nullptr;
 bool resolveActivation(RE::RefHandle& handle, RE::NiPointer<RE::TESObjectREFR>& out) {
     const auto before = cursorOverride.read();
-    if (!CursorOverride::active(before)) return previousResolveActivation(handle,out);
+    if (!CursorOverride::active(before)) {
+        // Exit cannot write job-owned CrosshairPickData. Refuse its last injected
+        // handle until the next Pick completes and clears/replaces the permit.
+        if (handle && handle == cursorPickHandle.load() && cursorPickPermit.load()) { out.reset(); return false; }
+        return previousResolveActivation(handle,out);
+    }
     // Runs at ActivatePickRef's one reference resolution, after native target or
     // command fallback. Never write shared CrosshairPickData from the API thread.
     if (!CursorOverride::target(before) || cursorPickPermit.load() != before ||
         invalidated.load() || loading.load() || menuState.load() != 1u) { out.reset(); return false; }
-    const bool result = previousResolveActivation(handle,out);
+    // Native Pick overwrites data->target before cursor validation completes.
+    // The matching permit belongs to the stored cursor handle, not that incoming
+    // centre pick. Publish the handle before its token; check token and FormID
+    // again after resolving so concurrent changes cannot borrow authorization.
+    auto permittedHandle = cursorPickHandle.load();
+    const bool result = permittedHandle && previousResolveActivation(permittedHandle,out);
     if (!result || !out || cursorPickPermit.load() != before ||
         !CursorOverride::permits(before,cursorOverride.read(),out->GetFormID())) {
         out.reset(); return false;

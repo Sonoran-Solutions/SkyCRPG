@@ -79,6 +79,7 @@ inline std::uint32_t choose(std::span<const Candidate> candidates, Point pointer
     return id;
 }
 inline bool within(std::span<const Candidate> candidates, std::uint32_t id, Point point, float radius) {
+    radius *= 1.25f;
     return id && std::any_of(candidates.begin(),candidates.end(),[&](const auto& c) {
         return c.id == id && distance2(c.point,point) <= radius*radius;
     });
@@ -87,34 +88,49 @@ inline bool inFront(const float row[4], float x, float y, float z) {
     const float w = row[0]*x+row[1]*y+row[2]*z+row[3];
     return std::isfinite(w) && w > 1e-5f;
 }
-template<class Register> bool prepareOverlay(bool& registered, bool active, bool pending, Register attempt) {
-    if (!registered) {
-        assert(!active && !pending); // no session may precede main-thread registration
+enum class Registration { deferred, ready, failed };
+struct OverlayRegistration {
+    Registration state = Registration::deferred;
+    bool fallbackUsed = false;
+    template<class Register> bool prepare(bool fallback, bool safe, bool active, bool pending, Register attempt) {
+        if (state == Registration::ready) return true;
+        if (state == Registration::failed || !safe || (fallback && fallbackUsed)) return false;
+        assert(!active && !pending);
         if (active || pending) return false;
-        registered = attempt();
+        if (fallback) fallbackUsed = true;
+        state = attempt();
+        return state == Registration::ready;
     }
-    return registered;
-}
+};
 struct HoverAttempts {
     std::uint64_t refresh = 0;
     std::array<std::uint32_t,16> ids{};
     std::size_t count = 0;
-    bool claim(std::uint32_t id, std::uint64_t value) {
+    bool allowed(std::uint32_t id, std::uint64_t value) {
         if (refresh != value) { refresh = value; count = 0; }
-        if (!id || count == ids.size() || std::find(ids.begin(),ids.begin()+count,id) != ids.begin()+count) return false;
-        ids[count++] = id;
-        return true;
+        return id && count < ids.size() && std::find(ids.begin(),ids.begin()+count,id) == ids.begin()+count;
+    }
+    void reject(std::uint32_t id, std::uint64_t value) {
+        if (allowed(id,value)) ids[count++] = id;
     }
 };
 struct Freshness {
     std::uint64_t refresh = 0;
     double at = 0, deadline = .5;
-    bool seen = false;
-    void observe(std::uint64_t value, double now, double interval = .1) {
+    std::uint32_t staleUpdate = 0;
+    bool seen = false, stalled = false;
+    void observe(std::uint64_t value, double now, std::uint32_t frame, double interval = .1) {
         deadline = (std::max)(.5,3*(std::isfinite(interval) ? std::clamp(interval,.1,1.0) : .1));
-        if (value && (!seen || refresh != value)) { refresh = value; at = now; seen = true; }
+        if (value && (!seen || refresh != value)) { refresh = value; at = now; staleUpdate = frame; seen = true; stalled = false; }
     }
-    bool usable(double now, bool sessionLost) const { return !sessionLost && seen && now >= at && now-at < deadline; }
+    bool usable(double now, std::uint32_t frame, bool sessionLost) {
+        if (sessionLost || !seen || now < at) return false;
+        if (now-at < deadline) return true;
+        // Start the update grace when age first expires: a hitch may follow
+        // several normal updates since the last scan, even at a legal interval.
+        if (!stalled) { staleUpdate = frame; stalled = true; }
+        return static_cast<std::uint32_t>(frame-staleUpdate) < 3u;
+    }
 };
 struct Latch {
     std::uint32_t id = 0;
