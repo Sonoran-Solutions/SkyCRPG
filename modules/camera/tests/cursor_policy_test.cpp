@@ -6,6 +6,21 @@ using namespace skycrpg::camera::cursor;
 int main() {
     const Eligibility ready{true,true,false,true,false,true,false,false,false,false,true,true,true};
     assert(refusal(ready) == Exit::none);
+    // A toggle may arrive before the first main service. Registration is tried
+    // even on idle services, and a deferred attempt preserves that request.
+    bool registered = false, requested = true;
+    unsigned registrationCalls = 0;
+    const auto registerOnMain = [&] { return ++registrationCalls > 1; };
+    assert(!prepareOverlay(registered,false,false,registerOnMain));
+    assert(requested && !registered);
+    assert(prepareOverlay(registered,false,false,registerOnMain));
+    assert(registered && requested && registrationCalls == 2);
+    assert(prepareOverlay(registered,true,false,registerOnMain));
+    assert(registrationCalls == 2);
+    requested = false;
+    bool idleRegistered = false;
+    assert(prepareOverlay(idleRegistered,false,false,[] { return true; }));
+    assert(!requested && idleRegistered);
     Session session;
     assert(session.toggle(ready,1920,1080));
     assert(session.pointer.point.x == 960 && session.pointer.point.y == 540);
@@ -58,6 +73,19 @@ int main() {
     assert(!freshness.usable(1.5,false));
     freshness.observe(2,1.5);
     assert(freshness.usable(1.6,false) && !freshness.usable(1.6,true));
+    freshness.observe(3,2,1.0); // maximum legal refresh interval
+    assert(freshness.usable(4.99,false) && !freshness.usable(5,false));
+    freshness.observe(4,3,1.0); // exhausted/capped attempt is still alive
+    assert(freshness.usable(5.5,false));
+    freshness.observe(4,5.5,1.0); // repeated publication cannot extend freshness
+    assert(!freshness.usable(6,false));
+    HoverAttempts attempts;
+    assert(attempts.claim(11,1));
+    assert(!attempts.claim(11,1)); // rejection/busy/missing reply: no per-frame retry
+    assert(attempts.claim(22,1)); // a direct hop is still immediate
+    assert(!attempts.claim(11,1)); // hopping away and back does not bypass backoff
+    assert(attempts.claim(11,2));
+    assert(!attempts.claim(0,2)); // empty revocation is never throttled here
     // Empty list is pointer over nothing, not an eligibility failure.
     assert(session.toggle(ready,100,80));
     assert(session.active && choose({},session.pointer.point,48)==0);

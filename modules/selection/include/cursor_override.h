@@ -3,8 +3,22 @@
 #include <atomic>
 #include <cstdint>
 #include <limits>
+#include "skycrpg/SelectionAPI.h"
 
 namespace skycrpg::selection {
+template<class T> T cursorContext(T context, bool active) {
+    if (active) { context.nativeLiveActor = false; context.combat = false; }
+    return context;
+}
+constexpr bool finishedScan(bool complete, bool unknown, bool contended, bool capped, bool rayCapped) {
+    return !contended && ((complete && !unknown) || capped || (complete && rayCapped));
+}
+constexpr api::Result legacyResult(api::Result result) {
+    return result == api::Result::busy ? api::Result::unavailable : result;
+}
+constexpr api::Result legacyReadResult(bool acquired, bool ready = true) {
+    return acquired && ready ? api::Result::ok : api::Result::unavailable;
+}
 inline bool cursorRequestCurrent(bool active, std::uint64_t expected, std::uint64_t cycles) {
     return !active || expected == cycles;
 }
@@ -53,6 +67,11 @@ private:
     }
     std::atomic<std::uint64_t> state_{0}, next_{0};
 };
+template<class Submit> api::Result replaceCursorTarget(CursorOverride& state, std::uint32_t id, Submit submit) {
+    const auto token = state.clear();
+    if (!token) return api::Result::unavailable;
+    return submit(token,id);
+}
 // Short independent mailbox/publication gate. Pick never waits for readers.
 // A failed try leaves the last complete value untouched; no racy seqlock copies.
 template<class T> class CursorExchange {

@@ -9,6 +9,9 @@ static_assert(offsetof(RE::IMenu,menuFlags) == 0x1C);
 static_assert(offsetof(RE::NiCamera::RUNTIME_DATA2,port) == 0x24);
 static_assert(offsetof(RE::GViewport,width) == 0x10);
 static_assert(offsetof(RE::GViewport,height) == 0x14);
+static_assert(offsetof(RE::NiAVObject,worldBound) == 0xE4);
+static_assert(offsetof(RE::NiBound,center) == 0);
+static_assert(offsetof(RE::UI,processMessagesLock) == 0x158);
 constexpr char menuName[] = "SkyCRPGCameraWorldPointer";
 constexpr auto flags = static_cast<std::uint32_t>(RE::UI_MENU_FLAGS::kRequiresUpdate) | static_cast<std::uint32_t>(RE::UI_MENU_FLAGS::kAllowSaving);
 const api::Interface* selection = nullptr;
@@ -17,8 +20,9 @@ cursor::Session session;
 std::atomic<bool> dataReady{false}, worldLoaded{false}, padInput{false};
 std::atomic<unsigned> stop{0}, toggle{0}, held{0};
 bool registered = false, pending = false, resolving = false;
-double pendingSince = 0, submittedAt = 0;
+double pendingSince = 0;
 cursor::Freshness freshness;
+cursor::HoverAttempts hoverAttempts;
 std::uint32_t servicedFrame = 0;
 bool serviced = false;
 api::CursorFrame cachedFrame;
@@ -27,7 +31,7 @@ std::size_t projectedCount = 0;
 bool waiting = false;
 std::uint32_t submittedTarget = 0;
 std::uint64_t submittedReplies = 0;
-std::uint64_t refresh = 0, cycles = 0, sentRefresh = UINT64_MAX, projections = 0, pushes = 0;
+std::uint64_t refresh = 0, cycles = 0, projections = 0, pushes = 0;
 std::uint32_t sentTarget = 0;
 RE::FormID cell = 0;
 unsigned traceLines = 0;
@@ -45,7 +49,7 @@ void refuse(Exit reason) {
     if (refusalBits & bit) return;
     refusalBits |= bit;
     char line[128]{};
-    constexpr std::array names{"none","toggle","disabled","lifecycle","menu","load","death","cell","first-person","special","precision","lock","F6","F8","selection","overlay","thread"};
+    constexpr std::array names{"none","toggle","disabled","lifecycle","menu","load","death","cell","first-person","special","precision","lock","F6","F8","selection","overlay","thread","stale"};
     std::snprintf(line,sizeof(line),"Cursor refused/exit reason=%s",names[static_cast<unsigned>(reason)]);
     log(line);
 }
@@ -53,6 +57,7 @@ void service();
 void leave(Exit reason);
 bool ownMenu(RE::IMenu* menu);
 bool nativeMenu();
+Exit captureExit();
 class Overlay final : public RE::IMenu {
 public:
     RE::GFxValue pointer, reticle;
@@ -132,7 +137,8 @@ public:
     void PostDisplay() override {
         if (!mainThread()) { stop.store(static_cast<unsigned>(Exit::thread)); return; }
         if (!session.active) return;
-        if (stop.load() || !freshness.usable(lockClock(),false) || !ownMenu(this) || nativeMenu() || !paint()) { leave(Exit::overlay); return; }
+        if (const auto reason = captureExit(); reason != Exit::none) { leave(reason); return; }
+        if (!ownMenu(this) || !paint()) { leave(Exit::overlay); return; }
         if (uiMovie) uiMovie->Display();
     }
 };
@@ -156,6 +162,13 @@ bool nativeMenu() {
     return false;
 }
 bool apiLive() { return selection && selectionModule; } // process-lifetime DLL; no live unload contract
+Exit captureExit() {
+    if (const auto reason = stop.exchange(0)) return static_cast<Exit>(reason);
+    if (nativeMenu()) return Exit::menu;
+    if (!apiLive() || selection->setCursorMode(2) != api::Result::ok) return Exit::selection;
+    if (!freshness.usable(lockClock(),false)) return Exit::stale;
+    return Exit::none;
+}
 void resolve() {
     if (resolving || !dataReady.load()) return;
     resolving = true;
@@ -181,7 +194,7 @@ void leave(Exit reason) {
         if (queue) queue->AddMessage(menuName,RE::UI_MESSAGE_TYPE::kHide,nullptr);
         refuse(reason);
     }
-    cell = 0; sentRefresh = UINT64_MAX; sentTarget = 0;
+    cell = 0; sentTarget = 0; hoverAttempts = {};
 }
 void requestExit(Exit reason) {
     if (!cursorSettings.enabled || !dataReady.load()) return;
@@ -201,8 +214,13 @@ RE::NiCamera* projectionCamera() {
     return nullptr;
 }
 bool centre(RE::TESObjectREFR* ref, RE::NiPoint3& result) {
-    if (!ref || !ref->Is3DLoaded() || ref->IsDeleted() || ref->IsDisabled() ||
-        (ref->GetFormType() == RE::FormType::ActorCharacter && ref->IsDead())) return false;
+    if (!ref || ref->IsDeleted() || ref->IsDisabled()) return false;
+    const auto root = ref->Get3D();
+    if (!root) return false;
+    if (ref->GetFormType() == RE::FormType::ActorCharacter && ref->IsDead()) {
+        result = root->worldBound.center;
+        return std::isfinite(result.x) && std::isfinite(result.y) && std::isfinite(result.z);
+    }
     const auto base = ref->GetBaseObject();
     if (!base) return false;
     const auto lo = base->boundData.boundMin, hi = base->boundData.boundMax;
@@ -233,11 +251,11 @@ void clearAway() {
         sentTarget = 0; waiting = false;
     }
 }
-void pick(const api::CursorFrame& frame, bool fresh, double now) {
+void pick(const api::CursorFrame& frame, bool fresh) {
     if (!overlay) return;
     const auto start = std::chrono::steady_clock::now();
     const auto& snapshot = frame.snapshot;
-    if (fresh && (frame.completedRefreshes != sentRefresh || snapshot.cyclesTotal != cycles)) {
+    { // Re-project cached IDs once per engine update, including while walking.
         if (frame.count > projected.size()) { leave(Exit::selection); return; }
         const auto camera = projectionCamera();
         const auto player = RE::PlayerCharacter::GetSingleton();
@@ -258,17 +276,16 @@ void pick(const api::CursorFrame& frame, bool fresh, double now) {
             const auto delta = world-player->GetPosition();
             projected[projectedCount++] = {frame.ids[i],screen,delta.SqrLength()};
         }
-        if (cycles != snapshot.cyclesTotal) {
+        if (fresh && cycles != snapshot.cyclesTotal) {
             cycles = snapshot.cyclesTotal;
             session.latch.cycle(snapshot.latched ? snapshot.target : 0,session.pointer.point);
-            waiting = false;
+            waiting = false; hoverAttempts = {};
         }
-        sentRefresh = frame.completedRefreshes;
     }
     if (fresh) {
         sentTarget = frame.authorizedTarget;
         if (waiting && frame.replies != submittedReplies) {
-            // queued is not applied: rejected/unknown hover is retried below.
+            // queued is not applied; retry rejection only after another scan attempt.
             waiting = false;
             if (snapshot.externalTarget != submittedTarget || snapshot.externalResult != static_cast<std::uint32_t>(api::Result::ok))
                 sentTarget = 0;
@@ -276,25 +293,30 @@ void pick(const api::CursorFrame& frame, bool fresh, double now) {
     }
     clearAway();
     const auto id = retainLatch() ? session.latch.id : cursor::choose(points(),session.pointer.point,cursorSettings.radius);
-    if (id != sentTarget && (!waiting || id != submittedTarget || now-submittedAt >= .2)) {
+    if (id != sentTarget && hoverAttempts.claim(id,frame.aliveRefreshes)) {
         const auto result = selection->setCursorTarget(id,cycles); ++pushes;
         if (result == api::Result::queued) {
-            waiting = true; submittedTarget = id; submittedReplies = frame.replies; submittedAt = now; sentTarget = 0;
+            waiting = true; submittedTarget = id; submittedReplies = frame.replies; sentTarget = 0;
         } else if (result == api::Result::ok) { sentTarget = 0; waiting = false; }
-        // Busy/invalid requests retry on a later update; only session query or
+        // Busy/invalid requests retry once per scan attempt; only session query or
         // bounded stale refreshes end capture, never a transient mailbox result.
     }
     framePickMicros += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now()-start).count());
 }
-void registerOverlay() {
-    if (registered || !cursorSettings.enabled || !mainThread()) return;
+bool registerOverlay() {
+    if (!mainThread()) { refuse(Exit::thread); return false; }
     const auto ui = RE::UI::GetSingleton();
-    if (!ui) return;
-    // kDataLoaded only, before sessions and UI message processing for this menu.
+    if (!ui) {
+        static bool deferred = false;
+        if (!deferred) { log("Cursor overlay registration deferred: UI unavailable; retry on main service."); deferred = true; }
+        return false;
+    }
+    // UI+0x158 is reentrant; first main service precedes every cursor session.
     const RE::BSSpinLockGuard lock(ui->processMessagesLock);
-    if (ui->menuMap.find(std::string_view(menuName)) != ui->menuMap.end()) { refuse(Exit::overlay); return; }
-    ui->Register(menuName,Overlay::create); registered = true;
+    if (ui->menuMap.find(std::string_view(menuName)) != ui->menuMap.end()) { refuse(Exit::overlay); return false; }
+    ui->Register(menuName,Overlay::create);
+    return true;
 }
 void traceFrame() {
     if (!mainThread()) return;
@@ -311,6 +333,7 @@ void traceFrame() {
 }
 void service() {
     if (!cursorSettings.enabled || !mainThread() || !dataReady.load()) return;
+    if (!cursor::prepareOverlay(registered,session.active,pending,registerOverlay)) return;
     if (const auto reason = stop.exchange(0)) { leave(static_cast<Exit>(reason)); return; }
     const auto graphics = RE::BSGraphics::State::GetSingleton();
     const auto frameState = graphics ? graphics->GetFrameState1799() : nullptr;
@@ -327,18 +350,19 @@ void service() {
     const auto now = lockClock();
     api::CursorFrame frame;
     const bool fresh = apiLive() && selection->getCursorFrame(&frame) == api::Result::ok;
-    if (fresh) { cachedFrame = frame; freshness.observe(frame.completedRefreshes,now); }
+    if (fresh) { cachedFrame = frame; freshness.observe(frame.aliveRefreshes,now,frame.refreshSeconds); }
     const auto& snapshot = cachedFrame.snapshot;
-    refresh = cachedFrame.completedRefreshes;
+    refresh = cachedFrame.aliveRefreshes;
     const bool lost = (session.active && (!apiLive() || selection->setCursorMode(2) != api::Result::ok));
     cursor::Eligibility e{settings.enabled,c.prerequisites && c.world,nativeMenu(),worldLoaded.load() && !loading,player && player->IsDead(),
         !cell || (parent && parent->GetFormID() == cell),c.firstPerson,c.special || c.slide,
-        player && player->IsWeaponDrawn(),c.targetLock,apiLive() && freshness.usable(now,lost),true,true};
+        player && player->IsWeaponDrawn(),c.targetLock,apiLive() && !lost,true,true};
     // Entry interrupts through the existing lease path; wait for TDM's unlocked
     // acknowledgement, never capture a frame while the lock still owns aim.
     if (request && e.locked) { interruptTargetLock(); e.locked = false; }
     if (pending && e.locked && now-pendingSince < .5) e.locked = false;
-    const auto reason = cursor::refusal(e);
+    auto reason = cursor::refusal(e);
+    if (reason == Exit::none && !freshness.usable(now,false)) reason = Exit::stale;
     if (reason != Exit::none) { refuse(reason); leave(reason); return; }
     if (request) {
         const auto map = RE::ControlMap::GetSingleton();
@@ -367,18 +391,19 @@ void service() {
         }
         static_cast<void>(session.toggle(e,overlay->width,overlay->height));
         pending = false; recenter = false; cycles = snapshot.cyclesTotal;
-        sentTarget = 0; sentRefresh = UINT64_MAX;
+        sentTarget = 0; hoverAttempts = {};
     }
     if (!session.active) return;
     if (!overlay || !ownMenu(overlay) || !overlay->paint()) { leave(Exit::overlay); return; }
-    pick(cachedFrame,fresh,now);
+    pick(cachedFrame,fresh);
 }
 bool look(const RE::NiPoint2& input) {
     if (!cursorSettings.enabled) return false;
     if (!mainThread()) { requestExit(Exit::thread); return false; }
     if (!session.active || !overlay) return false;
     if (toggle.exchange(0)) { leave(Exit::toggle); return false; }
-    if (stop.load() || !freshness.usable(lockClock(),false) || !ownMenu(overlay) || nativeMenu()) { leave(Exit::overlay); return false; }
+    if (const auto reason = captureExit(); reason != Exit::none) { leave(reason); return false; }
+    if (!ownMenu(overlay)) { leave(Exit::overlay); return false; }
     session.pointer.move({input.x,input.y},cursorSettings.sensitivity,overlay->width,overlay->height);
     clearAway();
     if (!overlay->paint()) { leave(Exit::overlay); return false; }

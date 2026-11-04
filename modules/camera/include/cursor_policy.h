@@ -4,6 +4,7 @@
 #include <array>
 #include <span>
 #include <limits>
+#include <cassert>
 
 namespace skycrpg::camera::cursor {
 struct Settings {
@@ -25,7 +26,7 @@ inline Settings validate(Settings s, const camera::Settings& camera) {
     s.trace = (std::min)(s.trace,512u);
     return s;
 }
-enum class Exit { none, toggle, disabled, lifecycle, menu, load, death, cell, firstPerson, special, precision, lock, f6, f8, selection, overlay, thread };
+enum class Exit { none, toggle, disabled, lifecycle, menu, load, death, cell, firstPerson, special, precision, lock, f6, f8, selection, overlay, thread, stale };
 constexpr Exit interruptKey(bool pad, int id, bool nativePOV) {
     if (!pad && id == 64) return Exit::f6;
     if (!pad && id == 66) return Exit::f8;
@@ -86,14 +87,34 @@ inline bool inFront(const float row[4], float x, float y, float z) {
     const float w = row[0]*x+row[1]*y+row[2]*z+row[3];
     return std::isfinite(w) && w > 1e-5f;
 }
+template<class Register> bool prepareOverlay(bool& registered, bool active, bool pending, Register attempt) {
+    if (!registered) {
+        assert(!active && !pending); // no session may precede main-thread registration
+        if (active || pending) return false;
+        registered = attempt();
+    }
+    return registered;
+}
+struct HoverAttempts {
+    std::uint64_t refresh = 0;
+    std::array<std::uint32_t,16> ids{};
+    std::size_t count = 0;
+    bool claim(std::uint32_t id, std::uint64_t value) {
+        if (refresh != value) { refresh = value; count = 0; }
+        if (!id || count == ids.size() || std::find(ids.begin(),ids.begin()+count,id) != ids.begin()+count) return false;
+        ids[count++] = id;
+        return true;
+    }
+};
 struct Freshness {
     std::uint64_t refresh = 0;
-    double at = 0;
+    double at = 0, deadline = .5;
     bool seen = false;
-    void observe(std::uint64_t value, double now) {
+    void observe(std::uint64_t value, double now, double interval = .1) {
+        deadline = (std::max)(.5,3*(std::isfinite(interval) ? std::clamp(interval,.1,1.0) : .1));
         if (value && (!seen || refresh != value)) { refresh = value; at = now; seen = true; }
     }
-    bool usable(double now, bool sessionLost) const { return !sessionLost && seen && now >= at && now-at < .5; }
+    bool usable(double now, bool sessionLost) const { return !sessionLost && seen && now >= at && now-at < deadline; }
 };
 struct Latch {
     std::uint32_t id = 0;

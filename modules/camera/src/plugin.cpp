@@ -1097,7 +1097,10 @@ void messages(SKSE::MessagingInterface::Message* message) {
             source->AddEventSink<RE::TESLoadGameEvent>(&events);
             source->AddEventSink<RE::TESCellAttachDetachEvent>(&events);
         }
-        if (cursorSettings.enabled) { cursorMode::registerOverlay(); cursorMode::dataReady.store(true); }
+        if (cursorSettings.enabled) {
+            log("Cursor overlay registration deferred to first main-thread service.");
+            cursorMode::dataReady.store(true);
+        }
         log("Camera input policy installed: one chained native look call; SmoothCam sole transform writer.");
         break;
     }

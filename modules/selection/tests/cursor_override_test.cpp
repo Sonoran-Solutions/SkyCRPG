@@ -47,6 +47,40 @@ int main() {
     Context context;
     context.enabled=context.runtime=context.reads=context.world=context.thirdPerson=true;
     context.loading=context.dead=context.menu=context.dialogue=context.firstPerson=context.special=false;
+    auto sneaking = context; sneaking.sneaking = sneaking.nativeLiveActor = true;
+    assert(passthrough(cursorContext(sneaking,false)) == Pass::nativeSneakActor);
+    assert(passthrough(cursorContext(sneaking,true)) == Pass::none);
+    sneaking.combat = true;
+    assert(passthrough(cursorContext(sneaking,false)) == Pass::combat);
+    assert(passthrough(cursorContext(sneaking,true)) == Pass::none);
+    // Cursor adjustment cannot mask any other native passthrough, even when
+    // combat/screen-centre sneaking would otherwise be present too.
+    const std::array exits{std::pair{&Context::telekinesis,Pass::telekinesis},
+        std::pair{&Context::armed,Pass::armed},std::pair{&Context::special,Pass::special},
+        std::pair{&Context::menu,Pass::menu},std::pair{&Context::dead,Pass::dead}};
+    for (const auto& [field,reason] : exits) {
+        auto blocked = sneaking; blocked.*field = true;
+        assert(passthrough(cursorContext(blocked,true)) == reason);
+    }
+    for (const auto result : {api::Result::ok,api::Result::unavailable,api::Result::wrongThread,
+        api::Result::disabled,api::Result::invalidTarget,api::Result::invalidArgument,api::Result::queued})
+        assert(legacyResult(result) == result);
+    assert(legacyResult(api::Result::busy) == api::Result::unavailable); // legacy setter during cursor mode too
+    assert(legacyReadResult(false) == api::Result::unavailable);
+    assert(legacyReadResult(true,false) == api::Result::unavailable);
+    assert(legacyReadResult(true,true) == api::Result::ok);
+    // Definite attempts advance liveness even without any usable selection.
+    std::uint64_t alive = 0;
+    const std::array occluded{Candidate{1,{0,10,0}},Candidate{2,{0,20,0}}};
+    const auto exhausted = lazyValidate(occluded,{},180,false,1,[](const Candidate&) { return Validation::invalid; });
+    assert(exhausted.exhausted && !exhausted.unknown && exhausted.accepted.empty());
+    if (finishedScan(true,exhausted.unknown,false,false,false)) ++alive;
+    assert(alive == 1);
+    assert(finishedScan(false,false,false,true,false)); // visit/reference cap
+    assert(finishedScan(true,true,false,false,true)); // ray cap is a definite result
+    assert(!finishedScan(true,true,true,false,true)); // contention never renews freshness
+    assert(!finishedScan(true,true,false,false,false)); // unknown engine reads
+    assert(!finishedScan(false,false,false,false,false)); // no world/radius
     const std::array candidates{Candidate{1,{0,10,0}},Candidate{2,{0,20,0}}};
     Settings settings;
     const auto held=cursorLatchSettings(settings,true);
@@ -72,6 +106,12 @@ int main() {
     assert(state.publish(state.read(),11));
     const auto authorized=state.read();
     assert(CursorOverride::permits(authorized,state.read(),11));
+    // A repeated Pick of the same token/handle must retain its permit while
+    // validation is in flight; a changed token or resolved ID never permits E.
+    const auto permit = authorized;
+    assert(CursorOverride::permits(permit,state.read(),11));
+    assert(CursorOverride::permits(permit,state.read(),11));
+    assert(!CursorOverride::permits(permit,state.read(),12));
     const auto cleared=state.clear();
     assert(cleared && !CursorOverride::permits(authorized,state.read(),11)); // E before next Pick
     assert(!state.publish(authorized,11)); // late Pick cannot resurrect authorization
@@ -81,6 +121,18 @@ int main() {
     assert(state.publish(newer,22));
     assert(CursorOverride::permits(state.read(),state.read(),22));
     assert(!CursorOverride::permits(state.read(),state.read(),11));
+    const auto oldTarget = state.read();
+    AccessGate heldGate;
+    assert(heldGate.enter());
+    const auto busy = replaceCursorTarget(state,33,[&](std::uint64_t token, std::uint32_t id) {
+        assert(id == 33 && token == state.read() && CursorOverride::target(token) == 0);
+        assert(!CursorOverride::permits(oldTarget,state.read(),22));
+        assert(!heldGate.enter());
+        return api::Result::busy;
+    });
+    assert(busy == api::Result::busy && CursorOverride::target(state.read()) == 0);
+    assert(!state.publish(oldTarget,22)); // in-flight old Pick cannot restore authorization
+    heldGate.leave();
     state.end(); assert(state.clear()==0 && !CursorOverride::active(state.read()));
     // A hover refresh replaces the frozen eight-item list, without requiring an
     // intervening empty hover or time-based expiry. Cycle still keeps its list.

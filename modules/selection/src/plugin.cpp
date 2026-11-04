@@ -51,7 +51,7 @@ CursorExchange<CursorRequest> cursorRequests;
 std::atomic<bool> sessionViable{false};
 bool activationGuardReady = false;
 std::atomic<std::uint64_t> cursorPickPermit{0};
-std::uint64_t completedRefreshes = 0, cursorReplies = 0;
+std::uint64_t completedRefreshes = 0, aliveRefreshes = 0, cursorReplies = 0;
 std::array<FreshPress,4> keys;
 struct RefIdentity { std::uint32_t id; RE::ObjectRefHandle handle; };
 std::vector<RefIdentity> identities;
@@ -251,6 +251,7 @@ Point point(RE::NiPoint3 p) { return {p.x,p.y,p.z}; }
 void selectionEvent(EventKind kind, std::uint32_t id, EventSource source, std::string_view reason,
     RE::TESObjectREFR* ref = nullptr);
 EventSource selectionSource() { return policy.latched() ? latchSource : EventSource::nearest; }
+void publish(bool resetState = false);
 void reset() {
     cursorOverride.end(); cursorRelease.store(false); sessionViable.store(false);
     policy.reset(); identities.clear(); discovered.clear(); scannedIDs.clear(); cellID = 0; gate.reset();
@@ -259,6 +260,7 @@ void reset() {
     counters.externalResult = static_cast<std::uint32_t>(api::Result::unavailable);
     counters.passthrough = static_cast<std::uint32_t>(Pass::invalidWorld);
     if (diagnostics) selectionEvent(EventKind::choose,0,EventSource::nearest,passName(Pass::invalidWorld));
+    publish(true);
 }
 bool menus(RE::UI* ui) {
     if (!ui || ui->GameIsPaused() || ui->IsApplicationMenuOpen() || ui->IsModalMenuOpen()) return true;
@@ -557,10 +559,10 @@ void selectionEvent(EventKind kind, std::uint32_t id, EventSource source, std::s
     }
     log(formatEvent(event,emission,eventLog.sequence(),ms).c_str());
 }
-void publish() {
+void publish(bool resetState) {
     counters.target = policy.current(); counters.latched = policy.latched() ? 1u : 0u;
     counters.candidateCount = static_cast<std::uint32_t>(policy.order().size());
-    counters.passthrough = static_cast<std::uint32_t>(policy.reason());
+    counters.passthrough = static_cast<std::uint32_t>(resetState ? Pass::invalidWorld : policy.reason());
     counters.available = scanReady ? 1u : 0u;
     counters.eventSuppressed = eventLog.suppressed();
     counters.requestDrops = requestDrops.load();
@@ -569,8 +571,9 @@ void publish() {
     frame.snapshot = counters;
     frame.viable = sessionViable.load() ? 1u : 0u;
     frame.completedRefreshes = completedRefreshes; frame.replies = cursorReplies;
+    frame.aliveRefreshes = aliveRefreshes; frame.refreshSeconds = settings.refreshSeconds;
     const auto ids = policy.order(CursorOverride::active(cursorOverride.read()));
-    frame.count = static_cast<std::uint32_t>((std::min)(ids.size(),std::size(frame.ids)));
+    frame.count = scanReady ? static_cast<std::uint32_t>((std::min)(ids.size(),std::size(frame.ids))) : 0u;
     std::copy_n(ids.begin(),frame.count,frame.ids);
     // A reader can defer publication, never a Pick or its native prompt.
     static_cast<void>(publication.write(frame));
@@ -593,7 +596,7 @@ void diagnostic(double now) {
 }
 bool refresh(double now) {
     if (invalidated.exchange(false)) reset();
-    const auto c = context();
+    const auto c = cursorContext(context(),CursorOverride::active(cursorOverride.read()));
     const auto state = passthrough(c);
     if (state != lastState || c.sneaking != lastSneaking) gate.reset();
     lastState = state; lastSneaking = c.sneaking;
@@ -669,7 +672,8 @@ bool refresh(double now) {
             else if (result == Validation::valid) checked.accepted.push_back(*it);
         }
     }
-    if (scanContended || checked.unknown) gate.reset(); // retry next Pick, not 100ms later
+    if (scanContended || (checked.unknown && (rays.complete || !CursorOverride::active(cursorOverride.read()))))
+        gate.reset(); // preserve legacy retries; definite cursor budgets wait for next refresh
     if (complete && !checked.unknown) {
         identities.clear();
         // Only validated candidates get handles (<=8 prefix + <=8 frozen).
@@ -693,6 +697,7 @@ bool refresh(double now) {
         if (scanReady && authorized && latchSource == EventSource::external)
             static_cast<void>(policy.push(authorized,body,now,settings.allowExternal,true));
     }
+    if (finishedScan(complete,checked.unknown,scanContended,!budget.complete || !visits.complete,!rays.complete)) ++aliveRefreshes;
     ++counters.refreshes; counters.inspectedLast = budget.inspected; counters.inspectedTotal += budget.inspected;
     counters.visitedLast = visits.inspected; counters.scanRaysLast = rays.inspected;
     counters.validatedLast = validated;
@@ -783,8 +788,6 @@ void consumeRequests(double now, RE::PlayerCharacter* player) {
 void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* origin, const RE::NiPoint3* direction) {
     threadLog(true);
     StateAccess access;
-    if (CursorOverride::active(cursorOverride.read())) cursorPickPermit.store(0);
-    previousPick(data,world,origin,direction);
     struct CursorPick {
         RE::CrosshairPickData* data;
         bool injected = false;
@@ -792,12 +795,15 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
         bool beganExclusive = CursorOverride::active(cursorOverride.read());
         ~CursorPick() {
             const auto cursor = cursorOverride.read();
-            if (data && ((beganExclusive && (!injected || !CursorOverride::active(cursor))) || CursorOverride::suppress(cursor,injected,id))) {
+            if ((beganExclusive && (!injected || !CursorOverride::active(cursor))) || CursorOverride::suppress(cursor,injected,id)) {
                 cursorPickPermit.store(0);
-                data->target = {}; data->grabPickRef = {}; data->targetCollider = nullptr;
+                if (data) { data->target = {}; data->grabPickRef = {}; data->targetCollider = nullptr; }
             }
         }
     } cursorPick{data};
+    // Keep the last matching permit while native Pick/validation runs. Revoke
+    // on a refused outcome below; token/ID changes already fail the E guard.
+    previousPick(data,world,origin,direction);
     if (!access.acquired || !data) { forwardReason(!data ? "null_pick" : "state_busy_or_reentrant"); return; }
     struct PickCost {
         std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
@@ -847,7 +853,7 @@ void pick(RE::CrosshairPickData* data, RE::bhkWorld* world, const RE::NiPoint3* 
     static REL::Relocation<CanGrab> canGrab{REL::ID(34614)};
     const bool grabbable = canGrab(target.get());
     const bool stale = invalidated.load();
-    const auto state = stale ? Pass::invalidWorld : passthrough(context());
+    const auto state = stale ? Pass::invalidWorld : passthrough(cursorContext(context(),CursorOverride::active(cursorOverride.read())));
     if (stale || state != Pass::none) {
         reset(); nativeDecision(stale ? "invalidated" : passName(state)); return;
     }
@@ -872,19 +878,22 @@ api::Result cursorFrame(api::CursorFrame* out) {
 }
 api::Result snapshot(api::Snapshot* out) {
     if (!out || out->size != sizeof(api::Snapshot)) return api::Result::invalidArgument;
-    api::CursorFrame frame;
-    const auto result = cursorFrame(&frame);
-    if (result == api::Result::ok) *out = frame.snapshot;
-    return result;
+    StateAccess access;
+    const auto result = legacyReadResult(access.acquired);
+    if (result != api::Result::ok) return result;
+    *out = counters;
+    if (invalidated.load() || loading.load() || menuState.load() != 1u) out->available = 0;
+    return api::Result::ok;
 }
 api::Result copyCandidates(std::uint32_t* ids, std::uint32_t capacity, std::uint32_t* count) {
     if (!count || (!ids && capacity)) return api::Result::invalidArgument;
-    api::CursorFrame frame;
-    const auto result = cursorFrame(&frame);
+    StateAccess access;
+    const auto result = legacyReadResult(access.acquired,access.acquired && scanReady &&
+        !invalidated.load() && !loading.load() && menuState.load() == 1u);
     if (result != api::Result::ok) return result;
-    if (!frame.viable) return api::Result::unavailable;
-    *count = frame.count;
-    std::copy_n(frame.ids,(std::min)(capacity,*count),ids);
+    const auto order = policy.order();
+    *count = static_cast<std::uint32_t>(order.size());
+    for (std::uint32_t i = 0; i < capacity && i < *count; ++i) ids[i] = order[i];
     return api::Result::ok;
 }
 api::Result postTarget(std::uint32_t id) {
@@ -892,7 +901,7 @@ api::Result postTarget(std::uint32_t id) {
     if (!settings.allowExternal) return api::Result::disabled;
     if (invalidated.load() || loading.load() || !inputAllowed.load() || menuState.load() != 1u) return api::Result::unavailable;
     std::uint64_t empty = 0;
-    return externalRequest.compare_exchange_strong(empty,(std::uint64_t{1} << 32) | id) ? api::Result::queued : api::Result::busy;
+    return externalRequest.compare_exchange_strong(empty,(std::uint64_t{1} << 32) | id) ? api::Result::queued : api::Result::unavailable;
 }
 api::Result setCursorTarget(std::uint32_t id, std::uint64_t observedCycles) {
     if (!CursorOverride::active(cursorOverride.read())) return api::Result::unavailable;
@@ -901,19 +910,19 @@ api::Result setCursorTarget(std::uint32_t id, std::uint64_t observedCycles) {
         cursorRelease.store(true);
         return api::Result::ok;
     }
-    CursorAccess access;
-    if (!access.acquired) return api::Result::busy;
-    if (observedCycles != counters.cyclesTotal) return api::Result::invalidTarget;
-    const auto token = cursorOverride.clear();
-    if (!token) return api::Result::unavailable;
-    // Generation tags cancel both an older queued request and an in-flight Pick.
-    return cursorRequests.write({token,observedCycles,id}) ? api::Result::queued : api::Result::busy;
+    return replaceCursorTarget(cursorOverride,id,[&](std::uint64_t token, std::uint32_t targetID) {
+        CursorAccess access;
+        if (!access.acquired) return api::Result::busy;
+        if (observedCycles != counters.cyclesTotal) return api::Result::invalidTarget;
+        // Generation tags cancel both an older queued request and an in-flight Pick.
+        return cursorRequests.write({token,observedCycles,targetID}) ? api::Result::queued : api::Result::busy;
+    });
 }
 api::Result setTarget(std::uint32_t id) {
     if (CursorOverride::active(cursorOverride.read())) {
         api::CursorFrame frame;
         const auto result = cursorFrame(&frame);
-        return result == api::Result::ok ? setCursorTarget(id,frame.snapshot.cyclesTotal) : result;
+        return legacyResult(result == api::Result::ok ? setCursorTarget(id,frame.snapshot.cyclesTotal) : result);
     }
     return id ? postTarget(id) : api::Result::invalidArgument;
 }
