@@ -50,6 +50,16 @@ Still open, and pre-existing on `main`: `focused()`, `noActiveMenus()` and `cont
 
 Not verified: the busy-skip rate, the frame cost of the bounded wait, whether the movie renders without Advance, and in-game behaviour.
 
+**`route-cursor-3` hover on `5fd8bb7`** (Camera DLL `f6377408…`, Selection DLL `6031bb21…`): **FAIL**. All steps ran and restore passed.
+
+- The overlay now opens on the UI job thread, as predicted, and `busy=0`: the try-lock never contended.
+- Each B still closed the overlay 16–17 ms later, logging `reason=overlay`. The log did not say which check failed.
+
+Follow-up diagnostics commit:
+- Every overlay exit site, constructor step, paint step and `ownMenu` check now has a code, and the codes are logged with the menu flags.
+- Overlay refusal lines are no longer limited to one.
+- `Mouse.removeListener` is best-effort and its outcome is logged. The listener is inert: nothing forwards input into the movie, and `AdvanceMovie` never runs it.
+
 ## Fifth pass — fourth review fixes, orchestrator (2026-11-04)
 
 A focused independent review of `531dcd5..3c9e896` found one blocker, one major and four minor issues. The orchestrator fixed them directly. This pass had no independent review of its own; it is covered by portable tests and Windows CI only.
