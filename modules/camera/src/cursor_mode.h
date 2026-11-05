@@ -31,6 +31,10 @@ bool serviced = false;
 api::CursorFrame cachedFrame;
 std::array<cursor::Candidate,16> projected{};
 std::size_t projectedCount = 0;
+// Last ready Selection list. A cycled latch needs membership here, not an
+// on-screen box: cycling reaches candidates the pointer cannot (route-cursor-6).
+std::array<std::uint32_t,16> listed{};
+std::size_t listedCount = 0;
 bool waiting = false;
 std::uint32_t submittedTarget = 0;
 std::uint64_t submittedReplies = 0;
@@ -272,7 +276,7 @@ void resolve() {
 }
 void leave(Exit reason) {
     const bool wasActive = session.active || pending;
-    session.exit(); pending = false; waiting = false; projectedCount = 0;
+    session.exit(); pending = false; waiting = false; projectedCount = 0; listedCount = 0;
     if (wasActive && apiLive()) { static_cast<void>(selection->setCursorMode(0)); }
     if (wasActive) {
         const auto queue = RE::UIMessageQueue::GetSingleton();
@@ -336,7 +340,8 @@ bool bounds(RE::TESObjectREFR* ref, RE::NiPoint3& centre, std::array<RE::NiPoint
 }
 std::span<const cursor::Candidate> points() { return {projected.data(),projectedCount}; }
 bool retainLatch() {
-    const bool valid = std::any_of(points().begin(),points().end(),[](const auto& c) { return c.id == session.latch.id; });
+    const auto end = listed.begin()+static_cast<std::ptrdiff_t>(listedCount);
+    const bool valid = session.latch.id && std::find(listed.begin(),end,session.latch.id) != end;
     return session.latch.retain(session.pointer.point,cursorSettings.latchPixels,valid);
 }
 void clearAway() {
@@ -363,6 +368,8 @@ void pick(const api::CursorFrame& frame, bool fresh) {
         const auto player = RE::PlayerCharacter::GetSingleton();
         if (!camera || !player || !o->dimensions()) { leave(Exit::lifecycle); return; }
         projectedCount = 0;
+        listedCount = frame.count;
+        std::copy_n(frame.ids,frame.count,listed.begin());
         for (std::uint32_t i = 0; i < frame.count; ++i) {
             const auto ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(frame.ids[i]);
             RE::NiPoint3 world;

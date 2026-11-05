@@ -76,6 +76,33 @@ Fix in the next commit:
 - **Sensitivity.** The default changes from 900 to 65, about 1 px per count. This is an engineering proposal pending owner approval.
 - **Trace.** The cursor trace logs the nearest box and its pixel distance.
 
+**Delta review of `0e3f1a4`.** No blocker and no major. The corner transform matches the old centre transform and Skyrim's angle convention. The 1.7.104 projector (AL 70640) does not clip to the screen, so boxes are not shrunk to their on-screen corners. Known limitations from the review:
+- A degenerate OBND (lo == hi) gives a point box at the reference position.
+- A candidate whose centre is behind the camera is dropped, even if part of it is visible.
+- Near-plane corners can inflate or under-cover a box.
+- A box containing the pointer beats every slack hit and overrides hysteresis.
+- The right stick shares the mouse delta path, so pad speed also dropped about 14×.
+
+**Routes on `0e3f1a4`** (Camera DLL `d9416d36…`, Selection DLL `a93f64ea…`, SkyrimSE.exe `846efccf…`, fixture: Bannered Mare bench pose). Every route ran all its steps, and restore passed after each.
+
+| Route | Row | Result | Evidence |
+| --- | --- | --- | --- |
+| `route-cursor-5` hover | Hover binds the bench | **PASS** | Trace target and `auth` `000C8FC6` from sample 2. Selection `source=external`, and the native "E Sit Bench" prompt shows. |
+| | Pointer along the bench, ±60 counts | **PASS** | x 960→1020→901, target unchanged. Horizontal gain 0.99 px/count. |
+| | Pointer just above the bench | Observation | Still the bench: the 48 px slack outside the box. |
+| | Pointer on the empty rug | **PASS** | Target revoked; `cursor_empty`, and the native prompt is suppressed. |
+| | Exit restores native picking and look | **PASS** | B gives `reason=toggle`; Selection is back to `source=nearest` and the camera yaws. |
+| | Vertical gain | Observation | About 0.69 px/count vertically, from route-cursor-6 activate (dy −360 → −249 px). Native look scales Y differently. |
+| `route-cursor-6` activate | E with the pointer on empty rug, native centre pick on the bench | **PASS** | Screenshot shows the player still standing; no activation. |
+| | E with the pointer on the bench | **PASS** | The player sits on bench `000C8FC6`. Selection goes `special`, and cursor mode exits with `reason=selection`. |
+| `route-cursor-6` interrupt | B, F6, F8, Tab, console | **PASS** | Each ends cursor mode: `toggle`, `F6` (first person), `F8`; TweenMenu and Console close the pointer within one frame. No automatic re-entry; look and the native prompt return. |
+| `route-cursor-6` off | `bEnabled=0`, same inputs | **PASS** | No cursor log lines, no overlay; native behaviour. |
+| `route-cursor-6` latch | `[` cycle latches the cycled target | **FAIL** | Selection cycled to `0005D692`, but Camera's latch stayed 0, and hover re-pushed the bench 17 ms later. |
+
+**Latch fix, next commit.** The latch was valid only while its target had a projected on-screen box. A cycled candidate off-screen or without a box was dropped immediately. The latch now requires membership in the last ready Selection list; the pointer-move release still applies.
+
+The cursor trace's 512-line cap covers only about 8 s of a route. The drift, no-timeout and reverse-cycle latch rows rely on screenshots and the Selection log.
+
 ## Fifth pass — fourth review fixes, orchestrator (2026-11-04)
 
 A focused independent review of `531dcd5..3c9e896` found one blocker, one major and four minor issues. The orchestrator fixed them directly. This pass had no independent review of its own; it is covered by portable tests and Windows CI only.
