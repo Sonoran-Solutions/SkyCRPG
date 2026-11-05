@@ -23,7 +23,23 @@ The Overlay's constructor, `ProcessMessage` and `AdvanceMovie` refused off-main,
 - Main-side movie and menu-stack access (`dimensions`, `hide`, `paint`, `ownMenu`, `nativeMenu`) takes the same reentrant UI+0x158 lock.
 - `PostDisplay` skips drawing off main, which the binary check found happens only on the ServingThread during blocking loads.
 
-Not verified: the cost of main waiting on UI+0x158 while the UI job holds it, and in-game behaviour.
+**Independent binary review of `4eb1b9d`.** No blocker. It confirmed the following:
+
+- UI+0x158 is reentrant and uses the same algorithm as CommonLib.
+- Reusing one Overlay keeps the refcount correct. The engine adopts the creator's return value without AddRef, releases it on hide, and calls the creator again on the next show.
+- The `ownMenu` flag test matches the 0x40 bit the engine sets.
+- The camera update and look hooks run on main, concurrently with the UI job.
+
+Its majors are fixed in the follow-up commit:
+
+| Finding | Resolution |
+| --- | --- |
+| MAJOR 1: `service` and `look` blocked main on UI+0x158 while the UI job ran (frame cost; deadlock if a third-party hook lock is also taken under ProcessMessages) | The camera hooks use `UITryLock`, the engine's acquire without the spin. On contention `service` skips the tick and keeps requests queued; `look` keeps the pointer maths and leaves checks and paint to PostDisplay. Skips are counted as `busy=` in the cursor trace. PostDisplay keeps the blocking lock: it runs after main waits for the UI job. |
+| MAJOR 2: `focused()`'s stack walk ran outside the lock | `nativeMenu` takes the lock before `focused()`, and `service` and `look` hold it. `focused()`, `noActiveMenus()` and `context()` called from other Camera features stay unlocked, as on `main` before this ticket. |
+| MINOR: `leave` always called `hide()` | Removed; PostDisplay draws nothing while inactive. |
+| MINOR: stale comments, discarded `compare_exchange_strong` | Fixed. A late kHide ending a new pending entry is documented as fail-closed. |
+
+Not verified: the busy-skip rate, whether the movie renders without Advance, and in-game behaviour.
 
 ## Fifth pass — fourth review fixes, orchestrator (2026-11-04)
 
