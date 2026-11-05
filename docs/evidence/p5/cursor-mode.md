@@ -103,6 +103,19 @@ Fix in the next commit:
 
 The cursor trace's 512-line cap covers only about 8 s of a route. The drift, no-timeout and reverse-cycle latch rows rely on screenshots and the Selection log.
 
+**`route-cursor-7` on `00129fd`** (Camera DLL `d6f5a2ce…`, Selection DLL `675db0a7…`). Both routes ran all their steps, and restore passed after each.
+
+| Route | Row | Result | Evidence |
+| --- | --- | --- | --- |
+| latch | `[` latches the cycled target | **PASS** | Selection cycle → `0005D692`, and Camera latch and target are `0005D692` from sample 34. The hover bench is not re-pushed. |
+| | 1-count drift keeps the latch | **PASS** | x 960→960.99 with latch `0005D692` unchanged. |
+| | Latch survives the 10 s Selection timeout | **PASS** | Held from 47.7 s to 61.3 s, when `]` cycled. The screenshot shows "Steal from Pot" while the pointer is over the bench. |
+| | `]` reverse cycle | **PASS** | Selection cycle `previous` → `000C8FC6`. |
+| | 100-count move releases the latch | NOT_RUN (inconclusive) | After the reverse cycle the latched and hovered targets are both the bench, and the trace had reached its cap. A distinct fixture is needed. |
+| hover | Regression | **PASS** | The bench is the target for 511 of 512 samples; toggle exit as before. |
+
+**Owner question from the latch row.** Cycling can latch a candidate with no on-screen box, here an owned pot that isn't visible, while the pointer sits on another object. The native prompt names it in red ("Steal from Pot"), and E would steal from it. Options: keep this, which matches non-cursor Selection cycling; or limit cursor-mode cycling to candidates with a projected box.
+
 ## Fifth pass — fourth review fixes, orchestrator (2026-11-04)
 
 A focused independent review of `531dcd5..3c9e896` found one blocker, one major and four minor issues. The orchestrator fixed them directly. This pass had no independent review of its own; it is covered by portable tests and Windows CI only.
