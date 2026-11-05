@@ -4,6 +4,8 @@
 #include <skycrpg/skeleton.h>
 #include "policy.h"
 #include "precision_policy.h"
+#include "cursor_policy.h"
+#include "../../selection/include/skycrpg/SelectionAPI.h"
 #include "precision_trace.h"
 #include "lifecycle_policy.h"
 #include "target_lock_policy.h"
@@ -50,6 +52,12 @@ static_assert(offsetof(RE::ShaderReferenceEffect,target) == 0x38);
 static_assert(offsetof(RE::ShaderReferenceEffect,finished) == 0x40);
 static_assert(offsetof(RE::ShaderReferenceEffect,effectData) == 0x108);
 Settings settings;
+cursor::Settings cursorSettings;
+namespace cursorMode {
+bool ownMenu(RE::IMenu* menu);
+void requestExit(cursor::Exit reason);
+void input(RE::InputEvent* events);
+}
 ObstructionSettings obstructionSettings;
 ObstructionPolicy obstructionPolicy;
 ObstructionFrame obstructionFrame;
@@ -254,6 +262,16 @@ void loadSettings() {
     lifecycleTraceEnabled = flag("Debug","iLifecycleTrace",0);
     compatibleSettings = s.schema == 1;
     settings = validate(s);
+    cursorSettings.enabled = flag("CursorMode","bEnabled",0);
+    if (cursorSettings.enabled) {
+        cursorSettings.toggleKey = number("CursorMode","iToggleKey",48);
+        cursorSettings.toggleGamepad = number("CursorMode","iToggleGamepad",-1);
+        cursorSettings.sensitivity = number("CursorMode","fSensitivity",65.0f);
+        cursorSettings.radius = number("CursorMode","fPickRadiusPixels",48.0f);
+        cursorSettings.latchPixels = number("CursorMode","fLatchMovePixels",12.0f);
+        cursorSettings.trace = number("CursorMode","iTrace",0u);
+        cursorSettings = cursor::validate(cursorSettings,settings);
+    }
     ObstructionSettings o;
     o.enabled = flag("Obstruction","bEnabled",0);
     o.enterRatio = number("Obstruction","fEnterRatio",o.enterRatio);
@@ -519,6 +537,7 @@ bool focused() {
     const auto ui = RE::UI::GetSingleton();
     if (!ui || ui->GameIsPaused() || ui->IsApplicationMenuOpen() || ui->IsModalMenuOpen()) return true;
     for (const auto& menu : ui->menuStack) {
+        if (cursorSettings.enabled && cursorMode::ownMenu(menu.get())) continue;
         if (menu && menu->menuFlags.any(RE::UI_MENU_FLAGS::kUsesCursor,RE::UI_MENU_FLAGS::kUsesMenuContext,RE::UI_MENU_FLAGS::kModal)) return true;
     }
     return ui->IsMenuOpen("Dialogue Menu") || ui->IsMenuOpen("Console") || ui->IsMenuOpen("Loading Menu");
@@ -579,6 +598,8 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     if (targetLockEnabled) updateTargetLock(c);
     return c;
 }
+#include "cursor_mode.h"
+
 RE::NiPoint3 thinGoal() {
     RE::NiPoint3 goal{},local{};
     provider->GetGoalPosition(RE::PlayerCharacter::GetSingleton(),goal,local);
@@ -685,6 +706,7 @@ void lifecycleLog(const char* event, Context c, unsigned stateId) {
     log(line);
 }
 void resetLifecycle(const char* event) {
+    cursorMode::requestExit(std::strstr(event,"load") ? cursor::Exit::load : cursor::Exit::cell);
     thin::requestRestore(std::strstr(event,"load") ? thin::Exit::load : thin::Exit::cell);
     interruptTargetLock();
     resetTransient(ownFirstPerson,recenter,applyZoom,keys);
@@ -738,6 +760,7 @@ void sampleObstruction(RE::ThirdPersonState* state) {
         {actual.x,actual.y,actual.z},{goal.x,goal.y,goal.z},focus),dt,obstructionSettings);
 }
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
+    if (cursorSettings.enabled && cursorMode::look(input)) { previousLook(state,RE::NiPoint2{}); return; }
     if (targetLockEnabled && lockFrameTraceEnabled && lockTraceWindow.budget.lines < LockFrameTraceBudget::limit && onTargetLockThread()) {
         lockLookInput.x += input.x; lockLookInput.y += input.y; ++lockLookCalls;
     }
@@ -769,6 +792,11 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
 }
 void traceLockFrame(Context c);
 void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>& next) {
+    if (cursorSettings.enabled) {
+        if (next && next.get() != state) cursorMode::requestExit(cursor::Exit::special);
+        cursorMode::service();
+        cursorMode::traceFrame();
+    }
     if (next && next.get() != state) { interruptTargetLock(); resetObstruction(); }
     else sampleObstruction(state);
     previousUpdate(state,next); // native first; outer SmoothCam wrapper performs transforms AFTER us
@@ -857,6 +885,10 @@ public:
         return RE::BSEventNotifyControl::kContinue;
     }
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
+        if (event && event->menuName == cursorMode::menuName) return RE::BSEventNotifyControl::kContinue;
+        if (cursorSettings.enabled && event && event->opening &&
+            event->menuName != "HUD Menu" && event->menuName != "Fader Menu" && event->menuName != "Mist Menu")
+            cursorMode::requestExit(cursor::Exit::menu);
         // Queue before any context() can consider releasing the lease.
         if (targetLockEnabled) {
             lockConfigRefresh.request();
@@ -879,6 +911,7 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
         if (!events) return RE::BSEventNotifyControl::kContinue;
+        cursorMode::input(*events);
         if (thin::enabled()) {
             for (auto event = *events; event; event = event->next) {
                 const auto button = event->AsButtonEvent();
@@ -1064,12 +1097,20 @@ void messages(SKSE::MessagingInterface::Message* message) {
             source->AddEventSink<RE::TESLoadGameEvent>(&events);
             source->AddEventSink<RE::TESCellAttachDetachEvent>(&events);
         }
+        if (cursorSettings.enabled) {
+            static_cast<void>(cursorMode::registration.prepare(false,true,false,false,cursorMode::registerOverlay));
+            cursorMode::dataReady.store(true);
+        }
         log("Camera input policy installed: one chained native look call; SmoothCam sole transform writer.");
         break;
     }
-    case SKSE::MessagingInterface::kPreLoadGame: thin::setLoaded(false); loading = true; failureDebounce.observe(false,0); resetLifecycle("pre-load"); break;
+    case SKSE::MessagingInterface::kPreLoadGame:
+        if (cursorSettings.enabled) cursorMode::worldLoaded.store(false);
+        thin::setLoaded(false); loading = true; failureDebounce.observe(false,0); resetLifecycle("pre-load"); break;
     case SKSE::MessagingInterface::kNewGame:
-    case SKSE::MessagingInterface::kPostLoadGame: thin::setLoaded(true); loading = false; resetLifecycle("post-load-or-new-game"); break;
+    case SKSE::MessagingInterface::kPostLoadGame:
+        if (cursorSettings.enabled) cursorMode::worldLoaded.store(message->type == SKSE::MessagingInterface::kNewGame || message->data != nullptr);
+        thin::setLoaded(true); loading = false; resetLifecycle("post-load-or-new-game"); break;
     case SKSE::MessagingInterface::kSaveGame: interruptTargetLock(); savePreferences(); break;
     default: break;
     }

@@ -11,7 +11,7 @@ on:
       module:
         description: Independent target
         type: choice
-        options: [ui, camera, both, testprobe, all]
+        options: [ui, camera, both, selection, testprobe, all]
         default: ui
 
 permissions:
@@ -24,6 +24,7 @@ jobs:
     outputs:
       modules: ${{ steps.scope.outputs.modules }}
       testprobe: ${{ steps.scope.outputs.testprobe }}
+      selection: ${{ steps.scope.outputs.selection }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -82,7 +83,7 @@ jobs:
         run: |
           $ui = '${{ matrix.module }}' -eq 'ui'
           $target = if ($ui) { 'SkyCRPG_UI' } else { 'SkyCRPG_Camera' }
-          $options = @()
+          $options = @("-DSKYCRPG_BUILD_SELECTION=OFF", "-DSKYCRPG_BUILD_TEST_PROBE=OFF")
           $options += "-DSKYCRPG_BUILD_UI=$(if ($ui) {'ON'} else {'OFF'})"
           $options += "-DSKYCRPG_BUILD_CAMERA=$(if ($ui) {'OFF'} else {'ON'})"
           $options += "-DCMAKE_TOOLCHAIN_FILE=$pwd/external/vcpkg/scripts/buildsystems/vcpkg.cmake"
@@ -155,7 +156,7 @@ jobs:
       - name: Build only the test probe and checksum it
         shell: pwsh
         run: |
-          cmake --preset windows-x64-release "-DSKYCRPG_SOURCE_COMMIT=$env:SOURCE_SHA" -DSKYCRPG_BUILD_CAMERA=OFF -DSKYCRPG_BUILD_UI=OFF -DSKYCRPG_BUILD_TEST_PROBE=ON "-DCMAKE_TOOLCHAIN_FILE=$pwd/external/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+          cmake --preset windows-x64-release "-DSKYCRPG_SOURCE_COMMIT=$env:SOURCE_SHA" -DSKYCRPG_BUILD_CAMERA=OFF -DSKYCRPG_BUILD_UI=OFF -DSKYCRPG_BUILD_TEST_PROBE=ON -DSKYCRPG_BUILD_SELECTION=OFF "-DCMAKE_TOOLCHAIN_FILE=$pwd/external/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build --preset windows-x64-release --target SkyCRPG_TestProbe --parallel 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -188,6 +189,82 @@ jobs:
             g++ -std=c++20 -Wall -Wextra -Werror -pedantic "$test" -o "$RUNNER_TEMP/$name"
             "$RUNNER_TEMP/$name"
             echo "$name PASS"
+          done
+
+  # Independent internal candidate; package.py has no Selection schema yet.
+  # Owner: DYL-198; purpose: MSVC /W4 /WX build + checksummed DLL/INI/notices.
+  # Completion: exit 0 and artifact upload; deadline/cleanup: 30 minutes, runner disposal.
+  selection:
+    needs: scope
+    if: needs.scope.outputs.selection == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Pinned dependency toolchain
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: ee12231b20c95013c6638d845d04c91559a1d1ff
+          path: external/vcpkg
+      - name: Bootstrap pinned vcpkg
+        shell: pwsh
+        run: external/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+      - uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: windows-static-vcpkg-${{ hashFiles('vcpkg.json') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            build/windows-x64-release/_deps
+            build/windows-x64-release/vcpkg_installed
+          key: commonlib-static-ae-${{ runner.os }}-${{ env.ImageVersion }}-${{ hashFiles('cmake/CommonLib.cmake', 'vcpkg.json') }}
+      - name: Build only the selection plugin and checksum it
+        shell: pwsh
+        run: |
+          cmake --preset windows-x64-release "-DSKYCRPG_SOURCE_COMMIT=$env:SOURCE_SHA" -DSKYCRPG_BUILD_CAMERA=OFF -DSKYCRPG_BUILD_UI=OFF -DSKYCRPG_BUILD_TEST_PROBE=OFF -DSKYCRPG_BUILD_SELECTION=ON "-DCMAKE_TOOLCHAIN_FILE=$pwd/external/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build --preset windows-x64-release --target SkyCRPG_Selection --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force selection-artifact | Out-Null
+          Copy-Item build/windows-x64-release/modules/selection/Release/SkyCRPG_Selection.dll selection-artifact/
+          Copy-Item modules/selection/config/SkyCRPG_Selection.ini selection-artifact/
+          Copy-Item LICENSE selection-artifact/
+          Copy-Item LICENSES/CommonLibSSE-NG-COPYING, LICENSES/CommonLibSSE-NG-EXCEPTIONS.md, LICENSES/CommonLibSSE-legacy-MIT selection-artifact/
+          [IO.File]::WriteAllText("$pwd/selection-artifact/SOURCE_COMMIT", "$env:SOURCE_SHA`n", [Text.UTF8Encoding]::new($false))
+          $sums = Get-ChildItem selection-artifact -File | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
+          }
+          [IO.File]::WriteAllText("$pwd/selection-artifact/SHA256SUMS", ($sums -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+      - uses: actions/upload-artifact@v5
+        with:
+          name: skycrpg-selection-${{ env.SOURCE_SHA }}
+          path: selection-artifact/
+          if-no-files-found: error
+
+  # Owner: DYL-198; purpose: portable rank/latch/passthrough/input regression.
+  # Expected/completion: PASS and exit 0; deadline/cleanup: 5 minutes, runner disposal.
+  selection-portable:
+    needs: scope
+    if: needs.scope.outputs.selection == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build and run portable selection tests
+        run: |
+          set -euo pipefail
+          for test in modules/selection/tests/*_test.cpp; do
+            name=$(basename "$test" .cpp)
+            g++ -std=c++20 -pthread -Wall -Wextra -Wshadow -Werror -pedantic "$test" -o "$RUNNER_TEMP/$name"
+            "$RUNNER_TEMP/$name"
           done
 
   # Camera policies and lease/indicator/trace regressions use no engine headers.
