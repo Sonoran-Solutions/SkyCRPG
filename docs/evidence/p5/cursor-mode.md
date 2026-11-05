@@ -60,6 +60,22 @@ Follow-up diagnostics commit:
 - Overlay refusal lines are no longer limited to one.
 - `Mouse.removeListener` is best-effort and its outcome is logged. The listener is inert: nothing forwards input into the movie, and `AdvanceMovie` never runs it.
 
+**`route-cursor-4` hover on `1366b39`** (Camera DLL `3cd3b808…`, Selection DLL `0d083b59…`): **FAIL**, with the overlay now working. All steps ran and restore passed.
+
+| Row | Result | Evidence |
+| --- | --- | --- |
+| Overlay failure cause | Confirmed | `listener=2`: `Invoke("Mouse.removeListener")` returned no Boolean true. The old constructor therefore left `usable=false`, which caused the site-14 exit one frame later. |
+| Entry, stay, toggle exit | PASS | 512 trace samples, `busy=0`. The second B exited with `reason=toggle`, and ownMenu saw flags `0x940`. |
+| Pointer drawn | PASS (screenshot) | The `mc_Cursor` arrow is drawn over the bench. With no hover target, the native "Sit Bench" prompt is suppressed (`cursor_empty`). |
+| Selection list | PASS | `viable=1 available=1 count=5` throughout. |
+| Hover target | FAIL | `pushes=0` and target 0 throughout, including at the start position over the bench. Hover picked by the projected OBND *centre* within 48 px. The bench is long, so its centre lies about 90 px from the crosshair. |
+| Sensitivity | FAIL as configured | One mouse count moved the pointer 13.78 px at `fSensitivity=900` (0.0153 native look units per count). The route's ±60-count moves sent the pointer to x=1800 and x=153. |
+
+Fix in the next commit:
+- **Hit-testing.** Each candidate is the screen box of its projected centre and its eight bound corners (OBND, or the world-bound cube for corpses). The pointer hits a box when it is inside it or within the radius of it. Inside several boxes, the smaller box wins, then the nearer object, then the lower id. Hysteresis also switches to a nested object under the pointer.
+- **Sensitivity.** The default changes from 900 to 65, about 1 px per count. This is an engineering proposal pending owner approval.
+- **Trace.** The cursor trace logs the nearest box and its pixel distance.
+
 ## Fifth pass — fourth review fixes, orchestrator (2026-11-04)
 
 A focused independent review of `531dcd5..3c9e896` found one blocker, one major and four minor issues. The orchestrator fixed them directly. This pass had no independent review of its own; it is covered by portable tests and Windows CI only.

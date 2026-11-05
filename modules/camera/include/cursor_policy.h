@@ -10,11 +10,12 @@ namespace skycrpg::camera::cursor {
 struct Settings {
     bool enabled = false;
     int toggleKey = 48, toggleGamepad = -1; // B; proposal only
-    float sensitivity = 900, radius = 48, latchPixels = 12;
+    // 65 px per native look unit is about 1 px per mouse count (route-cursor-4).
+    float sensitivity = 65, radius = 48, latchPixels = 12;
     unsigned trace = 0;
 };
 inline Settings validate(Settings s, const camera::Settings& camera) {
-    s.sensitivity = bounded(s.sensitivity,900,1,10000);
+    s.sensitivity = bounded(s.sensitivity,65,1,10000);
     s.radius = bounded(s.radius,48,1,256);
     s.latchPixels = bounded(s.latchPixels,12,1,128);
     // Native map adds remapped bindings; these reserve sibling-module controls.
@@ -65,37 +66,58 @@ struct Pointer {
         point.y = std::clamp(point.y-delta.y*sensitivity,0.0f,height);
     }
 };
-struct Candidate { std::uint32_t id = 0; Point point; float worldDistance2 = 0; };
+// Screen-space box of a candidate's projected bound corners. Hit-testing the
+// box, not its centre, lets a long bench be picked anywhere along it.
+struct Rect { float left = 0, top = 0, right = 0, bottom = 0; };
+inline float distance2(const Rect& r, Point p) {
+    const float x = (std::max)({r.left-p.x,0.0f,p.x-r.right}), y = (std::max)({r.top-p.y,0.0f,p.y-r.bottom});
+    return x*x+y*y;
+}
+inline float area(const Rect& r) { return (r.right-r.left)*(r.bottom-r.top); }
+struct Candidate { std::uint32_t id = 0; Rect box; float worldDistance2 = 0; };
+// Nearest box within radius; inside several (a mug on a table), the smaller box
+// wins, then the nearer object in the world, then the lower id.
+inline bool better(const Candidate& c, float d, const Candidate* best, float bestD) {
+    if (!best) return true;
+    if (d != bestD) return d < bestD;
+    if (area(c.box) != area(best->box)) return area(c.box) < area(best->box);
+    if (c.worldDistance2 != best->worldDistance2) return c.worldDistance2 < best->worldDistance2;
+    return c.id < best->id;
+}
+inline bool valid(const Candidate& c) {
+    return c.id && std::isfinite(c.worldDistance2) && std::isfinite(c.box.left) && std::isfinite(c.box.top) &&
+        std::isfinite(c.box.right) && std::isfinite(c.box.bottom) && c.box.left <= c.box.right && c.box.top <= c.box.bottom;
+}
 inline std::uint32_t choose(std::span<const Candidate> candidates, Point pointer, float radius) {
-    float best = radius*radius, world = std::numeric_limits<float>::infinity();
-    std::uint32_t id = 0;
+    const Candidate* best = nullptr;
+    float bestD = 0;
     for (const auto& c : candidates) {
-        const float d = distance2(c.point,pointer);
-        if (!c.id || !std::isfinite(d) || !std::isfinite(c.worldDistance2)) continue;
-        if (d < best || (d == best && (c.worldDistance2 < world || (c.worldDistance2 == world && c.id < id)))) {
-            best = d; world = c.worldDistance2; id = c.id;
-        }
+        if (!valid(c)) continue;
+        const float d = distance2(c.box,pointer);
+        if (!std::isfinite(d) || d > radius*radius) continue;
+        if (better(c,d,best,bestD)) { best = &c; bestD = d; }
     }
-    return id;
+    return best ? best->id : 0;
 }
 inline bool within(std::span<const Candidate> candidates, std::uint32_t id, Point point, float radius) {
     radius *= 1.25f;
     return id && std::any_of(candidates.begin(),candidates.end(),[&](const auto& c) {
-        return c.id == id && distance2(c.point,point) <= radius*radius;
+        return c.id == id && valid(c) && distance2(c.box,point) <= radius*radius;
     });
 }
 // Keep the authorized target inside 1.25x radius unless another candidate is
-// clearly nearer the pointer, so a neighbour can still be chosen directly.
+// clearly nearer the pointer, or the pointer is inside both boxes and choose()
+// ranks the other first, so a neighbour or a nested object is chosen directly.
 inline std::uint32_t hover(std::span<const Candidate> candidates, std::uint32_t sent, Point point, float radius) {
     const auto chosen = choose(candidates,point,radius);
     if (!within(candidates,sent,point,radius)) return chosen;
     if (!chosen || chosen == sent) return sent;
     float dSent = 0, dChosen = 0;
     for (const auto& c : candidates) {
-        if (c.id == sent) dSent = distance2(c.point,point);
-        if (c.id == chosen) dChosen = distance2(c.point,point);
+        if (c.id == sent) dSent = distance2(c.box,point);
+        if (c.id == chosen) dChosen = distance2(c.box,point);
     }
-    return 1.5625f*dChosen < dSent ? chosen : sent;
+    return 1.5625f*dChosen < dSent || (dChosen == 0 && dSent == 0) ? chosen : sent;
 }
 inline bool inFront(const float row[4], float x, float y, float z) {
     const float w = row[0]*x+row[1]*y+row[2]*z+row[3];

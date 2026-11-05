@@ -266,7 +266,7 @@ void loadSettings() {
     if (cursorSettings.enabled) {
         cursorSettings.toggleKey = number("CursorMode","iToggleKey",48);
         cursorSettings.toggleGamepad = number("CursorMode","iToggleGamepad",-1);
-        cursorSettings.sensitivity = number("CursorMode","fSensitivity",900.0f);
+        cursorSettings.sensitivity = number("CursorMode","fSensitivity",65.0f);
         cursorSettings.radius = number("CursorMode","fPickRadiusPixels",48.0f);
         cursorSettings.latchPixels = number("CursorMode","fLatchMovePixels",12.0f);
         cursorSettings.trace = number("CursorMode","iTrace",0u);

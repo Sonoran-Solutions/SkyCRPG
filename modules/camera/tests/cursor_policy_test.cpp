@@ -65,12 +65,25 @@ int main() {
     assert(latch.retain({32,20},12,true));
     assert(!latch.retain({32.01f,20},12,true));
     latch.cycle(12,{20,20}); assert(!latch.retain({20,20},12,false));
-    const std::array candidates{Candidate{1,{1,0},100},Candidate{2,{-1,0},20},Candidate{3,{2,0},1}};
+    // Point-sized boxes keep the old nearest-point behaviour.
+    const auto at = [](float x, float y) { return Rect{x,y,x,y}; };
+    const std::array candidates{Candidate{1,at(1,0),100},Candidate{2,at(-1,0),20},Candidate{3,at(2,0),1}};
     assert(choose(candidates,{0,0},10)==2);
     assert(choose(candidates,{0,0},.5f)==0);
     assert(choose(candidates,{0,0},1)==2);
     assert(choose(candidates,{2,0},1)==3);
     assert(choose({}, {}, 10)==0);
+    // A long bench is hit anywhere along its box, not only near its centre.
+    const std::array bench{Candidate{7,{565,555,1535,665},4000}};
+    assert(choose(bench,{960,540},48)==7 && choose(bench,{600,600},48)==7);
+    assert(distance2(bench[0].box,Point{960,600})==0 && choose(bench,{960,400},48)==0);
+    // Nested boxes: the smaller box wins inside both; the larger one outside it.
+    const std::array table{Candidate{20,{100,100,500,300},900},Candidate{21,{280,180,320,220},950}};
+    assert(choose(table,{300,200},48)==21 && choose(table,{150,150},48)==20);
+    assert(choose(table,{300,200},0)==21); // zero radius still hits inside a box
+    // Invalid boxes and ids are ignored.
+    const std::array broken{Candidate{0,{0,0,10,10},1},Candidate{5,{10,0,0,10},1},Candidate{6,{NAN,0,1,1},1}};
+    assert(choose(broken,{5,5},48)==0 && !within(broken,5,{5,5},48));
     // Busy/incomplete reads retain the session until a bounded stale window;
     // a known lost session exits immediately, including on a fresh refresh.
     Freshness freshness;
@@ -109,18 +122,22 @@ int main() {
     assert(session.active && choose({},session.pointer.point,48)==0);
     session.exit();
     // Hover is recomputed without a scan refresh: leave A, clear, then bind B.
-    const std::array hover{Candidate{11,{10,10},1},Candidate{22,{90,10},2}};
+    const std::array hover{Candidate{11,at(10,10),1},Candidate{22,at(90,10),2}};
     assert(within(hover,11,{10,10},20));
     assert(within(hover,11,{35,10},20) && choose(hover,{35,10},20)==0);
     assert(!within(hover,11,{35.01f,10},20));
     assert(!within(hover,11,{40,10},20) && choose(hover,{40,10},20)==0);
     assert(!within(hover,11,{90,10},20) && choose(hover,{90,10},20)==22);
     // Hysteresis keeps A near the edge, but a neighbour under the pointer wins.
-    const std::array neighbours{Candidate{11,{10,10},1},Candidate{22,{50,10},2}};
+    const std::array neighbours{Candidate{11,at(10,10),1},Candidate{22,at(50,10),2}};
     assert(skycrpg::camera::cursor::hover(neighbours,11,{28,10},48)==11);
     assert(skycrpg::camera::cursor::hover(neighbours,11,{50,10},48)==22);
     assert(skycrpg::camera::cursor::hover(neighbours,0,{12,10},48)==11);
     assert(skycrpg::camera::cursor::hover(neighbours,11,{200,200},48)==0);
+    // Moving onto a mug inside the hovered table selects the mug, and back off it the table.
+    assert(skycrpg::camera::cursor::hover(table,20,{300,200},48)==21);
+    assert(skycrpg::camera::cursor::hover(table,21,{150,150},48)==20);
+    assert(skycrpg::camera::cursor::hover(table,21,{300,200},48)==21);
     Freshness aged; aged.observe(1,0,0);
     assert(aged.fresh(.1) && !aged.fresh(.6));
     assert(aged.usable(.6,10,false)); // a running session keeps its update grace
@@ -130,7 +147,7 @@ int main() {
     assert(!inFront(row,NAN,11,0));
     skycrpg::camera::Settings base;
     auto settings=validate(Settings{},base);
-    assert(!settings.enabled && settings.toggleKey==48 && settings.toggleGamepad==-1);
+    assert(!settings.enabled && settings.toggleKey==48 && settings.toggleGamepad==-1 && settings.sensitivity==65);
     for (int key : {64,65,66,22,26,27,37,38,2,9,71,81}) {
         settings.toggleKey=key; assert(validate(settings,base).toggleKey==-1);
     }

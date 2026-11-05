@@ -39,6 +39,7 @@ std::uint32_t sentTarget = 0;
 RE::FormID cell = 0;
 unsigned traceLines = 0;
 std::uint64_t framePickMicros = 0, busyTicks = 0;
+std::uint32_t nearId = 0; float nearPixels = -1; // trace: nearest projected box
 // Diagnostics for reason=overlay: last exit site, first failing construct/paint/
 // ownership step, Mouse.removeListener outcome and the flags ownMenu saw.
 std::atomic<unsigned> overlaySite{0}, overlayStep{0}, listenerRemoved{0}, ownFlags{0}, ownStep{0};
@@ -297,29 +298,41 @@ RE::NiCamera* projectionCamera() {
     }
     return nullptr;
 }
-bool centre(RE::TESObjectREFR* ref, RE::NiPoint3& result) {
+// World centre and the eight bound corners: the dead-actor world-bound cube,
+// otherwise the rotated, scaled OBND box.
+bool bounds(RE::TESObjectREFR* ref, RE::NiPoint3& centre, std::array<RE::NiPoint3,8>& corners) {
     if (!ref || ref->IsDeleted() || ref->IsDisabled()) return false;
     const auto root = ref->Get3D();
     if (!root) return false;
+    const auto finite = [](const RE::NiPoint3& p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); };
     if (ref->GetFormType() == RE::FormType::ActorCharacter && ref->IsDead()) {
-        result = root->worldBound.center;
-        if (root->worldBound.radius > 0 && std::isfinite(root->worldBound.radius) &&
-            std::isfinite(result.x) && std::isfinite(result.y) && std::isfinite(result.z)) return true;
+        centre = root->worldBound.center;
+        const float r = root->worldBound.radius;
+        if (r > 0 && std::isfinite(r) && finite(centre)) {
+            for (unsigned i = 0; i < corners.size(); ++i)
+                corners[i] = {centre.x+(i&1 ? r : -r),centre.y+(i&2 ? r : -r),centre.z+(i&4 ? r : -r)};
+            return true;
+        }
     }
     const auto base = ref->GetBaseObject();
     if (!base) return false;
     const auto lo = base->boundData.boundMin, hi = base->boundData.boundMax;
     if (lo.x > hi.x || lo.y > hi.y || lo.z > hi.z) return false;
     const auto angle = ref->GetAngle();
-    const float scale = ref->GetScale()*.5f;
+    const float scale = ref->GetScale();
     if (!std::isfinite(scale) || scale <= 0) return false;
-    const float x = (static_cast<float>(lo.x)+hi.x)*scale, y = (static_cast<float>(lo.y)+hi.y)*scale, z = (static_cast<float>(lo.z)+hi.z)*scale;
     const float sx=std::sin(angle.x),cx=std::cos(angle.x),sy=std::sin(angle.y),cy=std::cos(angle.y),sz=std::sin(angle.z),cz=std::cos(angle.z);
     const auto position = ref->GetPosition();
-    result = {position.x+cy*cz*x+cy*sz*y-sy*z,
-        position.y+(sx*sy*cz-cx*sz)*x+(sx*sy*sz+cx*cz)*y+sx*cy*z,
-        position.z+(cx*sy*cz+sx*sz)*x+(cx*sy*sz-sx*cz)*y+cx*cy*z};
-    return std::isfinite(result.x) && std::isfinite(result.y) && std::isfinite(result.z);
+    const auto world = [&](float x, float y, float z) {
+        x *= scale; y *= scale; z *= scale;
+        return RE::NiPoint3{position.x+cy*cz*x+cy*sz*y-sy*z,
+            position.y+(sx*sy*cz-cx*sz)*x+(sx*sy*sz+cx*cz)*y+sx*cy*z,
+            position.z+(cx*sy*cz+sx*sz)*x+(cx*sy*sz-sx*cz)*y+cx*cy*z};
+    };
+    centre = world((static_cast<float>(lo.x)+hi.x)*.5f,(static_cast<float>(lo.y)+hi.y)*.5f,(static_cast<float>(lo.z)+hi.z)*.5f);
+    for (unsigned i = 0; i < corners.size(); ++i)
+        corners[i] = world(i&1 ? hi.x : lo.x,i&2 ? hi.y : lo.y,i&4 ? hi.z : lo.z);
+    return finite(centre) && std::all_of(corners.begin(),corners.end(),finite);
 }
 std::span<const cursor::Candidate> points() { return {projected.data(),projectedCount}; }
 bool retainLatch() {
@@ -353,17 +366,33 @@ void pick(const api::CursorFrame& frame, bool fresh) {
         for (std::uint32_t i = 0; i < frame.count; ++i) {
             const auto ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(frame.ids[i]);
             RE::NiPoint3 world;
-            if (!centre(ref,world)) continue;
+            std::array<RE::NiPoint3,8> corners;
+            if (!bounds(ref,world,corners)) continue;
             // The native projector divides by abs(w). Test signed w first;
             // this remains correct with reversed Z and uses no depth range.
-            if (!cursor::inFront(camera->GetRuntimeData().worldToCam[3],world.x,world.y,world.z)) continue;
-            float x = 0,y = 0,z = 0;
-            ++projections;
-            if (!camera->WorldPtToScreenPt3(world,x,y,z,1e-5f) || !std::isfinite(x) || !std::isfinite(y)) continue;
-            const cursor::Point screen{x*o->bufferWidth-o->left,(1-y)*o->bufferHeight-o->top};
-            if (screen.x < 0 || screen.x > o->width || screen.y < 0 || screen.y > o->height) continue;
+            const auto row = camera->GetRuntimeData().worldToCam[3];
+            if (!cursor::inFront(row,world.x,world.y,world.z)) continue;
+            // Box of the projected centre and every corner in front of the camera.
+            cursor::Rect box{std::numeric_limits<float>::infinity(),std::numeric_limits<float>::infinity(),
+                -std::numeric_limits<float>::infinity(),-std::numeric_limits<float>::infinity()};
+            const auto add = [&](const RE::NiPoint3& point) {
+                if (!cursor::inFront(row,point.x,point.y,point.z)) return;
+                float x = 0,y = 0,z = 0;
+                ++projections;
+                if (!camera->WorldPtToScreenPt3(point,x,y,z,1e-5f) || !std::isfinite(x) || !std::isfinite(y)) return;
+                const float sx = x*o->bufferWidth-o->left, sy = (1-y)*o->bufferHeight-o->top;
+                box = {(std::min)(box.left,sx),(std::min)(box.top,sy),(std::max)(box.right,sx),(std::max)(box.bottom,sy)};
+            };
+            add(world);
+            for (const auto& corner : corners) add(corner);
+            if (!(box.left <= box.right) || box.right < 0 || box.left > o->width || box.bottom < 0 || box.top > o->height) continue;
             const auto delta = world-player->GetPosition();
-            projected[projectedCount++] = {frame.ids[i],screen,delta.SqrLength()};
+            projected[projectedCount++] = {frame.ids[i],box,delta.SqrLength()};
+        }
+        nearId = 0; nearPixels = -1;
+        for (const auto& c : points()) {
+            const float d = std::sqrt(cursor::distance2(c.box,session.pointer.point));
+            if (nearPixels < 0 || d < nearPixels) { nearId = c.id; nearPixels = d; }
         }
         if (fresh && cycles != snapshot.cyclesTotal) {
             cycles = snapshot.cyclesTotal;
@@ -424,9 +453,9 @@ void traceFrame() {
     if (session.active && traceLines < cursorSettings.trace) {
         ++traceLines;
         char line[384]{};
-        std::snprintf(line,sizeof(line),"Cursor sample=%u refresh=%llu target=%08X latch=%08X x=%.2f y=%.2f projections=%llu pushes=%llu cost_us=%llu busy=%llu viable=%u available=%u count=%u replies=%llu auth=%08X",
+        std::snprintf(line,sizeof(line),"Cursor sample=%u refresh=%llu target=%08X latch=%08X x=%.2f y=%.2f projections=%llu pushes=%llu cost_us=%llu busy=%llu near=%08X d=%.1f viable=%u available=%u count=%u replies=%llu auth=%08X",
             traceLines,static_cast<unsigned long long>(refresh),sentTarget,session.latch.id,session.pointer.point.x,session.pointer.point.y,
-            static_cast<unsigned long long>(projections),static_cast<unsigned long long>(pushes),static_cast<unsigned long long>(framePickMicros),static_cast<unsigned long long>(busyTicks),
+            static_cast<unsigned long long>(projections),static_cast<unsigned long long>(pushes),static_cast<unsigned long long>(framePickMicros),static_cast<unsigned long long>(busyTicks),nearId,nearPixels,
             cachedFrame.viable,cachedFrame.snapshot.available,cachedFrame.count,static_cast<unsigned long long>(cachedFrame.replies),cachedFrame.authorizedTarget);
         log(line);
     }
