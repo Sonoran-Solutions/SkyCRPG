@@ -39,6 +39,7 @@ std::uint32_t sentTarget = 0;
 RE::FormID cell = 0;
 unsigned traceLines = 0;
 std::uint64_t framePickMicros = 0, busyTicks = 0;
+bool retryService = false; // a busy hook tick; PostDisplay runs it after the UI job
 std::uint64_t refusalBits = 0;
 class Overlay;
 // Published once by the creator (UI job thread) and never freed while the process runs.
@@ -63,20 +64,25 @@ public:
 private:
     RE::UI* ui;
 };
-// The camera hooks run on main while the UI job may hold UI+0x158; they never
-// wait for it. Same acquire as the engine's (0x140199fa0) without the spin:
+// The camera hooks run on main while the UI job may hold UI+0x158; they wait at
+// most `budget` for it. Same acquire as the engine's (0x140199fa0), bounded:
 // owner thread id at +0, count at +4 (pinned 1.7.104 / CommonLib BSSpinLock).
 // PostDisplay keeps the blocking UILock: main has already waited for the UI job.
 static_assert(sizeof(RE::BSSpinLock) == 8);
 class UITryLock {
 public:
-    UITryLock() {
+    explicit UITryLock(std::chrono::microseconds budget = {}) {
         const auto ui = RE::UI::GetSingleton();
         if (!ui) return;
         const auto words = reinterpret_cast<volatile LONG*>(&ui->processMessagesLock);
         const auto thread = static_cast<LONG>(GetCurrentThreadId());
         if (words[0] == thread) { InterlockedIncrement(&words[1]); held = ui; return; }
-        if (InterlockedCompareExchange(&words[1],1,0) == 0) { words[0] = thread; held = ui; }
+        const auto deadline = std::chrono::steady_clock::now()+budget;
+        for (;;) {
+            if (InterlockedCompareExchange(&words[1],1,0) == 0) { words[0] = thread; held = ui; return; }
+            if (std::chrono::steady_clock::now() >= deadline) return;
+            _mm_pause();
+        }
     }
     ~UITryLock() { if (held) held->processMessagesLock.Unlock(); }
     UITryLock(const UITryLock&) = delete;
@@ -91,7 +97,8 @@ void refuse(Exit reason) {
     refusalBits |= bit;
     char line[128]{};
     constexpr std::array names{"none","toggle","disabled","lifecycle","menu","load","death","cell","first-person","special","precision","lock","F6","F8","selection","overlay","thread","stale"};
-    std::snprintf(line,sizeof(line),"Cursor refused/exit reason=%s",names[static_cast<unsigned>(reason)]);
+    std::snprintf(line,sizeof(line),"Cursor refused/exit reason=%s busy=%llu",names[static_cast<unsigned>(reason)],
+        static_cast<unsigned long long>(busyTicks));
     log(line);
 }
 void service();
@@ -191,6 +198,7 @@ public:
         // On main the draw holds 0x14333b050 and then takes UI+0x158, the same
         // order as ProcessMessages, after main has waited for the UI job.
         if (!mainThread()) return;
+        if (std::exchange(retryService,false)) service(); // uncontended: the UI job has finished
         if (!session.active) return;
         if (const auto reason = captureExit(); reason != Exit::none) { leave(reason); return; }
         if (!ownMenu(this) || !paint()) { leave(Exit::overlay); return; }
@@ -418,8 +426,10 @@ void service() {
     if (serviced && servicedFrame == frameState->gUpdateCounter) { clearAway(); return; }
     serviced = true; servicedFrame = frameState->gUpdateCounter;
     if (!toggle.load() && !session.active && !pending) return;
-    // Skip, never wait, while the UI job holds UI+0x158; requests stay queued.
-    const UITryLock lock;
+    // Wait at most 1 ms for the UI job's UI+0x158, then skip; requests stay
+    // queued and a shown overlay's PostDisplay runs the tick instead.
+    const UITryLock lock(std::chrono::microseconds(1000));
+    retryService = !lock;
     if (!lock) { ++busyTicks; serviced = false; return; }
     const unsigned request = toggle.exchange(0);
     if (request && (session.active || pending)) { leave(Exit::toggle); return; }
@@ -488,6 +498,7 @@ bool look(const RE::NiPoint2& input) {
     const UITryLock lock;
     if (!lock) {
         // UI job busy: keep the pointer math; PostDisplay checks and paints.
+        // Never wait here: look runs every frame while active.
         ++busyTicks;
         session.pointer.move({input.x,input.y},cursorSettings.sensitivity,o->width,o->height);
         clearAway();

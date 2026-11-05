@@ -39,7 +39,16 @@ Its majors are fixed in the follow-up commit:
 | MINOR: `leave` always called `hide()` | Removed; PostDisplay draws nothing while inactive. |
 | MINOR: stale comments, discarded `compare_exchange_strong` | Fixed. A late kHide ending a new pending entry is documented as fail-closed. |
 
-Not verified: the busy-skip rate, whether the movie renders without Advance, and in-game behaviour.
+**Delta review of `3ffa523`.** No blocker. It confirmed the try-lock matches the engine's acquire and that nothing in `service` or `look` can block on UI+0x158 or 0x14333b050. One new MAJOR: under persistent contention, skipped ticks could leave entry, hover and the eligibility exits in `service` waiting indefinitely.
+
+Fixed in the next commit:
+- `service` now waits at most 1 ms for the lock before skipping.
+- A skipped tick sets `retryService`, and the shown overlay's PostDisplay runs it there, after the UI job has finished.
+- Refusal and exit lines now log `busy=`.
+
+Still open, and pre-existing on `main`: `focused()`, `noActiveMenus()` and `context()`, called from other Camera features outside cursor mode, walk the menu stack without the lock.
+
+Not verified: the busy-skip rate, the frame cost of the bounded wait, whether the movie renders without Advance, and in-game behaviour.
 
 ## Fifth pass — fourth review fixes, orchestrator (2026-11-04)
 
