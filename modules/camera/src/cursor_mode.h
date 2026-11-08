@@ -430,7 +430,11 @@ void pick(const api::CursorFrame& frame, bool fresh) {
         }
         if (fresh && cycles != snapshot.cyclesTotal) {
             cycles = snapshot.cyclesTotal;
-            session.latch.cycle(snapshot.latched ? snapshot.target : 0,session.pointer.point);
+            // A cycle from the frame before entry, or from the frame a target
+            // leaves the screen, is adopted only when the target has a box.
+            const auto target = snapshot.latched ? snapshot.target : 0u;
+            const bool hasBox = !visibleSupported || std::any_of(points().begin(),points().end(),[&](const auto& c) { return c.id == target; });
+            session.latch.cycle(hasBox ? target : 0u,session.pointer.point);
             waiting = false; hoverAttempts = {};
         }
     }

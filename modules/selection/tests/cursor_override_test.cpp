@@ -5,7 +5,7 @@
 #include <cassert>
 #include <cstddef>
 #include <iostream>
-#include <iterator>
+#include <type_traits>
 #include <limits>
 #include <thread>
 using namespace skycrpg::selection;
@@ -48,7 +48,7 @@ int main() {
     static_assert(offsetof(api::Interface,setCursorVisible)==offsetof(api::Interface,getCursorFrame)+sizeof(api::Interface::getCursorFrame));
     static_assert(sizeof(api::Interface)==offsetof(api::Interface,setCursorVisible)+sizeof(api::Interface::setCursorVisible));
     static_assert(sizeof(void*)!=8 || sizeof(api::Interface)==72);
-    static_assert(std::size(api::CursorFrame{}.ids)==api::cursorListCapacity && std::size(CursorVisible{}.ids)==api::cursorListCapacity);
+    static_assert((std::extent_v<decltype(api::CursorFrame::ids)>)==api::cursorListCapacity && (std::extent_v<decltype(CursorVisible::ids)>)==api::cursorListCapacity);
     const std::uint32_t one=7;
     assert(validCursorVisible(nullptr,0) && validCursorVisible(&one,1));
     assert(!validCursorVisible(nullptr,1) && !validCursorVisible(&one,api::cursorListCapacity+1));

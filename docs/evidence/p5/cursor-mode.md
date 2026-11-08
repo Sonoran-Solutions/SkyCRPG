@@ -21,7 +21,7 @@ The owner accepted the orchestrator's recommendation on all four open decisions:
 
 Limitations accepted with this change:
 
-- The shown set is the one Camera projected on its last frame; a cycle consumed by Pick in the same frame a candidate leaves the screen can still latch it. While Selection withholds its list, Camera stops reporting, but cycle keys are suspended then as well.
+- The shown set is the one Camera projected on its last frame. A cycle consumed by Pick in the same frame a candidate leaves the screen, or an ordinary Selection cycle from the frame before entry, can make a hidden candidate Selection's target for one Pick tick; Camera refuses to adopt such a latch (it requires a projected box when the visibility member exists) and its next hover push replaces the target. While Selection withholds its list, Camera stops reporting, but cycle keys are suspended then as well.
 - A cycle onto a visible object latches it and the latch is kept on list membership, so walking until that object leaves the screen keeps the latch and E still acts on it. This is step E of the owner's hands-on sheet; the alternative (require a box to keep the latch) is a one-line change once the owner has felt it.
 - When the only shown candidate is the current one, `]` counts as a cycle: it latches the hovered object and drops a queued hover to the same object. The target is unchanged.
 
