@@ -163,3 +163,13 @@ checks and real historical dry assemblies passed this limited comparison; final
 same-commit candidates, Windows CI and fresh-profile runtime acceptance remain
 open. Exact commands, hashes, install/update/removal drafts and NOT_RUN routes
 are in the [DYL-171 evidence](../evidence/p4/packaging.md).
+
+## Test tooling pins (never shipped)
+
+Internal test inputs built by CI from exact upstream commits. They are staged only into disposable
+profiles by the harness, verified by `SHA256SUMS`, removed on restoration, and are not part of any
+Camera/UI package or shipped configuration. A pin here is a build input, not runtime acceptance.
+
+| Component | Exact source and primary link | Role / claim | Pin and notices |
+| --- | --- | --- | --- |
+| vinput (LLM Game Automation MCP) — test tooling | commit **`ae28e65336b59f73d03e6ecd2f3c434c8fab3ee2`** (2026-11-08); [repository](https://github.com/CorruptedAng3l/llm-game-automation-mcp) | In-process virtual keyboard/mouse/XInput input and swapchain frame capture for the route harness, driven over `\\.\pipe\vinput_<pid>` by `vinput.exe`. Upstream claims are Windows claims; behaviour under Proton is the [vinput spike](../evidence/p5/vinput-spike.md) question. OCR (WinRT) is expected to fail under Wine; XInput emulation is not controller evidence. | [tools/vinput/UPSTREAM.lock](../../tools/vinput/UPSTREAM.lock); CI job `vinput-x64` ([vinput.yml](../../.github/workflows/vinput.yml)) checks the checkout against the pin and uploads `vinput.exe`, `vinput64.dll`, `vinput_x64.lib`, `SkyCRPG_VInput.dll`, `SHA256SUMS` and the licence texts. MIT plus vendored MinHook/HDE BSD-2-Clause: [THIRD_PARTY](../THIRD_PARTY.md#test-tooling-never-shipped). |

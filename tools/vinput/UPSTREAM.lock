@@ -1,0 +1,6 @@
+# vinput (LLM Game Automation MCP) upstream pin. Test tooling only; never shipped.
+# CI checks out exactly this commit; change it only with a dependency-lock update.
+repository=https://github.com/CorruptedAng3l/llm-game-automation-mcp
+commit=ae28e65336b59f73d03e6ecd2f3c434c8fab3ee2
+commit_date=2026-11-08
+license=MIT (LICENSE); vendored MinHook BSD-2-Clause (third_party/minhook/LICENSE.txt)

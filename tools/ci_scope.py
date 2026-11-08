@@ -15,6 +15,8 @@ SHARED_FILES = frozenset({
     "docs/compatibility/dependency-lock.md",
 })
 SHARED_PREFIXES = ("shared/", "cmake/", "LICENSES/", ".github/actions/")
+# Test tooling with its own workflow (vinput.yml); it never selects a native target here.
+TOOLING_PREFIXES = ("tools/vinput/",)
 
 
 def select_modules(paths, requested=""):
@@ -27,7 +29,10 @@ def select_modules(paths, requested=""):
     # Shared changes take precedence even when a target also changed.
     if any(p in SHARED_FILES or p.startswith(SHARED_PREFIXES) or p.startswith("tools/tests/test_package") for p in paths):
         return list(TARGETS)
-    changed = [t for t in TARGETS if any(p.startswith(LEAF_PREFIXES[t]) for p in paths)]
+    native = [p for p in paths if not p.startswith(TOOLING_PREFIXES)]
+    if paths and not native:
+        return []  # vinput-only change: the vinput workflow builds it; nothing native to select
+    changed = [t for t in TARGETS if any(p.startswith(LEAF_PREFIXES[t]) for p in native)]
     return changed or list(TARGETS)
 
 
@@ -44,7 +49,7 @@ def main():
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
         output.write("modules=" + json.dumps(modules) + "\n")
         output.write("testprobe=" + ("true" if "testprobe" in targets else "false") + "\n")
-    print("Selected native targets: " + ", ".join(targets))
+    print("Selected native targets: " + (", ".join(targets) or "none"))
 
 
 if __name__ == "__main__":

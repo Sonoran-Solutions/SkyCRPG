@@ -1,0 +1,94 @@
+name: vinput
+
+# Test tooling only (tools/vinput): builds the pinned upstream vinput CLI/DLL/static
+# library and the SkyCRPG_VInput SKSE host plugin on a disposable Windows runner, and
+# uploads them with SHA-256 sums. Nothing here is packaged or shipped. Owner: the
+# vinput spike; budget 30 minutes; completion: artifact upload / exit 0.
+on:
+  push:
+    branches: [main]
+    paths: ["tools/vinput/**", "shared/include/skycrpg/skeleton.h", ".github/workflows/vinput.yml"]
+  pull_request:
+    paths: ["tools/vinput/**", "shared/include/skycrpg/skeleton.h", ".github/workflows/vinput.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vinput-x64:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Read the upstream pin
+        id: pin
+        shell: pwsh
+        run: |
+          $match = Select-String -Path tools/vinput/UPSTREAM.lock -Pattern '^commit=([0-9a-f]{40})$'
+          if (-not $match) { throw 'tools/vinput/UPSTREAM.lock has no 40-hex commit= line' }
+          $commit = $match.Matches[0].Groups[1].Value
+          "commit=$commit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "upstream pin $commit"
+      - name: Checkout pinned upstream vinput (third-party test tooling)
+        uses: actions/checkout@v5
+        with:
+          repository: CorruptedAng3l/llm-game-automation-mcp
+          ref: ${{ steps.pin.outputs.commit }}
+          path: external/vinput
+          persist-credentials: false
+      - name: Verify the checkout is exactly the pin
+        shell: pwsh
+        run: |
+          $head = (git -C external/vinput rev-parse HEAD).Trim()
+          if ($head -ne '${{ steps.pin.outputs.commit }}') { throw "upstream HEAD $head is not the pinned commit" }
+          Write-Host "upstream HEAD $head OK"
+      - name: Build upstream x64 with its own build.bat
+        shell: cmd
+        run: |
+          cd external\vinput
+          call build.bat :arch x64
+          if errorlevel 1 exit /b 1
+          dir dist
+      - name: Build SkyCRPG_VInput.dll (compiled-in host plugin)
+        shell: pwsh
+        run: |
+          cmake --version
+          cmake -S tools/vinput/plugin -B build/vinput -G "Visual Studio 17 2022" -A x64 "-DSKYCRPG_VINPUT_DIST=$pwd/external/vinput/dist" "-DSKYCRPG_VINPUT_SRC=$pwd/external/vinput/src" "-DSKYCRPG_VINPUT_UPSTREAM=${{ steps.pin.outputs.commit }}" "-DSKYCRPG_SOURCE_COMMIT=$env:SOURCE_SHA"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/vinput --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Assemble the artifact and checksum it
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vinput-artifact | Out-Null
+          foreach ($name in 'vinput.exe', 'vinput64.dll', 'vinput_x64.lib') { Copy-Item "external/vinput/dist/$name" vinput-artifact/ }
+          Copy-Item build/vinput/Release/SkyCRPG_VInput.dll vinput-artifact/
+          Copy-Item tools/vinput/plugin/SkyCRPG_VInput.ini vinput-artifact/
+          Copy-Item tools/vinput/UPSTREAM.lock vinput-artifact/
+          # MinHook's BSD licence requires its notice next to binary redistributions, internal or not.
+          Copy-Item external/vinput/LICENSE vinput-artifact/LICENSE-vinput.txt
+          Copy-Item external/vinput/third_party/minhook/LICENSE.txt vinput-artifact/LICENSE-MinHook.txt
+          $lines = Get-ChildItem vinput-artifact -File | Sort-Object Name | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          }
+          [IO.File]::WriteAllText("$pwd/vinput-artifact/SHA256SUMS", (($lines -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+          Get-Content vinput-artifact/SHA256SUMS
+      - uses: actions/upload-artifact@v5
+        with:
+          name: skycrpg-vinput-${{ env.SOURCE_SHA }}
+          path: vinput-artifact/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: vinput-diagnostics-${{ env.SOURCE_SHA }}
+          path: |
+            build/vinput/Release/SkyCRPG_VInput.pdb
+            build/vinput/CMakeCache.txt
+            external/vinput/dist/vinput64.pdb
+          if-no-files-found: ignore

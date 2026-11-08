@@ -44,6 +44,28 @@ class ScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.select_modules([], "unknown")
 
+    def test_vinput_tooling_selects_no_native_target(self):
+        # tools/vinput has its own workflow; alone it selects nothing, beside a module it stays focused.
+        self.assertEqual(module.select_modules(["tools/vinput/plugin/src/plugin.cpp", "tools/vinput/UPSTREAM.lock"]), [])
+        self.assertEqual(module.select_modules(["tools/vinput/README.md", "modules/ui/src/plugin.cpp"]), ["ui"])
+        self.assertEqual(module.select_modules(["tools/vinput/README.md", "tools/testprobe/src/plugin.cpp"]), ["testprobe"])
+        # A shared change still widens, and an unclassified companion stays conservative.
+        self.assertEqual(module.select_modules(["tools/vinput/README.md", "vcpkg.json"]), ["camera", "ui", "testprobe"])
+        self.assertEqual(module.select_modules(["tools/vinput/README.md", "docs/STATUS.md"]), ["camera", "ui", "testprobe"])
+
+    def test_vinput_workflow_is_separate_and_pinned(self):
+        workflows = Path(__file__).parents[2] / ".github/workflows"
+        build = (workflows / "build.yml").read_text()
+        vinput = (workflows / "vinput.yml").read_text()
+        self.assertNotIn("tools/vinput", build)
+        self.assertEqual(vinput.count('"tools/vinput/**"'), 2)
+        self.assertEqual(vinput.count('".github/workflows/vinput.yml"'), 2)
+        self.assertIn("tools/vinput/UPSTREAM.lock", vinput)
+        self.assertIn("call build.bat :arch x64", vinput)
+        self.assertIn("runs-on: windows-2022", vinput)
+        lock = (Path(__file__).parents[2] / "tools/vinput/UPSTREAM.lock").read_text()
+        self.assertRegex(lock, r"(?m)^commit=[0-9a-f]{40}$")
+
     def test_workflow_uses_tested_selector_and_triggers_its_inputs(self):
         workflow = (Path(__file__).parents[2] / ".github/workflows/build.yml").read_text()
         self.assertIn("python tools/ci_scope.py", workflow)
