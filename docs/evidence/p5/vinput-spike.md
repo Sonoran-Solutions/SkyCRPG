@@ -21,17 +21,22 @@ notices in [THIRD_PARTY](../../THIRD_PARTY.md#test-tooling-never-shipped).
 | `SkyCRPG_VInput.dll` compiled-in SKSE host (`/W4 /WX`, no CommonLib) | **PASS** (built first iteration; no injector needed) |
 | Host wiring: launcher service on the bus, wrapper, PID discovery | **PASS** (bus name and PID file confirmed with the game up) |
 | In-game: plugin load, vinput start, hooks, pipe | **PASS** (SKSE handle 4; `VInput_Init returned 1`; all hooks ok; pipe created) |
-| In-game: game survives to the main menu with vinput hooked | **FAIL** (access violation in `SkyrimSE.exe` ~3 s after the main menu opened) |
-| In-game: `status`, covered `capture`, `hold w`, `move`, `pad` | **BLOCKED** by the crash |
+| In-game: game survives to the main menu with vinput hooked (spike-2, spike-3 attempt 2) | **FAIL** twice (access violation in `SkyrimSE.exe` at `+0xE128B2`, ~3 s after the main menu opened, identical backtrace both runs) |
+| In-game bisect (spike-3): `config fakefocus=false isolate=false` 0.5 s after the pipe appeared | **PASS** accepted (`ok:true`); the game then survived the main menu for 47 s |
+| In-game bisect (spike-3): `status` at the main menu | **PASS** (29 KB JSON; channels below) |
+| In-game bisect (spike-3): game survives real window activation with faking off | **FAIL** (same crash, same address and backtrace, ~1 s after `WM_ACTIVATEAPP`/`WM_ACTIVATE`/`WM_SETFOCUS` with `realfg=1`) |
+| In-game: save load, re-enable, `key w`, covered `capture`, `move`, `pad` | **NOT_RUN** (crash came first; no key was ever sent by the driver) |
 
-**Recommendation: do not adopt vinput in its current form; one more bounded experiment is
-justified before dropping it, if the owner approves it.** With vinput compiled in and
-started at plugin load, Skyrim SE 1.7.104 under Proton crashed on the main thread inside its
-DirectInput buffered-keyboard read, about 3 s after the main menu opened, in a configuration
-(same stage without the vinput DLL) that has run dozens of Phase 5 routes. The crash
-analysis below points at the DirectInput `GetDeviceData` interposition or the activation
-refresh that triggers the first poll; a single run with vinput's faking switched off until
-after the save loads would tell them apart.
+**Recommendation: drop vinput and keep the uinput, focus and `xwd` harness.** Three game
+runs, three identical crashes at `SkyrimSE.exe+0xE128B2` inside Skyrim's DirectInput
+buffered-keyboard read. The spike-3 bisect showed that vinput's fake activation only decides
+*when* the crash happens: with `fakefocus=false isolate=false` the game sat at the main menu
+for 47 s (spike-2 died at 11 s) and crashed about one second after the window became the
+real foreground, on the first keyboard poll after activation. The DirectInput interposition
+itself (installed unconditionally at `VInput_Init`, `dinput8 keyboard/mouse A/W poll coverage:
+15/15`) is therefore what Skyrim 1.7.104 under Wine's `dinput` cannot survive, and it has no
+runtime switch. Not adopted as a route input/capture layer and not adopted for interactive
+steering.
 
 ## CI build and artifact
 
@@ -173,35 +178,86 @@ Caveats that hold regardless: OCR commands (`ocr`, `click-text`, `wait-text`) us
 `Windows.Media.Ocr` and are expected to fail under Wine; XInput emulation is not controller
 proof; the DLLs are test-only and never ship.
 
+## Game spike 3 (2026-11-08, runs `vinput-spike-3`, bisect)
+
+Owner go relayed verbatim by the orchestrator: "Run the bisect"; the user in this session
+allowed the harness launch after the permission classifier denied it once (attempt 1,
+NOT_RUN, deployment restored). Same stage (`session-p5/stage-vinput`), dist
+(`dist-camera-p5-off`), profile `camera-only`; the owner's 2026-10-26 Riverwood quicksave was
+copied into the profile's save folder as `SkyCRPG_VInput3` (`.ess` `284c9b8d226fc9ae94d6b811f139028fd44b63bed69bd95226fc82f3800fdb7f`)
+after prepare, so restore removed it. Host side: `spike3_driver.sh` (pipe wait, `config`,
+`status`) and `spike3_run.py` (console load through the harness's uinput keyboard, re-enable,
+one `key w`, `qqq`); both only talk to a game the harness already started. Logs:
+`session-p5/logs/vinput/spike-3/`.
+
+**Attempt 2 (no bisect, my sequencing error).** The pipe driver was started after the
+launch command returned; the game had already crashed. It reproduced spike-2 exactly:
+plugin loaded, `pid=356`, `VInput_Init returned 1`, Main Menu at 22:51:47Z, `Exception
+0xc0000005 ... addr=0000000140E128B2` on the main thread at 22:51:52Z, same seven-frame
+backtrace, `leftover_pids []`. Proton log `fa8cd83fbce4b0e6edb6d9ce0d2b475072d4e50922b28f2eeeda46115100e7ee`, vinput log
+`0d03d1b067b083ded9076e4b54e80318c65b6f8cf32d578c6eb1fa5cd80a7935` (`attempt2-nobisect/`). It counts as the second
+unmodified reproduction; the orchestrator's "one unchanged retry" was then used for attempt 3.
+
+**Attempt 3 (bisect).** Driver started before the launch.
+
+| Step | Evidence | Result |
+| --- | --- | --- |
+| Plugin loads, vinput starts | `SkyCRPG_VInput.log`: `pid=348`, runtime 1.7.104.0, SKSE 2.3.1.0, `VInput_Init returned 1`; `vinput_348.log` 0.581 s: `hooks ok:` (54 entries, `hooks_failed` empty), `dinput8 keyboard/mouse A/W poll coverage: 15/15`, `pipe \\.\pipe\vinput_348` | **PASS** |
+| `config fakefocus=false isolate=false` at the pipe | `driver.log` 22:55:49.9 PID file read, 22:55:50.4 reply `{"ok":true,...,"pid":348,...}` (first try; the pipe answered through the launcher service) | **PASS** |
+| Main menu with faking off | TestProbe `Main Menu` opening 22:55:56Z; `status` at 22:56:00 (`uptime_ms 10725`): `fakefocus false`, `isolate false`, `physical_input.physical_passthrough true`, `really_foreground false`, `user_took_foreground false`, `blockfocus true`, `frame_api d3d11`, swapchain 1920x1080, `frames 164`, `capture_path none`; `raw_kbd false`, `raw_mouse false`, `raw_registration.count 0`; `directinput_readers`: `factory_hooked true`, `created_device_returns 4`, `state_entries 2`, `buffer_entries 2`, `hook_failures 4`, `formatted_buffer_reads 0`; `directinput_mouse.poll_channel none`; `virtual_pad.active false`, XInput users 0-3 all `entries 0`. Reading: at the main menu Skyrim had created its DirectInput keyboard and mouse devices but had not yet polled them; Raw Input was not registered | **PASS** |
+| Game survives real activation | `vinput_348.log` +52.005 s: `trace msg 0x1C w=0x1 ... realfg=1` (WM_ACTIVATEAPP), `msg 0x6 w=0x2 ... realfg=1` (WM_ACTIVATE), `msg 0x7 ... realfg=1` (WM_SETFOCUS); last line of the log. Proton log 263716.048 (init 263664.6, so +51.4 s): `Exception 0xc0000005 ... addr=0000000140E128B2`, thread 0160, backtrace `+0xE128B2 → +0xCF9624 → +0x658DEE → +0x651465 → +0x15A843E → kernel32 → ntdll` (identical to spike-2 and attempt 2). `run.log`: the Skyrim window became the active X11 window at 22:56:41.8 (not by this driver: `spike3_run.py` had only been waiting for focus since 22:56:04, and its first GRAVE tap at 22:56:44.3 was refused because the active window was already gone); `run.json` ended 22:56:43, `leftover_pids []` | **FAIL** |
+| Save load via console, `config fakefocus=true isolate=true`, `key w 500`, position change | not reached; no key was sent to the game by either driver (`result.json` steps: `main_menu PASS`, `focus PASS`, then the process was gone) | NOT_RUN |
+| Restore | `restoration.json` PASS, `mismatch []`, `game_pids []`; `Data/SKSE/Plugins/logs/vinput_348.log` and `vinput_356.log` preserved to `plugin-logs/` and removed first so `Data/SKSE` disappeared cleanly | **PASS** |
+
+| File (`session-p5/logs/vinput/spike-3/`) | SHA-256 |
+| --- | --- |
+| `steam-489830.log` | `93289f527a5ba6503eb3f3f29a99944be5216d3a534ef7d969d1d454df0559ad` |
+| `plugin-logs/vinput_348.log` | `8f3c40ce8243236a9af3e1661c540d6a43b3eef790109ab287ff9a101cb325ef` |
+| `SkyCRPG_VInput.log` | `7b21c29465d8e901d818eada6be4c3886ecfd8921682cb010eb5b731f0e25359` |
+| `skse64.log` | `1ab145f229eb65082be1d8f1169d4f7a248488aa4908aabd2e2b32562fb62f0d` |
+| `SkyCRPG_TestProbe-run.jsonl` | `d1ce2a932a180480a20959a94d9aaf4f573d73352a3151d9e701c20739e23139` |
+| `01-config-off.json` | `549de57fe1e5ad2eb81e82e6253dcde49cb39886f74a9418dbaa5a81e1979ea6` |
+| `02-status-mainmenu.clean.json` | `016320aa5af0b6e17d4549c66cdc49a2af86454b5f2b99096d73664a75a5904a` |
+| `driver.log` / `run.log` / `result.json` | `d8bba5f590bb9cc98db0602f350b8e822db1a3ed024d9d729f8031e876455089` / `c1a8793362bcc39a6a3b2929b7f7ce5be319660c80a508a25596ce77c05b851f` / `1d20c6fa005ad955a47fa7eadc9e0213485669f6d96808f3a9fed33503fee501` |
+
+**Reading of the bisect.** The outcome table below predicted three cases; the result is a
+sharper version of "crashes anyway". Switching off fake focus and isolation (the only
+vinput behaviour that has a runtime switch) moved the crash from 11 s after init to the
+moment the window was really activated, and the fault, address and backtrace did not
+change. So the activation path merely triggers Skyrim's first buffered keyboard poll; the
+poll itself faults with vinput's DirectInput reader hooks in place, whether or not vinput
+is faking anything. Caveats: real activation at 22:56:41 came from outside the drivers (the
+owner or the compositor), which does not weaken the reading because the crash needed exactly
+that; `isolate=false` means the hook was in pass-through mode and still corrupted or
+mis-sized the buffered records; the status JSON records `hook_failures 4` under
+`directinput_readers` with every top-level hook reported ok, which upstream would have to
+explain. A further bisect would need a vinput build without the `dinput8` hooks, which is
+a code change upstream, outside this spike.
+
 ## Recommendation
 
-**One more bounded experiment is justified before dropping vinput, if the owner approves
-it; otherwise drop it and keep the uinput harness.** Do not adopt it for routes or for
-interactive steering until the experiment has run. Proposed run (one process, 20 minutes,
-same stage, same launch; companion script `session-p5/vinput/spike3_driver.sh`, which never
-launches anything):
+**Drop vinput; keep the uinput, focus and `xwd` harness.** The bisect the previous version
+of this note proposed has run (above). Its outcome table and result:
 
-1. As soon as the pipe answers (0.7 s after `VInput_Init`; the main menu came up about 8 s
-   after it in spike-2), the wrapper sends `config fakefocus=false isolate=false`, so vinput
-   neither fakes activation nor interposes physical input before Skyrim's first keyboard poll.
-2. Capture `status` JSON at the main menu (which input channels Skyrim reads).
-3. Load the save; once the TestProbe reports `player_state` available, send
-   `config fakefocus=true isolate=true`, then one `key w`.
+| Outcome | Reading | Result |
+| --- | --- | --- |
+| Survives with faking off, crashes after re-enabling | the activation / cooperative-level path | not this |
+| Crashes anyway | the DirectInput buffered-read hook under Wine's `dinput` | **this**, refined: survives until real activation, then the same fault |
+| Survives both | the first crash was timing-dependent | not this |
 
-| Outcome | Reading |
-| --- | --- |
-| Survives with faking off, crashes after re-enabling | the activation / cooperative-level path |
-| Crashes anyway | the DirectInput buffered-read hook under Wine's `dinput` |
-| Survives both | the first crash was timing-dependent; proceed to covered `capture`, `hold w`, `move`, `pad` |
-
-If it still crashes, drop vinput and keep the uinput, focus and `xwd` harness.
+Do not adopt vinput as a route input/capture layer, and do not adopt it for interactive
+steering: the first real keyboard poll kills the game. The vendored pin, CI job, test-only
+plugin, wrapper and drivers stay in this draft PR as the record of what was tried; nothing
+is integrated, shipped or configured in `modules/**`. Revisit only with an upstream build
+that can leave DirectInput alone.
 
 ## Open risks (updated)
 
-- **Startup crash with hooks installed at plugin load** (observed). Located in Skyrim's
-  DirectInput buffered-keyboard read with a garbage second record; attributed to vinput's
-  `GetDeviceData` interposition or its activation refresh (see the crash analysis), not yet
-  separated. This blocks everything else.
+- **Crash on the first buffered DirectInput keyboard poll with vinput's reader hooks in place**
+  (observed three times, bisected once). Located in Skyrim's DirectInput buffered-keyboard
+  read with a garbage second record; fake activation only sets the time of the first poll
+  (11 s after init), real activation triggers it too (spike-3, 47 s at the main menu with
+  faking off). No runtime switch disables these hooks. This blocks everything else.
 - **Present hook on DXVK** (not reached). DXVK's presenter did start (`Presenter: Actual
   swapchain properties`) with vinput's `IDXGISwapChain::Present` hook in place; whether a
   capture would be black, wrong-format or absent is unknown.
