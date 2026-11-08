@@ -25,6 +25,8 @@ Limitations accepted with this change:
 - A cycle onto a visible object latches it and the latch is kept on list membership, so walking until that object leaves the screen keeps the latch and E still acts on it. This is step E of the owner's hands-on sheet; the alternative (require a box to keep the latch) is a one-line change once the owner has felt it.
 - When the only shown candidate is the current one, `]` counts as a cycle: it latches the hovered object and drops a queued hover to the same object. The target is unchanged.
 
+**Independent review.** Two rounds on this pass. The first (`10d3355`) found the entry-handshake blocker described above plus minors; the second (`35dbc95`) found no blocker or major, verified the atomics' ordering across the entry sequence, re-ran a fuzz comparison of `Policy::cycle` against `8e96585` (byte-identical traces) and an entry-race harness (first session, stale mailbox, early report, contended adoption tick, mode 1), and raised the pre-entry cycle adoption fixed in `4946c92`.
+
 **In-game check.** NOT_RUN at the time of writing. The latch route (`p5-cursor-latch`) is the regression fixture: on `00129fd` its first `[` latched `0005D692` (the pot, "Steal from Pot") while the pointer sat on the bench `000C8FC6`; with this change the same press must latch a candidate that has a projected box and the prompt must not read "Steal".
 
 ## Sixth pass — overlay callback threads, from the first in-game route (2026-11-04)
