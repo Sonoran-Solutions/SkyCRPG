@@ -41,6 +41,11 @@ struct Interface {
     Result (*setCursorMode)(std::uint32_t mode); // 0 exit, 1 enter empty, 2 query active
     Result (*setCursorTarget)(std::uint32_t formID, std::uint64_t observedCycles);
     Result (*getCursorFrame)(CursorFrame*);
+    // Optional append-only cursor visibility member. Check size before reading
+    // it. The cursor client reports the listed candidates that have an on-screen
+    // box (owner decision 2026-11-08); while cursor mode is active, [ ] cycling
+    // skips the rest. A client that never reports leaves cycling unrestricted.
+    Result (*setCursorVisible)(const std::uint32_t* ids, std::uint32_t count);
 };
 using GetAPI = const Interface* (*)(std::uint32_t requestedVersion);
 // Resolve via GetModuleHandleW(L"SkyCRPG_Selection.dll") / GetProcAddress;

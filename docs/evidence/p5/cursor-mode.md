@@ -1,5 +1,26 @@
 # DYL-200 / P5-03 — world cursor mode candidate
 
+## Seventh pass — owner decisions and visible-only cycling (2026-11-08)
+
+The owner accepted the orchestrator's recommendation on all four open decisions:
+
+| Decision | Outcome | Where recorded |
+| --- | --- | --- |
+| Bindings (D5-2) | Keyboard **B** (DIK 48) approved as the default toggle. **No gamepad default**; the controller pass decides it. D-pad Left stays a proposal that needs a native Hotkey1 remap first. | `SkyCRPG_Camera.ini` `[CursorMode]` comments |
+| Tuning | `fSensitivity=65`, `fPickRadiusPixels=48`, `fLatchMovePixels=12` approved as **provisional** defaults, measured on a 1920×1080 window; to be adjusted after the owner's hands-on run. | `SkyCRPG_Camera.ini` |
+| Off-screen cycling | **On-screen only.** While cursor mode is active, `[` `]` visit only candidates with a projected box. | Code change below |
+| Selection default | Ship **`bAllowExternalTargets=0`** (opt-in). Installer coordination is a gate-time question. | `SkyCRPG_Selection.ini` |
+
+**Visible-only cycling.** The skip lives in Selection, not Camera, so an off-screen candidate is never Selection's target, not even for one Pick tick; a Camera-side cancel would have left a window of one refresh (about 100 ms) in which E could still have acted on the hidden object.
+
+- `SelectionAPI.h` appends `setCursorVisible(ids, count)` after the v2 cursor extension, size-checked like the extension itself. The version stays 2. A Camera built against the new header still accepts a Selection without the member and logs once that cycling is unrestricted.
+- Camera reports its projected ID set from `pick()` whenever it changes (`reportVisible`), and marks it dirty on entry and exit. A `busy` reply retries on the next projection. The trace line gains `visible=<count>/<writes>`.
+- Selection keeps the last complete set on the Pick thread (`visibleSeen`); a contended mailbox read keeps the previous set rather than lifting the restriction. Entry resets it, so a stale set from the previous session cannot restrict the first cycle.
+- `Policy::cycle` takes an eligibility predicate and walks the frozen ring in the pressed direction until an eligible candidate; a cycle with none eligible is refused (`cycle_refusals` in the diagnostic line) and changes nothing. The predicate-free overload is unchanged behaviour, and the ring keeps hidden candidates so ordinary Selection cycling is unaffected.
+- Tests: `selection_policy_test` `visibleCycling` (skip both ways, refusal with nothing visible latched and unlatched, wrap onto the only visible candidate, unrestricted overload). Portable suites for both modules pass with the CI flags.
+
+**In-game check.** NOT_RUN at the time of writing. The latch route (`p5-cursor-latch`) is the regression fixture: on `00129fd` its first `[` latched `0005D692` (the pot, "Steal from Pot") while the pointer sat on the bench `000C8FC6`; with this change the same press must latch a candidate that has a projected box and the prompt must not read "Steal".
+
 ## Sixth pass — overlay callback threads, from the first in-game route (2026-11-04)
 
 **Route evidence on `503b27b`** (Camera DLL `fd5e9148…`, Selection DLL `3a12f12f…`, SkyrimSE.exe `846efccf…`):

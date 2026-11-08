@@ -303,22 +303,30 @@ public:
         return reason_ == Pass::none;
     }
     bool cycle(int direction, Point player, double now) {
+        return cycle(direction,player,now,[](std::uint32_t) { return true; });
+    }
+    // Cursor cycling skips candidates the client cannot show. The frozen ring
+    // keeps them; a cycle with no eligible candidate changes nothing.
+    template<class Eligible> bool cycle(int direction, Point player, double now, Eligible eligible) {
         if (reason_ != Pass::none || sorted_.empty() || !finite(player) || !std::isfinite(now) || direction == 0) return false;
-        if (!latched_) {
-            frozen_.clear();
-            for (const auto& c : sorted_) {
-                if (frozen_.size() == 8) break;
-                frozen_.push_back(c.id);
-            }
-            latchOrigin_ = player;
+        std::vector<std::uint32_t> ring;
+        if (latched_) ring = frozen_;
+        else for (const auto& c : sorted_) {
+            if (ring.size() == 8) break;
+            ring.push_back(c.id);
         }
-        const auto it = std::find(frozen_.begin(),frozen_.end(),current_);
-        const auto size = frozen_.size();
+        const auto size = ring.size();
         if (!size) return false;
-        const auto index = it == frozen_.end() ? 0u : static_cast<std::size_t>(it-frozen_.begin());
-        current_ = frozen_[(index+(direction > 0 ? 1 : size-1))%size];
-        latched_ = current_; latchStart_ = now;
-        return true;
+        const auto it = std::find(ring.begin(),ring.end(),current_);
+        auto index = it == ring.end() ? 0u : static_cast<std::size_t>(it-ring.begin());
+        for (std::size_t step = 0; step < size; ++step) {
+            index = (index+(direction > 0 ? 1 : size-1))%size;
+            if (!eligible(ring[index])) continue;
+            if (!latched_) { frozen_ = std::move(ring); latchOrigin_ = player; }
+            current_ = latched_ = frozen_[index]; latchStart_ = now;
+            return true;
+        }
+        return false;
     }
     bool push(std::uint32_t id, Point player, double now, bool allowed, bool rebind = false) {
         if (!allowed || reason_ != Pass::none || !contains(id) || !finite(player) || !std::isfinite(now)) return false;

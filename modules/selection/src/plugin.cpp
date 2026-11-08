@@ -48,6 +48,13 @@ CursorOverride cursorOverride;
 std::atomic<bool> cursorRelease{false};
 CursorExchange<api::CursorFrame> publication;
 CursorExchange<CursorRequest> cursorRequests;
+// Candidates the cursor client can show. Pick keeps its last complete copy, so
+// a contended read never lets a cycle reach a hidden candidate.
+struct CursorVisible { std::uint32_t count = 0; std::uint32_t ids[16]{}; bool reported = false; };
+CursorExchange<CursorVisible> cursorVisible;
+CursorVisible visibleSeen;
+std::atomic<bool> visibleReset{false};
+std::atomic<std::uint64_t> visibleWrites{0};
 std::atomic<bool> sessionViable{false};
 bool activationGuardReady = false;
 std::atomic<std::uint64_t> cursorPickPermit{0};
@@ -584,7 +591,7 @@ void diagnostic(double now) {
     if (!diagnostics || diagnosticCount >= diagnosticLimit || now-diagnosticTime < 5) return;
     diagnosticTime = now; ++diagnosticCount;
     char line[768]{};
-    std::snprintf(line,sizeof(line),"selection target=%08X candidates=%u latch=%u pass=%u radius=%.2f inspected=%u scans=%llu capped=%u rays=%llu cost_us=%llu visits=%u scan_rays=%u picks=%llu suppressed=%llu validated=%u world_contended=%llu world_retries=%llu cell_contended=%llu refused_presses=%llu discarded_edges=%llu cycle_refusals=%llu pick_cost_us=%llu cycles=%llu request_drops=%llu",
+    std::snprintf(line,sizeof(line),"selection target=%08X candidates=%u latch=%u pass=%u radius=%.2f inspected=%u scans=%llu capped=%u rays=%llu cost_us=%llu visits=%u scan_rays=%u picks=%llu suppressed=%llu validated=%u world_contended=%llu world_retries=%llu cell_contended=%llu refused_presses=%llu discarded_edges=%llu cycle_refusals=%llu pick_cost_us=%llu cycles=%llu request_drops=%llu visible=%u/%llu",
         counters.target,counters.candidateCount,counters.latched,counters.passthrough,counters.radius,counters.inspectedLast,
         static_cast<unsigned long long>(counters.refreshes),counters.cappedScans,
         static_cast<unsigned long long>(counters.raysTotal),static_cast<unsigned long long>(counters.lastCostMicros),counters.visitedLast,counters.scanRaysLast,
@@ -593,7 +600,7 @@ void diagnostic(double now) {
         static_cast<unsigned long long>(cellContentions),static_cast<unsigned long long>(refusedPresses.load()),
         static_cast<unsigned long long>(discardedEdges),static_cast<unsigned long long>(cycleRefusals),
         static_cast<unsigned long long>(counters.lastPickCostMicros),static_cast<unsigned long long>(counters.cyclesTotal),
-        static_cast<unsigned long long>(requestDrops.load()));
+        static_cast<unsigned long long>(requestDrops.load()),visibleSeen.reported ? visibleSeen.count : 0u,static_cast<unsigned long long>(visibleWrites.load()));
     log(line);
 }
 bool refresh(double now) {
@@ -725,11 +732,18 @@ void consumeRequests(double now, RE::PlayerCharacter* player) {
     if (!access.acquired) return; // defer requests, never skip normal Pick validation
     const auto body = bodyCentre(player);
     const auto cursorToken = cursorOverride.read();
+    if (visibleReset.exchange(false)) visibleSeen = {};
+    static_cast<void>(cursorVisible.read(visibleSeen));
+    const bool restrictCycle = CursorOverride::active(cursorToken) && visibleSeen.reported;
+    const auto eligible = [&](std::uint32_t id) {
+        const auto end = visibleSeen.ids+visibleSeen.count;
+        return !restrictCycle || std::find(visibleSeen.ids,end,id) != end;
+    };
     bool cycled = false;
     auto batch = cycleRequests.take();
     while (batch) {
         const auto direction = CycleRequests::pop(batch);
-        if (policy.cycle(direction,body,now)) {
+        if (policy.cycle(direction,body,now,eligible)) {
             ++counters.cyclesTotal;
             cycled = true;
             latchSource = EventSource::cycle;
@@ -919,6 +933,15 @@ api::Result setCursorTarget(std::uint32_t id, std::uint64_t observedCycles) {
         return cursorRequests.write({token,observedCycles,targetID}) ? api::Result::queued : api::Result::busy;
     });
 }
+api::Result setCursorVisible(const std::uint32_t* ids, std::uint32_t count) {
+    if (count > std::size(CursorVisible{}.ids) || (count && !ids)) return api::Result::invalidArgument;
+    if (!CursorOverride::active(cursorOverride.read())) return api::Result::unavailable;
+    CursorVisible visible; visible.count = count; visible.reported = true;
+    if (count) std::copy_n(ids,count,visible.ids);
+    if (!cursorVisible.write(visible)) return api::Result::busy;
+    ++visibleWrites;
+    return api::Result::ok;
+}
 api::Result setTarget(std::uint32_t id) {
     if (CursorOverride::active(cursorOverride.read())) {
         api::CursorFrame frame;
@@ -943,10 +966,10 @@ api::Result setCursorMode(std::uint32_t enabled) {
     if (!settings.allowExternal) return api::Result::disabled;
     if (!activationGuardReady) return api::Result::unavailable;
     if (invalidated.load() || loading.load() || !sessionViable.load() || menuState.load() != 1u) return api::Result::unavailable;
-    externalRequest.store(0); cursorRelease.store(true); cursorOverride.begin();
+    externalRequest.store(0); cursorRelease.store(true); visibleReset.store(true); cursorOverride.begin();
     return api::Result::ok;
 }
-const api::Interface interfaceV2{sizeof(api::Interface),api::version,snapshot,copyCandidates,setTarget,clearTarget,setCursorMode,setCursorTarget,cursorFrame};
+const api::Interface interfaceV2{sizeof(api::Interface),api::version,snapshot,copyCandidates,setTarget,clearTarget,setCursorMode,setCursorTarget,cursorFrame,setCursorVisible};
 class Events final : public RE::BSTEventSink<RE::InputEvent*>, public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
 public:
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent*,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {

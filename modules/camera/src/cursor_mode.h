@@ -35,6 +35,12 @@ std::size_t projectedCount = 0;
 // on-screen box: cycling reaches candidates the pointer cannot (route-cursor-6).
 std::array<std::uint32_t,16> listed{};
 std::size_t listedCount = 0;
+// Projected IDs last accepted by Selection's visibility member. Cycling there
+// skips the rest while the mode is active (owner decision 2026-11-08).
+bool visibleSupported = false, visibleDirty = true;
+std::array<std::uint32_t,16> visibleSent{};
+std::size_t visibleSentCount = 0;
+std::uint64_t visibleWrites = 0;
 bool waiting = false;
 std::uint32_t submittedTarget = 0;
 std::uint64_t submittedReplies = 0;
@@ -269,14 +275,20 @@ void resolve() {
     static_assert(sizeof(get) == sizeof(proc));
     std::memcpy(&get,&proc,sizeof(get));
     const auto candidate = get ? get(api::version) : nullptr;
-    if (candidate && candidate->apiVersion == api::version && candidate->size >= sizeof(api::Interface) &&
-        candidate->getSnapshot && candidate->copyCandidates && candidate->setTarget && candidate->clearTarget && candidate->setCursorMode && candidate->setCursorTarget && candidate->getCursorFrame)
+    constexpr auto cursorExtension = offsetof(api::Interface,getCursorFrame)+sizeof(candidate->getCursorFrame);
+    constexpr auto visibleMember = offsetof(api::Interface,setCursorVisible)+sizeof(candidate->setCursorVisible);
+    if (candidate && candidate->apiVersion == api::version && candidate->size >= cursorExtension &&
+        candidate->getSnapshot && candidate->copyCandidates && candidate->setTarget && candidate->clearTarget && candidate->setCursorMode && candidate->setCursorTarget && candidate->getCursorFrame) {
         selection = candidate;
+        visibleSupported = candidate->size >= visibleMember && candidate->setCursorVisible;
+        if (!visibleSupported) log("Cursor cycling unrestricted: Selection has no visibility member; cycling may latch off-screen candidates.");
+    }
     else log("Cursor unavailable: Selection v2 cursor extension missing or invalid size/function table.");
 }
 void leave(Exit reason) {
     const bool wasActive = session.active || pending;
     session.exit(); pending = false; waiting = false; projectedCount = 0; listedCount = 0;
+    visibleDirty = true; visibleSentCount = 0;
     if (wasActive && apiLive()) { static_cast<void>(selection->setCursorMode(0)); }
     if (wasActive) {
         const auto queue = RE::UIMessageQueue::GetSingleton();
@@ -339,6 +351,19 @@ bool bounds(RE::TESObjectREFR* ref, RE::NiPoint3& centre, std::array<RE::NiPoint
     return finite(centre) && std::all_of(corners.begin(),corners.end(),finite);
 }
 std::span<const cursor::Candidate> points() { return {projected.data(),projectedCount}; }
+// Report the projected set when it changes. A busy reply retries on the next
+// projection; Selection keeps its last complete copy meanwhile.
+void reportVisible() {
+    if (!visibleSupported) return;
+    const auto sent = std::span<const std::uint32_t>(visibleSent.data(),visibleSentCount);
+    if (!visibleDirty && std::equal(sent.begin(),sent.end(),points().begin(),points().end(),
+        [](std::uint32_t id, const cursor::Candidate& c) { return id == c.id; })) return;
+    std::array<std::uint32_t,16> ids{};
+    for (std::size_t i = 0; i < projectedCount; ++i) ids[i] = projected[i].id;
+    ++visibleWrites;
+    if (selection->setCursorVisible(ids.data(),static_cast<std::uint32_t>(projectedCount)) != api::Result::ok) return;
+    visibleSent = ids; visibleSentCount = projectedCount; visibleDirty = false;
+}
 bool retainLatch() {
     const auto end = listed.begin()+static_cast<std::ptrdiff_t>(listedCount);
     const bool valid = session.latch.id && std::find(listed.begin(),end,session.latch.id) != end;
@@ -396,6 +421,7 @@ void pick(const api::CursorFrame& frame, bool fresh) {
             const auto delta = world-player->GetPosition();
             projected[projectedCount++] = {frame.ids[i],box,delta.SqrLength()};
         }
+        reportVisible();
         nearId = 0; nearPixels = -1;
         for (const auto& c : points()) {
             const float d = std::sqrt(cursor::distance2(c.box,session.pointer.point));
@@ -460,10 +486,11 @@ void traceFrame() {
     if (session.active && traceLines < cursorSettings.trace) {
         ++traceLines;
         char line[384]{};
-        std::snprintf(line,sizeof(line),"Cursor sample=%u refresh=%llu target=%08X latch=%08X x=%.2f y=%.2f projections=%llu pushes=%llu cost_us=%llu busy=%llu near=%08X d=%.1f viable=%u available=%u count=%u replies=%llu auth=%08X",
+        std::snprintf(line,sizeof(line),"Cursor sample=%u refresh=%llu target=%08X latch=%08X x=%.2f y=%.2f projections=%llu pushes=%llu cost_us=%llu busy=%llu near=%08X d=%.1f viable=%u available=%u count=%u replies=%llu auth=%08X visible=%u/%llu",
             traceLines,static_cast<unsigned long long>(refresh),sentTarget,session.latch.id,session.pointer.point.x,session.pointer.point.y,
             static_cast<unsigned long long>(projections),static_cast<unsigned long long>(pushes),static_cast<unsigned long long>(framePickMicros),static_cast<unsigned long long>(busyTicks),nearId,nearPixels,
-            cachedFrame.viable,cachedFrame.snapshot.available,cachedFrame.count,static_cast<unsigned long long>(cachedFrame.replies),cachedFrame.authorizedTarget);
+            cachedFrame.viable,cachedFrame.snapshot.available,cachedFrame.count,static_cast<unsigned long long>(cachedFrame.replies),cachedFrame.authorizedTarget,
+            static_cast<unsigned>(visibleSentCount),static_cast<unsigned long long>(visibleWrites));
         log(line);
     }
     framePickMicros = 0;
@@ -536,7 +563,7 @@ void service() {
         }
         static_cast<void>(session.toggle(e,o->width,o->height));
         pending = false; recenter = false; cycles = snapshot.cyclesTotal;
-        sentTarget = 0; hoverAttempts = {};
+        sentTarget = 0; hoverAttempts = {}; visibleDirty = true; visibleSentCount = 0;
     }
     if (!session.active) return;
     if (!o || !ownMenu(o)) { overlaySite.store(15); leave(Exit::overlay); return; }
