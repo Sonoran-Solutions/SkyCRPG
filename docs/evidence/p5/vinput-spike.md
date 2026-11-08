@@ -24,12 +24,14 @@ notices in [THIRD_PARTY](../../THIRD_PARTY.md#test-tooling-never-shipped).
 | In-game: game survives to the main menu with vinput hooked | **FAIL** (access violation in `SkyrimSE.exe` ~3 s after the main menu opened) |
 | In-game: `status`, covered `capture`, `hold w`, `move`, `pad` | **BLOCKED** by the crash |
 
-**Recommendation: do not adopt vinput as the route input/capture layer in its current
-form.** With vinput compiled in and started at plugin load, Skyrim SE 1.7.104 under Proton
-crashed on the main thread before any gameplay, in a configuration (same stage without the
-vinput DLL) that has run dozens of Phase 5 routes. One further bounded experiment is worth
-running before dropping it, see below; interactive steering is not an option either until
-the crash is understood, because the crash happens before the first command.
+**Recommendation: do not adopt vinput in its current form; one more bounded experiment is
+justified before dropping it, if the owner approves it.** With vinput compiled in and
+started at plugin load, Skyrim SE 1.7.104 under Proton crashed on the main thread inside its
+DirectInput buffered-keyboard read, about 3 s after the main menu opened, in a configuration
+(same stage without the vinput DLL) that has run dozens of Phase 5 routes. The crash
+analysis below points at the DirectInput `GetDeviceData` interposition or the activation
+refresh that triggers the first poll; a single run with vinput's faking switched off until
+after the save loads would tell them apart.
 
 ## CI build and artifact
 
@@ -104,7 +106,7 @@ deployment. Ledger: `session-p5/ledger.md`; logs: `session-p5/logs/vinput/spike-
 | Plugin loads | `skse64.log`: `plugin SkyCRPG_VInput.dll (00000001 SkyCRPG VInput (test only) 00000001) loaded correctly (handle 4)`; `SkyCRPG_VInput.log`: runtime 1.7.104.0, SKSE 2.3.1.0, `pid=348`, `VInput_Init returned 1 (started by this plugin)` | **PASS** |
 | vinput hooks and pipe | `vinput_348.log` 0.704 s: `hooks ok:` every listed user32, raw-input, DirectInput 8 (`dinput8 keyboard/mouse A/W poll coverage: 15/15`), `wglSwapBuffers`, `IDXGISwapChain::Present/GetFullscreenState/SetFullscreenState`; no `hooks FAILED` line; `pipe \\.\pipe\vinput_348`; 4.486 s: `target window 0000000000030080 class=Skyrim Special Edition client=1920x1080` | **PASS** |
 | Launcher service and PID discovery | `vinput --host-check`: bus `com.steampowered.App489830` on the session bus; `SkyCRPG_VInput.pid` read as 348 | **PASS** |
-| Game reaches a usable main menu | TestProbe: `data_loaded`, `input_registration` (t=7329 ms), `Main Menu` opening (t=7388 ms, 20:01:36Z); Proton log 253214.022: `Exception 0xc0000005 ... addr=0000000140E128B2`, `info[1]=00000000A38A1118` (read fault), thread 0160 (main thread); backtrace `SkyrimSE.exe+0xE128B2 → +0xCF9624 → +0x658DEE → +0x651465 → +0x15A843E → kernel32 → ntdll`. vinput started at 253203.024, so 11.0 s after init and about 3 s after the main menu opened; no vinput log line after 4.488 s; watchdog `exit_code 0`, `stop_reason null`, `leftover_pids []` | **FAIL** |
+| Game reaches a usable main menu | TestProbe: `data_loaded`, `input_registration` (t=7329 ms), `Main Menu` opening (t=7388 ms, 20:01:36Z); Proton log 253214.022: `Exception 0xc0000005 ... addr=0000000140E128B2`, `info[1]=00000000A38A1118` (read fault), thread 0160 (main thread); backtrace `SkyrimSE.exe+0xE128B2 → +0xCF9624 → +0x658DEE → +0x651465 → +0x15A843E → kernel32 → ntdll`. vinput started at 253203.024, so 11.0 s after init and about 3 s after the main menu opened; no vinput log line after 4.488 s; watchdog `exit_code 0`, `stop_reason null`, `leftover_pids []`. Fault is inside Skyrim's DirectInput buffered-keyboard read; see the crash analysis | **FAIL** |
 | `status` (input channels) | launch client: `Unable to connect to any of the specified bus names` (the game had already exited) | BLOCKED |
 | `capture` with another window in front | not reached; no capture file produced | BLOCKED |
 | `hold w 500` + TestProbe position | not reached; no `player_state` with `available:true` in the run (2 samples, both `not_loaded`) | BLOCKED |
@@ -129,33 +131,77 @@ TestProbe (identical probe in every Phase 5 route), or with the Camera module (s
 and INI as the passing `off` routes). One run is not a reproduction; the control (same stage
 without `SkyCRPG_VInput.dll`) exists only historically in the Phase 5 runs.
 
+### Crash analysis (orchestrator disassembly, checked here against the executable and the trace)
+
+Source: the Wine `seh` trace at `steam-489830.log` line 9478 and the on-disk `SkyrimSE.exe`
+1.7.104 (`846efccf…`). Items marked *verified* were re-derived in this session with
+`objdump` on the executable's bytes and the logged registers; the rest is the orchestrator's
+reading of the surrounding disassembly.
+
+- *Verified.* The faulting instruction at `0x140E128B2` is `movzx r8d, byte ptr [r14+rbp]`,
+  immediately after `call qword ptr [0x1417C88F8]`, and that import is
+  `USER32.dll!MapVirtualKeyA`. Just before it, `r14d` is loaded from `[rbx + rcx*24 + 0x78]`
+  and `esi` from `[rbx + rcx*24 + 0x7C]` with `ecx = r15d`: a loop over 24-byte records
+  starting at `this+0x78`, reading each record's `dwOfs` and `dwData`.
+- *Verified.* Registers at the fault: `rbx` (this) `0x819421A0`, `rbp` `0x81942408` =
+  `this+0x268`, `r15` = 1 (record index), `r12` = `0x32` (MapVirtualKeyA result for record
+  0, scan code `0x03`), `rax` = `0x51` (result for record 1), `r14` = `0x21F5ED10` = record
+  1's `dwOfs`; `rbp + r14` = `0xA38A1118` = the logged fault address. So the buffered read
+  returned at least two records and record 1's `dwOfs` was not a scan code.
+- *Verified.* The return address `0x140CF9624` sits in a loop that calls `vtable+0x10` on six
+  objects (`mov edi,6`, `call [rax+0x10]`, `add rbx,8`), consistent with the per-device
+  update inside `Main::Update`; the rest of the backtrace (`0x140658DEE`, `0x140651465`)
+  is the main-thread loop.
+- *Orchestrator reading, not re-verified here.* The faulting function `0x140E127C0..0x140E12AD3`
+  is Skyrim's buffered keyboard read: a wrapper at `0x140CFAF60` calls
+  `IDirectInputDevice8::Poll` (vtable `+0xC8`) then `GetDeviceData` (vtable `+0x50`) with
+  `cbObjectData = 0x18`, `rgdod = this+0x78`, `pdwInOut = 128`, flags 0, then maps each
+  `dwOfs` with `MapVirtualKeyA(…, MAPVK_VSC_TO_VK)` and reads a state byte at
+  `this+0x268+dwOfs`.
+- *Layout hypothesis (one sample, unproven).* `0x21F5ED10` (about 570 million) looks like a
+  tick count. If the hook delivered 16-byte `DIDEVICEOBJECTDATA_DX3` records where Skyrim
+  reads 24-byte `DIDEVICEOBJECTDATA`, Skyrim's record 1 `dwOfs` lands on native record 1's
+  `dwTimeStamp`, which matches record 0 reading correctly and record 1 being garbage.
+- *Attribution.* vinput does not hook `MapVirtualKeyA`, but it interposes exactly this
+  `GetDeviceData` call (upstream `vi_di_format_hooks.inl` `DiFormattedBuffer` and
+  `vinput_core.cpp` `DIGetDeviceDataImpl`), plus `Acquire` and `SetCooperativeLevel` on the
+  claimed device, and its "virtual activation adoption refresh" at 4.5 s
+  (`WM_ACTIVATEAPP`/`WM_ACTIVATE`/`WM_SETFOCUS` through `CallWindowProc`) is what makes
+  Skyrim re-acquire and poll the keyboard. Hundreds of vinput-free routes never crashed here.
+
 Caveats that hold regardless: OCR commands (`ocr`, `click-text`, `wait-text`) use WinRT
 `Windows.Media.Ocr` and are expected to fail under Wine; XInput emulation is not controller
 proof; the DLLs are test-only and never ship.
 
 ## Recommendation
 
-**Drop vinput as the route input/capture layer for now; do not adopt it for interactive
-steering either.** It crashed the game before the first command. The build and wiring work
-is cheap to keep on the branch for one more bounded experiment, which needs its own owner go:
+**One more bounded experiment is justified before dropping vinput, if the owner approves
+it; otherwise drop it and keep the uinput harness.** Do not adopt it for routes or for
+interactive steering until the experiment has run. Proposed run (one process, 20 minutes,
+same stage, same launch; companion script `session-p5/vinput/spike3_driver.sh`, which never
+launches anything):
 
-1. Same stage **without** `SkyCRPG_VInput.dll` as the control (one process, expect the main
-   menu and a save load as in every Phase 5 route), then
-2. plain `vinput64.dll` injected **after** the save has loaded, through the wrapper
-   (`vinput inject --pid 348`-style, from the wrapper with `--json`), so the hooks are
-   installed after startup input registration. If the game survives, run `status` and the
-   covered `capture`; if it crashes again, drop vinput.
-3. If step 2 passes, bisect hook families with upstream's `config raw=off msgs=off`
-   options before any route integration.
+1. As soon as the pipe answers (0.7 s after `VInput_Init`; the main menu came up about 8 s
+   after it in spike-2), the wrapper sends `config fakefocus=false isolate=false`, so vinput
+   neither fakes activation nor interposes physical input before Skyrim's first keyboard poll.
+2. Capture `status` JSON at the main menu (which input channels Skyrim reads).
+3. Load the save; once the TestProbe reports `player_state` available, send
+   `config fakefocus=true isolate=true`, then one `key w`.
 
-If the owner does not want to spend two more game processes on this, the recommendation is
-to drop it and keep the current uinput, focus and `xwd` harness.
+| Outcome | Reading |
+| --- | --- |
+| Survives with faking off, crashes after re-enabling | the activation / cooperative-level path |
+| Crashes anyway | the DirectInput buffered-read hook under Wine's `dinput` |
+| Survives both | the first crash was timing-dependent; proceed to covered `capture`, `hold w`, `move`, `pad` |
+
+If it still crashes, drop vinput and keep the uinput, focus and `xwd` harness.
 
 ## Open risks (updated)
 
-- **Startup crash with hooks installed at plugin load** (observed). Cause unattributed;
-  candidates are the raw-input, DirectInput 8, XInput, cursor and focus hooks hit when the
-  main menu starts polling input. This blocks everything else.
+- **Startup crash with hooks installed at plugin load** (observed). Located in Skyrim's
+  DirectInput buffered-keyboard read with a garbage second record; attributed to vinput's
+  `GetDeviceData` interposition or its activation refresh (see the crash analysis), not yet
+  separated. This blocks everything else.
 - **Present hook on DXVK** (not reached). DXVK's presenter did start (`Presenter: Actual
   swapchain properties`) with vinput's `IDXGISwapChain::Present` hook in place; whether a
   capture would be black, wrong-format or absent is unknown.
