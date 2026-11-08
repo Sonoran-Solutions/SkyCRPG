@@ -19,8 +19,17 @@ notices in [THIRD_PARTY](../../THIRD_PARTY.md#test-tooling-never-shipped).
 | --- | --- |
 | Pinned upstream build on CI (`build.bat :arch x64`, windows-2022) | **PASS** |
 | `SkyCRPG_VInput.dll` compiled-in SKSE host (`/W4 /WX`, no CommonLib) | **PASS** (built first iteration; no injector needed) |
-| Host wiring (launcher service, wrapper, path translation, PID discovery) | **PASS** for everything checkable without the game; container-side checks **NOT_RUN** |
-| In-game: DLL load, `status`, covered `capture`, `hold w`, `move`, `pad` | **NOT_RUN** (awaiting owner go) |
+| Host wiring: launcher service on the bus, wrapper, PID discovery | **PASS** (bus name and PID file confirmed with the game up) |
+| In-game: plugin load, vinput start, hooks, pipe | **PASS** (SKSE handle 4; `VInput_Init returned 1`; all hooks ok; pipe created) |
+| In-game: game survives to the main menu with vinput hooked | **FAIL** (access violation in `SkyrimSE.exe` ~3 s after the main menu opened) |
+| In-game: `status`, covered `capture`, `hold w`, `move`, `pad` | **BLOCKED** by the crash |
+
+**Recommendation: do not adopt vinput as the route input/capture layer in its current
+form.** With vinput compiled in and started at plugin load, Skyrim SE 1.7.104 under Proton
+crashed on the main thread before any gameplay, in a configuration (same stage without the
+vinput DLL) that has run dozens of Phase 5 routes. One further bounded experiment is worth
+running before dropping it, see below; interactive steering is not an option either until
+the crash is understood, because the crash happens before the first command.
 
 ## CI build and artifact
 
@@ -72,49 +81,92 @@ the container).
 | `launch_spec.py` reproduces the harness MO2 command; the only delta is `STEAM_COMPAT_LAUNCHER_SERVICE=proton` | PASS (dry print) |
 | `vinput --host-check`: binaries, `SHA256SUMS`, dist under a container-shared path | PASS |
 | `vinput --print-command` for `list`, `status`, `capture <linux path>` | PASS (correct `Z:\` translation and `--pid` insertion) |
-| Bus name present while the game runs | NOT_RUN |
-| `vinput.exe list` enumerating `\\.\pipe\*` under Wine | NOT_RUN; believed unsupported in Wine, hence the PID file |
-| Second wine process connecting to the game's named pipe | NOT_RUN |
+| Bus name present while the game runs | **PASS** (spike-2: `com.steampowered.App489830` on the session bus with the game up; Proton log: "Starting program with command-launcher service.") |
+| `vinput.exe list` enumerating `\\.\pipe\*` under Wine | BLOCKED (the game crashed before the CLI connected); the PID file alternative worked: `SkyCRPG_VInput.pid` = 348 |
+| Second wine process connecting to the game's named pipe | BLOCKED (game crashed first; the launch client then reported the bus name gone) |
 | WIC PNG encoding under Wine (`capture`) | NOT_RUN |
 
-## Game spike
+## Game spike (2026-11-08, run `vinput-spike-2`)
 
-NOT_RUN. Awaiting the owner's go in chat. Plan: ledger entry; disposable profile with
-`SkyCRPG_VInput.dll` + `.ini` staged beside `SkyCRPG_TestProbe`; one process; 20 minutes;
-restore after. Steps and the evidence each must produce:
+Owner go relayed verbatim through the orchestrator session: "Steam's up, go". One process,
+camera-only profile, stage `session-p5/stage-vinput` (= `stage-camera-p5-off` plus
+`SkyCRPG_TestProbe.dll/.ini` and `SkyCRPG_VInput.dll/.ini`, manifest
+`session-p5/p5-stage-manifest-vinput.json`), dist `dist-camera-p5-off` (Camera rc1
+`6b4c0fc`), copied owner quicksave, `runtime_profile.py prepare`, `runtime_watchdog.py 1200`
+with `STEAM_COMPAT_LAUNCHER_SERVICE=proton`, restore after. A first attempt
+(`vinput-spike-1`) never launched: this session's permission classifier refused the launch
+command; the deployment was restored (PASS) and the user approved a retry. Preflight for
+the retry: no Skyrim or loader process, 13.1 GiB available, Steam running, no active
+deployment. Ledger: `session-p5/ledger.md`; logs: `session-p5/logs/vinput/spike-2/`.
 
 | Step | Evidence | Result |
 | --- | --- | --- |
-| Plugin loads; vinput starts | `SkyCRPG_VInput.log` (`VInput_Init returned 1`), `SkyCRPG_VInput.pid`, `logs/vinput_<pid>.log` hooks line | NOT_RUN |
-| `status` | which input channels Skyrim reads (`channels`), `really_foreground`, readiness | NOT_RUN |
-| `capture` while another window covers the game | PNG under `session-p5/vinput/captures/`, its hash, `capture_method` | NOT_RUN |
-| `hold w 500` | TestProbe `player_state.position` before/after differ | NOT_RUN |
-| `move 200 0` | camera yaw changed (TestProbe state or capture pair) | NOT_RUN |
-| `pad` right stick, controller off | observed camera/menu reaction, with the caveat below | NOT_RUN |
+| Plugin loads | `skse64.log`: `plugin SkyCRPG_VInput.dll (00000001 SkyCRPG VInput (test only) 00000001) loaded correctly (handle 4)`; `SkyCRPG_VInput.log`: runtime 1.7.104.0, SKSE 2.3.1.0, `pid=348`, `VInput_Init returned 1 (started by this plugin)` | **PASS** |
+| vinput hooks and pipe | `vinput_348.log` 0.704 s: `hooks ok:` every listed user32, raw-input, DirectInput 8 (`dinput8 keyboard/mouse A/W poll coverage: 15/15`), `wglSwapBuffers`, `IDXGISwapChain::Present/GetFullscreenState/SetFullscreenState`; no `hooks FAILED` line; `pipe \\.\pipe\vinput_348`; 4.486 s: `target window 0000000000030080 class=Skyrim Special Edition client=1920x1080` | **PASS** |
+| Launcher service and PID discovery | `vinput --host-check`: bus `com.steampowered.App489830` on the session bus; `SkyCRPG_VInput.pid` read as 348 | **PASS** |
+| Game reaches a usable main menu | TestProbe: `data_loaded`, `input_registration` (t=7329 ms), `Main Menu` opening (t=7388 ms, 20:01:36Z); Proton log 253214.022: `Exception 0xc0000005 ... addr=0000000140E128B2`, `info[1]=00000000A38A1118` (read fault), thread 0160 (main thread); backtrace `SkyrimSE.exe+0xE128B2 → +0xCF9624 → +0x658DEE → +0x651465 → +0x15A843E → kernel32 → ntdll`. vinput started at 253203.024, so 11.0 s after init and about 3 s after the main menu opened; no vinput log line after 4.488 s; watchdog `exit_code 0`, `stop_reason null`, `leftover_pids []` | **FAIL** |
+| `status` (input channels) | launch client: `Unable to connect to any of the specified bus names` (the game had already exited) | BLOCKED |
+| `capture` with another window in front | not reached; no capture file produced | BLOCKED |
+| `hold w 500` + TestProbe position | not reached; no `player_state` with `available:true` in the run (2 samples, both `not_loaded`) | BLOCKED |
+| `move 200 0` (camera yaw) | not reached | BLOCKED |
+| `pad` right stick, controller off | not reached; XInput emulation would not have been controller proof in any case | BLOCKED |
+| Restore | `restoration.json` result PASS, `mismatch []`, `game_pids []`; the test DLL's `Data/SKSE/Plugins/logs/vinput_348.log` was preserved to the log folder and removed before restore so `Data/SKSE` disappeared cleanly | **PASS** |
 
-Caveats that hold regardless of outcome: OCR commands (`ocr`, `click-text`, `wait-text`)
-use WinRT `Windows.Media.Ocr` and are expected to fail under Wine; XInput emulation is not
-controller proof; the DLLs are test-only and never ship.
+Log hashes (SHA-256): `steam-489830.log` `8dfe2343c03f6de57cf97be00ee92bcbbb855033e5ef139e1c6251c50ffefdd7`;
+`vinput_348.log` `bd74724cc50d06367c6306dc8548368665c82f6595af638c218d497ef6203f27`;
+`SkyCRPG_VInput.log` `d4fc6703526b08db5fd38830d821392636b5f189ed20b1f54f9984be21657055`;
+`skse64.log` `67eb8803aeb9d4afd24641b3b521dd4eda310463e5723b298b512c899e3b3aac`.
+Binaries as in the CI table above (`SkyCRPG_VInput.dll` `475fcbf0…`, `SkyrimSE.exe`
+`846efccf…`, Proton `experimental-11.0-20261027b`).
+
+What the crash does and does not show. The faulting instruction and the whole backtrace
+are inside `SkyrimSE.exe`, reached from the main-thread startup path. vinput logged nothing
+between adopting the window (4.5 s) and the crash (11 s), so the fault is not in a vinput
+call site; it is consistent with the game consuming a value one of vinput's hooks returned
+(raw input, DirectInput 8 device state, XInput state, cursor or focus queries) at the moment
+input polling begins with the main menu. It is not consistent with a load failure, with the
+TestProbe (identical probe in every Phase 5 route), or with the Camera module (same package
+and INI as the passing `off` routes). One run is not a reproduction; the control (same stage
+without `SkyCRPG_VInput.dll`) exists only historically in the Phase 5 runs.
+
+Caveats that hold regardless: OCR commands (`ocr`, `click-text`, `wait-text`) use WinRT
+`Windows.Media.Ocr` and are expected to fail under Wine; XInput emulation is not controller
+proof; the DLLs are test-only and never ship.
 
 ## Recommendation
 
-Pending the game spike. The build and wiring side is cheap and now exists; the decision
-(adopt as the route input/capture layer, adopt only for interactive steering, or drop)
-depends on whether `Present` capture and in-process input work under DXVK and Proton.
+**Drop vinput as the route input/capture layer for now; do not adopt it for interactive
+steering either.** It crashed the game before the first command. The build and wiring work
+is cheap to keep on the branch for one more bounded experiment, which needs its own owner go:
 
-## Open risks
+1. Same stage **without** `SkyCRPG_VInput.dll` as the control (one process, expect the main
+   menu and a save load as in every Phase 5 route), then
+2. plain `vinput64.dll` injected **after** the save has loaded, through the wrapper
+   (`vinput inject --pid 348`-style, from the wrapper with `--json`), so the hooks are
+   installed after startup input registration. If the game survives, run `status` and the
+   covered `capture`; if it crashes again, drop vinput.
+3. If step 2 passes, bisect hook families with upstream's `config raw=off msgs=off`
+   options before any route integration.
 
-- **Present hook on DXVK.** vinput hooks `IDXGISwapChain::Present` through a dummy device
-  vtable; under Proton the D3D11/DXGI implementation is DXVK (Vulkan). Captures may be black,
-  wrong-format, or absent.
-- **Fake focus under XWayland.** vinput fakes `GetForegroundWindow`/activation inside the
-  process; Wine's own focus model on XWayland may still route raw input and cursor clipping
-  differently than Windows.
-- **WIC PNG encoding in Wine.** `capture` encodes through `windowscodecs`; Wine's encoder
-  support exists but is less exercised than Windows'.
-- **Hook coexistence.** vinput, SmoothCam, TDM and our modules all install hooks in one
-  process. Camera-profile runs are the real-world case; a baseline profile isolates vinput.
-- **Pipe discovery.** `list` enumerates `\\.\pipe\*`, likely unsupported under Wine; the
-  PID file covers it but the MCP server's `list`/`launch` flows would need the wrapper.
-- **WinRT imports.** The CLI and DLL link `windowsapp.lib` for OCR; a missing import in
-  Wine's `combase` would stop them loading at all, which the first `status` would reveal.
+If the owner does not want to spend two more game processes on this, the recommendation is
+to drop it and keep the current uinput, focus and `xwd` harness.
+
+## Open risks (updated)
+
+- **Startup crash with hooks installed at plugin load** (observed). Cause unattributed;
+  candidates are the raw-input, DirectInput 8, XInput, cursor and focus hooks hit when the
+  main menu starts polling input. This blocks everything else.
+- **Present hook on DXVK** (not reached). DXVK's presenter did start (`Presenter: Actual
+  swapchain properties`) with vinput's `IDXGISwapChain::Present` hook in place; whether a
+  capture would be black, wrong-format or absent is unknown.
+- **Fake focus under XWayland** (not reached). vinput adopted the window with
+  `actual_fg=0` and queued a "virtual activation"; how Wine routes raw input and cursor
+  clipping to a window it believes is in the background is untested.
+- **WIC PNG encoding in Wine** (not reached).
+- **Hook coexistence with SmoothCam, TDM and our Camera module** (not isolated). The
+  crash happened with all of them loaded; the control run above would separate this from
+  the Proton question.
+- **Pipe discovery.** `list` enumerates `\\.\pipe\*`, probably unsupported under Wine; the
+  PID file works, but the MCP server's `list`/`launch` flows would need the wrapper.
+- **WinRT imports.** Both the DLL (compiled in) and the CLI link `windowsapp.lib`; the DLL
+  loaded, so Wine's `combase` satisfied its imports; the CLI was never exercised.
