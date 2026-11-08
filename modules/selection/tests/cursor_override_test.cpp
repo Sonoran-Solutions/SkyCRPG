@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstddef>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <thread>
 using namespace skycrpg::selection;
@@ -43,6 +44,26 @@ int main() {
     const auto before=state.read(); state.end(); assert(!state.publish(before,99));
     assert(cursorRequestCurrent(true,12,12));
     assert(!cursorRequestCurrent(true,12,13)); // a queued hover cannot overwrite a later cycle
+    // Visibility member appended after the v2 cursor extension; 72 bytes on x64.
+    static_assert(offsetof(api::Interface,setCursorVisible)==offsetof(api::Interface,getCursorFrame)+sizeof(api::Interface::getCursorFrame));
+    static_assert(sizeof(api::Interface)==offsetof(api::Interface,setCursorVisible)+sizeof(api::Interface::setCursorVisible));
+    static_assert(sizeof(void*)!=8 || sizeof(api::Interface)==72);
+    static_assert(std::size(api::CursorFrame{}.ids)==api::cursorListCapacity && std::size(CursorVisible{}.ids)==api::cursorListCapacity);
+    const std::uint32_t one=7;
+    assert(validCursorVisible(nullptr,0) && validCursorVisible(&one,1));
+    assert(!validCursorVisible(nullptr,1) && !validCursorVisible(&one,api::cursorListCapacity+1));
+    // Session handshake: a stale report cannot restrict or permit a new session,
+    // a restricted session shows nothing until its first report, mode-1 shows all.
+    CursorVisibility seen;
+    CursorVisible stale; stale.session=1; stale.count=1; stale.ids[0]=20;
+    seen.enter(1,true); seen.observe(stale);
+    assert(seen.shown(20) && !seen.shown(10) && seen.count()==1);
+    seen.enter(2,true); seen.observe(stale);
+    assert(!seen.shown(20) && !seen.shown(10) && seen.count()==0 && seen.session()==2);
+    CursorVisible fresh=stale; fresh.session=2; fresh.ids[0]=10;
+    seen.observe(fresh); assert(seen.shown(10) && !seen.shown(20));
+    fresh.count=0; seen.observe(fresh); assert(!seen.shown(10)); // an empty report hides everything
+    seen.enter(3,false); assert(seen.shown(10) && seen.shown(20) && !seen.restricted());
     assert(cursorRequestCurrent(false,12,13)); // legacy v2 behavior unchanged
     Context context;
     context.enabled=context.runtime=context.reads=context.world=context.thirdPerson=true;

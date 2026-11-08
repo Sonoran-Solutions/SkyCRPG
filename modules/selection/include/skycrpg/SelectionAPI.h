@@ -20,10 +20,11 @@ struct Snapshot {
     std::uint64_t cyclesTotal = 0, eventSuppressed = 0, requestDrops = 0;
 };
 // Coherent snapshot/list publication from Pick; readers never acquire its state gate.
+inline constexpr std::uint32_t cursorListCapacity = 16; // CursorFrame::ids and setCursorVisible
 struct CursorFrame {
     std::uint32_t size = sizeof(CursorFrame);
     Snapshot snapshot;
-    std::uint32_t viable = 0, count = 0, ids[16]{};
+    std::uint32_t viable = 0, count = 0, ids[cursorListCapacity]{};
     std::uint64_t completedRefreshes = 0, replies = 0;
     std::uint32_t authorizedTarget = 0; // live atomic authorization, may be newer than snapshot
     std::uint64_t aliveRefreshes = 0; // definite attempts, including exhausted/capped scans
@@ -38,13 +39,17 @@ struct Interface {
     Result (*setTarget)(std::uint32_t formID);
     Result (*clearTarget)();
     // Optional append-only v2 extension. Check size before reading this member.
-    Result (*setCursorMode)(std::uint32_t mode); // 0 exit, 1 enter empty, 2 query active
+    // 0 exit, 1 enter empty, 2 query active, 3 enter empty with visibility
+    // reports: [ ] cycling is refused until the first setCursorVisible of this
+    // session arrives. A table without setCursorVisible rejects 3.
+    Result (*setCursorMode)(std::uint32_t mode);
     Result (*setCursorTarget)(std::uint32_t formID, std::uint64_t observedCycles);
     Result (*getCursorFrame)(CursorFrame*);
     // Optional append-only cursor visibility member. Check size before reading
     // it. The cursor client reports the listed candidates that have an on-screen
-    // box (owner decision 2026-11-08); while cursor mode is active, [ ] cycling
-    // skips the rest. A client that never reports leaves cycling unrestricted.
+    // box (owner decision 2026-11-08); in a session entered with mode 3, [ ]
+    // cycling visits only reported IDs. Reports belong to the session that is
+    // active when they are sent; a session entered with mode 1 never restricts.
     Result (*setCursorVisible)(const std::uint32_t* ids, std::uint32_t count);
 };
 using GetAPI = const Interface* (*)(std::uint32_t requestedVersion);

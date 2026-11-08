@@ -477,8 +477,23 @@ void visibleCycling() {
     assert(p.cycle(-1,{},1,only({10,30})) && p.current() == 30);
     // Nothing visible: refused, latch and order unchanged.
     assert(!p.cycle(1,{},2,none) && p.current() == 30 && p.latched() && p.order().size() == 3);
-    // Only the current candidate visible: a cycle wraps onto it.
+    // Only the current candidate visible: a cycle wraps onto it (as a one-entry ring does).
     assert(p.cycle(1,{},2,only({30})) && p.current() == 30);
+    // A refused cycle leaves the latch clock alone: a 1 s timeout measured from
+    // the accepted cycle at t=2 still holds at t=2.5, and would not from t=50.
+    Settings brief = settings; brief.latchSeconds = 1;
+    assert(!p.cycle(1,{},50,none));
+    p.refresh(c,refs,{},180,2.5,brief);
+    assert(p.latched() && p.current() == 30);
+    // A hidden current candidate steps on to the next shown one.
+    assert(p.cycle(1,{},3,only({20})) && p.current() == 20);
+    // The ring keeps its 8-entry cap: a shown candidate beyond it is unreachable.
+    std::array<Candidate,10> many{};
+    for (std::uint32_t i = 0; i < many.size(); ++i) many[i] = Candidate{100+i,{10.0*(i+1),0,0}};
+    Policy r;
+    r.refresh(c,many,{},180,0,settings);
+    assert(!r.cycle(1,{},0,only({108})) && !r.latched());
+    assert(r.cycle(1,{},0,only({107})) && r.current() == 107 && r.order().size() == 8);
     // Unlatched refusal freezes nothing.
     Policy q;
     q.refresh(c,refs,{},180,0,settings);

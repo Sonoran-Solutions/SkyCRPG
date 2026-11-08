@@ -1,5 +1,6 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #pragma once
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <limits>
@@ -121,4 +122,29 @@ private:
     T value_{};
 };
 struct CursorRequest { std::uint64_t token = 0, cycles = 0; std::uint32_t id = 0; };
+// A cursor client's visibility report, stamped with the cursor session that
+// was active when it was sent.
+struct CursorVisible { std::uint64_t session = 0; std::uint32_t count = 0; std::uint32_t ids[api::cursorListCapacity]{}; };
+constexpr bool validCursorVisible(const std::uint32_t* ids, std::uint32_t count) {
+    return count <= api::cursorListCapacity && (ids || !count);
+}
+// Pick-thread view of those reports. Entering a session discards the previous
+// one; a report from another session is ignored; a restricted session refuses
+// every cycle until its first report, and a contended read keeps the last one.
+class CursorVisibility {
+public:
+    void enter(std::uint64_t session, bool restricted) { seen_ = {}; seen_.session = session; restricted_ = restricted; }
+    void observe(const CursorVisible& report) { if (report.session == seen_.session) seen_ = report; }
+    [[nodiscard]] bool shown(std::uint32_t id) const {
+        if (!restricted_) return true;
+        const auto end = seen_.ids+seen_.count;
+        return std::find(seen_.ids,end,id) != end;
+    }
+    [[nodiscard]] std::uint64_t session() const { return seen_.session; }
+    [[nodiscard]] bool restricted() const { return restricted_; }
+    [[nodiscard]] std::uint32_t count() const { return seen_.count; }
+private:
+    CursorVisible seen_;
+    bool restricted_ = false;
+};
 } // namespace skycrpg::selection

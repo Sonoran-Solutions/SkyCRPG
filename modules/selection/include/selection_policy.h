@@ -306,8 +306,9 @@ public:
         return cycle(direction,player,now,[](std::uint32_t) { return true; });
     }
     // Cursor cycling skips candidates the client cannot show. The frozen ring
-    // keeps them; a cycle with no eligible candidate changes nothing.
-    template<class Eligible> bool cycle(int direction, Point player, double now, Eligible eligible) {
+    // keeps them; a cycle with no shown candidate changes nothing. A ring whose
+    // only shown entry is the current one latches it, as a one-entry ring does.
+    template<class Shown> bool cycle(int direction, Point player, double now, Shown shown) {
         if (reason_ != Pass::none || sorted_.empty() || !finite(player) || !std::isfinite(now) || direction == 0) return false;
         std::vector<std::uint32_t> ring;
         if (latched_) ring = frozen_;
@@ -321,7 +322,7 @@ public:
         auto index = it == ring.end() ? 0u : static_cast<std::size_t>(it-ring.begin());
         for (std::size_t step = 0; step < size; ++step) {
             index = (index+(direction > 0 ? 1 : size-1))%size;
-            if (!eligible(ring[index])) continue;
+            if (!shown(ring[index])) continue;
             if (!latched_) { frozen_ = std::move(ring); latchOrigin_ = player; }
             current_ = latched_ = frozen_[index]; latchStart_ = now;
             return true;

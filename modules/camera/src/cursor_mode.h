@@ -29,18 +29,18 @@ cursor::HoverAttempts hoverAttempts;
 std::uint32_t servicedFrame = 0;
 bool serviced = false;
 api::CursorFrame cachedFrame;
-std::array<cursor::Candidate,16> projected{};
+std::array<cursor::Candidate,api::cursorListCapacity> projected{};
 std::size_t projectedCount = 0;
 // Last ready Selection list. A cycled latch needs membership here, not an
 // on-screen box: cycling reaches candidates the pointer cannot (route-cursor-6).
-std::array<std::uint32_t,16> listed{};
+std::array<std::uint32_t,api::cursorListCapacity> listed{};
 std::size_t listedCount = 0;
-// Projected IDs last accepted by Selection's visibility member. Cycling there
-// skips the rest while the mode is active (owner decision 2026-11-08).
+// Projected IDs last accepted by Selection's visibility member. A session
+// entered with mode 3 cycles only among them (owner decision 2026-11-08).
 bool visibleSupported = false, visibleDirty = true;
-std::array<std::uint32_t,16> visibleSent{};
+std::array<std::uint32_t,api::cursorListCapacity> visibleSent{};
 std::size_t visibleSentCount = 0;
-std::uint64_t visibleWrites = 0;
+std::uint64_t visibleWrites = 0; // accepted reports
 bool waiting = false;
 std::uint32_t submittedTarget = 0;
 std::uint64_t submittedReplies = 0;
@@ -275,8 +275,8 @@ void resolve() {
     static_assert(sizeof(get) == sizeof(proc));
     std::memcpy(&get,&proc,sizeof(get));
     const auto candidate = get ? get(api::version) : nullptr;
-    constexpr auto cursorExtension = offsetof(api::Interface,getCursorFrame)+sizeof(candidate->getCursorFrame);
-    constexpr auto visibleMember = offsetof(api::Interface,setCursorVisible)+sizeof(candidate->setCursorVisible);
+    constexpr auto cursorExtension = offsetof(api::Interface,getCursorFrame)+sizeof(api::Interface::getCursorFrame);
+    constexpr auto visibleMember = offsetof(api::Interface,setCursorVisible)+sizeof(api::Interface::setCursorVisible);
     if (candidate && candidate->apiVersion == api::version && candidate->size >= cursorExtension &&
         candidate->getSnapshot && candidate->copyCandidates && candidate->setTarget && candidate->clearTarget && candidate->setCursorMode && candidate->setCursorTarget && candidate->getCursorFrame) {
         selection = candidate;
@@ -356,12 +356,13 @@ std::span<const cursor::Candidate> points() { return {projected.data(),projected
 void reportVisible() {
     if (!visibleSupported) return;
     const auto sent = std::span<const std::uint32_t>(visibleSent.data(),visibleSentCount);
-    if (!visibleDirty && std::equal(sent.begin(),sent.end(),points().begin(),points().end(),
+    const auto shown = points();
+    if (!visibleDirty && std::equal(sent.begin(),sent.end(),shown.begin(),shown.end(),
         [](std::uint32_t id, const cursor::Candidate& c) { return id == c.id; })) return;
-    std::array<std::uint32_t,16> ids{};
+    std::array<std::uint32_t,api::cursorListCapacity> ids{};
     for (std::size_t i = 0; i < projectedCount; ++i) ids[i] = projected[i].id;
-    ++visibleWrites;
     if (selection->setCursorVisible(ids.data(),static_cast<std::uint32_t>(projectedCount)) != api::Result::ok) return;
+    ++visibleWrites;
     visibleSent = ids; visibleSentCount = projectedCount; visibleDirty = false;
 }
 bool retainLatch() {
@@ -555,7 +556,7 @@ void service() {
         if (now-pendingSince >= .5) { overlaySite.store(13); leave(Exit::overlay); return; }
         if (c.targetLock || !o || !ownMenu(o)) return;
         if (!o->usable) { overlaySite.store(14); leave(Exit::overlay); return; }
-        const auto result = selection->setCursorMode(1);
+        const auto result = selection->setCursorMode(visibleSupported ? 3 : 1);
         if (result != api::Result::ok) {
             if (result == api::Result::disabled && !(refusalBits & (std::uint64_t{1} << static_cast<unsigned>(Exit::selection))))
                 log("Cursor unavailable: Selection bAllowExternalTargets=0 (opt-in required).");
