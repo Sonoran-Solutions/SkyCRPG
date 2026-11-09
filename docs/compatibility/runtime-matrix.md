@@ -2,6 +2,19 @@
 
 DYL-154 baseline, updated with DYL-155 evidence on 2026-10-26. The [Phase 3 candidate](#dyl-169-phase-3-candidate) section was added on 2026-10-28; the host and provider pins are unchanged. On 2026-10-31 Steam updated Proton Experimental and the owner accepted the new build as the Phase 4 test host; Phase 1–3 evidence remains on the earlier build. **One tested feasibility environment**, with scoped working behaviors and explicit failures below. This is not a finished MVP support certification. Other runtimes, operating systems, Proton builds and untested mod combinations are unsupported by Phase 1 evidence. [Acceptance matrix](acceptance-matrix.md) owns requirement status; [dependency lock](dependency-lock.md) owns exact upstream files, source commits and permissions.
 
+## Phase 5 feature builds (2026-11-08)
+
+Same host, Proton build and provider pins as Phase 4. Feature evidence is from separate builds/profiles unless stated. `owner-cursor-1` ran with CursorMode on and TargetLock and ThinOccluder off (preserved INI `after-owned-files/33`); no session or route has had two Phase 5 features enabled together.
+
+| Feature / build | Profile and device | Status |
+| --- | --- | --- |
+| Target lock, Camera `63e992e` (`8be698a5…`) | camera-only; keyboard/mouse, controller R3 | Lock and lease **PASS** in owner sessions; menu/F6 interrupt PASS owner; F7 recenters and does not interrupt; dialogue/load/F8 interrupt, mouse look/zoom, switching, auto-retarget **NOT_RUN** |
+| Selection `1506e6d` (`eba23c2e…`) and `4946c92` (`6d8b12e2…`) | camera-only with Selection; keyboard/mouse | Hook, bench prompt, cycling **PASS**; activation breadth, controller, DLL-absent on the final build **NOT_RUN** |
+| Fixed height, Camera `50a3dd2` (`28de1800…`) / `c10e6bc` (`5409d1bd…`) | camera-only, three curated beams; keyboard/mouse | Standing, transparency, enclosure, restores **PASS**; walking result accepted under D033's “no additional beam-induced pull-in, subject to enclosure”; fixed height resumes automatically after menu/F8 by design; controller and lock together **NOT_RUN** |
+| Cursor mode, Camera `4946c92` (`8ca54149…`) with Selection `6d8b12e2…` | camera-only with Selection; owner session: CursorMode on, TargetLock and ThinOccluder off (preserved INI); route override `bAllowExternalTargets=1` | Hover, activation, on-screen-only cycling **PASS**; owner-cursor-1 was cursor-only (TargetLock and ThinOccluder off; logs capped); controller reticle, other resolutions **NOT_RUN** |
+| Occlusion spike `6667bf5` (`abff6b40…`, never shipped) | camera-only spike profile | Stage 1 GO by D028; evidence on its branch |
+| Harness route or combined candidate with two Phase 5 features enabled; UI-only or combined profile on a Phase 5 build | — | **NOT_RUN** (no session or route has combined two Phase 5 features; `owner-cursor-1` had only cursor mode on) |
+
 ## Host and runtime
 
 | Field | Only tested value |

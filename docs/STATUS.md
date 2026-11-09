@@ -4,18 +4,18 @@ Updated 2026-11-02 for the Phase 4 owner ACCEPT and the Phase 5 start; Phase 3 g
 
 Main `c10cd80` contains every Phase 3 merge (#15–#23). Main CI on `8eef712` [run 40753002080](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40753002080) **PASS**; on `c10cd80`, [run 40759295249](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40759295249). Main's module sources equal the tested internal candidate: UI `9a8692e` and Camera `28aae27`.
 
-## Phase 5 — in progress
+## Phase 5 — targeting, activation and camera features (gate REVISE, 2026-11-08)
 
-Starting main `20e215d41a57d83f5e9f517aec8bca1fb33e1c8b`. Owner rulings D5-1 to D5-6 and D026 are recorded in [DECISIONS](DECISIONS.md). Phase 5 feature branches have bounded in-game evidence: target lock owner sessions (2026-11-02), occlusion spike runs (2026-11-02), fixed-height routes and owner session (2026-11-03), and cursor routes and owner session (2026-11-08). None are merged or accepted as a phase; per-feature evidence notes remain on their branches until merge, and the Phase 5 gate record (`docs/evidence/p5/gate.md`, PR #40; orchestrator recommendation REVISE, owner ruling REVISE 2026-11-08) is authoritative on status.
+Orchestrator recommendation was **REVISE**, then the owner recorded **REVISE, do R1–R11** on 2026-11-08 (D030); Phase 5 ACCEPT is not recorded. [Gate record](evidence/p5/gate.md). D025 and D029–D035 are recorded on main. PRs #33, #34, #36, #37, #38, #41 and #42 are merged to `main` under D035 (each after an Astra senior-review PASS; the feature PRs also with green Windows CI on their merge heads). #39 (vinput tooling spike) is closed unmerged. No combined candidate exists; the Phase 4 regression and C1–C5 have not been rerun on a Phase 5 build. Controller evidence includes target-lock R3 in owner-lock-3 (D027); cursor reticle and combined controller checks remain NOT_RUN.
 
-| Ticket | Plan ID | State |
-| --- | --- | --- |
-| DYL-197 | P5-01 target lock | Wave 1. |
-| DYL-198 | P5-02 selection plugin | Wave 1; original plugin replacing BTPS ([D026](DECISIONS.md)). |
-| DYL-199 | P5-04 occlusion spike | Recommendation accepted under [D028](DECISIONS.md); [evidence](https://github.com/Sonoran-Solutions/SkyCRPG/blob/phase5/dyl-199-occlusion-spike/docs/evidence/p5/occlusion-spike.md) (on its branch until merged). |
-| DYL-200 | P5-03 cursor mode | Waiting on P5-02, whose plugin provides the target-injection path ([D026](DECISIONS.md)). |
-| DYL-201 | P5-05 fixed height | Started under [D028](DECISIONS.md): Stage 1, curated base-form list. |
-| DYL-202 | P5-06 gate | Waiting on the feature outcomes. |
+| Ticket | Current evidence and remaining obligation |
+| --- | --- |
+| DYL-197 | Lock, lease release and retake, stable pitch/yaw **PASS** in owner sessions on `63e992e`; owner: "It worked and felt right, I approve" (R3, D027). Menu and F6 interrupts PASS owner; F7 does not interrupt (recenter only). **NOT_RUN:** mouse look/zoom while locked, target switching, auto-retarget, dialogue/load/F8 interrupting a held lock. U is approved by D032. [Evidence](evidence/p5/target-lock.md). |
+| DYL-198 | Original selection plugin (D026): hook, bench prompt, cycling and scan limits **PASS** on `1506e6d`; used as the activation path in cursor routes and owner session. **NOT_RUN:** activation breadth, LOS through walls, combat/sneak, controller, DLL-absent on final build. D031 decides its own archive. [Evidence](evidence/p5/proximity-activation.md). |
+| DYL-199 | Spike closed by **D028** (Stage 1 GO with a curated list). Height held, fade cost at the cap, automatic classifier **FAIL** (discards real enclosure). Evidence stays on its branch (#35). |
+| DYL-201 | Fixed height past three curated beams: standing, transparency, enclosure, restores, feature off **PASS** on `50a3dd2`; walking result is accepted under D033's criterion, "no additional beam-induced pull-in, subject to enclosure" (owner accepted as felt 2026-11-03). Fixed height restores and resumes after menu/F8 by design. **NOT_RUN:** low-space framing, lock with fixed height, controller, budget on `c10e6bc`. [Evidence](evidence/p5/fixed-height-camera.md). |
+| DYL-200 | Cursor mode (B, 65/48/12, on-screen-only cycling, Selection ships `bAllowExternalTargets=0`): route-cursor-8 **PASS** on `4946c92`; owner 2026-11-08 "Finished, everything passed" (4-minute session; logs corroborate the first minutes; quickload NOT_RUN). **NOT_RUN:** controller reticle, other resolutions, frame-cost sample. [Evidence](evidence/p5/cursor-mode.md). |
+| DYL-202 | Owner recorded **REVISE, do R1–R11** (D030); ACCEPT is not recorded. D031–D035 settle packaging, bindings, fixed-height wording, regression scope and merge process. The remaining REVISE items and progress are in the [gate](evidence/p5/gate.md). |
 
 ## Phase 4 — internal candidates
 

@@ -27,6 +27,29 @@ The DYL-161 candidate maps keyboard hotkey events 1–8 to the slot shown. Nativ
 
 The keyboard sink observes Skyrim's mapped Hotkey1–Hotkey8 key-down events without consuming them. For a native quick-key-bound slot, Skyrim handles the press and the UI dispatches nothing. For an auto-filled `FAV` slot, the UI requests one action through `ActorEquipManager`; blocking menus prevent that dispatch. Resolve conflicting remaps in the game's or conflicting mod's bindings. F6/F7/F8 and map K/L retain their documented owners. Windows build **PASS** on UI source `ba10da6` ([build 40438723566](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40438723566)); keyboard FAV dispatch **PASS**, owner-reported and bounded, in run `8eb20c9ab8cf4a978fcfbbbfcf8833ec` with the controller off. On the test host the controller must be off for keyboard/mouse input. A truly native-number-bound press proving no duplicate action, weapon unequip on a second press, in-game shout recovery, and the full native cast/attack path are **NOT_RUN**; see [evidence](evidence/p2/hotbar.md). The voice line displays the selected shout or power and the native global voice recovery timer, sampled at most twice per second; `--` means unavailable and `0s` only means that timer is zero, not that a daily power is available.
 
+## Phase 5 — target lock, Selection and cursor mode (owner bindings 2026-11-08, gate REVISE)
+
+Target lock, fixed height and cursor mode are default OFF in the Camera INI. The Selection plugin is enabled by default (`[Selection] bEnabled=1`); external-target requests are opt-in (`bAllowExternalTargets=0`). Keys below are owner-approved defaults (D027/D032 for R3 and U, `[` `]`; D029 for B). Interrupt behavior differs by feature: target lock exits on menu and F6 (owner PASS); dialogue, load and F8 interrupting a held lock are **NOT_RUN**, and F7 recenters without interrupting lock. Cursor mode exits on toggle, Tab/menus, console, F6, F8, weapon draw, dialogue and load; the cursor routes and owner sheet cover those, but F.6 quickload remains **NOT_RUN**, and the designed exit on a target lock is **NOT_RUN** (no session has had cursor mode and target lock enabled together). Fixed height restores on F6/F8/menu/load/cell/unload/disable and resumes automatically after menu or F8 by design. One consumer per input event: target lock reads its own key through an input tracker, Selection reads `[` `]` through an edge FIFO, cursor mode captures look deltas only while active, and Activate stays native E / A dispatched once through Selection's Pick. Combined device checks on one candidate are **NOT_RUN** ([gate](evidence/p5/gate.md) R5, R6).
+
+### Keyboard and mouse
+
+| Action | Binding | Notes |
+| --- | --- | --- |
+| Target lock toggle | **U**, bound in the TDM target-lock overlay fragment that ships with Camera (TDM's own key; Camera's `[TargetLock] bEnabled=1` only authorizes the lease) | A second press toggles lock off. Menu and F6 interrupts are owner **PASS**; dialogue/load/F8 interrupting a held lock is **NOT_RUN**. F7 only recenters and does not interrupt lock. No target-switch key in Phase 5. |
+| Selection cycle next / previous | **[** next / **]** previous (`[Controls] iCycleNextKey=26`, `iCyclePreviousKey=27`) | Latches the cycled candidate; the native prompt names it. Ordinary latch expires after 10 s or on movement; in cursor mode it holds until the pointer moves more than 12 px. |
+| Cursor mode toggle | **B** (`[CursorMode] iToggleKey=48`) | Mouse look moves the pointer instead of the camera (65 ≈ 1 px per count); the pointer picks the object whose screen box it is in or within 48 px of; `[` `]` visit only on-screen candidates. Requires Selection with `bAllowExternalTargets=1`. |
+| Activate | native **E** | The only activation input; pointing at nothing activates nothing. |
+| Exits | Esc/Tab menus, `~` console, F6, F8, weapon draw, target lock, dialogue, load | Cursor mode exits on these triggers. F.6 quickload remains **NOT_RUN**. Lock: menu/F6 PASS; dialogue/load/F8 NOT_RUN; F7 does not interrupt. Fixed height restores on menu/load/F6/F8 and resumes automatically after menu or F8 by design. |
+
+### Controller
+
+| Action | Binding | Notes |
+| --- | --- | --- |
+| Target lock / native POV | **R3 short press** locks; **hold 0.4 s** is native POV (D027) | Owner-tested 2026-11-02. |
+| Selection cycle, target switch, cursor toggle | **unbound** in Phase 5 (owner decision 2026-11-08) | No free stock button; D-pad Left would need a native Hotkey1 remap. Next phase. |
+| Cursor pointer | right stick while cursor mode is active | Same delta path as the mouse at reduced speed; untested on a controller (cursor mode cannot be toggled from the pad by default). |
+| Activate | native **A** | |
+
 ## Phase 2 Camera candidate — DYL-156
 
 These mappings describe the new candidate; [Camera evidence](evidence/p2/camera-controls.md) separately records build and gameplay validation. Native movement/combat/activation remain unchanged, with TDM movement-only and SmoothCam as the only normal third-person transform writer.
