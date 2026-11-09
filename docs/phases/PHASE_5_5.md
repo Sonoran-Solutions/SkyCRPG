@@ -2,7 +2,7 @@
 
 [Roadmap](../ROADMAP.md) · [MVP scope](../MVP_SCOPE.md) · [Phase 5](PHASE_5.md) · [Phase 5 research](../planning/phase5-targeting-camera-research.md) · [Linear project](https://linear.app/devils17/project/skycrpg-3bba43f5930f)
 
-**Status: proposal, 2026-11-09. No tickets exist and nothing here is implemented.** It follows the Phase 5 owner ACCEPT ([D041](../DECISIONS.md)) and sits before any Phase 6. It is a camera-only phase: no UI, Selection or packaging scope except where the camera forces it. The owner's three scope answers of 2026-11-09 are recorded as [D042–D044](../DECISIONS.md); the remaining decisions below are engineering proposals until the owner rules on them. Feasibility statements are taken from the Phase 5 research, the DYL-199 spike record and the DYL-201 evidence; anything not measured in game is marked **unverified**.
+**Status: proposal, 2026-11-09, revised the same day after the senior review of PR #55. Nothing here is implemented.** Linear tickets: P5.5-01 DYL-216, P5.5-02 DYL-217, P5.5-03 DYL-218, P5.5-04 DYL-219, P5.5-05 DYL-220, P5.5-06 DYL-221, P5.5-07 DYL-222, all in Backlog. It follows the Phase 5 owner ACCEPT ([D041](../DECISIONS.md)) and sits before any Phase 6. It is a camera-only phase: no UI, Selection or packaging scope except where the camera forces it. The owner's three scope answers of 2026-11-09 are recorded as [D042–D044](../DECISIONS.md) and the owner's agreement with the review's recommendations as [D045](../DECISIONS.md); the D55 decisions below are engineering starting points until the owner rules on them. Merging this plan is not implementation acceptance or release authorization. Feasibility statements are taken from the Phase 5 research, the DYL-199 spike record and the DYL-201 evidence; anything not measured in game is marked **unverified**.
 
 ## Outcome
 
@@ -24,7 +24,7 @@ Source: `modules/camera/src/plugin.cpp`, the policy headers, `docs/evidence/p5/f
 | Special states | Mount, swim, furniture, bleedout, beast forms, killmoves and scripted cameras hand back to native. | Each needs a decision: hold the fixed view or hand off. |
 | Measurement | The probe reports player position, cell, camera state and frame stats. It has no camera position, no line of sight and no player screen position. | "Player visible" cannot be asserted by a route today; evidence is screenshots and the thin-occluder trace. |
 
-Two spike results matter for the design. `SetAppCulled` on a reference both hid it **and** stopped it from blocking the camera (the native caster skips culled objects), giving a full-height view in that run. The per-draw near-plane clip was refused because its projection helper takes an argument the reference source does not pass; it remains untested, not disproven.
+Two spike results matter for the design. In the spike's `SetAppCulled` run the beam was hidden and the matched screenshot showed full-height framing. The binary analysis gives a plausible reason (the native caster skips objects carrying the hidden bit), but the per-reference contact change was not logged, so that explanation is a hypothesis, not a measured contact result. The per-draw near-plane clip was refused because its projection helper takes an argument the reference source does not pass; it remains untested, not disproven.
 
 ## What this phase changes in principle
 
@@ -42,7 +42,7 @@ These are recorded so that the plan does not quietly contradict earlier document
 - A technical failure never substitutes a different product behaviour. If a location type cannot be made visible, it is recorded as FAIL with the tested alternatives and returned to the owner. The camera does not quietly pull in, tilt or switch to first person there.
 - Rules, not lists. The Phase 5 curated-form list cannot cover the game or any mod. What is faded or cut is decided from geometry relative to the player and camera, with form lists only as exceptions.
 - Presentation only. Nothing changes actor or player collision, navmesh, activation rules, saves or reference persistence. Every visual change is restored on every lifecycle exit.
-- State precedence is unchanged (disable → invalid world → special → menu → first person → precision → target lock → obstruction → normal). Fixed mode is a property of the normal and target-lock states. F8 remains the emergency exit and F6 remains available as a player choice.
+- State precedence is unchanged (disable → invalid world → special → menu → first person → precision → target lock → obstruction → normal). Fixed mode applies in the normal and target-lock states. Holding it in any state the camera hands off today is the D55-5 retained-state contract and is not assumed. Native menu input precedence is separate from camera retention and does not change. F8 remains the emergency exit and F6 remains available as a player choice.
 - Process carried from Phase 5: a binary-checking independent review precedes the first game run of any native change; a fix on a path shared by a feature flag is rerun in both flag states; every route asserts the probe state it claims rather than only sending keys.
 
 ## Decisions
@@ -54,18 +54,30 @@ These are recorded so that the plan does not quietly contradict earlier document
 | D042 | Fixed means pitch, height and distance never change and there is no free orbit. The view turns in 90° steps on a player input. |
 | D043 | Where walls, ceilings or upper floors block the view, the look (fade, cutaway or clip) is whichever the spike proves per location type. The owner reviews screenshots of each look before the feature is built. |
 | D044 | Acceptance needs both a hand-picked location matrix with an owner playtest and an unattended sweep of every vanilla and DLC interior that measures player visibility. |
+| D045 | The owner agrees with the PR #55 senior review's recommendations: peek is deferred from the first fixed-rig implementation; retained special states need an explicit contract with feasibility checks and in-state assertions; the first two tickets start on a stated experimental scope and the remaining choices are frozen before production work; the sweep evidence is reproducible and time-aware. |
 
-### Required before tickets are ready
+### Scope the first two tickets start on
 
-| ID | Decision | Default proposed by engineering |
+P5.5-01 and P5.5-02 exist to answer the D55 decisions, so they do not wait for them. They are ready on this experimental scope and need only the owner's go to start:
+
+- Disposable Camera builds and the never-shipped test probe only. Nothing is merged into the shipped Camera DLL and no archive changes.
+- Content bounds: Skyrim.esm, Dawnguard, Hearthfire and Dragonborn on the pinned 1.7.104 host, with the Phase 5 candidate 8 stack. Creation Club content and mods are not exercised.
+- Fixed mode stays off by default; game sessions are serialized on the one host under the AGENTS.md job limits.
+- Their output is evidence and recommendations. It is not acceptance evidence until the [oracle-validation checkpoint](#acceptance-measures) passes, and it authorizes no production work.
+
+### Frozen after the spike, before production work
+
+The table gives engineering starting points for the spike to test. None is an owner decision. The **decision freeze** is the owner's ruling on these rows from the spike and baseline evidence; P5.5-03 is not dispatched before D55-1, D55-2, D55-3 and D55-5 are ruled, and P5.5-04 is not dispatched before the look per location type (D043), D55-6 and D55-8 are ruled.
+
+| ID | Decision | Engineering starting point |
 | --- | --- | --- |
 | D55-1 | Who writes the camera transform in fixed mode. | **SmoothCam stays the only writer.** The existing caster detour (ID 33007) reports "no hit" for every cast while fixed mode is eligible, so SmoothCam never pulls in. Taking `RequestCameraControl` and owning the transform is evaluated in the spike only as the fallback if SmoothCam's interpolation or offsets fight a fixed rig, and needs an owner ruling under D012. |
-| D55-2 | The four headings and the snap-turn inputs. | Four diagonal headings (NE, SE, SW, NW) so two far walls are seen and two near walls are cut, with the spike comparing against cardinal headings in screenshots. Controller: a right-stick flick left/right, because the stick's yaw axis is unused in fixed mode and no new button is needed. Keyboard: two keys proposed after a binding audit, returned to the owner as a tested proposal. F7 becomes "return to the default heading". |
+| D55-2 | The four headings and the snap-turn inputs. | Four diagonal headings (NE, SE, SW, NW) so two far walls are seen and two near walls are cut, with the spike comparing against cardinal headings in screenshots. Controller: a right-stick flick left/right. Keyboard: two keys proposed after a binding audit. Neither a free input nor a compatible binding is assumed; both return to the owner as a tested proposal. F7 becomes "return to the default heading". |
 | D55-3 | Whether any zoom remains. | One configured distance, no wheel zoom, matching "100% fixed". An optional small set of fixed zoom steps can be added later if the owner wants it. |
-| D55-4 | What the freed look inputs do. | A bounded "peek": holding the stick or mouse shifts the framing a limited distance toward that direction and springs back. This is the proposed answer to enemies outside the frame on the near side. Decided after the spike shows how much of the scene is visible. |
-| D55-5 | Which special states keep the fixed view. | Keep it for sneak, combat, drawn bow/spell, target lock, surface swimming, mount, beast forms, bleedout and dialogue. Hand off for killmoves, scripted cameras, furniture/crafting and menus, and return to the same heading afterwards. Underwater and dragon riding are decided on spike evidence. |
-| D55-6 | Acceptance thresholds for "playable". | Proposed in [Acceptance measures](#acceptance-measures); the owner approves or changes the numbers before the gate, not after. |
-| D55-7 | Content in scope. | Skyrim.esm, Dawnguard, Hearthfire and Dragonborn on the pinned 1.7.104 host. Creation Club content and mods are untested and stated as such. |
+| D55-4 | Peek on the freed look inputs. | **Deferred from the first fixed-rig implementation (D045).** The first rig is the locked view and snap turns only. A later peek proposal must say whether it shifts the framing or moves the camera relative to the player, how it squares with the rig-hold measure, how it relates to the owner's fixed-camera requirement (D042), and which of flick and hold wins on the same right stick. |
+| D55-5 | Which special states keep the fixed view. | The camera hands off in mount, swimming, beast forms, bleedout and dialogue today, on purpose. Starting proposal: retain the fixed view in sneak, combat, drawn bow/spell and target lock (already eligible), and test retention for surface swimming, mount, beast forms, bleedout and dialogue. Each tested state needs a feasibility result in P5.5-02 (which hook owns the view there and whether the hold can be kept) before it is proposed as retained. Killmoves, scripted cameras, furniture/crafting and menus hand off and return to the same heading. Underwater and dragon riding are decided on spike evidence. The ruling is the explicit list of retained states, and it is a dependency of the rig. |
+| D55-6 | Acceptance thresholds for "playable". | Proposed in [Acceptance measures](#acceptance-measures); the owner sets the numbers from the baseline, before production measurements are taken, not after. |
+| D55-7 | Content in scope for acceptance. | The four official masters named in the experimental scope above. Creation Club content and mods are untested and stated as such. |
 | D55-8 | Framing. | Perspective projection with field of view, pitch and distance tuned once in the spike and then frozen. A longer, narrower view looks more isometric but puts the camera outside more rooms; the spike records that trade with screenshots. |
 
 ## Coverage matrix
@@ -112,33 +124,45 @@ These came out of the survey and are folded into the work items:
 
 ## Acceptance measures
 
-Proposed under D55-6. P5.5-01 builds the instrument; the numbers are placeholders for the owner to set once the baseline is measured.
+Proposed under D55-6. P5.5-01 builds the instrument and P5.5-02 supplies the mechanisms it must be validated against. The numbers are starting points for the owner to set once the baseline is measured.
+
+Two different things are measured, and only the second is acceptance evidence:
+
+- **Geometric clearance (diagnostic).** Rays from the camera to fixed points on the player (head, chest, feet, both shoulders) and to a ring of floor points, reporting which surfaces lie on each ray and how each is treated: opaque, faded, hidden or clipped. It explains failures. It never passes anything by itself, because treated geometry can still obscure the player: eight overlapping surfaces at the Phase 5 fade alpha of 0.35 let through 0.65^8 ≈ 3.2% of what is behind them, while every ray reports only faded hits.
+- **Rendered visibility (acceptance).** Evidence of what reaches the screen at the projected positions of the player points and the floor ring, for example accumulated transmittance along each ray against a minimum threshold, or final-image or depth evidence. The technique is a spike deliverable. Whatever is chosen is calibrated against each selected fade, hide and clip mechanism, including overlapping fades and geometry that is missing or culled.
+
+A sample that is missing, off screen or indeterminate is recorded NOT_RUN or BLOCKED. It is never counted as clear.
+
+**Oracle-validation checkpoint.** Before any measurement counts as acceptance evidence, P5.5-01 and P5.5-02 jointly validate the instrument on fixtures with known answers, for every mechanism the spike selects: a single fade, stacked fades, hidden geometry, clipped geometry, an undrawn room and a plainly visible player. Until the checkpoint passes, instrument output is diagnostic only. The checkpoint is repeated if the set of mechanisms changes.
+
+The measures:
 
 - **Rig hold.** In every fixed-mode sample the camera position equals player position plus the configured offset for the current heading, within a recorded tolerance. Any pull-in is a FAIL, not a degraded pass.
-- **Player visible.** Rays from the camera to a fixed set of points on the player (head, chest, feet, both shoulders) are tested against what is actually drawn, so faded or hidden geometry does not count as blocking. Proposed: at least 4 of 5 points clear in 98% of samples per route, and no interval longer than 1 s with the player fully hidden.
-- **Surroundings visible.** The same test to a ring of floor points around the player. Proposed: at least 75% of the ring clear in 95% of samples, so the player can see where they are walking and who is next to them.
-- **Room drawn.** A screenshot check that the frame is not empty or void where the floor should be. Proposed: zero blank frames.
-- **Sweep.** Every interior cell in scope is entered, sampled at its arrival pose and along a short walk, in each of the four headings. Proposed: 97% of cells pass the three measures above; every failing cell is listed with its location type and a disposition.
+- **Player visible.** Rendered visibility at the five player points. Proposed: at least 4 of 5 points visible in 98% of valid samples per route, and no interval longer than 1 s with the player fully hidden, stated at the measured capture cadence.
+- **Surroundings visible.** Rendered visibility at the floor ring. Proposed: at least 75% of the ring visible in 95% of valid samples, so the player can see where they are walking and who is next to them.
+- **Room drawn.** A frame-level check that the view is not empty or void where the floor should be. Proposed: zero blank frames among the frames captured. The capture cadence and the handling of missing samples are established first: the existing probe coalesces stalled samples, so periodic state snapshots are not rendered-frame coverage, and neither this claim nor a blackout duration is made beyond what the cadence supports.
+- **Sweep.** Every interior cell in scope is entered, sampled at its arrival pose and along a short walk, in each of the four headings. Proposed: 97% of attempted cells pass the measures above; every failing cell is listed with its location type and a disposition. The sweep record is reproducible: the scanner and route-generator revisions, the resolved cell census, the counts of eligible, attempted, passed, failed and NOT_RUN cells, the poses used and the candidate hashes. Cells that could not be entered or whose fixture was invalid stay in the report as NOT_RUN; they are not dropped from the denominator silently.
 - **Owner route.** The owner plays one fixture from each matrix row without using F6 for visibility and records ACCEPT or specific revisions.
 
 ## Work items
 
 ### P5.5-01 — Visibility instrument, fixtures and baseline
 
-**Lane:** test infrastructure. **Dependencies:** none; starts at kickoff. **Decisions:** D55-6, D55-7.
+**Lane:** test infrastructure. **Dependencies:** none; ready on the [experimental scope](#scope-the-first-two-tickets-start-on). **Informs:** D55-6, D55-7.
 
 **Scope**
 
-- Extend the never-shipped test probe with camera position and orientation, the player's projected screen box, and the ray tests defined above against rendered geometry. Keep it out of every shipped archive, as today.
-- Enumerate the interior cells in scope from the masters with the existing offline scanner and generate sweep routes in batches that fit the 20-minute route limit. Measure the time per cell first and state the real size of the sweep before committing to it.
+- Extend the never-shipped test probe with camera position and orientation, the player's projected screen box and the geometric-clearance rays. Implement the rendered-visibility technique chosen with P5.5-02, and record the capture cadence and how missing or stalled samples are reported. Keep the probe out of every shipped archive, as today.
+- Enumerate the interior cells in scope from the masters with the existing offline scanner and generate sweep routes in batches that fit the 20-minute route limit. Pin the scanner and generator revisions and write the resolved cell census. Measure the time per cell first and state the real size of the sweep before committing to it.
 - Author one fixture per matrix row from reviewed player poses, following the route-fixture rules learned in Phase 5.
-- Run the matrix once on candidate 8 with fixed height on and off. This baseline says where the current camera fails and by how much, and it is the comparison for every later run.
+- Run the matrix once on candidate 8 with fixed height on and off. This baseline says where the current camera fails and by how much, and it is the comparison for every later run. It is diagnostic until the oracle-validation checkpoint passes.
 
 **Acceptance criteria**
 
-- [ ] The probe's visibility numbers agree with screenshots on at least three fixtures where the answer is obvious (open ground, behind a wall, under a beam).
+- [ ] The probe's numbers agree with screenshots on at least three fixtures where the answer is obvious (open ground, behind a wall, under a beam), and missing or indeterminate samples are reported as such, never as clear.
+- [ ] The oracle-validation checkpoint passes jointly with P5.5-02 for every selected mechanism, including stacked fades.
 - [ ] The baseline table exists for all 18 rows, with NOT_RUN where a fixture could not be built and why.
-- [ ] The sweep's measured duration and batch plan are recorded.
+- [ ] The sweep's cell census, pinned tool revisions, measured duration and batch plan are recorded.
 
 **Evidence/deliverables:** `docs/evidence/p5.5/visibility-instrument.md`, `docs/evidence/p5.5/baseline.md`, probe README.
 
@@ -146,7 +170,7 @@ Proposed under D55-6. P5.5-01 builds the instrument; the numbers are placeholder
 
 ### P5.5-02 — Spike: fixed rig and enclosure see-through on 1.7.104
 
-**Lane:** camera. **Dependencies:** none; runs beside P5.5-01. **Decisions:** D043, D55-1, D55-2, D55-8.
+**Lane:** camera. **Dependencies:** none; ready on the [experimental scope](#scope-the-first-two-tickets-start-on) and runs beside P5.5-01. **Informs:** D043, D55-1, D55-2, D55-3, D55-5, D55-8.
 
 Measure before building, as P5-04 did. Disposable builds only. The spike ends with **GO / REVISE / HOLD per location type**, because one mechanism is unlikely to win everywhere.
 
@@ -159,6 +183,8 @@ Measure before building, as P5-04 did. Disposable builds only. The spike ends wi
   2. Per-reference fade with the Phase 5 material clones, to find where shared shaders make it refuse.
   3. Per-draw clip. Resolve the projection helper's argument on 1.7.104 first; if it cannot be resolved, record the row as BLOCKED.
   4. A world-space discard in the pixel shader (everything above a plane through the player's head, or inside a cone from camera to player). Record what renderer hooking it needs and whether that is acceptable without a new dependency.
+- **Retained states.** For surface swimming, mount, beast forms, bleedout and dialogue, record which hook owns the view in that state today and whether the locked pitch, heading and distance can be held there without a second transform writer. This is the feasibility input to D55-5.
+- **Rendered-visibility technique.** With P5.5-01, choose how visibility is measured for each mechanism (transmittance, final image or depth) and run the oracle-validation checkpoint.
 - **Side effects.** For the best candidate, capture fog, lighting and shadows, sound near the player, water, and the black backdrop above interiors.
 - **Framing.** Screenshots at the proposed pitch, distance and field of view, at diagonal and cardinal headings, and during a snap turn.
 
@@ -166,7 +192,9 @@ Measure before building, as P5-04 did. Disposable builds only. The spike ends wi
 
 - [ ] A table per location type: mechanism, result (Transparent / Hidden / Clipped / FAIL / BLOCKED), screenshots, frame-time delta, side effects.
 - [ ] A written outcome per location type and a recommended combination, with the open risks stated.
-- [ ] The owner has seen the looks and ruled on D043's choice per type and on D55-1, D55-2, D55-4 and D55-8.
+- [ ] A feasibility result for each state proposed as retained under D55-5.
+- [ ] The oracle-validation checkpoint passes jointly with P5.5-01.
+- [ ] The owner has seen the looks and the decision freeze is recorded: D043's choice per location type and D55-1, D55-2, D55-3, D55-5, D55-6 and D55-8.
 - [ ] No spike code is merged into the shipped Camera DLL.
 
 **Evidence/deliverables:** `docs/evidence/p5.5/fixed-camera-spike.md`, `docs/DECISIONS.md` entries.
@@ -175,7 +203,7 @@ Measure before building, as P5-04 did. Disposable builds only. The spike ends wi
 
 ### P5.5-03 — Fixed rig: locked pitch, height and distance with snap turns
 
-**Lane:** camera. **Dependencies:** P5.5-02 rig rows PASS; D55-1, D55-2, D55-3 ruled.
+**Lane:** camera. **Dependencies:** P5.5-02 rig rows PASS; D55-1, D55-2, D55-3 and the D55-5 retained-state list ruled.
 
 **Scope**
 
@@ -184,12 +212,15 @@ Measure before building, as P5-04 did. Disposable builds only. The spike ends wi
 - Collision off for every cast while fixed mode is eligible, replacing the curated-beam path in that mode. With fixed mode off, DYL-201 behaves as shipped.
 - Interaction with existing features: the DYL-157 compression policy is suppressed; target lock keeps working with its zero yaw and pitch adjustment; cursor mode keeps its own input ownership; F7 returns to the default heading.
 - Movement stays camera-relative through TDM, so "up" on the stick is always away from the camera at the current heading.
+- Eligibility for exactly the states the owner ruled as retained under D55-5; every other state hands off as today. Menu input precedence is untouched.
+- No peek (D55-4, D045). The look axes not used by snap turns do nothing in fixed mode.
 
 **Acceptance criteria**
 
 - [ ] Rig hold passes on every matrix fixture: zero pull-in samples, including walking into walls, under beams, through doorways and up stairs.
 - [ ] Snap turns land on exactly four headings on both devices, do not fire during menus, and cause no duplicate native action.
 - [ ] Load, death and reload, F6 and return, F8 off and on, and each handed-off state return to the same heading and distance.
+- [ ] For each retained state, rig hold is asserted from samples taken **during** the state, not only at entry and return.
 - [ ] With `bEnabled=0`, the candidate-8 routes for camera controls and fixed height still pass.
 
 **Evidence/deliverables:** `docs/evidence/p5.5/fixed-rig.md`, `modules/camera/config/SkyCRPG_Camera.ini`, `docs/CONTROLS.md`.
@@ -244,20 +275,20 @@ Measure before building, as P5-04 did. Disposable builds only. The spike ends wi
 
 ### P5.5-06 — Playing under a fixed view
 
-**Lane:** camera. **Dependencies:** P5.5-03; runs beside P5.5-05. **Decisions:** D55-4, D55-5.
+**Lane:** camera. **Dependencies:** P5.5-03; runs beside P5.5-05. **Decisions:** D55-5.
 
 **Scope**
 
-- Threat awareness: the peek control if approved, and a check that enemies on the camera side, above the player and on other floors can be seen or located in time to react.
+- Threat awareness: a check that enemies on the camera side, above the player and on other floors can be seen or located in time to react with the locked view and snap turns alone. If they cannot, the result is recorded and a peek proposal meeting the D55-4 conditions returns to the owner; peek is not built under this item.
 - Aiming: melee, locked bow and spell across a height difference, and the unlocked case recorded honestly as PASS or as a limitation.
 - Activation: objects above the cut line and behind cut walls; Selection must not offer what the player cannot see, or must show it.
-- Special states per D55-5, each with an enter and return check.
+- Special states per the D55-5 ruling: retained states are checked while the state is active, handed-off states on entry and return.
 - Transitions (row 17): the correct view on the first frame after a load door, fast travel and a lift.
 
 **Acceptance criteria**
 
 - [ ] A bounded combat route with a melee enemy, an archer on a ledge and one airborne or tall enemy completes without F6 on both devices.
-- [ ] The special-state table has a result for every state in D55-5.
+- [ ] The special-state table has a result for every state in the D55-5 ruling, with in-state samples for the retained ones.
 - [ ] No transition shows a blocked or empty first second.
 
 **Evidence/deliverables:** `docs/evidence/p5.5/fixed-view-play.md`, `docs/CONTROLS.md`.
@@ -270,7 +301,7 @@ Measure before building, as P5-04 did. Disposable builds only. The spike ends wi
 
 **Scope**
 
-- Full matrix and full sweep on the final candidate, with the probe measures and screenshots.
+- Full matrix and full sweep on the final candidate, with the probe measures and screenshots, and the reproducible sweep record (census, attempted and NOT_RUN cells, poses, tool revisions, candidate hashes).
 - Regression with fixed mode off (equals candidate 8) and on, in camera-only and combined profiles, and the Phase 4 performance capture on a small interior, a great hall, a cave and an exterior.
 - Owner playtest across one fixture per matrix row on both devices.
 
@@ -286,8 +317,10 @@ Measure before building, as P5-04 did. Disposable builds only. The spike ends wi
 
 ```
 Phase 5: DYL-202 owner ACCEPT (D041)
+  → owner go on the experimental scope
   → P5.5-01 (instrument, fixtures, baseline) ‖ P5.5-02 (spike)
-  → owner reviews the spike: looks per location type, D55-1 … D55-8
+  → oracle-validation checkpoint (P5.5-01 + P5.5-02)
+  → decision freeze: looks per location type, D55-1 … D55-8 (D55-4 deferred)
   → P5.5-03 (fixed rig)
   → P5.5-04 (see-through and room visibility)
   → P5.5-05 (coverage hardening, sweep) ‖ P5.5-06 (play under a fixed view)
@@ -296,16 +329,17 @@ Phase 5: DYL-202 owner ACCEPT (D041)
 
 P5.5-01 and P5.5-02 touch disjoint files (probe and routes versus a disposable Camera build) and can run in parallel; game sessions stay serialized on the one host. P5.5-03 to P5.5-06 all edit `plugin.cpp` and the Camera INI and need one integrator and a fixed merge order. Relative effort: P5.5-01 medium, P5.5-02 large and decisive, P5.5-03 small to medium, P5.5-04 large, P5.5-05 large and open-ended until the sweep converges, P5.5-06 medium, P5.5-07 medium.
 
-The phase can stop early with a useful result. If the spike returns HOLD on room culling, the rig (P5.5-03) still ships as an exterior-and-large-hall mode and the interior problem goes back to the owner with the measured alternatives.
+The combined result of P5.5-01 and P5.5-02 is the decision point for the rest of the phase; it is not assumed that the whole effort is feasible. If the spike returns HOLD on room culling, the rig work is kept as an internal experimental result and nothing ships from it. A reduced-scope deliverable can only be proposed to the owner afterwards, and needs a new owner scope ruling that defines the permitted locations, what happens in unsupported locations, its own visibility, performance and lifecycle checks, and a separate acceptance gate. A rig-position PASS is not evidence that a reduced mode is playable: the rig alone excludes visibility, and exteriors still have canopy, cliffs and overhangs to solve.
 
 ## Risks specific to this phase
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| Rooms are not drawn when the camera is outside them. | Blank or partial interiors; the phase is not achievable indoors. | First spike row; the seeding hook target is already checked against the binary; HOLD and an owner decision if no mode works within budget. |
+| Rooms are not drawn when the camera is outside them. | Blank or partial interiors; the phase is not achievable indoors. | First spike row; the seeding hook target is already checked against the binary; HOLD and an owner decision if no mode works within budget. Nothing ships from a HOLD without a new scope ruling. |
 | No mechanism handles one-piece cave and Dwemer meshes. | Caves and mines stay blocked, a large share of dungeons. | Per-draw clip and shader discard are evaluated before any production work; per-type outcome lets kit interiors proceed while caves are decided. |
 | The shader route needs a renderer dependency. | Conflicts with the "no Community Shaders dependency" boundary. | Recorded as a spike finding and an owner decision, never adopted silently. |
 | SmoothCam misbehaves with collision removed. | Jitter or drift in the rig. | Spike rig row; fallback to owning the transform under an owner ruling (D55-1). |
+| The instrument reports the player visible when they are obscured. | False PASS at the gate, for example through stacked fades. | Geometric clearance is diagnostic only; rendered visibility is calibrated per mechanism; the oracle-validation checkpoint precedes any acceptance measurement; indeterminate samples never pass. |
 | Rule-based cutting hides something the player needs. | Missed levers, loot or enemies above the cut. | Cut height margin, exceptions list, Selection check in P5.5-06, sweep screenshots. |
 | Fog, lighting or sound change with a distant camera. | The game looks or sounds wrong even when visible. | Measured in the spike; each correction is its own change with captures. |
 | Extra rooms and faded geometry cost frames. | Budget exceeded in large interiors. | Cost measured per seeding mode in the spike; cap and hysteresis; budget rows at the gate. |
