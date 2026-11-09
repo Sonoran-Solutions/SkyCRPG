@@ -8,7 +8,7 @@ from pathlib import Path
 import struct
 import zlib
 
-from classify import classify, RULES
+from classify import classify_detail, utility_reason, RULES
 
 NAMES = ['Skyrim.esm', 'Update.esm', 'Dawnguard.esm', 'HearthFires.esm', 'Dragonborn.esm']
 DEFAULT = Path.home() / '.local/share/Steam/steamapps/common/Skyrim Special Edition/Data'
@@ -63,7 +63,7 @@ def scan(data_dir, names=NAMES):
             if index > len(masters):
                 return 'UNRESOLVED:%08X@%s' % (fid, plugin)
             return '%s:%06X' % ((masters + [plugin])[index], fid & 0xffffff)
-        def walk(start, end, cell=None, group_type=None):
+        def walk(start, end, cell=None, group_type=None, world=None):
             pos = start
             while pos < end:
                 if pos + 24 > end:
@@ -73,7 +73,7 @@ def scan(data_dir, names=NAMES):
                     label, typ = struct.unpack_from('<Ii', blob, pos + 8)
                     if size < 24 or pos + size > end:
                         raise ValueError('bad group in ' + plugin)
-                    walk(pos + 24, pos + size, key(label) if typ == 6 else cell, typ)
+                    walk(pos + 24, pos + size, key(label) if typ == 6 else cell, typ, key(label) if typ == 1 else world)
                     pos += size
                     continue
                 flags, fid = struct.unpack_from('<II', blob, pos + 8)
@@ -82,7 +82,7 @@ def scan(data_dir, names=NAMES):
                 raw = blob[pos + 24:pos + 24 + size]
                 pos += 24 + size
                 typ = tag.decode('ascii')
-                if typ not in ('TES4', 'CELL', 'REFR', 'ACHR', 'STAT', 'DOOR', 'LCTN', 'KYWD', 'LGTM', 'ACTI', 'MSTT', 'FURN'):
+                if typ not in ('TES4', 'CELL', 'REFR', 'ACHR', 'STAT', 'DOOR', 'LCTN', 'KYWD', 'LGTM', 'ACTI', 'MSTT', 'FURN', 'WRLD'):
                     continue
                 if flags & 0x40000:
                     length = struct.unpack_from('<I', raw)[0]
@@ -98,8 +98,11 @@ def scan(data_dir, names=NAMES):
                 def form(name):
                     v = fields.get(name, b'')
                     return key(struct.unpack_from('<I', v)[0]) if len(v) >= 4 else None
+                if typ == 'WRLD':
+                    row.update(parent=form('WNAM'), world_flags=int.from_bytes(fields.get('DATA', b'\0')[:1], 'little'))
                 if typ == 'CELL':
-                    row.update(cell_flags=int.from_bytes(fields.get('DATA', b'\0')[:2], 'little'), location=form('XLCN'), encounter_zone=form('XEZN'), lighting_template=form('XCLL_template') or form('LTMP'))
+                    row['worldspace'] = world
+                    row.update(cell_flags=int.from_bytes(fields.get('DATA', b'\0')[:2], 'little'), location=form('XLCN'), encounter_zone=form('XEZN'), lighting_template=form('LTMP'))
                     x = fields.get('XCLL', b'')
                     row['fog_near_far'] = list(struct.unpack_from('<2f', x, 12)) if len(x) >= 20 else None
                 if typ == 'LCTN':
@@ -146,10 +149,26 @@ def scan(data_dir, names=NAMES):
         z = [r['pose'][2] for r in statics if r['pose']]
         cell['static_z_extent'] = [min(z), max(z)] if z else None
         cell['storey_count'] = None
-        cell['classification'] = classify(cell)
+        cell['classification'], cell['classification_rule'] = classify_detail(cell)
+        cell['utility_reason'] = utility_reason(cell)
         cell['review_flags'] = ([] if cell['editor_id'] else ['no_editor_id']) + ([] if cell['arrival_poses'] or cell['markers'] else ['no_known_arrival_pose']) + (['possible_test_or_unused'] if any(x in cell['editor_id'].lower() for x in ('test', 'qasmoke', 'unused', 'unreachable')) else [])
         rows.append(cell)
-    return dict(masters=sources, tool_sha256=digest(Path(__file__)), classifier_sha256=digest(Path(__file__).with_name('classify.py')), marker_identification='Base EDID contains RoomMarker or PortalMarker; conservative name search, not a proven exhaustive engine type mapping.', marker_bases=list(marker_bases.values()), classification_rules=[dict(name=n, pattern=p, matched=sum(c['classification'] == n for c in rows)) for n,p in RULES], distribution=dict(Counter(c['classification'] for c in rows)), cells=sorted(rows, key=lambda r:r['id']))
+    worlds = [r.copy() for r in records.values() if r['type'] == 'WRLD' and not r['flags'] & 0x20 and r['editor_id'] != 'Tamriel']
+    world_counts = Counter(r.get('worldspace') for r in records.values() if r['type'] == 'CELL' and not r['cell_flags'] & 1 and not r['flags'] & 0x20)
+    for world in worlds:
+        world['parent_editor_id'] = records.get(world['parent'], {}).get('editor_id') or None
+        world['cell_count'] = world_counts[world['id']]
+        name = world['editor_id'].lower()
+        if name in ('blackreach', 'dlc01soulcairn', 'dlc2apocryphaworld', 'dlc01falmervalley', 'dlc01boneyard') or any(token in name for token in ('cave', 'cavern', 'grotto', 'crypt', 'passage', 'holdout', 'alftand')):
+            world['category'] = 'enclosed_candidate'
+        elif any(token in name for token in ('whiterun', 'solitude', 'windhelm', 'markarth', 'riften')):
+            world['category'] = 'city_exterior'
+        elif name == 'dlc2solstheimworld':
+            world['category'] = 'exterior'
+        else:
+            world['category'] = 'review'
+
+    return dict(worldspaces=sorted(worlds, key=lambda w:w['id']), worldspace_method='Hypothesis: known enclosed EDIDs and cave-like tokens are enclosed candidates; known city EDIDs are exterior; Solstheim is exterior. Parent alone is insufficient: Blackreach and Soul Cairn have Tamriel parents. Other worlds require review; flags and parents retained.', masters=sources, tool_sha256=digest(Path(__file__)), classifier_sha256=digest(Path(__file__).with_name('classify.py')), marker_identification='Base EDID contains RoomMarker or PortalMarker; conservative name search, not a proven exhaustive engine type mapping.', marker_bases=list(marker_bases.values()), classification_rules=[dict(source=source, name=n, values=v, matched=sum(c['classification_rule'] == i for c in rows)) for i,(source,n,v) in enumerate(RULES)], distribution=dict(Counter(c['classification'] for c in rows)), cells=sorted(rows, key=lambda r:r['id']))
 
 
 def main():

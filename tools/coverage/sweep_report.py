@@ -29,6 +29,10 @@ def aggregate(manifest, reports, events, threshold=None, oracle=None):
                 reason = 'missing or ambiguous requested samples'
             elif any(s[0].get('available') is not True for s in samples):
                 status, reason = 'BLOCKED', 'sample unavailable'
+            elif any(s[0].get('player', {}).get('cell', {}).get('editor_id') != c.get('editor_id') for s in samples):
+                status, reason = 'BLOCKED', 'cell assertion failed'
+            elif any(not isinstance(s[0].get('camera', {}).get('yaw_deg'), (int, float)) or abs((s[0]['camera']['yaw_deg'] - heading + 180) % 360 - 180) > manifest.get('heading_tolerance_deg', 5) for s, heading in zip(samples, c.get('expected_headings', []))):
+                status, reason = 'BLOCKED', 'heading assertion failed'
             elif any(not isinstance(s[0].get('points'), list) or len(s[0]['points']) != 5 or
                      any(p.get('on_screen') is not True or p.get('ray', {}).get('status') not in ('clear', 'faded_only', 'blocked') for p in s[0]['points']) or
                      not isinstance(s[0].get('ring'), list) or not s[0]['ring'] or

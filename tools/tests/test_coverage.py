@@ -58,6 +58,23 @@ class CensusTests(unittest.TestCase):
         self.assertEqual(classify.classify({'editor_id': 'BleakFallsBarrow01'}), 'nordic_ruin')
         self.assertEqual(classify.classify({'editor_id': 'Unrelated'}), 'unclassified')
 
+    def test_keyword_priority_and_boundaries(self):
+        self.assertEqual(classify.classify({'editor_id': 'Cave01', 'location_keywords': ['LocTypeInn']}), 'multi_storey_house_inn')
+        for name in ('Beginning01', 'Determine01', 'Attention01', 'Fortune01'):
+            self.assertEqual(classify.classify({'editor_id': name}), 'unclassified')
+        self.assertIsNotNone(classify.utility_reason({'editor_id': 'WarehouseTest01'}))
+
+    def test_worldspace_group(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = rec('WRLD', 0x100, [('EDID', b'Blackreach\0'), ('DATA', b'\0')])
+            cell = rec('CELL', 0x200, [('EDID', b'BlackreachCell\0'), ('DATA', b'\0')])
+            (root / 'A.esm').write_bytes(rec('TES4', 0, []) + world + group(0x100, 1, cell))
+            result = cc.scan(root, ['A.esm'])
+            self.assertEqual(result['worldspaces'][0]['cell_count'], 1)
+            self.assertEqual(result['worldspaces'][0]['category'], 'enclosed_candidate')
+            self.assertEqual(result['cells'], [])
+
     def test_batch_hashes_and_not_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -69,12 +86,27 @@ class CensusTests(unittest.TestCase):
             for r in m['routes']:
                 self.assertEqual(r['sha256'], routes.sha(root / 'routes' / r['file']))
             self.assertEqual(m['census_sha256'], routes.sha(census))
+            route = json.loads((root / 'routes' / m['routes'][0]['file']).read_text())
+            steps = route['steps'][0]['steps']
+            self.assertEqual([s['kind'] for s in steps[2:5]], ['key', 'request_view', 'assert_probe'])
+            self.assertIn('camera.yaw_deg', steps[4]['expr'])
+            self.assertIn('player.cell.editor_id', steps[5]['expr'])
+            with self.assertRaises(ValueError):
+                routes.generate(census, root / 'ready', 100, 400, 10, [0,90,180,270], 'F1', ready=True)
             report = sweep_report.aggregate(m, [{'name':m['routes'][0]['name']}], [], 0.97)
             self.assertEqual(report['totals']['NOT_RUN'], 5)
             events = [dict(ev='view_sample', requested=True, tag=t, available=False) for t in m['cells'][0]['tags']]
             report = sweep_report.aggregate(m, [{'name':m['routes'][0]['name']}], events)
             self.assertEqual(report['cells'][0]['status'], 'BLOCKED')
             self.assertNotIn('PASS', report['totals'])
+            events = [dict(ev='view_sample', requested=True, tag=t, available=True, player={'cell': {'editor_id':'Wrong'}}, camera={'yaw_deg': 0}) for t in m['cells'][0]['tags']]
+            report = sweep_report.aggregate(m, [{'name':m['routes'][0]['name']}], events)
+            self.assertEqual(report['cells'][0]['result_reason'], 'cell assertion failed')
+            for event in events:
+                event['player']['cell']['editor_id'] = 'Cell0'
+                event['camera']['yaw_deg'] = 180
+            report = sweep_report.aggregate(m, [{'name':m['routes'][0]['name']}], events)
+            self.assertEqual(report['cells'][0]['result_reason'], 'heading assertion failed')
 
 
 if __name__ == '__main__':
