@@ -173,7 +173,7 @@ Unverified: MSVC/link; live guard chain/TDM pitch retention; live shader ownersh
 
 ## In-game runs fx1-2359 and fx2-0002 — 2026-11-02
 
-Eleven routes on `50a3dd2` (Camera DLL `28de1800…`), camera-only, keyboard/mouse, unattended; no crash, every runner exit 0, and restores clean. `check_fixed_log.py` shows engagement only, not acceptance, so the table below comes from traces and screenshots.
+Eleven routes on `50a3dd2` (Camera DLL `28de18005d08202d9afc154062c930b77d593cf19eeaaf600695a73c1635b73b`), camera-only, keyboard/mouse, unattended; no crash, every runner exit 0, and restores clean. `check_fixed_log.py` shows engagement only, not acceptance, so the table below comes from traces and screenshots.
 
 | Row | Result | Evidence |
 | --- | --- | --- |
@@ -194,7 +194,7 @@ Open for the owner: the literal "height equals preference" can't hold where real
 
 ## Menu-close fix, run fx4-1850 — 2026-11-02
 
-`c10e6bc`, Camera DLL `5409d1bd…`, camera-only, keyboard/mouse, unattended: beam-hold, restores and boundary, all runner exit 0, no crash.
+`c10e6bc`, Camera DLL `5409d1bdc02b40ad7f3063d82cb9fb2734e508863779c668329d221a21a5f77b`, camera-only, keyboard/mouse, unattended: beam-hold, restores and boundary, all runner exit 0, no crash.
 
 Cause: the menu event queued a restore that cleared admission, so the beam hit was kept for the 0.1 s enter dwell. Paused menus run no camera tick (frame numbers stop while the console is open), so that restore only ran on the first frame after close. The event no longer queues a restore. A menu that ticks still restores through eligibility, and beams that were faded are re-admitted on the first eligible frame.
 
@@ -215,7 +215,7 @@ An earlier build of this fix, `2f02dfc`, exited at the main menu once in beam-ho
 
 ## Owner hands-on run owner-fixed-1 — 2026-11-03
 
-`c10e6bc`, Camera DLL `5409d1bd…`, camera-only, compression off, target lock off, Bannered Mare. Profile restore PASS. Camera log `7f57bc7d…` in `session-p5/logs/owner-fixed-1/`. Keyboard/mouse, confirmed by the owner after the run.
+`c10e6bc`, Camera DLL `5409d1bdc02b40ad7f3063d82cb9fb2734e508863779c668329d221a21a5f77b`, camera-only, compression off, target lock off, Bannered Mare. Profile restore PASS. Camera log `7f57bc7d…` in `session-p5/logs/owner-fixed-1/`. Keyboard/mouse, confirmed by the owner after the run.
 
 The owner walked under the beams and columns, closed the console, Tab and dialogue under a beam, pressed F8 twice and F6, then reported: "everything passed and I approve". They skipped the optional low-space check.
 
