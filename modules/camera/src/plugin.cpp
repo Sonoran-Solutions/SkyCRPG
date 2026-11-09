@@ -27,6 +27,7 @@
 #include <fstream>
 #include <string>
 #include <limits>
+#include "thin_occluder.h"
 
 namespace {
 using namespace skycrpg::camera;
@@ -105,6 +106,9 @@ Look previousLook = nullptr;
 using Update = void(*)(RE::ThirdPersonState*,RE::BSTSmartPointer<RE::TESCameraState>&);
 Update previousUpdate = nullptr;
 std::filesystem::path iniPath;
+bool thinEligible();
+RE::NiPoint3 thinGoal();
+RE::NiPoint3 thinFocus();
 void log(const char* text) {
     FILE* file = nullptr;
     const auto path = skycrpg::LogDirectory() + L"SkyCRPG_Camera.log";
@@ -234,6 +238,25 @@ void loadSettings() {
         if (lockHoldSeconds < .2f || lockHoldSeconds > 1.5f) {
             badSettings = true; lockHoldSeconds = .4f;
         }
+    }
+    // No allocation, address use or scanning when the optional feature is off.
+    if (flag("ThinOccluder","bEnabled",0)) {
+        thin::runtime = new thin::Runtime;
+        auto& t = *thin::runtime;
+        t.enabled = true; t.logger = log; t.eligibleNow = thinEligible; t.goalNow = thinGoal; t.focusNow = thinFocus;
+        t.trace = flag("ThinOccluder","iTrace",0);
+        t.targetAlpha = thin::validateAlpha(number("ThinOccluder","fTargetAlpha",.35f));
+        const auto count = number("ThinOccluder","iFormCount",3u);
+        if (!count || count > thin::maxForms) t.enabled = false;
+        t.formCount = (std::min)(count,thin::maxForms);
+        for (unsigned i = 0;i < t.formCount;++i) {
+            char key[24]{},fallback[128]{};
+            std::snprintf(key,sizeof(key),"sForm%u",i);
+            if (i < thin::defaults.size()) std::snprintf(fallback,sizeof(fallback),"Skyrim.esm|%06X",thin::defaults[i].local);
+            t.configured[i] = read("ThinOccluder",key,fallback);
+            if (!thin::parseForm(t.configured[i])) t.enabled = false;
+        }
+        if (!t.enabled) thin::refuse("ThinOccluder: invalid curated form configuration; native collision retained.");
     }
     precisionTraceEnabled = flag("Debug","iPrecisionTrace",0);
     lifecycleTraceEnabled = flag("Debug","iLifecycleTrace",0);
@@ -525,7 +548,8 @@ bool providerChainReady() {
     }
     return module != nullptr;
 }
-Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, bool* failure = nullptr) {
+Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, bool* failure = nullptr,
+    bool readOnlyLock = false) {
     Context c;
     if (hardSpecial) *hardSpecial = true;
     c.enabled = settings.enabled;
@@ -538,8 +562,13 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     const bool baseReady = compatibleSettings && configSafe && ready && movement && providerEnabled &&
         provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
     const bool leaseReady = !targetLockEnabled ? movement && haveLease && !movement->GetTargetLockState() :
+        readOnlyLock ? publishedLockPrerequisites.load() :
         lockThread && lockHooksReady && movement && (haveLease ? !movement->GetTargetLockState() : lockConfigSafe && indicatorReady());
     c.prerequisites = targetLockEnabled ? baseReady : phase4Prerequisites(baseReady,leaseReady,allowLeaseRequest,haveLease);
+    if (targetLockEnabled && readOnlyLock) {
+        c.prerequisites = c.prerequisites && leaseReady;
+        c.targetLock = publishedTargetLock.load();
+    }
     // An intentionally disabled SmoothCam (F8) is not a failure.
     // With lock enabled, off-main observations cannot diagnose lease failure.
     if (failure) *failure = lockFailureReportable(targetLockEnabled,lockThread) && prerequisiteFailure(baseReady,leaseReady,
@@ -548,7 +577,7 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     const auto camera = RE::PlayerCamera::GetSingleton();
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
     if (!c.world) {
-        if (targetLockEnabled) updateTargetLock(c,sampledMenuEpoch);
+        if (targetLockEnabled && !readOnlyLock) updateTargetLock(c,sampledMenuEpoch);
         return c;
     }
     c.firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
@@ -573,8 +602,26 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     c.menu = targetLockEnabled && !lockThread ? publishedLockMenu.load() : focused();
     // DYL-158 supplies precision/targeting intervention; select() reserves their priority.
     c.obstruction = obstructionFrame.obstructed;
-    if (targetLockEnabled) updateTargetLock(c,sampledMenuEpoch);
+    if (targetLockEnabled && !readOnlyLock) updateTargetLock(c,sampledMenuEpoch);
     return c;
+}
+RE::NiPoint3 thinGoal() {
+    RE::NiPoint3 goal{},local{};
+    provider->GetGoalPosition(RE::PlayerCharacter::GetSingleton(),goal,local);
+    return goal;
+}
+RE::NiPoint3 thinFocus() {
+    RE::NiPoint3 goal{},local{};
+    provider->GetGoalPosition(RE::PlayerCharacter::GetSingleton(),goal,local);
+    return {goal.x-local.x,goal.y-local.y,goal.z-local.z};
+}
+bool thinEligible() {
+    // The all-state thin tick observes lock decisions; it never advances them.
+    const auto c = context(nullptr,false,nullptr,true);
+    const auto state = select(c);
+    thin::runtime->ineligibleCause = state == State::disabled ? thin::Exit::disable :
+        c.firstPerson ? thin::Exit::firstPerson : c.menu ? thin::Exit::menu : thin::Exit::special;
+    return thin::eligible(state) && !c.slide;
 }
 bool noActiveMenus() {
     const auto ui = RE::UI::GetSingleton();
@@ -654,6 +701,9 @@ void lifecycleLog(const char* event, Context c, unsigned stateId) {
     log(line);
 }
 void resetLifecycle(const char* event) {
+    thin::requestRestore(std::strstr(event,"load") ? thin::Exit::load : thin::Exit::cell);
+    if (thin::enabled() && thin::onMain() && std::strcmp(event,"player-detach") == 0)
+        thin::restoreAll(thin::Exit::cell);
     interruptTargetLock();
     resetTransient(ownFirstPerson,recenter,applyZoom,keys);
     resetObstruction();
@@ -702,8 +752,8 @@ void sampleObstruction(RE::ThirdPersonState* state) {
     const ObstructionPoint focus{static_cast<double>(goal.x)-local.x,
                                  static_cast<double>(goal.y)-local.y,
                                  static_cast<double>(goal.z)-local.z};
-    obstructionFrame = obstructionPolicy.step(c,cameraCompression(
-        {actual.x,actual.y,actual.z},{goal.x,goal.y,goal.z},focus),dt,obstructionSettings);
+    obstructionFrame = obstructionPolicy.step(c,thin::obstructionSample(cameraCompression(
+        {actual.x,actual.y,actual.z},{goal.x,goal.y,goal.z},focus)),dt,obstructionSettings);
 }
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     if (targetLockEnabled && lockFrameTraceEnabled && lockTraceWindow.budget.lines < LockFrameTraceBudget::limit && onTargetLockThread()) {
@@ -854,6 +904,14 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
         if (!events) return RE::BSEventNotifyControl::kContinue;
+        if (thin::enabled()) {
+            for (auto event = *events; event; event = event->next) {
+                const auto button = event->AsButtonEvent();
+                if (button && button->IsDown() && ((event->GetDevice() == RE::INPUT_DEVICE::kKeyboard &&
+                    (button->GetIDCode() == 66 || button->GetIDCode() == 64)) || button->QUserEvent() == "Toggle POV"))
+                    thin::requestRestore(button->GetIDCode() == 66 ? thin::Exit::f8 : thin::Exit::firstPerson);
+            }
+        }
         if (targetLockEnabled) {
             pollLockInput(*events);
             for (auto event = *events; event; event = event->next) {
@@ -993,14 +1051,23 @@ void messages(SKSE::MessagingInterface::Message* message) {
             hashMatches(L"SmoothCam.dll","b20bf8a276bf76fbe35277dd9b25c64c57d17bfdcc20daa74a5f941c90f563da") &&
             hashMatches(L"TrueDirectionalMovement.dll","5ba3abd82fe070e2a6e9af7f07eca82b9ddb1a53dcd47bc34af571efab01899f") &&
             hashMatches(L"MCMHelper.dll","d58f433bef7690614d42aaac69cc35f60d179a85429a385e21858a1f276aef38");
-        if (!ready) { prerequisiteFailed = true; log("Exact executable/provider prerequisite hash mismatch; controller disabled."); break; }
+        if (!ready) {
+            thin::refuseInstall("ThinOccluder: prerequisite hash mismatch; no thin hooks installed.");
+            prerequisiteFailed = true; log("Exact executable/provider prerequisite hash mismatch; controller disabled."); break;
+        }
         movementConfigSafe = checkMovementConfig();
         if (!movementConfigSafe) { prerequisiteFailed = true; log("TDM camera-yaw config absent/unsafe; custom policy suspended until corrected and a menu closes."); }
         movement = static_cast<TDM_API::IVTDM5*>(TDM_API::RequestPluginAPI());
-        if (!movement) { prerequisiteFailed = true; ready = false; log("TDM V5 API absent; controller suspended."); break; }
+        if (!movement) {
+            thin::refuseInstall("ThinOccluder: TDM V5 API absent; no thin hooks installed.");
+            prerequisiteFailed = true; ready = false; log("TDM V5 API absent; controller suspended."); break;
+        }
         if (!targetLockEnabled) {
             if (leaseWanted(settings.enabled,false,movementLease)) {
-                if (!acquireMovementLease()) { ready = false; break; }
+                if (!acquireMovementLease()) {
+                    thin::refuseInstall("ThinOccluder: movement lease unavailable; no thin hooks installed.");
+                    ready = false; break;
+                }
             } else if (!settings.enabled) log("TDM target-lock-disable lease not requested because Camera is disabled.");
         } else {
             // TDM's disable-request API permits startup acquisition without a
@@ -1018,6 +1085,10 @@ void messages(SKSE::MessagingInterface::Message* message) {
         const auto slots = reinterpret_cast<const std::uintptr_t*>(table.address());
         const REL::Relocation<std::uintptr_t> nativeUpdate{REL::ID(50896)};
         const REL::Relocation<std::uintptr_t> nativeLook{REL::ID(50914)};
+        if (thin::enabled()) {
+            thin::guardResult("third-person-update-before-SmoothCam",slots[3] == nativeUpdate.address());
+            thin::guardResult("third-person-look-before-SmoothCam",slots[15] == nativeLook.address());
+        }
         if (slots[3] != nativeUpdate.address() || slots[15] != nativeLook.address()) {
             if (targetLockEnabled) {
                 if (!movementLease) static_cast<void>(acquireMovementLease());
@@ -1028,11 +1099,13 @@ void messages(SKSE::MessagingInterface::Message* message) {
             }
             ready = false; prerequisiteFailed = true;
             log("Unexpected camera hook order/owner before SmoothCam deferred attach; policy left inert.");
+            thin::refuseInstall("ThinOccluder: camera slot owner guard failed; no thin hooks installed.");
             return;
         }
         previousLook = reinterpret_cast<Look>(table.write_vfunc(0xF,look));
         previousUpdate = reinterpret_cast<Update>(table.write_vfunc(3,update));
         lockHooksReady = targetLockEnabled;
+        thin::installHooks(ready);
         if (const auto source = RE::ScriptEventSourceHolder::GetSingleton()) {
             source->AddEventSink<RE::TESLoadGameEvent>(&events);
             source->AddEventSink<RE::TESCellAttachDetachEvent>(&events);
@@ -1040,9 +1113,9 @@ void messages(SKSE::MessagingInterface::Message* message) {
         log("Camera input policy installed: one chained native look call; SmoothCam sole transform writer.");
         break;
     }
-    case SKSE::MessagingInterface::kPreLoadGame: loading = true; failureDebounce.observe(false,0); resetLifecycle("pre-load"); break;
+    case SKSE::MessagingInterface::kPreLoadGame: thin::setLoaded(false); loading = true; failureDebounce.observe(false,0); resetLifecycle("pre-load"); break;
     case SKSE::MessagingInterface::kNewGame:
-    case SKSE::MessagingInterface::kPostLoadGame: loading = false; resetLifecycle("post-load-or-new-game"); break;
+    case SKSE::MessagingInterface::kPostLoadGame: thin::setLoaded(true); loading = false; resetLifecycle("post-load-or-new-game"); break;
     case SKSE::MessagingInterface::kSaveGame: interruptTargetLock(); savePreferences(); break;
     default: break;
     }
