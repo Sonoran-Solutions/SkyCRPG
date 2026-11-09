@@ -29,8 +29,11 @@ constexpr bool lockMenuPassive(std::string_view name) {
 constexpr bool lockMenuPublishesFocus(std::string_view name, bool opening) {
     return opening && !lockMenuPassive(name);
 }
+constexpr bool menuFocusNeedsReassert(unsigned epochBefore, unsigned epochAfterStore) {
+    return epochBefore != epochAfterStore;
+}
 constexpr bool publishedMenuFocus(bool sampled, unsigned epochBefore, unsigned epochAfter) {
-    return sampled || epochBefore != epochAfter;
+    return sampled || menuFocusNeedsReassert(epochBefore,epochAfter);
 }
 constexpr bool lockMenuInterrupt(std::string_view name, bool opening) {
     if (lockMenuPassive(name)) return false;
