@@ -155,7 +155,7 @@ End the planned four phases with two working mod MVPs and an honest completion d
 **Acceptance criteria**
 
 - [ ] Camera-only, UI-only and combined packaged builds pass the required technical criteria.
-- [ ] The owner records ACCEPT or a specific revision request after actual play; absent playtest remains OWNER_PLAYTEST_PENDING.
+- [x] The owner records ACCEPT or a specific revision request after actual play ([D025](../DECISIONS.md)); absent playtest remains OWNER_PLAYTEST_PENDING.
 - [ ] The roadmap ends at MVP acceptance with no hidden dependency on a fifth implementation phase.
 
 **Focused validation:** Owner executes the bounded route once; repeat only a reported defect after a fix. Technical verification is not replaced by a taste vote.
