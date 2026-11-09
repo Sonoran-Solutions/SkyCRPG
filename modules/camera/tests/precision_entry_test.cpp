@@ -33,6 +33,57 @@ struct EntryRoute {
 };
 
 int main() {
+    // Deferred adapter model: IO is gated separately from native entry. The
+    // source audit checks this wiring against plugin.cpp; these calls exercise
+    // the real intent, menu and lock-lease policies for both feature settings.
+    for (const bool lockEnabled : {false,true}) {
+        for (const bool outsideMenuLocks : {false,true}) {
+            for (unsigned route = 0; route < 3; ++route) {
+                EntryRoute r;
+                LockInterrupt refresh, interrupt;
+                bool recenterRequested = false, haveLease = !lockEnabled;
+                if (route == 0) refresh.request();
+                else {
+                    // Console close is a refresh source in both profiles;
+                    // Inventory/Magic close refreshes only with lock disabled.
+                    r.camera.menu = true;
+                    if (lockMenuPublishesFocus("Console",true)) r.intent.cancel(false);
+                    r.camera.menu = false;
+                    if (!lockEnabled || lockMenuRefresh("Console",false)) refresh.request();
+                    if (route == 2) recenterRequested = heldFramingAllowed(r.camera); // F7
+                }
+                assert(refresh.requested());
+                assert(recenterRequested == (route == 2));
+                assert(r.publish(r.camera,r.intent.snapshot())); // F6 after menu/F7
+                interrupt.request();
+                const auto pending = r.intent.snapshot();
+                // Reproduce candidate 4's entry gate without consuming intent.
+                const bool oldWouldService = !refresh.requested();
+                assert(!oldWouldService && r.intent.snapshot() == pending && r.forces == 0);
+                unsigned passes = 0, reads = 0;
+                const auto deferredPass = [&] {
+                    ++passes;
+                    if (outsideMenuLocks && refresh.consume()) ++reads;
+                    if (lockEnabled && interrupt.consume()) haveLease = true;
+                    return r.service(); // independent of refresh/IO-gate state
+                };
+                assert(deferredPass());
+                assert(passes == 1 && r.forces == 1 && r.intent.owned() && haveLease);
+                assert(reads == (outsideMenuLocks ? 1u : 0u));
+                assert(refresh.requested() == !outsideMenuLocks);
+                // Pending refresh still closes lock release; native entry did
+                // not clear it or weaken the unlocked acknowledgement barrier.
+                if (refresh.requested()) {
+                    const auto lease = targetLockLease({lockEnabled,true,false,true,true,haveLease,false,true});
+                    assert(lease.action == LockLeaseAction::keep && !lease.lockStateAllowed);
+                }
+                assert(!deferredPass() && r.forces == 1);
+            }
+        }
+        std::cout << "PASS refresh entry lock-" << (lockEnabled ? "on" : "off")
+            << ": pending refresh, Console close, F7 then F6; one deferred Main pass with IO allowed or deferred\n";
+    }
+
     // Adapted from sr47 retire_repro.cpp, case 1: a cancelled FP observation
     // must not retire a new token captured after native POV and re-enable.
     for (const bool publishBeforeObservation : {false,true}) {

@@ -647,6 +647,7 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
 }
 #include "cursor_mode.h"
 void servicePrecisionEntry();
+void serviceFirstPersonReturn();
 
 // SKSE's task drain is outside camera/input callbacks. A process-lifetime
 // timer only bridges dirty flags into that existing drain; callbacks never
@@ -659,9 +660,6 @@ void serviceDeferredCameraWork() {
             publishedLockMovementConfigSafe.store(movementConfigSafe);
         }
         publishedReturnChainReady.store(providerChainReady());
-        // Lock-off profiles have no all-state lock hook; use this existing
-        // Main task for entry without changing the provider hook chain.
-        if (!targetLockEnabled) servicePrecisionEntry();
         if (deferredIndicatorStop.load()) stopIndicator();
         if (const auto snapshot = preferencesToSave.exchange(0)) savePreferences(snapshot);
         precisionDiagnostics.drain([](unsigned reason, std::uint32_t sample) {
@@ -675,12 +673,18 @@ void serviceDeferredCameraWork() {
             log(line);
         });
     }
+    // Native entry does no IO and must not wait for the configuration drain's
+    // outside-UI-lock gate. Lock-on keeps its interrupt/lease service ordering.
+    if (cursorMode::mainThread() && PrecisionReturn::entryRequested(precisionReturn.snapshot())) {
+        if (targetLockEnabled) serviceFirstPersonReturn();
+        else servicePrecisionEntry();
+    }
     deferredCameraQueued.store(false);
 }
 void CALLBACK queueDeferredCameraWork(PVOID, BOOLEAN) {
     if (!preferencesToSave.load() && !lockConfigRefresh.requested() && !deferredIndicatorStop.load() &&
         !precisionDiagnostics.requested() &&
-        (targetLockEnabled || !PrecisionReturn::entryRequested(precisionReturn.snapshot()))) return;
+        !PrecisionReturn::entryRequested(precisionReturn.snapshot())) return;
     if (deferredCameraQueued.exchange(true)) return;
     deferredCameraTasks->AddTask(serviceDeferredCameraWork);
 }
@@ -728,7 +732,10 @@ void servicePrecisionEntry() {
     if (!ready || !cursorMode::mainThread()) return;
     const auto sessionToken = precisionReturn.snapshot();
     if (!PrecisionReturn::entryRequested(sessionToken)) return;
-    if (lockConfigRefresh.requested()) { precisionDiagnostics.note(PrecisionReason::refreshPending); return; }
+    // A refresh gates held framing/lock release, not escape into native FP.
+    // Keep the last validated prerequisites and all fresh world/focus checks;
+    // leave refresh pending for the IO task and for the return-to-TP barrier.
+    if (lockConfigRefresh.requested()) precisionDiagnostics.note(PrecisionReason::refreshPending);
     // Two bounded reads, with no UI/mount lock held across the native setter.
     // All context and camera observations used to claim belong to this Main call.
     const auto readEntry = []() -> std::optional<Context> {
