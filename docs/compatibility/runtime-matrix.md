@@ -120,5 +120,5 @@ On the recorded Proton host, source `6b4c0fc`, CI `41376680950`, the rc1 archive
 | DYL-171 | Strict package/repro and MO2 2.5.2 automated fresh, controlled combined update/removal **PASS**; Vortex, other managers and human written-instruction install **NOT_RUN**. [Packaging](../evidence/p4/packaging.md). |
 | DYL-172 | Frame cost **PASS** (combined p95 +0.58% standing, +0.72% turn) and warm inventory latency **PASS** (max 203 ms); memory **FAIL** with the optional minimap stack, also in the baseline without SkyCRPG modules and not flagged with the stack omitted. Accepted as an external-provider limitation by owner decision 2026-11-02 ([D024](../DECISIONS.md)); not a pass. [Performance](../evidence/p4/performance.md). |
 | DYL-173 | 22/22 bounded keyboard/mouse automated routes **PASS**; automated controller **NOT_RUN** by host policy. [Regression](../evidence/p4/regression.md). |
-| DYL-174 | Final documentation in review; redistribution clearance deferred. [Review](../evidence/p4/docs-review.md). |
-| DYL-175 | **OWNER_PLAYTEST_PENDING**; no owner acceptance claimed. [Handoff](../evidence/p4/acceptance.md). |
+| DYL-174 | Final documentation merged in #32; redistribution clearance deferred. [Review](../evidence/p4/docs-review.md). |
+| DYL-175 | **ACCEPT, owner decision 2026-11-02** ([D025](../DECISIONS.md)). [Record](../evidence/p4/acceptance.md). |

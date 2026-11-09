@@ -2,8 +2,118 @@
 #include "cursor_policy.h"
 #include <cassert>
 #include <iostream>
+#include <chrono>
+#include <latch>
+#include <mutex>
+#include <thread>
+#include <vector>
+#include <string_view>
 using namespace skycrpg::camera::cursor;
+void menuContention() {
+    static_assert(menuBusyFrameLimit == 20);
+    assert(std::string_view(exitNames[static_cast<unsigned>(Exit::busy)]) == "busy");
+    assert(std::string_view(exitNames[static_cast<unsigned>(Exit::menu)]) == "menu");
+    MenuContention policy;
+    for (std::uint32_t frame = 0; frame < menuBusyFrameLimit-1u; ++frame) {
+        assert(policy.observe(false,frame) == MenuAccess::skip);
+        assert(policy.failures == frame+1u);
+        // Several failing callbacks must not consume multiple frames of grace.
+        assert(policy.observe(false,frame) == MenuAccess::skip);
+        assert(policy.observe(false,frame) == MenuAccess::skip);
+        assert(policy.failures == frame+1u);
+    }
+    assert(policy.observe(false,menuBusyFrameLimit-1u) == MenuAccess::exit);
+    assert(policy.observe(false,menuBusyFrameLimit) == MenuAccess::exit);
+    assert(policy.failures == menuBusyFrameLimit); // saturates
+    assert(policy.observe(true,menuBusyFrameLimit) == MenuAccess::ready);
+    assert(policy.failures == 0 && !policy.counted);
+    assert(policy.observe(false,menuBusyFrameLimit) == MenuAccess::skip);
+    assert(policy.failures == 1); // success resets even within the same frame
+    assert(policy.observe(true,menuBusyFrameLimit) == MenuAccess::ready);
+    for (std::uint32_t frame = 100; frame < 100+menuBusyFrameLimit-1u; ++frame)
+        assert(policy.observe(false,frame) == MenuAccess::skip);
+    assert(policy.observe(true,119) == MenuAccess::ready); // recovery before exit
+    assert(policy.observe(false,120) == MenuAccess::skip);
+    assert(policy.failures == 1);
+    policy = {};
+    assert(policy.observe(false,UINT32_MAX) == MenuAccess::skip);
+    assert(policy.observe(false,0) == MenuAccess::skip);
+    assert(policy.failures == 2); // frame counter wrap is still a new frame
+}
+void menuLocks() {
+    std::vector<int> calls;
+    bool outerReady = true, innerReady = true;
+    const auto outerAttempt = [&] { calls.push_back(1); return outerReady; };
+    const auto innerAttempt = [&] { calls.push_back(2); return innerReady; };
+    const auto releaseOuter = [&] { calls.push_back(3); };
+    assert(tryMenuLocks(false,outerAttempt,innerAttempt,releaseOuter));
+    assert((calls == std::vector<int>{1,2}));
+    calls.clear(); innerReady = false;
+    assert(!tryMenuLocks(false,outerAttempt,innerAttempt,releaseOuter));
+    assert((calls == std::vector<int>{1,2,3}));
+    calls.clear(); outerReady = false;
+    assert(!tryMenuLocks(false,outerAttempt,innerAttempt,releaseOuter));
+    assert((calls == std::vector<int>{1}));
+    calls.clear(); outerReady = innerReady = true;
+    assert(!tryMenuLocks(true,outerAttempt,innerAttempt,releaseOuter));
+    assert(calls.empty()); // a callback holding only inner must never take outer
+
+    // Keep the worker's inner lock held THROUGH a timed-out service attempt and
+    // subsequent focus/native-menu decisions. Completion must not need unlock.
+    // These exercise the shared acquire policy, not Skyrim's update/IMenu code.
+    std::recursive_mutex outer, inner;
+    std::latch locked(1), finish(1);
+    std::thread worker([&] {
+        const std::lock_guard lock(inner);
+        locked.count_down(); finish.wait();
+    });
+    locked.wait();
+    const auto attempt = [&] {
+        return tryMenuLocks(false,[&] { return outer.try_lock(); },
+            [&] { return inner.try_lock(); },[&] { outer.unlock(); });
+    };
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::milliseconds(1);
+    do { assert(!attempt()); } while (std::chrono::steady_clock::now() < deadline);
+    const bool ownMenu = attempt();
+    const bool nativeMenu = !attempt();
+    assert(!ownMenu && nativeMenu); // fail closed after the service budget
+    MenuContention policy;
+    for (std::uint32_t frame = 0; frame < menuBusyFrameLimit; ++frame) {
+        const auto expected = frame+1u < menuBusyFrameLimit ? MenuAccess::skip : MenuAccess::exit;
+        for (unsigned tick = 0; tick < 3; ++tick)
+            assert(policy.observe(attempt(),frame) == expected);
+    }
+    // Even the entire skip/exit continuation completes while inner stays held.
+    finish.count_down(); worker.join();
+    assert(attempt());
+    assert(policy.observe(true,menuBusyFrameLimit) == MenuAccess::ready);
+    assert(policy.failures == 0);
+    assert(attempt()); // both owned: recursive nativeMenu -> focused -> ownMenu
+    inner.unlock(); outer.unlock();
+    inner.unlock(); outer.unlock();
+    bool released = false;
+    std::thread checkRelease([&] {
+        released = attempt();
+        if (released) { inner.unlock(); outer.unlock(); }
+    });
+    checkRelease.join();
+    assert(released); // no leaked reference from rollback or recursive success
+    // Same contention at the OUTER lock: no inner read/acquisition is permitted.
+    std::latch outerLocked(1), outerFinish(1);
+    std::thread sorter([&] {
+        const std::lock_guard lock(outer);
+        outerLocked.count_down(); outerFinish.wait();
+    });
+    outerLocked.wait();
+    unsigned innerCalls = 0;
+    assert(!tryMenuLocks(false,[&] { return outer.try_lock(); },
+        [&] { ++innerCalls; return inner.try_lock(); },[&] { outer.unlock(); }));
+    assert(innerCalls == 0);
+    outerFinish.count_down(); sorter.join();
+}
 int main() {
+    menuContention();
+    menuLocks();
     const Eligibility ready{true,true,false,true,false,true,false,false,false,false,true,true,true};
     assert(refusal(ready) == Exit::none);
     // DataLoaded may defer once. Nested ProcessMessages must not consume the

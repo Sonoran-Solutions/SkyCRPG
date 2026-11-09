@@ -1,12 +1,12 @@
 # Current status
 
-Updated for the Phase 4 internal candidate handoff; Phase 3 gate recorded 2026-10-28. **Phase 3 is GO by owner decision with documented deferrals**; see the [Phase 3 gate](evidence/p3/gate.md). Phase 4 is in progress. This GO does not turn untested or failed requirements into passes, and it is not an MVP release.
+Updated 2026-11-02 for the Phase 4 owner ACCEPT and the Phase 5 start; Phase 3 gate recorded 2026-10-28. **Phase 3 is GO by owner decision with documented deferrals**; see the [Phase 3 gate](evidence/p3/gate.md). **Phase 4 is accepted by the owner** ([D025](DECISIONS.md)); Phase 5 is in progress. This GO does not turn untested or failed requirements into passes, and it is not an MVP release.
 
 Main `c10cd80` contains every Phase 3 merge (#15–#23). Main CI on `8eef712` [run 40753002080](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40753002080) **PASS**; on `c10cd80`, [run 40759295249](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40759295249). Main's module sources equal the tested internal candidate: UI `9a8692e` and Camera `28aae27`.
 
 ## Phase 5 — targeting, activation and camera features (gate REVISE, 2026-11-08)
 
-Orchestrator recommendation was **REVISE**, then the owner recorded **REVISE, do R1–R11** on 2026-11-08 (D030); Phase 5 ACCEPT is not recorded. [Gate record](evidence/p5/gate.md). D025 and D029–D035 are recorded on main. PR #33, #34, #36 and #42 have merged; #37's review and CI are PASS and its ordered merge follows #34; #38, #41 and #40 remain in review as recorded in the gate progress table. #39 (vinput tooling spike) is closed unmerged. No combined candidate exists; the Phase 4 regression and C1–C5 have not been rerun on a Phase 5 build. Controller evidence includes target-lock R3 in owner-lock-3 (D027); cursor reticle and combined controller checks remain NOT_RUN.
+Orchestrator recommendation was **REVISE**, then the owner recorded **REVISE, do R1–R11** on 2026-11-08 (D030); Phase 5 ACCEPT is not recorded. [Gate record](evidence/p5/gate.md). D025 and D029–D035 are recorded on main. PR #33, #34, #36, #37, #38 and #42 have merged; #37's review and CI are PASS and its ordered merge follows #34; #38, #41 and #40 remain in review as recorded in the gate progress table. #39 (vinput tooling spike) is closed unmerged. No combined candidate exists; the Phase 4 regression and C1–C5 have not been rerun on a Phase 5 build. Controller evidence includes target-lock R3 in owner-lock-3 (D027); cursor reticle and combined controller checks remain NOT_RUN.
 
 | Ticket | Current evidence and remaining obligation |
 | --- | --- |
@@ -19,7 +19,7 @@ Orchestrator recommendation was **REVISE**, then the owner recorded **REVISE, do
 
 ## Phase 4 — internal candidates
 
-Source `6b4c0fc` (merge #29), [CI 41376680950](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41376680950). Exact archives and hashes: [acceptance handoff](evidence/p4/acceptance.md). Automated evidence does not establish owner acceptance. Public redistribution is deferred by [D023](DECISIONS.md).
+Source `6b4c0fc` (merge #29), [CI 41376680950](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41376680950). Exact archives and hashes: [acceptance handoff](evidence/p4/acceptance.md). The owner accepted these candidates on 2026-11-02; that acceptance does not turn FAIL, BLOCKED or NOT_RUN rows into passes. Public redistribution is deferred by [D023](DECISIONS.md).
 
 | Ticket | Current evidence and remaining obligation |
 | --- | --- |
@@ -27,8 +27,8 @@ Source `6b4c0fc` (merge #29), [CI 41376680950](https://github.com/Sonoran-Soluti
 | DYL-171 | Strict assembly/repro and bounded MO2 automated fresh, controlled update and removal **PASS** (5/5); controller, Vortex, edited-settings migration and person-followed instructions **NOT_RUN**. [Packaging](evidence/p4/packaging.md). |
 | DYL-172 | Frame cost **PASS** (combined p95 +0.58% standing, +0.72% turn) and warm inventory latency **PASS** (max 203 ms); memory **FAIL** with the optional minimap stack, also in the baseline without SkyCRPG modules and not flagged with the stack omitted. Accepted as an external-provider limitation by owner decision 2026-11-02 ([D024](DECISIONS.md)); not a pass. [Performance](evidence/p4/performance.md). |
 | DYL-173 | Packaged keyboard/mouse automated **PASS** (22/22); controller and broader coverage **NOT_RUN**. [Regression](evidence/p4/regression.md). |
-| DYL-174 | Final documentation in review; package identities cross-checked; public rights clearance deferred. [Review](evidence/p4/docs-review.md). |
-| DYL-175 | **OWNER_PLAYTEST_PENDING**. [Handoff](evidence/p4/acceptance.md) and [route](PLAYTEST.md). |
+| DYL-174 | Final documentation merged in #32; package identities cross-checked; public rights clearance deferred. [Review](evidence/p4/docs-review.md). |
+| DYL-175 | **ACCEPT, owner decision 2026-11-02** ([D025](DECISIONS.md)). [Record](evidence/p4/acceptance.md) and [route](PLAYTEST.md). |
 
 ## Phase 3
 
