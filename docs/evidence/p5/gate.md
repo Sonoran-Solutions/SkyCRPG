@@ -187,7 +187,7 @@ Automatic merges and public release (D023), Stage 2 walls and ceilings, cursor-a
 
 ## Owner decision
 
-**REVISE — owner decision 2026-11-08 (D030).** The owner ruled, verbatim: “REVISE, do R1–R11”. All eleven items are required before the Phase 5 ACCEPT question is put again. This is a ruling on the gate, not a combined play session; hands-on evidence remains the per-feature sessions above (keyboard/mouse; controller for target-lock R3 only). D031–D034 record packaging, bindings, fixed-height criterion and initial regression scope; D035 records merge process; D037–D039 record the successive R6 rerun scopes:
+**REVISE — owner decision 2026-11-08 (D030).** The owner ruled, verbatim: “REVISE, do R1–R11”. All eleven items are required before the Phase 5 ACCEPT question is put again. This is a ruling on the gate. Hands-on evidence includes the earlier per-feature sessions (keyboard/mouse; controller for target-lock R3 only) and the combined R5 controller session on candidate 8, with per-step limitations recorded in [owner-r5.md](owner-r5.md). The hands-on R11 route was waived under D040; Phase 5 remains REVISE. D031–D034 record packaging, bindings, fixed-height criterion and initial regression scope; D035 records merge process; D037–D039 record the successive R6 rerun scopes; D040 records the R11 waiver:
 
 | Item | Owner choice (2026-11-08) |
 | --- | --- |
