@@ -109,7 +109,8 @@ One input consumer per event was reviewed in source for each feature (lock's inp
 | owner-lock-1 / -2 / -3 | 2026-11-02 | `63e992e` | keyboard/mouse; -3 controller | Lock, lease, arrows, Firebolt, menu and F6 interrupts, R3 press/hold; quotes above; D027 |
 | owner-fixed-1 | 2026-11-03 | `c10e6bc` | keyboard/mouse | "everything passed and I approve"; low-space step skipped |
 | owner-cursor-1 | 2026-11-08 | `4946c92` | keyboard/mouse | "Finished, everything passed", "All of A–G"; 4-minute session, logs corroborate the first minutes, F.6 NOT_RUN |
-| Combined representative route | — | — | — | **NOT_RUN** |
+| owner-p5-r5 (R5 combined controller pass) | 2026-11-09 | `53410cd` (candidate 8) | 8BitDo controller | "everything passed"; F7 reaffirmed "the F7 recent passed"; per-step log limitations in [owner-r5.md](owner-r5.md) |
+| Combined representative route (R11) | — | — | — | Hands-on R11 waived; R11 ruled PASS by the owner under D040. Phase 5 remains REVISE. |
 
 ## Tooling and process notes
 
@@ -136,17 +137,17 @@ Ordered by what unblocks the most. Each names who closes it and what evidence cl
 | --- | --- | --- | --- |
 | R1 | Complete the D035 per-PR merge process for #34, #36, #37, #38 after merged #33; resolve shared workflow overlaps and preserve evidence notes. | Owner (merge authorization), integrator | Ordered merges with green CI and Astra review per D035; all four features in main. |
 | R2 | D031: Selection ships in its own archive, the lock overlay inside Camera's. Packaging merged in #41 (`890a5da`): `package.py native --module selection`, three-module `assemble`, overlay folder with README — [packaging note](packaging.md). The current all-module main build and local three-module candidate assembly are complete on candidate 8; hashes and run are recorded below. | `docs/evidence/p5/packaging.md` |
-| R3 | Phase 5 controls and binding decisions recorded in `docs/CONTROLS.md`; D032 approves U, `[` / `]`, and leaves pad cycle/switch/cursor unbound. | Orchestrator | **Done in this PR**; remaining combined checks are R5. |
+| R3 | Phase 5 controls and binding decisions recorded in `docs/CONTROLS.md`; D032 approves U, `[` / `]`, and leaves pad cycle/switch/cursor unbound. | Orchestrator | **Done in this PR**; R5 combined controller results are recorded in [owner-r5.md](owner-r5.md). |
 | R4 | Fixed-height criterion and curated beam list. | Owner | **Decided by D033**: “no additional beam-induced pull-in, subject to enclosure”; three beams retained. |
-| R5 | **Controller pass** on the combined candidate: recheck lock R3 short press / 0.4 s native-POV hold, F6/F7/F8 and native POV priority, and confirm no stranded state. D032 leaves pad cycle, target switch and cursor unbound for Phase 5. | Owner (hands-on), orchestrator (profile, logs) | Owner sheet with per-step results and log corroboration, as for owner-cursor-1. |
+| R5 | Original R5 requirement: **Controller pass** on the combined candidate: recheck lock R3 short press / 0.4 s native-POV hold, F6/F7/F8 and native POV priority, and confirm no stranded state. D032 leaves pad cycle, target switch and cursor unbound for Phase 5. | Owner (hands-on), orchestrator (profile, logs) | Owner PASS recorded in [owner-r5.md](owner-r5.md), with per-step log limitations. |
 | R6 | **Regression on the combined candidate**: 41 owner-approved routes across Camera/UI/combined and performance profiles, as listed in [the R6/R10 regression record](regression.md). Retest C1–C5 to their current scoped definitions and record status honestly (C1/C4 pitch FAIL may remain). | Orchestrator | Route reports and feature evidence; `acceptance-matrix.md` rows updated from them. |
 | R7 | Close the lock rows that a fixture can reach: owner framing judgment on mouse look/zoom, dialogue/load interruption, and auto-retarget with two verified hostiles. | Orchestrator | R7 unattended routes measured mouse yaw, held pitch, screenshot-based zoom, menu/F8/console interrupts and target-death lock release; remaining rows are listed in the progress table and target-lock note. |
 | R8 | Selection activation breadth: one bounded route over a door, a container, a loose item, an NPC and an owned item (prompt only), with LOS through a wall; reconcile the note's acceptance table with the PR body (Windows build, co-load, DLL absent). | Orchestrator | Route report; note and PR body agree. |
 | R9 | Record hygiene: #35 header and body to say D028 GO; #34 and #37 bodies to name their actual last code commits and DLL hashes; cursor PR body's opening line and results row to match its own later sections; fixed-height pre-run table marked superseded. | Orchestrator | Bodies and notes consistent with this gate. |
 | R10 | Matched performance sample for R2: standing and turning p95 with features off and individually enabled, plus cursor/all rows; dense Selection/Cursor/All and resource Baseline/Off/All. Figures are recorded with each source candidate in [regression.md](regression.md); the display-cap caveat remains. | Orchestrator | Candidate measurements and pending rows in [the R6/R10 regression record](regression.md). |
-| R11 | Owner plays one bounded **combined representative route** on the candidate from R2 (lock a hostile, cycle to a chest, cursor-activate a door, walk under a listed beam, F6/F7/F8 and a menu in between) and records ACCEPT or itemized REVISE/HOLD. | Owner | Quote recorded in this file's [owner decision](#owner-decision). |
+| R11 | Owner plays one bounded **combined representative route** on the candidate from R2 (lock a hostile, cycle to a chest, cursor-activate a door, walk under a listed beam, F6/F7/F8 and a menu in between) and records ACCEPT or itemized REVISE/HOLD. | Owner | Original hands-on requirement waived under D040; R11 ruled PASS by the owner. Phase 5 ACCEPT remains a separate ruling. |
 
-R5, R6, R10 and R11 need the candidate from R2; R2 needs R1. R3, R4, R7, R8 and R9 can proceed now. A reasonable sequence is R1 → R3/R4/R9 (docs and decisions, no game time) → R2 → R6 → R7/R8/R10 → R5 → R11.
+Original planning sequence (2026-11-08): R5, R6, R10 and R11 need the candidate from R2; R2 needs R1. R3, R4, R7, R8 and R9 can proceed now. A reasonable sequence is R1 → R3/R4/R9 (docs and decisions, no game time) → R2 → R6 → R7/R8/R10 → R5 → R11. Current status: R5 owner PASS recorded; R11 hands-on route waived and R11 ruled PASS under D040.
 
 ## REVISE progress
 
@@ -189,7 +190,7 @@ Automatic merges and public release (D023), Stage 2 walls and ceilings, cursor-a
 
 **REVISE — owner decision 2026-11-08 (D030).** The owner ruled, verbatim: “REVISE, do R1–R11”. All eleven items are required before the Phase 5 ACCEPT question is put again. This is a ruling on the gate. Hands-on evidence includes the earlier per-feature sessions (keyboard/mouse; controller for target-lock R3 only) and the combined R5 controller session on candidate 8, with per-step limitations recorded in [owner-r5.md](owner-r5.md). The hands-on R11 route was waived under D040; Phase 5 remains REVISE. D031–D034 record packaging, bindings, fixed-height criterion and initial regression scope; D035 records merge process; D037–D039 record the successive R6 rerun scopes; D040 records the R11 waiver:
 
-| Item | Owner choice (2026-11-08) |
+| Item | Owner choice |
 | --- | --- |
 | R2 packaging | **Selection ships in its own archive** (`SkyCRPG_Selection`); the lock indicator overlay ships inside Camera's archive. Camera and UI remain independent; cursor mode needs Camera and Selection. (D031) |
 | R3 keyboard | **U** toggles target lock; **[** cycles next and **]** previous. (D032) |
@@ -200,6 +201,6 @@ Automatic merges and public release (D023), Stage 2 walls and ceilings, cursor-a
 | R6 candidate 6 scope | After #49 fixed lock refresh, rerun only 12 lock-enabled routes; the other 29 retain recorded builds. Alternative considered: rerun the full 41-route set. (D037) |
 | R6 candidate 7 scope | After candidate 6 exposed lock-off F6 regression and #50 fixed it, rerun 12 lock-enabled plus 12 lock-off F6 routes. Alternative: retain the earlier 12-route lock-enabled scope. (D038) |
 | R6 candidate 8 scope | After #51 restores claim trace, rerun only seven routes with `iPrecisionTrace` enabled: on-main, on-ui-disabled, parity-off, combined-main, cam-malformed-ini, cam-obstruction, combined-ui-disabled. Alternative: rerun all 24 D038 routes. (D039) |
-| R11 combined route | Owner waives the hands-on R11 route and rules it PASS on the automated route evidence: “We can skip my playtest for R11 and rule it as a PASS. I've watched the automated tests where it's done these tests and I approve” (D040). This is not the Phase 5 ACCEPT ruling. |
+| R11 combined route | 2026-11-09: owner waives the hands-on R11 route and rules it PASS on the automated route evidence: “We can skip my playtest for R11 and rule it as a PASS. I've watched the automated tests where it's done these tests and I approve” (D040). This is not the Phase 5 ACCEPT ruling. |
 
 D029 records cursor defaults. DYL-202 remains open (its Linear state is kept at In Progress by the orchestrator; a GitHub integration may auto-close it on merged branches, which does not change the ruling); Phase 5 is not accepted. R1 merges follow D035 and its recorded owner authorization.
