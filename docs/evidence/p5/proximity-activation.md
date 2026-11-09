@@ -136,7 +136,7 @@ Owner questions remain for the runtime gate: do reference-pose body/surface dist
 
 ## Pre-merge re-review fixes (2026-11-08)
 
-DYL-198 / P5-02, branch `phase5/dyl-198-selection`, base `d133dae` (code identical to `1506e6d`), uncommitted fixes. Read the common worker brief, repository instructions, README/status/MVP scope, P5-02 phase/research/architecture documents and the assigned Linear issue; D026 and the owner's current fix instructions supersede the old BTPS plan. No commit, push, PR, download, game launch or external message was performed. Only Selection files and this evidence file changed.
+DYL-198 / P5-02, branch `phase5/dyl-198-selection`, base `d133dae` (code identical to `1506e6d`); the fixes below are commit `6af10e3`, the branch head submitted for merge. Read the common worker brief, repository instructions, README/status/MVP scope, P5-02 phase/research/architecture documents and the assigned Linear issue; D026 and the owner's current fix instructions supersede the old BTPS plan. No commit, push, PR, download, game launch or external message was performed. Only Selection files and this evidence file changed.
 
 **Source:** the owner's independent 2026-11-08 binary review against SkyrimSE.exe 1.7.104, supplied with this task, is the basis for the native type/thread findings. This worker did not repeat that binary audit. The verified hook address/signature/bytes, Address Library IDs and world/cell lock contracts are unchanged. The table below supersedes the earlier sixth-review claims about the narrow type allowlist, scan-time text cache, all-unknown immediate retries and unconditional input/menu log drains.
 

@@ -349,7 +349,7 @@ Unverified: corrected Windows build/link and hosted CI; all in-game indicator/sa
 
 ## In-game run p5-b — 2026-11-02
 
-Camera DLL `3b6ff9cf…` from `6b42f35`, camera-only, keyboard/mouse, unattended.
+Camera DLL `3b6ff9cfc2a604a39b5ac8e5ff280ec89ec6030ffa8c10cfa19a3df6d2e26c9f` from `6b42f35`, camera-only, keyboard/mouse, unattended.
 
 | Route | Result | Note |
 | --- | --- | --- |
@@ -361,13 +361,13 @@ Cause: the log shows `current=620 Main=368 TDM=620`. `GetTDMThreadId` returns th
 
 ## In-game run p5-d — 2026-11-02
 
-`p5-lock-main` on Camera DLL `9a5a2278…` from `82b2121` was **FAIL**: the lease was still never released, with no refusal logged, so no lock happened and it failed closed. The update hook reached the normal state, so the likely cause is the release-input tracker, which only advanced on the main thread and counted input dispatches. Probe records show menu events running on several worker threads as well as main; the input sink's thread had not been logged.
+`p5-lock-main` on Camera DLL `9a5a2278a34399704f2979213dce268aff26a0633b4f63d333650ff1fe66d701` from `82b2121` was **FAIL**: the lease was still never released, with no refusal logged, so no lock happened and it failed closed. The update hook reached the normal state, so the likely cause is the release-input tracker, which only advanced on the main thread and counted input dispatches. Probe records show menu events running on several worker threads as well as main; the input sink's thread had not been logged.
 
 The tracker now uses atomics and a 0.25 s quiet window, because a held key emits an event on every poll, and works from any sink thread. Off-main `context()` reuses the last main-thread decision, so F6/F7/F8 aren't affected. A bounded line logs each lock state change and the sink's thread. Whether this cause is right is **not yet confirmed in game**.
 
 ## Owner hands-on run owner-lock-1 — 2026-11-02
 
-Camera DLL `8be698a5…` from `63e992e`, camera-only, keyboard, Bleak Falls Barrow save with placed bandits, isolated profile; restore PASS, no leftover processes. The owner said: "The lock worked, I'm satisfied with the implementation". This is owner feedback on the lock, not the P5-06 gate.
+Camera DLL `8be698a57853f07c8acef77fe75462b925f426345e18de28a9ade360e9e501da` from `63e992e`, camera-only, keyboard, Bleak Falls Barrow save with placed bandits, isolated profile; restore PASS, no leftover processes. The owner said: "The lock worked, I'm satisfied with the implementation". This is owner feedback on the lock, not the P5-06 gate.
 
 | Check | Result | Evidence |
 | --- | --- | --- |

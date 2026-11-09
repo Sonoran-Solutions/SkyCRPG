@@ -1,4 +1,4 @@
-# DYL-175 — owner acceptance handoff
+# DYL-175 — owner acceptance
 
 Phase 4 internal candidates; automated technical results are not owner acceptance. Public redistribution and related rights clearance are deferred by [D023](../../DECISIONS.md).
 
@@ -23,15 +23,15 @@ Phase 4 internal candidates; automated technical results are not owner acceptanc
 | DYL-171 | Strict assembly/reproduction and MO2 automated 5/5 **PASS**, with open rows in [packaging](packaging.md). |
 | DYL-172 | Frame cost **PASS** (combined p95 +0.58% standing, +0.72% turn) and warm inventory latency **PASS** (max 203 ms); memory **FAIL** with the optional minimap stack, also in the baseline without SkyCRPG modules and not flagged with the stack omitted. Accepted as an external-provider limitation by owner decision 2026-11-02 ([D024](../../DECISIONS.md)); not a pass. [Performance](performance.md). |
 | DYL-173 | Automated packaged regression 22/22 **PASS**, bounded to [routes](regression.md); controller **NOT_RUN**. |
-| DYL-174 | Final documentation in review; package identities cross-checked; public rights clearance deferred. [Review](docs-review.md). |
-| DYL-175 | **OWNER_PLAYTEST_PENDING**. |
+| DYL-174 | Final documentation merged in #32; package identities cross-checked; public rights clearance deferred. [Review](docs-review.md). |
+| DYL-175 | **ACCEPT, owner decision 2026-11-02** ([D025](../../DECISIONS.md)). |
 
-Known limitations: [release notes](../../RELEASE_NOTES.md). Owner route: [PLAYTEST.md](../../PLAYTEST.md); record actual devices, observations and any unreached steps. No owner playtest has been recorded.
+Known limitations: [release notes](../../RELEASE_NOTES.md). Owner route: [PLAYTEST.md](../../PLAYTEST.md); The owner confirmed on 2026-11-02 that they played the route with both keyboard/mouse and controller and accept the Phase 4 MVP. Their Linear comment on DYL-175 reads: “Recording that owner playtest approved, recording as GO to phase 5”. The per-area device split, per-area observations and any unreached steps were not recorded. The ACCEPT does not turn any FAIL, BLOCKED or NOT_RUN row in the linked evidence into a pass, and it is not a public release ([D023](../../DECISIONS.md)).
 
 | Owner result | Observation / disposition |
 | --- | --- |
-| Camera controls and aiming | OWNER_PLAYTEST_PENDING |
-| Inventory readability and actions | OWNER_PLAYTEST_PENDING |
-| Minimap and navigation | OWNER_PLAYTEST_PENDING |
-| Module independence and recovery | OWNER_PLAYTEST_PENDING |
-| Overall ACCEPT / revision request | OWNER_PLAYTEST_PENDING |
+| Camera controls and aiming | Not separately recorded — covered only by the overall ACCEPT (D025); unreached-step inventory unknown. |
+| Inventory readability and actions | Not separately recorded — covered only by the overall ACCEPT (D025); unreached-step inventory unknown. |
+| Minimap and navigation | Not separately recorded — covered only by the overall ACCEPT (D025); unreached-step inventory unknown. |
+| Module independence and recovery | Not separately recorded — covered only by the overall ACCEPT (D025); unreached-step inventory unknown. |
+| Overall ACCEPT / revision request | **ACCEPT**; keyboard/mouse and controller; no revision request. |
