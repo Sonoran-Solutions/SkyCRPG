@@ -153,6 +153,8 @@ enum class PrecisionReason : unsigned {
 };
 class PrecisionDiagnostics {
 public:
+    // Bit 8: return pending; entry pending is not encoded. Bit 11: caller-supplied
+    // Main-thread marker, including the entry service as well as input callbacks.
     void note(PrecisionReason reason, Context c = {}, PrecisionReturn::Token token = 0, bool changed = false, bool mainThread = false) {
         const auto index = static_cast<unsigned>(reason);
         const std::uint32_t value = 1u | (c.prerequisites?2u:0u) | (c.world?4u:0u) |

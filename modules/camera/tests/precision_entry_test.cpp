@@ -1,5 +1,6 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #include "precision_policy.h"
+#include "target_lock_policy.h"
 #include <cassert>
 #include <iostream>
 #include <semaphore>
@@ -78,6 +79,62 @@ int main() {
         assert(!r.service() && !r.intent.owned() && r.forces == 1);
     }
     std::cout << "PASS sr47 hidden-departure reproduction: no delayed input claim; only a fresh Main transition owns FP\n";
+
+    // Adapted from sr47b menu_repro.cpp: the whole menu interval occurs
+    // between input publication and service, including lock-off deferred entry.
+    for (const bool lockEnabled : {false,true}) {
+        EntryRoute r;
+        FreshPress key;
+        LockInterrupt refresh;
+        const auto menu = [&](bool opening) {
+            r.camera.menu = opening;
+            // Mirror the menu sink: precision cancellation precedes the lock gate.
+            if (lockMenuPublishesFocus("InventoryMenu",opening)) r.intent.cancel(false);
+            if (lockEnabled) {
+                if (lockMenuRefresh("InventoryMenu",opening)) refresh.request();
+                if (!lockMenuInterrupt("InventoryMenu",opening)) return;
+            }
+            if (!lockEnabled) refresh.request();
+            key.suspend();
+        };
+        assert(key.update(true,true));
+        assert(r.publish(r.camera,r.intent.snapshot()));
+        const auto pending = r.intent.snapshot();
+        menu(true); menu(false); // no input/context/service observation inside
+        static_cast<void>(refresh.consume()); // task refresh precedes entry service
+        assert(!r.service() && r.forces == 0 && !r.intent.owned());
+        assert(r.intent.snapshot() != pending && !PrecisionReturn::entryRequested(r.intent.snapshot()));
+        assert(!r.publish(r.camera,pending)); // stale producer cannot republish
+        assert(!key.update(true,true) && !r.service()); // held F6 cannot replay
+        assert(!key.update(false,true) && key.update(true,true));
+        assert(r.publish(r.camera,r.intent.snapshot()));
+        assert(r.service() && r.forces == 1 && r.intent.owned());
+        // Preserve the existing active-session retention, clearing return intent.
+        assert(r.intent.request(r.camera,r.intent.snapshot()));
+        menu(true); menu(false);
+        static_cast<void>(refresh.consume());
+        assert(r.intent.owned() && !PrecisionReturn::requested(r.intent.snapshot()));
+        assert(!r.service() && r.forces == 1 && r.intent.owned());
+        std::cout << "PASS sr47b menu reproduction: lock-" << (lockEnabled ? "on" : "off")
+            << " cancels entry across full menu interval; fresh F6 required; owned FP retained\n";
+    }
+    {
+        EntryRoute r;
+        assert(r.publish(r.camera,r.intent.snapshot()));
+        PrecisionDiagnostics diagnostic;
+        diagnostic.note(PrecisionReason::entryToken,r.camera,r.intent.snapshot(),false,true);
+        assert(r.service() && r.intent.request(r.camera,r.intent.snapshot()));
+        diagnostic.note(PrecisionReason::requestAccepted,r.camera,r.intent.snapshot());
+        unsigned emitted = 0;
+        diagnostic.drain([&](unsigned reason, std::uint32_t bits) {
+            const bool entry = reason == static_cast<unsigned>(PrecisionReason::entryToken);
+            assert(((bits & 256u) != 0) == !entry);
+            assert(((bits & 2048u) != 0) == entry);
+            ++emitted;
+        });
+        assert(emitted == 2);
+        std::cout << "PASS sr47b diagnostics: bit 8 encodes return only; bit 11 carries the caller's Main marker\n";
+    }
 
     for (unsigned cause = 0; cause < 8; ++cause) {
         EntryRoute r;

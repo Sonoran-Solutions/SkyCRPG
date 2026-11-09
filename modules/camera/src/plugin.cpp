@@ -1145,12 +1145,15 @@ public:
         if (cursorSettings.enabled && event && event->opening &&
             event->menuName != "HUD Menu" && event->menuName != "Fader Menu" && event->menuName != "Mist Menu")
             cursorMode::requestExit(cursor::Exit::menu);
+        // Cancel entry even when lock-off service waits for the deferred task.
+        // An active first-person session keeps its ownership across menu focus.
+        if (event && lockMenuPublishesFocus(event->menuName.c_str(),event->opening))
+            precisionReturn.cancel(false);
         // Queue before any context() can consider releasing the lease.
         if (targetLockEnabled) {
             if (!event) return RE::BSEventNotifyControl::kContinue;
             const std::string_view name{event->menuName.c_str()};
             if (lockMenuPublishesFocus(name,event->opening)) {
-                precisionReturn.cancel(false);
                 lockMenuOpenEpoch.fetch_add(1u);
                 publishedLockMenu.store(true);
             }
