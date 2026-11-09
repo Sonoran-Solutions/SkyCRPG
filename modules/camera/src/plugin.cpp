@@ -404,6 +404,8 @@ void updateTargetLock(Context& c, unsigned sampledMenuEpoch) {
     publishedLockPrerequisites.store(c.prerequisites);
     publishedTargetLock.store(c.targetLock);
     publishedLockMenu.store(publishedMenuFocus(c.menu,sampledMenuEpoch,lockMenuOpenEpoch.load()));
+    // An opening can land between the preceding epoch load and focus store.
+    if (menuFocusNeedsReassert(sampledMenuEpoch,lockMenuOpenEpoch.load())) publishedLockMenu.store(true);
     publishedLockMovementConfigSafe.store(movementConfigSafe);
 }
 void updateTargetLockMain(Context& c) {

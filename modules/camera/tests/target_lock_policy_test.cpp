@@ -78,6 +78,39 @@ int main() {
     static_assert(publishedMenuFocus(true,0u,0u));
     static_assert(publishedMenuFocus(false,0u,1u));
     static_assert(publishedMenuFocus(true,0u,1u));
+    static_assert(!menuFocusNeedsReassert(1u,1u));
+    static_assert(menuFocusNeedsReassert(0u,1u));
+    // Enumerate all 21 orders of main {capture, sample, load, store, re-load}
+    // against event {increment, store(true)}. Slots 0, 3 and 4 cover opening
+    // before capture, after the pre-store load, and after the store respectively.
+    for (unsigned incrementSlot = 0; incrementSlot <= 5; ++incrementSlot) {
+        for (unsigned eventStoreSlot = incrementSlot; eventStoreSlot <= 5; ++eventStoreSlot) {
+            std::atomic<unsigned> epoch{0};
+            std::atomic<bool> focus{false};
+            unsigned before = 0;
+            bool menuOpen = false, sampled = false, published = false;
+            for (unsigned step = 0; step <= 5; ++step) {
+                if (step == incrementSlot) { menuOpen = true; epoch.fetch_add(1u); }
+                if (step == eventStoreSlot) focus.store(true);
+                switch (step) {
+                case 0: before = epoch.load(); break;
+                case 1: sampled = menuOpen; break;
+                case 2: published = publishedMenuFocus(sampled,before,epoch.load()); break;
+                case 3: focus.store(published); break;
+                case 4:
+                    if (menuFocusNeedsReassert(before,epoch.load())) focus.store(true);
+                    break;
+                default: break; // event after main's re-load is the final writer
+                }
+                if (incrementSlot == 0 && step == 3) assert(sampled && published && focus.load());
+                if (incrementSlot == 3 && eventStoreSlot == 3 && step == 3)
+                    assert(!focus.load()); // reproduce the round-4 lost opening
+                if ((incrementSlot == 3 || incrementSlot == 4) && step == 4)
+                    assert(!sampled && focus.load()); // re-assert after the stale store
+            }
+            assert(focus.load());
+        }
+    }
     // Main samples no focus, then an unlisted pausing menu opens before
     // publication. Neither the stale sample nor closing may clear focus.
     std::atomic<bool> publishedMenu{false};
@@ -94,6 +127,7 @@ int main() {
     assert(publishedMenu.load());
     assert(menuOpenEpoch.load() == sampledEpoch+1u);
     publishedMenu.store(publishedMenuFocus(sampledMenu,sampledEpoch,menuOpenEpoch.load()));
+    if (menuFocusNeedsReassert(sampledEpoch,menuOpenEpoch.load())) publishedMenu.store(true);
     assert(publishedMenu.load());
     std::thread menuClosing([&] {
         if (lockMenuPublishesFocus("Tutorial Menu",false)) publishedMenu.store(true);
@@ -103,6 +137,7 @@ int main() {
     const unsigned nextSampledEpoch = menuOpenEpoch.load();
     assert(nextSampledEpoch == sampledEpoch+1u);
     publishedMenu.store(publishedMenuFocus(false,nextSampledEpoch,menuOpenEpoch.load()));
+    if (menuFocusNeedsReassert(nextSampledEpoch,menuOpenEpoch.load())) publishedMenu.store(true);
     assert(!publishedMenu.load());
     static_assert(static_cast<unsigned>(State::targeting) == 6);
     static_assert(static_cast<unsigned>(State::obstruction) == 7);
