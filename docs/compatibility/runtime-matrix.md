@@ -4,7 +4,7 @@ DYL-154 baseline, updated with DYL-155 evidence on 2026-10-26. The [Phase 3 cand
 
 ## Phase 5 feature builds (2026-11-08)
 
-Same host, Proton build and provider pins as Phase 4. Feature evidence below is from separate builds/profiles unless stated. `owner-cursor-1` ran with CursorMode on and TargetLock and ThinOccluder off (preserved INI `after-owned-files/33`). Combined candidate 8 evidence is recorded in the section below.
+Same host, Proton build and provider pins as Phase 4. Feature evidence is from separate builds/profiles unless stated. `owner-cursor-1` ran with CursorMode on and TargetLock and ThinOccluder off (preserved INI `after-owned-files/33`); no session or route has had two Phase 5 features enabled together.
 
 | Feature / build | Profile and device | Status |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ Same host, Proton build and provider pins as Phase 4. Feature evidence below is 
 | Fixed height, Camera `50a3dd2` (`28de1800…`) / `c10e6bc` (`5409d1bd…`) | camera-only, three curated beams; keyboard/mouse | Standing, transparency, enclosure, restores **PASS**; walking result accepted under D033's “no additional beam-induced pull-in, subject to enclosure”; fixed height resumes automatically after menu/F8 by design; controller and lock together **NOT_RUN** |
 | Cursor mode, Camera `4946c92` (`8ca54149…`) with Selection `6d8b12e2…` | camera-only with Selection; owner session: CursorMode on, TargetLock and ThinOccluder off (preserved INI); route override `bAllowExternalTargets=1` | Hover, activation, on-screen-only cycling **PASS**; owner-cursor-1 was cursor-only (TargetLock and ThinOccluder off; logs capped); controller reticle, other resolutions **NOT_RUN** |
 | Occlusion spike `6667bf5` (`abff6b40…`, never shipped) | camera-only spike profile | Stage 1 GO by D028; evidence on its branch |
-| Combined candidate / UI-only Phase 5 profile (earlier snapshot) | — | Earlier **NOT_RUN** status superseded by candidate 8 R5/R6 evidence below; coverage remains bounded to the listed owner session and routes. |
+| Harness route or combined candidate with two Phase 5 features enabled; UI-only or combined profile on a Phase 5 build | — | **NOT_RUN** (no session or route has combined two Phase 5 features; `owner-cursor-1` had only cursor mode on) |
 
 ## Phase 5 accepted combined candidate 8 (2026-11-09, D041)
 
