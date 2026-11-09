@@ -63,6 +63,45 @@ private:
     static constexpr unsigned pending = 1, releasing = 2;
     std::atomic<unsigned> state{0};
 };
+enum class LockRefreshSource : unsigned {
+    startup = 1, consoleOpen = 2, consoleClose = 4, dialogue = 8,
+    loadingOpen = 16, loadingClose = 32, journalClose = 64, lockOffMenu = 128
+};
+constexpr LockRefreshSource lockRefreshSource(std::string_view name, bool opening) {
+    if (name == "Console") return opening ? LockRefreshSource::consoleOpen : LockRefreshSource::consoleClose;
+    if (name == "Loading Menu") return opening ? LockRefreshSource::loadingOpen : LockRefreshSource::loadingClose;
+    return name == "Dialogue Menu" ? LockRefreshSource::dialogue : LockRefreshSource::journalClose;
+}
+struct LockConfigResult { bool movementSafe = false, lockSafe = false; };
+// Producers only OR source bits. One IO worker reads files; Main applies the
+// scalar result. Pending stays set through BOTH stages, including application.
+// A request during either stage survives for the next worker/Main pair.
+class LockConfigRefresh {
+public:
+    void request(LockRefreshSource source) { state.fetch_or(static_cast<unsigned>(source)); }
+    bool requested() const { return state.load() != 0; }
+    unsigned snapshot() const { return state.load(); }
+    unsigned beginRead() {
+        auto value = state.load();
+        if (!(value & sources) || (value & (reading | complete))) return 0;
+        return state.compare_exchange_strong(value,reading) ? value & sources : 0;
+    }
+    void finishRead(LockConfigResult result) {
+        state.fetch_or(complete | (result.movementSafe ? movementSafe : 0u) | (result.lockSafe ? lockSafe : 0u));
+        state.fetch_and(~reading);
+    }
+    template<class Apply> bool apply(Apply applyResult) {
+        const auto value = state.load();
+        if (!(value & complete) || (value & reading)) return false;
+        applyResult(LockConfigResult{(value & movementSafe) != 0,(value & lockSafe) != 0});
+        state.fetch_and(~(complete | movementSafe | lockSafe));
+        return true;
+    }
+private:
+    static_assert(std::atomic<unsigned>::is_always_lock_free);
+    static constexpr unsigned sources = 255, reading = 256, complete = 512, movementSafe = 1024, lockSafe = 2048;
+    std::atomic<unsigned> state{0};
+};
 struct LockFrameTraceBudget {
     static constexpr unsigned limit = 2048;
     unsigned lines = 0;

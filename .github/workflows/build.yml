@@ -278,3 +278,4 @@ jobs:
             "$RUNNER_TEMP/$name"
             echo "$name PASS"
           done
+          python3 -B -I modules/camera/tests/lock_refresh_wiring_test.py

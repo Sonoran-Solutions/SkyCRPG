@@ -82,7 +82,7 @@ std::atomic<bool> publishedReturnChainReady{false};
 SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
 bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
-bool targetLockEnabled = false, lockConfigSafe = false, lockConfigLogged = false;
+bool targetLockEnabled = false, lockConfigSafe = false;
 std::atomic<bool> lockHooksReady{false};
 bool lockFrameTraceEnabled = false;
 LockTraceWindow lockTraceWindow;
@@ -93,7 +93,13 @@ LockRetargetWindow lockRetargetWindow;
 LockStateChange<TDM_API::APIResult> lockLeaseLog;
 bool lockRefusalNotified = false;
 std::atomic<bool> lockRefusalRequested{false};
-LockInterrupt lockInterrupt, lockConfigRefresh;
+LockInterrupt lockInterrupt;
+LockConfigRefresh lockConfigRefresh;
+std::atomic_flag deferredConfigBusy = ATOMIC_FLAG_INIT;
+std::atomic<bool> lockBindingRefused{false};
+std::atomic<unsigned> lockRefreshApplied{0}, deferredTaskRuns{0}, deferredTaskOther{0}, deferredTaskMenuBusy{0};
+std::atomic<unsigned> deferredTaskQueuedCount{0}, lockRefreshMainSample{0};
+std::optional<RE::BSFixedString> lockPOVEvent; // prepared before callbacks; no interning in Main apply
 float lockHoldSeconds = .4f;
 RE::FormID indicatorShaderForm = 0xAAEB3;
 RE::TESEffectShader* indicatorShader = nullptr;
@@ -195,10 +201,10 @@ bool checkMovementConfig() {
     }
     return yaw == 0;
 }
-bool checkLockMovementConfig() {
+LockConfigResult readLockMovementConfig() {
     // Match TDM Settings::ReadSettings precedence: provider config, then user MCM.
     wchar_t executable[32768]{};
-    if (!GetModuleFileNameW(nullptr,executable,32768)) { lockConfigSafe = false; return false; }
+    if (!GetModuleFileNameW(nullptr,executable,32768)) return {};
     const auto root = std::filesystem::path(executable).parent_path()/L"Data"/L"MCM";
     const std::array paths{root/L"Config"/L"TrueDirectionalMovement"/L"settings.ini",
         root/L"Settings"/L"TrueDirectionalMovement.ini"};
@@ -211,21 +217,22 @@ bool checkLockMovementConfig() {
         }
         return result;
     };
-    lockConfigSafe = true;
+    bool contractSafe = true;
+    static bool mismatchLogged = false; // serialized IO worker only
     for (const auto& setting : lockSettings) {
         if (!lockSettingMatches(setting,effective(setting.section,setting.key),lockHoldSeconds)) {
-            lockConfigSafe = false;
-            if (targetLockEnabled && !lockConfigLogged) {
+            contractSafe = false;
+            if (!mismatchLogged) {
                 char line[192]{};
                 std::snprintf(line,sizeof(line),"Target lock refused: live TDM [%s] %s differs from Camera contract; lease held, file unchanged.",
                     setting.section,setting.key);
-                log(line); lockConfigLogged = true;
+                log(line); mismatchLogged = true;
             }
         }
     }
     // The opt-in yaw guard uses the same strict parser as the lock keys.
-    return lockSettingMatches({"DirectionalMovement","uAdjustCameraYawDuringMovement",0},
-        effective("DirectionalMovement","uAdjustCameraYawDuringMovement"));
+    return {lockSettingMatches({"DirectionalMovement","uAdjustCameraYawDuringMovement",0},
+        effective("DirectionalMovement","uAdjustCameraYawDuringMovement")),contractSafe};
 }
 bool flag(const char* section, const char* key, int fallback) {
     const int value = number(section,key,fallback);
@@ -431,19 +438,36 @@ void observeTargetLock() {
     lockRetargetWindow.started.reset();
     observedLock = locked;
 }
-void checkLockBindings() {
+bool lockBindingsSafe() {
     const auto map = RE::ControlMap::GetSingleton();
-    // U is a test default, never a second consumer of a native/Camera binding.
-    const bool bindingsSafe = map && map->GetUserEventName(22,RE::INPUT_DEVICE::kKeyboard).empty() &&
-        map->GetMappedKey("Toggle POV",RE::INPUT_DEVICE::kGamepad) == 128 &&
-        settings.toggleKey != 22 && settings.recenterKey != 22 &&
-        settings.toggleGamepad != 128 && settings.recenterGamepad != 128;
-    if (!bindingsSafe) {
-        lockConfigSafe = false;
-        if (!lockConfigLogged) {
-            log("Target lock refused: U conflicts or gamepad POV is not R3; lease held, bindings unchanged.");
-            lockConfigLogged = true;
+    if (!map || !lockPOVEvent || !map->GetUserEventName(22,RE::INPUT_DEVICE::kKeyboard).empty() ||
+        settings.toggleKey == 22 || settings.recenterKey == 22 ||
+        settings.toggleGamepad == 128 || settings.recenterGamepad == 128) return false;
+    const auto gameplay = map->controlMap[RE::UserEvents::INPUT_CONTEXT_ID::kGameplay];
+    if (!gameplay) return false;
+    // GetMappedKey interns its string_view even if the caller retains a key.
+    // Compare the prepared key directly, with no string-table lock in a callback.
+    for (const auto& mapping : gameplay->deviceMappings[RE::INPUT_DEVICE::kGamepad])
+        if (mapping.eventID == *lockPOVEvent) return mapping.inputKey == 128;
+    return false;
+}
+void applyLockConfigRefresh() {
+    const auto main = RE::Main::GetSingleton();
+    if (!main || main->threadID != GetCurrentThreadId()) return;
+    if (lockConfigRefresh.apply([](LockConfigResult result) {
+        movementConfigSafe = result.movementSafe;
+        lockConfigSafe = result.lockSafe;
+        if (targetLockEnabled && !lockBindingsSafe()) {
+            lockConfigSafe = false;
+            lockBindingRefused.store(true);
         }
+        publishedLockMovementConfigSafe.store(movementConfigSafe);
+    })) {
+        lockRefreshApplied.fetch_add(1u);
+        const auto camera = RE::PlayerCamera::GetSingleton();
+        const bool firstPerson = camera && camera->currentState && camera->currentState->id == RE::CameraState::kFirstPerson;
+        lockRefreshMainSample.store((firstPerson?1u:0u)|(loading?2u:0u)|(movementLease?4u:0u)|
+            (deferredIndicatorStop.load()?8u:0u)|(movementConfigSafe?16u:0u)|(lockConfigSafe?32u:0u));
     }
 }
 void updateTargetLockMain(Context& c);
@@ -611,6 +635,7 @@ void readCameraWorld(Context& c, bool* hardSpecial, std::optional<bool> mounted 
 }
 Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, bool* failure = nullptr,
     bool readOnlyLock = false) {
+    if (!readOnlyLock) applyLockConfigRefresh();
     Context c;
     if (hardSpecial) *hardSpecial = true;
     c.enabled = settings.enabled;
@@ -650,42 +675,92 @@ void servicePrecisionEntry();
 void serviceFirstPersonReturn();
 
 // SKSE's task drain is outside camera/input callbacks. A process-lifetime
-// timer only bridges dirty flags into that existing drain; callbacks never
+// timer bridges remaining engine work into that drain; callbacks never
 // allocate a task or acquire SKSE's queue lock. At most one task is outstanding.
 void serviceDeferredCameraWork() {
-    if (cursorMode::mainThread() && cursorMode::outsideMenuLocks()) {
-        if (lockConfigRefresh.consume()) {
-            movementConfigSafe = targetLockEnabled ? checkLockMovementConfig() : checkMovementConfig();
-            if (targetLockEnabled) checkLockBindings();
-            publishedLockMovementConfigSafe.store(movementConfigSafe);
-        }
+    deferredTaskRuns.fetch_add(1u);
+    const bool taskMain = cursorMode::mainThread();
+    const bool taskOutside = cursorMode::outsideMenuLocks();
+    if (!taskMain) deferredTaskOther.fetch_add(1u);
+    if (!taskOutside) deferredTaskMenuBusy.fetch_add(1u);
+    if (taskMain && taskOutside) {
+        applyLockConfigRefresh();
         publishedReturnChainReady.store(providerChainReady());
         if (deferredIndicatorStop.load()) stopIndicator();
         if (const auto snapshot = preferencesToSave.exchange(0)) savePreferences(snapshot);
-        precisionDiagnostics.drain([](unsigned reason, std::uint32_t sample) {
-            constexpr std::array names{"service-main","service-other","entry-claimed","entry-context","entry-token",
-                "input-unsafe","input-unowned","input-mapped","input-no-edge","ownership-lost",
-                "request-accepted","request-rejected","service-pending","refresh-pending",
-                "menu-busy","mount-busy","invalid-context","lease-missing","unlock-pending","session-changed","returned","return-refused"};
-            static_assert(names.size() == static_cast<unsigned>(PrecisionReason::count));
-            char line[160]{};
-            std::snprintf(line,sizeof(line),"PrecisionReturn reason=%s context=0x%X",names[reason],sample);
-            log(line);
-        });
     }
-    // Native entry does no IO and must not wait for the configuration drain's
-    // outside-UI-lock gate. Lock-on keeps its interrupt/lease service ordering.
+    // Native entry does no IO and must not wait for the task's outside-UI-lock
+    // gate. Lock-on keeps its interrupt/lease service ordering.
     if (cursorMode::mainThread() && PrecisionReturn::entryRequested(precisionReturn.snapshot())) {
         if (targetLockEnabled) serviceFirstPersonReturn();
         else servicePrecisionEntry();
     }
     deferredCameraQueued.store(false);
 }
+// File validation has no engine/UI access and must not depend on SKSE's task
+// drain ever running on Main. The timer serializes IO; Main only accepts scalars.
+void serviceLockConfigIO() {
+    if (const auto sources = lockConfigRefresh.beginRead()) {
+        static unsigned readLines = 0;
+        const bool report = readLines++ < 64;
+        if (report) {
+            char line[160]{};
+            std::snprintf(line,sizeof(line),"LockRefresh read-start sources=0x%X seconds=%.3f",sources,lockClock());
+            log(line);
+        }
+        LockConfigResult result;
+        try {
+            result = targetLockEnabled ? readLockMovementConfig() : LockConfigResult{checkMovementConfig(),false};
+        } catch (...) {
+            static bool readFailureLogged = false; // serialized IO worker only
+            if (!readFailureLogged) { readFailureLogged = true; log("LockRefresh read failed; applying unsafe result, lease retained."); }
+        }
+        lockConfigRefresh.finishRead(result);
+        if (report) log("LockRefresh read-complete; awaiting Main apply.");
+    }
+    static bool bindingLogged = false;
+    if (lockBindingRefused.exchange(false) && !bindingLogged) {
+        bindingLogged = true;
+        log("Target lock refused: U conflicts or gamepad POV is not R3; lease held, bindings unchanged.");
+    }
+    // Bounded state-change diagnostics distinguish queued/no-task, off-Main and UI-lock
+    // rejection. Samples are atomic; no callback formats, allocates or logs.
+    static unsigned ticks = 0, traceLines = 0;
+    static unsigned lastRefreshState = 0, lastApplied = 0, lastTaskFlags = 0;
+    const auto refreshState = lockConfigRefresh.snapshot();
+    const auto applied = lockRefreshApplied.load();
+    const unsigned taskFlags = (deferredTaskQueuedCount.load()?1u:0u)|(deferredTaskRuns.load()?2u:0u)|
+        (deferredTaskOther.load()?4u:0u)|(deferredTaskMenuBusy.load()?8u:0u);
+    if (++ticks % 10 == 0 && traceLines < 128 &&
+        (refreshState != lastRefreshState || applied != lastApplied || taskFlags != lastTaskFlags)) {
+        lastRefreshState = refreshState; lastApplied = applied; lastTaskFlags = taskFlags;
+        ++traceLines;
+        char line[256]{};
+        std::snprintf(line,sizeof(line),"LockRefresh state=0x%X applied=%u main_sample=0x%X task_queued=%u task_runs=%u task_other=%u task_menu_busy=%u seconds=%.3f",
+            lockConfigRefresh.snapshot(),lockRefreshApplied.load(),lockRefreshMainSample.load(),
+            deferredTaskQueuedCount.load(),deferredTaskRuns.load(),deferredTaskOther.load(),deferredTaskMenuBusy.load(),lockClock());
+        log(line);
+    }
+    precisionDiagnostics.drain([](unsigned reason, std::uint32_t sample) {
+        constexpr std::array names{"service-main","service-other","entry-claimed","entry-context","entry-token",
+            "input-unsafe","input-unowned","input-mapped","input-no-edge","ownership-lost",
+            "request-accepted","request-rejected","service-pending","refresh-pending",
+            "menu-busy","mount-busy","invalid-context","lease-missing","unlock-pending","session-changed","returned","return-refused","entry-before"};
+        static_assert(names.size() == static_cast<unsigned>(PrecisionReason::count));
+        char line[160]{};
+        std::snprintf(line,sizeof(line),"PrecisionReturn reason=%s context=0x%X",names[reason],sample);
+        log(line);
+    });
+}
 void CALLBACK queueDeferredCameraWork(PVOID, BOOLEAN) {
+    if (deferredConfigBusy.test_and_set()) return;
+    serviceLockConfigIO();
+    deferredConfigBusy.clear();
     if (!preferencesToSave.load() && !lockConfigRefresh.requested() && !deferredIndicatorStop.load() &&
         !precisionDiagnostics.requested() &&
         !PrecisionReturn::entryRequested(precisionReturn.snapshot())) return;
     if (deferredCameraQueued.exchange(true)) return;
+    deferredTaskQueuedCount.fetch_add(1u);
     deferredCameraTasks->AddTask(serviceDeferredCameraWork);
 }
 bool prepareDeferredCameraWork() {
@@ -696,6 +771,7 @@ bool prepareDeferredCameraWork() {
         log("Camera deferred service unavailable; camera hooks left inert.");
         return false;
     }
+    log("LockRefresh IO timer prepared: 100 ms; Main applies scalar results in all camera states.");
     return true;
 }
 
@@ -734,7 +810,7 @@ void servicePrecisionEntry() {
     if (!PrecisionReturn::entryRequested(sessionToken)) return;
     // A refresh gates held framing/lock release, not escape into native FP.
     // Keep the last validated prerequisites and all fresh world/focus checks;
-    // leave refresh pending for the IO task and for the return-to-TP barrier.
+    // leave refresh pending for timer IO/Main apply and the return-to-TP barrier.
     if (lockConfigRefresh.requested()) precisionDiagnostics.note(PrecisionReason::refreshPending);
     // Two bounded reads, with no UI/mount lock held across the native setter.
     // All context and camera observations used to claim belong to this Main call.
@@ -757,6 +833,7 @@ void servicePrecisionEntry() {
     };
     const auto before = readEntry();
     if (!before) return; // contention before consumption preserves the intent
+    precisionDiagnostics.note(PrecisionReason::entryBefore,*before,sessionToken,false,true);
     Context after;
     const bool claimed = precisionReturn.enter(*before,sessionToken,[&] {
         settings.enabled = false; suspend();
@@ -774,6 +851,10 @@ void serviceFirstPersonReturn() {
     if (!ready || !lockHooksReady) return;
     if (!cursorMode::mainThread()) { precisionDiagnostics.note(PrecisionReason::serviceOther); return; }
     precisionDiagnostics.note(PrecisionReason::serviceMain);
+    applyLockConfigRefresh(); // before loading/first-person exits; no IO or effect traversal
+    const auto pendingPrecision = precisionReturn.snapshot();
+    if (PrecisionReturn::entryRequested(pendingPrecision) || PrecisionReturn::requested(pendingPrecision))
+        publishedReturnChainReady.store(providerChainReady());
     movementLease = movement && movement->GetDisableTargetLockOwner() == SKSE::GetPluginHandle();
     publishedMovementLease.store(movementLease);
     // No indicator traversal (engine lock), diagnostic formatting or IO here.
@@ -1164,14 +1245,14 @@ public:
                 lockMenuOpenEpoch.fetch_add(1u);
                 publishedLockMenu.store(true);
             }
-            if (lockMenuRefresh(name,event->opening)) lockConfigRefresh.request();
+            if (lockMenuRefresh(name,event->opening)) lockConfigRefresh.request(lockRefreshSource(name,event->opening));
             if (!lockMenuInterrupt(name,event->opening)) return RE::BSEventNotifyControl::kContinue;
             interruptTargetLock();
         }
         bool hard = true;
         const auto c = precisionTraceEnabled ? context(&hard) : Context{};
         const auto before = traceState(c,hard,0);
-        if (!targetLockEnabled) lockConfigRefresh.request();
+        if (!targetLockEnabled) lockConfigRefresh.request(LockRefreshSource::lockOffMenu);
         failureDebounce.observe(false,0);
         suspend();
         if (precisionTraceEnabled && event && (c.world || precisionReturn.owned())) {
@@ -1369,7 +1450,7 @@ void messages(SKSE::MessagingInterface::Message* message) {
             // thread-ID match. Effect mutation and release remain gated.
             static_cast<void>(acquireMovementLease());
             interruptTargetLock();
-            lockConfigRefresh.request();
+            lockConfigRefresh.request(LockRefreshSource::startup);
         }
         if (targetLockEnabled) {
             const auto data = RE::TESDataHandler::GetSingleton();
@@ -1397,6 +1478,7 @@ void messages(SKSE::MessagingInterface::Message* message) {
             thin::refuseInstall("ThinOccluder: camera slot owner guard failed; no thin hooks installed.");
             return;
         }
+        lockPOVEvent.emplace("Toggle POV");
         cursorMode::prepareInputMenuKeys();
         static_cast<void>(cursorMode::outsideMenuLocks());
         if (!prepareDeferredCameraWork()) { ready = false; return; }
