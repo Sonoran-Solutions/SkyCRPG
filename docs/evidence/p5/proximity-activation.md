@@ -133,7 +133,7 @@ R8 used camera-only `stage-p5-r6-cam-selection` in the Bannered Mare; no E was s
 | Hulda pose | `WoodenBarStool` was selected; Hulda was not logged as selected (diagnostics expose selected references and candidate counts, not every candidate's identity). | NPC **NOT_RUN** |
 | Behind-bar pose | No LOS rejection logged. | LOS-through-wall **NOT_RUN** |
 
-Diagnostics: radius 180, `capped=0`, Across the full `p5-r8-b` Selection log, sampled scan `cost_us` ranged 127–420 µs; sampled `pick_cost_us` ranged 4–36 µs. The route reports and supporting provider logs/screenshots are under `/srv/storage/Projects/SkyCRPG/session-p4/autotest/runs/batch-p5-r8-{a,b}-00/`.
+Diagnostics: radius 180, `capped=0`; across the full `p5-r8-b` Selection log, sampled scan `cost_us` ranged 127–420 µs; sampled `pick_cost_us` ranged 4–36 µs. The route reports and supporting provider logs/screenshots are under `/srv/storage/Projects/SkyCRPG/session-p4/autotest/runs/batch-p5-r8-{a,b}-00/`.
 
 ## In-game run j-p5 — 2026-11-02
 
