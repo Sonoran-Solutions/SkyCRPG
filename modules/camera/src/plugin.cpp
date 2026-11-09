@@ -673,8 +673,9 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
 #include "cursor_mode.h"
 void servicePrecisionEntry();
 void serviceFirstPersonReturn();
+void serviceLockOffPrecisionEntry();
 
-// SKSE's task drain is outside camera/input callbacks. A process-lifetime
+// SKSE's ordinary task drain can run on workers or Main. A process-lifetime
 // timer bridges remaining engine work into that drain; callbacks never
 // allocate a task or acquire SKSE's queue lock. At most one task is outstanding.
 void serviceDeferredCameraWork() {
@@ -691,9 +692,10 @@ void serviceDeferredCameraWork() {
     }
     // Native entry does no IO and must not wait for the task's outside-UI-lock
     // gate. Lock-on keeps its interrupt/lease service ordering.
-    if (cursorMode::mainThread() && PrecisionReturn::entryRequested(precisionReturn.snapshot())) {
-        if (targetLockEnabled) serviceFirstPersonReturn();
-        else servicePrecisionEntry();
+    if (PrecisionReturn::entryRequested(precisionReturn.snapshot())) {
+        if (!taskMain) precisionDiagnostics.note(PrecisionReason::serviceOther);
+        else if (targetLockEnabled) serviceFirstPersonReturn();
+        else serviceLockOffPrecisionEntry();
     }
     deferredCameraQueued.store(false);
 }
@@ -745,7 +747,7 @@ void serviceLockConfigIO() {
         constexpr std::array names{"service-main","service-other","entry-claimed","entry-context","entry-token",
             "input-unsafe","input-unowned","input-mapped","input-no-edge","ownership-lost",
             "request-accepted","request-rejected","service-pending","refresh-pending",
-            "menu-busy","mount-busy","invalid-context","lease-missing","unlock-pending","session-changed","returned","return-refused","entry-before"};
+            "menu-busy","mount-busy","invalid-context","lease-missing","unlock-pending","session-changed","returned","return-refused","entry-before","entry-accepted","entry-rejected"};
         static_assert(names.size() == static_cast<unsigned>(PrecisionReason::count));
         char line[160]{};
         std::snprintf(line,sizeof(line),"PrecisionReturn reason=%s context=0x%X",names[reason],sample);
@@ -805,9 +807,11 @@ Context returnContext(bool& hardSpecial, bool mounted) {
     return c;
 }
 void servicePrecisionEntry() {
-    if (!ready || !cursorMode::mainThread()) return;
     const auto sessionToken = precisionReturn.snapshot();
     if (!PrecisionReturn::entryRequested(sessionToken)) return;
+    if (!cursorMode::mainThread()) { precisionDiagnostics.note(PrecisionReason::serviceOther); return; }
+    precisionDiagnostics.note(PrecisionReason::serviceMain,{},sessionToken,false,true);
+    if (!ready) { precisionDiagnostics.note(PrecisionReason::entryContext); return; }
     // A refresh gates held framing/lock release, not escape into native FP.
     // Keep the last validated prerequisites and all fresh world/focus checks;
     // leave refresh pending for timer IO/Main apply and the return-to-TP barrier.
@@ -919,32 +923,43 @@ void serviceFirstPersonReturn() {
         PrecisionReason::returned : PrecisionReason::returnRefused,{},sessionToken);
     requestPreferences(); // drained on the SKSE main task path, outside UI locks
 }
+void serviceLockOffPrecisionEntry() {
+    if (!PrecisionReturn::entryRequested(precisionReturn.snapshot())) return;
+    if (!cursorMode::mainThread()) { precisionDiagnostics.note(PrecisionReason::serviceOther); return; }
+    if (ready) {
+        applyLockConfigRefresh();
+        publishedReturnChainReady.store(providerChainReady());
+    }
+    servicePrecisionEntry();
+}
 void serviceCameraCall(RE::PlayerCamera* camera) {
-    serviceFirstPersonReturn();
+    // Every all-state camera frame services entry, independently of optional
+    // lock/cursor/fixed-height hooks. Keep lock-on interrupt ordering unchanged.
+    if (targetLockEnabled) serviceFirstPersonReturn();
+    else serviceLockOffPrecisionEntry();
     previousCameraCall(camera); // exactly once, including TDM's pitch/update chain
 }
 bool installLockCameraService() {
-    if (!targetLockEnabled) return true;
     // Reuse the already guarded all-state call when thin hooks are installed.
     // The thin observer stays read-only; its previous provider target is retained.
     if (thin::runtime && thin::runtime->installed) {
         previousCameraCall = thin::runtime->update;
         thin::runtime->update = serviceCameraCall;
-        log("Target lock camera service path=thin-chain.");
+        log("Camera precision service path=thin-chain.");
     } else {
         const auto base = REL::Module::get().base();
         const auto site = REL::ID(50784).address()+0x1A6;
         if (site != base+0x8f8826 || !thin::cameraCallGuard(site,base+0x558e70) ||
             std::memcmp(reinterpret_cast<const void*>(base+0x558e70),"\x40\x57\x48\x83\xec\x30",6) != 0) {
-            log("Target lock refused: all-state camera call guard failed; lease held.");
+            log("Camera precision service refused: all-state camera call guard failed; lease held.");
             return false;
         }
         SKSE::AllocTrampoline(32);
         previousCameraCall = reinterpret_cast<CameraCall>(SKSE::GetTrampoline().write_call<5>(site,serviceCameraCall));
         FlushInstructionCache(GetCurrentProcess(),reinterpret_cast<void*>(site),5);
-        log("Target lock camera service path=trampoline.");
+        log("Camera precision service path=trampoline.");
     }
-    log("Target lock all-state interrupt/precision-return service installed.");
+    log("Camera all-state precision service installed (both target-lock settings).");
     return true;
 }
 
@@ -1288,14 +1303,15 @@ public:
         bool hardSpecial = true;
         bool failure = false;
         const bool lockThread = targetLockEnabled && onTargetLockThread();
+        const bool precisionInputMain = cursorMode::mainThread();
         const bool haveLease = targetLockEnabled && !lockThread ? publishedMovementLease.load() : movementLease;
         const auto c = context(&hardSpecial,!settings.enabled && !haveLease,&failure);
         observePrerequisiteFailure(c,failure);
         if (targetLockEnabled) lockRefusalRequested.store(true);
         const bool ownedBefore = precisionReturn.owned();
         precisionReturn.retain(c,hardSpecial,returnSession);
-        if (targetLockEnabled && ownedBefore && !precisionReturn.owned())
-            precisionDiagnostics.note(PrecisionReason::ownershipLost,c,returnSession,precisionReturn.snapshot() != returnSession,lockThread);
+        if (ownedBefore && !precisionReturn.owned())
+            precisionDiagnostics.note(PrecisionReason::ownershipLost,c,returnSession,precisionReturn.snapshot() != returnSession,precisionInputMain);
         if (precisionTraceEnabled && ownedBefore != precisionReturn.owned()) {
             const auto after = traceState(c,hardSpecial,0);
             auto before = after; before.owned = ownedBefore;
@@ -1330,8 +1346,8 @@ public:
                     tracePrecision(button->IsPressed() ? PrecisionTraceEvent::togglePress : PrecisionTraceEvent::toggleRelease,
                         before,before,pad?2u:1u,button->IsPressed(),button->IsDown());
                 if (!safe) {
-                    if (targetLockEnabled && i == 0 && button->IsDown())
-                        precisionDiagnostics.note(PrecisionReason::inputUnsafe,c,returnSession,precisionReturn.snapshot() != returnSession,lockThread);
+                    if (i == 0 && button->IsDown())
+                        precisionDiagnostics.note(PrecisionReason::inputUnsafe,c,returnSession,precisionReturn.snapshot() != returnSession,precisionInputMain);
                     // A refused opt-in policy must still allow the native F6
                     // escape. It cannot re-enable unsafe held framing.
                     if (targetLockEnabled && i == 0 && button->IsDown() && c.world &&
@@ -1352,28 +1368,31 @@ public:
                 auto map = RE::ControlMap::GetSingleton();
                 // Never dispatch custom action on a mapped native gameplay button.
                 if (!map || !map->GetUserEventName(button->GetIDCode(),device).empty() || !button->QUserEvent().empty()) {
-                    if (targetLockEnabled && i == 0 && button->IsDown())
-                        precisionDiagnostics.note(PrecisionReason::inputMapped,c,returnSession,false,lockThread);
+                    if (i == 0 && button->IsDown())
+                        precisionDiagnostics.note(PrecisionReason::inputMapped,c,returnSession,false,precisionInputMain);
                     if (i == 0 && button->IsDown()) tracePrecision(PrecisionTraceEvent::toggleMapped,before,before,pad?2u:1u,button->IsPressed(),button->IsDown());
                     continue;
                 }
                 if (!keys[keyIndex].update(button->IsPressed(),button->IsDown())) {
-                    if (targetLockEnabled && i == 0 && button->IsDown())
-                        precisionDiagnostics.note(PrecisionReason::inputNoEdge,c,returnSession,false,lockThread);
+                    if (i == 0 && button->IsDown())
+                        precisionDiagnostics.note(PrecisionReason::inputNoEdge,c,returnSession,false,precisionInputMain);
                     if (i == 0 && button->IsDown()) tracePrecision(PrecisionTraceEvent::toggleNoEdge,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,button->IsPressed(),button->IsDown());
                     continue;
                 }
                 if (i == 0) {
                     auto camera = RE::PlayerCamera::GetSingleton();
                     const auto request = toggleRequest(c,precisionReturn.owned());
-                    if (targetLockEnabled && request == ToggleRequest::none)
-                        precisionDiagnostics.note(PrecisionReason::inputUnowned,c,returnSession,precisionReturn.snapshot() != returnSession,lockThread);
+                    if (request == ToggleRequest::none)
+                        precisionDiagnostics.note(PrecisionReason::inputUnowned,c,returnSession,precisionReturn.snapshot() != returnSession,precisionInputMain);
                     enableIntent.request(request);
                     tracePrecision(PrecisionTraceEvent::toggleDecision,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,true,true,static_cast<unsigned>(request));
                     if (request == ToggleRequest::firstPerson) {
                         // Publish only an epoch-bound intent, even on Main.
                         // The service alone samples/forces/claims the FP interval.
-                        if (precisionReturn.requestEntry(c,returnSession)) lockInterrupt.request();
+                        const bool entryAccepted = precisionReturn.requestEntry(c,returnSession);
+                        precisionDiagnostics.note(entryAccepted ? PrecisionReason::entryAccepted : PrecisionReason::entryRejected,
+                            c,returnSession,!entryAccepted && precisionReturn.snapshot() != returnSession,precisionInputMain);
+                        if (entryAccepted) lockInterrupt.request();
                     } else if (request == ToggleRequest::enableOnly) {
                         if (targetLockEnabled && !lockThread) {
                             if (!publishedMovementLease.load()) { interruptTargetLock(); continue; }
@@ -1388,7 +1407,7 @@ public:
                             // session/focus/provider and TDM's unlocked reply.
                             const bool accepted = precisionReturn.request(c,returnSession);
                             precisionDiagnostics.note(accepted ? PrecisionReason::requestAccepted : PrecisionReason::requestRejected,
-                                c,returnSession,!accepted && precisionReturn.snapshot() != returnSession,lockThread);
+                                c,returnSession,!accepted && precisionReturn.snapshot() != returnSession,precisionInputMain);
                             if (accepted) lockInterrupt.request();
                             continue;
                         }
@@ -1487,7 +1506,10 @@ void messages(SKSE::MessagingInterface::Message* message) {
         previousUpdate = reinterpret_cast<Update>(table.write_vfunc(3,update));
         lockHooksReady = targetLockEnabled;
         thin::installHooks(ready);
-        if (!installLockCameraService()) lockHooksReady = false;
+        if (!installLockCameraService()) {
+            lockHooksReady = false;
+            if (!targetLockEnabled) ready = false;
+        }
         if (const auto source = RE::ScriptEventSourceHolder::GetSingleton()) {
             source->AddEventSink<RE::TESLoadGameEvent>(&events);
             source->AddEventSink<RE::TESCellAttachDetachEvent>(&events);

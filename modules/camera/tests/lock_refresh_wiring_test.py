@@ -37,3 +37,34 @@ assert "lockConfigRefresh.request(" not in input_sink  # F8/B/U are not producer
 assert "event->menuName == cursorMode::menuName) return" in source
 assert "if (lockMenuRefresh(name,event->opening)) lockConfigRefresh.request(lockRefreshSource(name,event->opening));" in source
 print("PASS native wiring: timer IO before queue gate; Main applies before loading/FP; fresh F6 chain check; barriers retained; exact producer set")
+
+# Entry needs a per-frame Main consumer even when the ordinary task drain never
+# reaches Main. Inspect both installer branches and their unconditional caller.
+installer = body("bool installLockCameraService() {", "RE::NiPoint3 thinGoal()")
+assert "targetLockEnabled" not in installer
+assert "previousCameraCall = thin::runtime->update;" in installer
+assert "thin::runtime->update = serviceCameraCall;" in installer
+assert "write_call<5>(site,serviceCameraCall)" in installer
+assert "REL::ID(50784).address()+0x1A6" in installer
+startup = body("        lockHooksReady = targetLockEnabled;", "        if (const auto source = RE::ScriptEventSourceHolder")
+assert startup.startswith("        lockHooksReady = targetLockEnabled;\n        thin::installHooks(ready);\n        if (!installLockCameraService()) {")
+assert "if (!targetLockEnabled) ready = false;" in startup
+callback = body("void serviceCameraCall(RE::PlayerCamera* camera) {", "bool installLockCameraService() {")
+assert "if (targetLockEnabled) serviceFirstPersonReturn();\n    else serviceLockOffPrecisionEntry();" in callback
+assert callback.count("previousCameraCall(camera);") == 1
+assert callback.index("serviceLockOffPrecisionEntry();") < callback.index("previousCameraCall(camera);")
+lock_off = body("void serviceLockOffPrecisionEntry() {", "void serviceCameraCall(")
+assert lock_off.index("!cursorMode::mainThread()") < lock_off.index("applyLockConfigRefresh();")
+assert lock_off.index("publishedReturnChainReady.store(providerChainReady());") < lock_off.index("servicePrecisionEntry();")
+assert not any(gate in lock_off for gate in ("targetLockEnabled", "lockHooksReady", "cursorSettings", "thin::", "outsideMenuLocks"))
+entry = body("void servicePrecisionEntry() {", "void serviceFirstPersonReturn() {")
+assert entry.index("!cursorMode::mainThread()") < entry.index("const auto before = readEntry();")
+assert entry.index("const auto before = readEntry();") < entry.index("ForceFirstPerson()")
+assert "if (!before) return;" in entry
+assert "PrecisionReason::serviceOther" in entry and "PrecisionReason::serviceMain" in entry
+entry_input = body("                    if (request == ToggleRequest::firstPerson) {", "                    } else if (request == ToggleRequest::enableOnly)")
+assert "requestEntry(c,returnSession)" in entry_input and "ForceFirstPerson" not in entry_input
+assert "PrecisionReason::entryAccepted" in entry_input and "PrecisionReason::entryRejected" in entry_input
+assert "if (targetLockEnabled && i == 0 && button->IsDown())\n                        precisionDiagnostics.note" not in input_sink
+assert "if (targetLockEnabled && request == ToggleRequest::none)" not in input_sink
+print("PASS lock-off wiring: unconditional thin/trampoline installation; Main frame refreshes chain then services entry; one predecessor; input publishes only; diagnostics ungated")
