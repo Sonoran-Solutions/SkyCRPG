@@ -54,12 +54,20 @@ int main() {
     }
     assert(!failureDebounce.observe(lockFailureReportable(true,true) && prerequisiteFailure(true,false,true),13));
     assert(failureDebounce.observe(lockFailureReportable(true,true) && prerequisiteFailure(true,false,true),14));
-    for (const auto name : {"HUD Menu","Cursor Menu","Fader Menu","Mist Menu"})
+    for (const auto name : {"HUD Menu","Cursor Menu","Fader Menu","Mist Menu","LoadWaitSpinner"}) {
         assert(!lockMenuInterrupt(name,true) && !lockMenuInterrupt(name,false));
-    for (const auto name : {"Dialogue Menu","Console","Loading Menu"})
+        assert(!lockMenuRefresh(name,true) && !lockMenuRefresh(name,false));
+    }
+    for (const auto name : {"Dialogue Menu","Console","Loading Menu"}) {
         assert(lockMenuInterrupt(name,true) && lockMenuInterrupt(name,false));
-    for (const auto name : {"InventoryMenu","Custom Menu","TDM_BossBar"})
-        assert(!lockMenuInterrupt(name,true) && !lockMenuInterrupt(name,false)); // main-thread focused() handles these
+        assert(lockMenuRefresh(name,true) && lockMenuRefresh(name,false));
+    }
+    for (const auto name : {"InventoryMenu","Custom Menu","TDM_BossBar","Tutorial Menu","StatsMenuSkillRing"}) {
+        assert(!lockMenuInterrupt(name,true) && lockMenuInterrupt(name,false));
+        assert(!lockMenuRefresh(name,true) && !lockMenuRefresh(name,false));
+    }
+    assert(!lockMenuInterrupt("Journal Menu",true) && lockMenuInterrupt("Journal Menu",false));
+    assert(!lockMenuRefresh("Journal Menu",true) && lockMenuRefresh("Journal Menu",false));
     static_assert(static_cast<unsigned>(State::targeting) == 6);
     static_assert(static_cast<unsigned>(State::obstruction) == 7);
     static_assert(static_cast<unsigned>(State::normal) == 8);
@@ -116,9 +124,10 @@ int main() {
     unsigned releases = 0;
     auto release = [&] { ++releases; };
     std::thread callback([&] {
-        // A listed blocking menu queues the barrier from the event thread.
-        if (lockMenuInterrupt("Console",true)) interrupt.request();
-        if (lockMenuInterrupt("Custom Menu",false)) interrupt.request(); // unlisted: no request
+        // An unlisted menu opens and closes entirely between main-thread
+        // observations. Only its close queues the fresh-input barrier.
+        if (lockMenuInterrupt("Custom Menu",true)) interrupt.request();
+        if (lockMenuInterrupt("Custom Menu",false)) interrupt.request();
     });
     callback.join();
     assert(!interrupt.releaseIfClear(release) && releases == 0);

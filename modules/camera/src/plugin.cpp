@@ -72,6 +72,7 @@ unsigned lockLookCalls = 0;
 LockRetargetWindow lockRetargetWindow;
 LockStateChange<TDM_API::APIResult> lockLeaseLog;
 bool lockRefusalNotified = false;
+std::atomic<bool> lockRefusalRequested{false};
 LockInterrupt lockInterrupt, lockConfigRefresh;
 float lockHoldSeconds = .4f;
 RE::FormID indicatorShaderForm = 0xAAEB3;
@@ -83,6 +84,7 @@ std::atomic<double> lockInputLast{0};
 std::atomic<bool> lockInputSeen{false};
 // Last main-thread decision, read when context() runs on another thread.
 std::atomic<bool> publishedLockPrerequisites{false}, publishedTargetLock{false};
+std::atomic<bool> publishedLockMenu{true}, publishedLockMovementConfigSafe{false};
 unsigned lockStateLogs = 0;
 std::optional<bool> observedLock;
 RE::ActorHandle observedTarget;
@@ -395,6 +397,8 @@ void updateTargetLock(Context& c) {
     updateTargetLockMain(c);
     publishedLockPrerequisites.store(c.prerequisites);
     publishedTargetLock.store(c.targetLock);
+    publishedLockMenu.store(c.menu);
+    publishedLockMovementConfigSafe.store(movementConfigSafe);
 }
 void updateTargetLockMain(Context& c) {
     observeTargetLock();
@@ -517,16 +521,17 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     if (hardSpecial) *hardSpecial = true;
     c.enabled = settings.enabled;
     const bool providerEnabled = provider && provider->IsCameraEnabled();
-    const bool baseReady = compatibleSettings && movementConfigSafe && ready && movement && providerEnabled &&
-        provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
     const bool lockThread = targetLockEnabled && onTargetLockThread();
+    const bool configSafe = targetLockEnabled && !lockThread ? publishedLockMovementConfigSafe.load() : movementConfigSafe;
+    const bool baseReady = compatibleSettings && configSafe && ready && movement && providerEnabled &&
+        provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
     const bool leaseReady = !targetLockEnabled ? movement && movementLease && !movement->GetTargetLockState() :
         lockThread && movement && (movementLease ? !movement->GetTargetLockState() : lockConfigSafe && indicatorReady());
     c.prerequisites = targetLockEnabled ? baseReady : phase4Prerequisites(baseReady,leaseReady,allowLeaseRequest,movementLease);
     // An intentionally disabled SmoothCam (F8) is not a failure.
     // With lock enabled, off-main observations cannot diagnose lease failure.
     if (failure) *failure = lockFailureReportable(targetLockEnabled,lockThread) && prerequisiteFailure(baseReady,leaseReady,
-        !provider || providerEnabled || !ready || !compatibleSettings || !movementConfigSafe || !movement);
+        !provider || providerEnabled || !ready || !compatibleSettings || !configSafe || !movement);
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto camera = RE::PlayerCamera::GetSingleton();
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
@@ -553,7 +558,7 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     // Tween is indeterminate, but real non-camera hazards remain hard.
     if (hardSpecial) *hardSpecial = c.tween ? hazard : c.special;
     if (controlMap && (!controlMap->IsLookingControlsEnabled() || !controlMap->IsPOVSwitchControlsEnabled())) c.special = true;
-    c.menu = focused();
+    c.menu = targetLockEnabled && !lockThread ? publishedLockMenu.load() : focused();
     // DYL-158 supplies precision/targeting intervention; select() reserves their priority.
     c.obstruction = obstructionFrame.obstructed;
     if (targetLockEnabled) updateTargetLock(c);
@@ -571,9 +576,6 @@ bool noActiveMenus() {
             menu.get() != fader.get() && menu.get() != mist.get())) return false;
     }
     return true;
-}
-bool lockBlockingMenu(const RE::MenuOpenCloseEvent* event) {
-    return event && lockMenuInterrupt(event->menuName.c_str(),event->opening);
 }
 void notifyLockRefusal(Context c) {
     if (targetLockEnabled && ready && lockHooksReady && !lockRefusalNotified && (!lockConfigSafe || !indicatorReady()) &&
@@ -731,6 +733,7 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
     const auto c = context(&hard,false,&failure);
     observeLifecycle(c,hard);
     observePrerequisiteFailure(c,failure);
+    if (targetLockEnabled && onTargetLockThread() && lockRefusalRequested.exchange(false)) notifyLockRefusal(c);
     if (targetLockEnabled) traceLockFrame(c);
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (!heldFramingAllowed(c) || !camera || camera->currentState.get() != state || (next && next.get() != state)) {
@@ -813,8 +816,10 @@ public:
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
         // Queue before any context() can consider releasing the lease.
         if (targetLockEnabled) {
-            if (!lockBlockingMenu(event)) return RE::BSEventNotifyControl::kContinue;
-            lockConfigRefresh.request();
+            if (!event) return RE::BSEventNotifyControl::kContinue;
+            const std::string_view name{event->menuName.c_str()};
+            if (lockMenuRefresh(name,event->opening)) lockConfigRefresh.request();
+            if (!lockMenuInterrupt(name,event->opening)) return RE::BSEventNotifyControl::kContinue;
             interruptTargetLock();
         }
         bool hard = true;
@@ -845,7 +850,7 @@ public:
         bool failure = false;
         const auto c = context(&hardSpecial,!settings.enabled && !movementLease,&failure);
         observePrerequisiteFailure(c,failure);
-        if (targetLockEnabled) notifyLockRefusal(c);
+        if (targetLockEnabled) lockRefusalRequested.store(true);
         const bool ownedBefore = ownFirstPerson;
         ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hardSpecial);
         if (precisionTraceEnabled && ownedBefore != ownFirstPerson) {
