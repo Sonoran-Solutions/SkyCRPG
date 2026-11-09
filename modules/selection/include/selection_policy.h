@@ -121,7 +121,7 @@ inline Settings validate(Settings s) {
 }
 inline double searchRadius(double nativeRadius, const Settings& s) {
     if (!std::isfinite(nativeRadius) || nativeRadius <= 0 || nativeRadius > 4096) return 0;
-    return s.radius > 0 ? std::min(s.radius,nativeRadius) : nativeRadius;
+    return s.radius > 0 ? (std::min)(s.radius,nativeRadius) : nativeRadius;
 }
 struct Context {
     bool enabled = false, runtime = false, reads = false, world = false;
@@ -300,27 +300,36 @@ public:
         return reason_ == Pass::none;
     }
     bool cycle(int direction, Point player, double now) {
-        if (reason_ != Pass::none || sorted_.empty() || !finite(player) || !std::isfinite(now) || direction == 0) return false;
-        if (!latched_) {
-            frozen_.clear();
-            for (const auto& c : sorted_) {
-                if (frozen_.size() == 8) break;
-                frozen_.push_back(c.id);
-            }
-            latchOrigin_ = player;
-        }
-        const auto it = std::find(frozen_.begin(),frozen_.end(),current_);
-        const auto size = frozen_.size();
-        if (!size) return false;
-        const auto index = it == frozen_.end() ? 0u : static_cast<std::size_t>(it-frozen_.begin());
-        current_ = frozen_[(index+(direction > 0 ? 1 : size-1))%size];
-        latched_ = current_; latchStart_ = now;
-        return true;
+        return cycle(direction,player,now,[](std::uint32_t) { return true; });
     }
-    bool push(std::uint32_t id, Point player, double now, bool allowed) {
+    // Cursor cycling skips candidates the client cannot show. The frozen ring
+    // keeps them; a cycle with no shown candidate changes nothing. A ring whose
+    // only shown entry is the current one latches it, as a one-entry ring does.
+    template<class Shown> bool cycle(int direction, Point player, double now, Shown shown) {
+        if (reason_ != Pass::none || sorted_.empty() || !finite(player) || !std::isfinite(now) || direction == 0) return false;
+        std::vector<std::uint32_t> ring;
+        if (latched_) ring = frozen_;
+        else for (const auto& c : sorted_) {
+            if (ring.size() == 8) break;
+            ring.push_back(c.id);
+        }
+        const auto size = ring.size();
+        if (!size) return false;
+        const auto it = std::find(ring.begin(),ring.end(),current_);
+        auto index = it == ring.end() ? 0u : static_cast<std::size_t>(it-ring.begin());
+        for (std::size_t step = 0; step < size; ++step) {
+            index = (index+(direction > 0 ? 1 : size-1))%size;
+            if (!shown(ring[index])) continue;
+            if (!latched_) { frozen_ = std::move(ring); latchOrigin_ = player; }
+            current_ = latched_ = frozen_[index]; latchStart_ = now;
+            return true;
+        }
+        return false;
+    }
+    bool push(std::uint32_t id, Point player, double now, bool allowed, bool rebind = false) {
         if (!allowed || reason_ != Pass::none || !contains(id) || !finite(player) || !std::isfinite(now)) return false;
         auto next = frozen_;
-        if (!latched_) {
+        if (!latched_ || rebind) {
             next.clear();
             for (const auto& c : sorted_) {
                 if (next.size() == 8) break;
@@ -354,8 +363,8 @@ public:
     [[nodiscard]] std::uint32_t current() const { return current_; }
     [[nodiscard]] bool latched() const { return latched_ != 0; }
     [[nodiscard]] Pass reason() const { return reason_; }
-    [[nodiscard]] std::vector<std::uint32_t> order() const {
-        if (latched_) return frozen_;
+    [[nodiscard]] std::vector<std::uint32_t> order(bool prefix = false) const {
+        if (latched_ && !prefix) return frozen_;
         std::vector<std::uint32_t> ids;
         for (const auto& c : sorted_) ids.push_back(c.id);
         return ids;

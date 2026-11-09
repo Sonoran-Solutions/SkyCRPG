@@ -34,6 +34,11 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(module.select_modules(["modules/selection/include/selection_policy.h", "modules/camera/src/plugin.cpp"]), ["camera", "selection"])
         self.assertEqual(module.select_modules(["modules/selection/config/SkyCRPG_Selection.ini", "tools/testprobe/src/plugin.cpp"]), ["selection", "testprobe"])
 
+    def test_selection_api_rebuilds_camera_consumer(self):
+        header = "modules/selection/include/skycrpg/SelectionAPI.h"
+        self.assertEqual(module.select_modules([header]), ["camera", "selection"])
+        self.assertEqual(module.select_modules([header, "tools/testprobe/src/plugin.cpp"]), ["camera", "selection", "testprobe"])
+
     def test_probe_and_module_changes_build_only_those(self):
         self.assertEqual(module.select_modules(["modules/ui/src/plugin.cpp", "tools/testprobe/src/plugin.cpp"]), ["ui", "testprobe"])
 

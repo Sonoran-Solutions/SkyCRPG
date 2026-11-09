@@ -508,8 +508,51 @@ void eventDiagnostics() {
     assert(formatEvent(event,EventEmission::dropped,2001,13000) ==
         "selection event=dropped seq=2001 ms=13000 reason=budget limit=2000");
 }
+// Cursor cycling only visits candidates the client reports as on-screen.
+void visibleCycling() {
+    Settings settings;
+    const auto c = active();
+    const auto only = [](std::vector<std::uint32_t> ids) {
+        return [ids](std::uint32_t id) { return std::find(ids.begin(),ids.end(),id) != ids.end(); };
+    };
+    const auto none = [](std::uint32_t) { return false; };
+    const std::array refs{Candidate{10,{10,0,0}},Candidate{20,{20,0,0}},Candidate{30,{30,0,0}}};
+    Policy p;
+    p.refresh(c,refs,{},180,0,settings);
+    // A hidden neighbour is skipped both ways; the frozen ring still holds it.
+    assert(p.cycle(1,{},1,only({10,30})) && p.current() == 30 && p.latched());
+    assert(p.order() == std::vector<std::uint32_t>({10,20,30}));
+    assert(p.cycle(1,{},1,only({10,30})) && p.current() == 10);
+    assert(p.cycle(-1,{},1,only({10,30})) && p.current() == 30);
+    // Nothing visible: refused, latch and order unchanged.
+    assert(!p.cycle(1,{},2,none) && p.current() == 30 && p.latched() && p.order().size() == 3);
+    // Only the current candidate visible: a cycle wraps onto it (as a one-entry ring does).
+    assert(p.cycle(1,{},2,only({30})) && p.current() == 30);
+    // A refused cycle leaves the latch clock alone: a 1 s timeout measured from
+    // the accepted cycle at t=2 still holds at t=2.5, and would not from t=50.
+    Settings brief = settings; brief.latchSeconds = 1;
+    assert(!p.cycle(1,{},50,none));
+    p.refresh(c,refs,{},180,2.5,brief);
+    assert(p.latched() && p.current() == 30);
+    // A hidden current candidate steps on to the next shown one.
+    assert(p.cycle(1,{},3,only({20})) && p.current() == 20);
+    // The ring keeps its 8-entry cap: a shown candidate beyond it is unreachable.
+    std::array<Candidate,10> many{};
+    for (std::uint32_t i = 0; i < many.size(); ++i) many[i] = Candidate{100+i,{10.0*(i+1),0,0}};
+    Policy r;
+    r.refresh(c,many,{},180,0,settings);
+    assert(!r.cycle(1,{},0,only({108})) && !r.latched());
+    assert(r.cycle(1,{},0,only({107})) && r.current() == 107 && r.order().size() == 8);
+    // Unlatched refusal freezes nothing.
+    Policy q;
+    q.refresh(c,refs,{},180,0,settings);
+    assert(!q.cycle(-1,{},0,none) && !q.latched() && q.current() == 10);
+    assert(q.cycle(-1,{},0,only({20})) && q.current() == 20 && q.latched() && q.order() == std::vector<std::uint32_t>({10,20,30}));
+    // The predicate-free overload is the unrestricted ring.
+    assert(q.cycle(1,{},0) && q.current() == 30);
+}
 int main() {
-    ranking(); latches(); passthroughTable(); inputEdges(); configurationAndBudget(); accessGate(); nativeSafety(); requestsAndLazyValidation(); preRunRegressions(); rayBudgetExhaustion(); eventDiagnostics();
+    ranking(); latches(); visibleCycling(); passthroughTable(); inputEdges(); configurationAndBudget(); accessGate(); nativeSafety(); requestsAndLazyValidation(); preRunRegressions(); rayBudgetExhaustion(); eventDiagnostics();
     std::cout << "PASS selection: surface rank/ties/long rotated bench, latch/wrap/invalidation, passthrough, edges, config/budget/API layout, pool-thread/reentrancy gate, atomic FIFO, lazy validation/unknown rays/native seeding/body probes, sneak/combat/telekinesis/collider safety, cheap clutter filtering/reference poses/bounded reader retries, event pairs/repeated cycles/suppression/budget/format\n";
     std::cout << "PASS re-review: all 256 canPick types/carry-light states, scroll/book/projectile cycling, definite ray exhaustion/preserved latch/refresh interval\n";
 }
