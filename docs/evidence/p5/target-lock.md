@@ -413,4 +413,18 @@ Same build, camera-only, controller on, from the owner's quicksave next to the b
 | No double fire from one R3 press | **PASS, owner** | Owner report; not independently traced. |
 | Right-stick look turns the camera while locked, pitch held | **PASS** | 114 locked rows with look input; yaw range 240.4 degrees; pitch 55.0 degrees throughout. |
 
-This shows user look works while locked on controller. Mouse look uses the same look hook but was not exercised while locked (owner-lock-2 logged no look input), so the mouse row stays **NOT_RUN** rather than PASS. **Still NOT_RUN:** wheel or controller zoom while locked, target switching, auto-retarget, and dialogue, load and F8 interrupting a held lock.
+This shows user look works while locked on controller. In the owner-lock sessions, mouse look was not exercised while locked (owner-lock-2 logged no look input), and wheel/controller zoom was not measured; those owner-session rows remain **NOT_RUN**. Later unattended run `p5-r7-c` measured mouse yaw and wheel zoom by screenshot, but owner framing judgment remains **NOT_RUN**. Target switching, auto-retarget, and dialogue/load interruption also remain **NOT_RUN**; F8 interruption was measured in `p5-r7-d`.
+
+## Unattended routes, 2026-11-09
+
+R7 runs used the camera-only `stage-p5-r6-cam-lock` variant, the Camera DLL from the R2 candidate, keyboard/mouse through the runner's virtual devices, and controller off. Fixture: owner quicksave `Quicksave0_B259CD4B_1_507269736F6E6572_BleakFallsBarrow01_000043_20261102205255_1_1`, `tgm`, and `player.placeatme 0001BCD8`. The quicksave's own bandit was out of view at the load pose: `p5-r7-a` pressed U with no lock and an empty trace.
+
+| Run / check | Result |
+| --- | --- |
+| `p5-r7-a` | **NOT_RUN** for lock behavior: no target was in view at the quicksave pose; no lock and empty trace. |
+| `p5-r7-b` — one spawned bandit | LOCK ENGAGED on handle `001106F9`; 877 locked trace rows. Spawn survived two tap shots. Auto-retarget **NOT_RUN**. |
+| `p5-r7-c` — locked look and zoom | LOCK ENGAGED on `001106FD`; 1,122 locked rows. Look-right yaw peak-to-peak 6.86°, look-left 18.06°; look-down/up yaw 0. World pitch was 0.9599 rad (55.0°) in every window, peak-to-peak 0.000°. Mouse yaw while locked and held pitch were MEASURED. Zoom-in was visibly closer than `locked-baseline.png`; zoom-out returned to about baseline, with lock=1 throughout. Wheel zoom while locked was MEASURED by screenshot; zoom is not traced. Owner framing judgment is **NOT_RUN**. |
+| `p5-r7-d` — interruptions | Runner **FAIL** only on the final step because a `since` mark was malformed; the generator was fixed. All 42 prior steps PASS. Four lock segments: 3.60/2.02/2.81/2.48 s. Timeline UTC: U 04:13:36.86 → locked 36.96; TAB open 40.46 → lease 40.56 (lock held); TAB close 42.17 → locked=0 42.84 and lease released; U 44.24 → locked 44.34; F8 46.24 → locked=0 46.36; F8 48.24 → no relock; U 50.49 → locked 50.59; console open 53.29 → lease 53.41 (lock held); console close 55.29 → locked=0 55.70; U 57.29 → locked 57.39. Menu, F8 and console interruption, no self-relock, and fresh U relock were MEASURED. Dialogue and load interruption remain **NOT_RUN**. |
+| `p5-r7-e` — two spawns, `AttackDamageMult 100` | LOCK ENGAGED on `00110725` at 04:16:57.41. First shot 04:17:01.61; locked=0 at 04:17:03.07 with no lease; body at player's feet in `death-window.png`. No second lock segment through 04:17:10 although TDM `bAutoTargetNextOnDeath=1`. Target death ending lock was MEASURED (second time). Auto-retarget **NOT_RUN**: second spawn was never verified as a live target in range. |
+
+All five restores PASS; game folder clean afterwards. Evidence is in `/srv/storage/Projects/SkyCRPG/session-p4/autotest/runs/batch-p5-r7-{a,b,c,d,e}-00/` (`report.json`, `evidence/provider-logs/`, and `screenshots/`).
