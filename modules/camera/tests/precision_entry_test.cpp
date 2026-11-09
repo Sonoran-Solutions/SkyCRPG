@@ -33,6 +33,42 @@ struct EntryRoute {
 };
 
 int main() {
+    // Lock-off entry must progress from the camera frame even if every SKSE
+    // ordinary task runs off Main. Configuration/optional hooks are not a gate.
+    for (const bool menuContention : {false,true}) {
+        EntryRoute r;
+        PrecisionDiagnostics diagnostic;
+        const auto initial = r.intent.snapshot();
+        std::thread input([&] {
+            assert(r.publish(r.camera,initial));
+            diagnostic.note(PrecisionReason::entryAccepted,r.camera,initial);
+        });
+        input.join();
+        const auto pending = r.intent.snapshot();
+        std::thread taskDrain([&] {
+            for (unsigned pass = 0; pass < 120; ++pass) {
+                assert(!r.service());
+                diagnostic.note(PrecisionReason::serviceOther);
+            }
+        });
+        taskDrain.join();
+        assert(r.intent.snapshot() == pending && r.forces == 0);
+        // Model either UI or mount contention in the before-context reader.
+        assert(!r.service(false));
+        diagnostic.note(menuContention ? PrecisionReason::menuBusy : PrecisionReason::mountBusy);
+        assert(r.intent.snapshot() == pending && r.forces == 0);
+        // First eligible camera frame, without another task-drain invocation.
+        assert(r.service() && r.intent.owned() && r.camera.firstPerson && r.forces == 1);
+        diagnostic.note(PrecisionReason::entryClaimed,r.camera,r.intent.snapshot(),false,true);
+        assert(!r.service() && r.forces == 1);
+        unsigned emitted = 0;
+        diagnostic.drain([&](unsigned, std::uint32_t) { ++emitted; });
+        assert(emitted == 4); // 120 off-Main samples produce one reason
+        diagnostic.note(PrecisionReason::serviceOther);
+        diagnostic.drain([&](unsigned, std::uint32_t) { ++emitted; });
+        assert(emitted == 4);
+    }
+    std::cout << "PASS lock-off entry: worker intent; 120 off-Main drains preserve intent; UI/mount contention preserves intent; first eligible Main frame claims once; diagnostics bounded\n";
     // Deferred adapter model: IO is gated separately from native entry. The
     // source audit checks this wiring against plugin.cpp; these calls exercise
     // the real intent, menu and lock-lease policies for both feature settings.
