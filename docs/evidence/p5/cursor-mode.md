@@ -27,7 +27,19 @@ Limitations accepted with this change:
 
 **Independent review.** Two rounds on this pass. The first (`10d3355`) found the entry-handshake blocker described above plus minors; the second (`35dbc95`) found no blocker or major, verified the atomics' ordering across the entry sequence, re-ran a fuzz comparison of `Policy::cycle` against `8e96585` (byte-identical traces) and an entry-race harness (first session, stale mailbox, early report, contended adoption tick, mode 1), and raised the pre-entry cycle adoption fixed in `4946c92`.
 
-**In-game check.** NOT_RUN at the time of writing. The latch route (`p5-cursor-latch`) is the regression fixture: on `00129fd` its first `[` latched `0005D692` (the pot, "Steal from Pot") while the pointer sat on the bench `000C8FC6`; with this change the same press must latch a candidate that has a projected box and the prompt must not read "Steal".
+**In-game check — `route-cursor-8` on `4946c92`** (Camera DLL `8ca54149…`, Selection DLL `6d8b12e2…`, SkyrimSE.exe `846efccf…`; copied save, keyboard and mouse, restore PASS after each route; logs `session-p5/logs/collected/route-cursor-8-{latch,hover}/`, Camera.log `b29cc60b…`/`86f44024…`, Selection.log `695df1a5…`).
+
+| Run | Row | Result | Evidence |
+| --- | --- | --- | --- |
+| latch | First `[` visits only an on-screen candidate | **PASS** | Selection `event=cycle … reason=next cycle_index=4 cycle_count=5` to `000C8FC7`; indices 1–3 skipped. Screenshot `latched.png` reads "Sit Chair" (the chair by the table, on screen). On `00129fd` the same press latched the hidden pot `0005D692`; that ID appears nowhere in either log this time. Camera `latch=000C8FC7`, `visible=2/1` (two projected boxes, one accepted report). |
+| latch | 1-count drift keeps the latch | **PASS** | `latch=000C8FC7` for 480 of 512 samples; `x` unchanged. |
+| latch | Latch survives the 10 s Selection timeout | **PASS** | Held from 47.0 s to 60.8 s, when `]` cycled. |
+| latch | `]` reverse cycle also skips hidden candidates | **PASS** | `event=cycle … reason=previous cycle_index=0` to `000C8FC6`; `reverse-cycle.png` reads "Sit Bench". |
+| latch | 100-count move releases the latch | NOT_RUN (inconclusive) | As before: latched and hovered are both the bench after the reverse cycle, and the Camera trace had reached its 512-line cap. Needs a distinct fixture; owner sheet step D.3 covers it by hand. |
+| latch | No cycle refused | PASS | Selection `cycle_refusals=0`, `cycles=2`; no `Cursor refused` other than the planned toggle exit. |
+| hover | Regression | **PASS** | Bench is the target for 511 of 512 samples; toggle exit; `busy=0`; pick cost median 6 µs, max 65 µs; `visible=2/1` throughout, so reporting adds one mailbox write per change, not per frame. |
+
+The `Cursor cycling unrestricted` line is absent from both Camera logs: the member resolved and both sessions entered with mode 3.
 
 ## Sixth pass — overlay callback threads, from the first in-game route (2026-11-04)
 
