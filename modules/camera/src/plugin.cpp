@@ -712,7 +712,8 @@ void serviceLockConfigIO() {
         try {
             result = targetLockEnabled ? readLockMovementConfig() : LockConfigResult{checkMovementConfig(),false};
         } catch (...) {
-            log("LockRefresh read failed; applying unsafe result, lease retained.");
+            static bool readFailureLogged = false; // serialized IO worker only
+            if (!readFailureLogged) { readFailureLogged = true; log("LockRefresh read failed; applying unsafe result, lease retained."); }
         }
         lockConfigRefresh.finishRead(result);
         if (report) log("LockRefresh read-complete; awaiting Main apply.");
