@@ -31,6 +31,7 @@
 #include <string>
 #include <limits>
 #include "thin_occluder.h"
+#include "fixed_spike.h"
 
 namespace {
 using namespace skycrpg::camera;
@@ -134,6 +135,8 @@ std::filesystem::path iniPath;
 bool thinEligible();
 RE::NiPoint3 thinGoal();
 RE::NiPoint3 thinFocus();
+RE::NiPoint3 fixedPreCollision();
+unsigned fixedCause(int state);
 void log(const char* text) {
     FILE* file = nullptr;
     const auto path = skycrpg::LogDirectory() + L"SkyCRPG_Camera.log";
@@ -318,6 +321,28 @@ void loadSettings() {
         o.enterRatio != v.enterRatio || o.exitRatio != v.exitRatio || o.enterSeconds != v.enterSeconds ||
         o.exitSeconds != v.exitSeconds || o.warmupSeconds != v.warmupSeconds || o.tightPitch != v.tightPitch ||
         o.tightZoom != v.tightZoom || o.tightenRate != v.tightenRate || o.recoverRate != v.recoverRate) badSettings = true;
+    // P5.5-02 disposable spike: no allocation, hook or evaluation when off.
+    if (flag("FixedCameraSpike","bEnabled",0)) {
+        fixed::Config f;
+        f.enabled = true;
+        f.heading = number("FixedCameraSpike","fHeadingDegrees",f.heading);
+        f.snapSeconds = number("FixedCameraSpike","fSnapSeconds",f.snapSeconds);
+        f.zoom = number("FixedCameraSpike","fZoom",f.zoom);
+        f.snapLeftKey = number("FixedCameraSpike","iSnapLeftKey",f.snapLeftKey);
+        f.snapRightKey = number("FixedCameraSpike","iSnapRightKey",f.snapRightKey);
+        f.castProbe = flag("FixedCameraSpike","iCastProbe",1);
+        f.rigTrace = flag("FixedCameraSpike","iRigTrace",0);
+        f.roomSeedMode = number("FixedCameraSpike","iRoomSeedMode",f.roomSeedMode);
+        f.roomSeedRadius = number("FixedCameraSpike","fRoomSeedRadius",f.roomSeedRadius);
+        f.roomTrace = flag("FixedCameraSpike","iRoomTrace",0);
+        f.seeThroughMode = number("FixedCameraSpike","iSeeThroughMode",f.seeThroughMode);
+        f.cutHeight = number("FixedCameraSpike","fCutHeight",f.cutHeight);
+        f.hidePerFrame = number("FixedCameraSpike","iHideMaxPerFrame",f.hidePerFrame);
+        f.hideTotal = number("FixedCameraSpike","iHideMaxTotal",f.hideTotal);
+        f.hideTrace = flag("FixedCameraSpike","iHideTrace",0);
+        fixed::configure(f,settings,cursorSettings.enabled ? cursorSettings.toggleKey : -1,
+            std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera_FixedSpike.log",log,thinGoal,fixedPreCollision,fixedCause);
+    }
     if (badSettings) log("Invalid Camera INI values: defaults or safe bounds applied; unsupported schema disables policy.");
     if (!s.enabled) log("Camera disabled in INI; native camera controls remain available.");
     if (!compatibleSettings) prerequisiteFailed = true;
@@ -958,7 +983,9 @@ void serviceCameraCall(RE::PlayerCamera* camera) {
     // lock/cursor/fixed-height hooks. Keep lock-on interrupt ordering unchanged.
     if (targetLockEnabled) serviceFirstPersonReturn();
     else serviceLockOffPrecisionEntry();
+    if (fixed::runtime) fixed::beginFrame();
     previousCameraCall(camera); // exactly once, including TDM's pitch/update chain
+    if (fixed::runtime) fixed::endFrame();
 }
 bool installLockCameraService() {
     // Reuse the already guarded all-state call when thin hooks are installed.
@@ -993,6 +1020,21 @@ RE::NiPoint3 thinFocus() {
     RE::NiPoint3 goal{},local{};
     provider->GetGoalPosition(RE::PlayerCharacter::GetSingleton(),goal,local);
     return {goal.x-local.x,goal.y-local.y,goal.z-local.z};
+}
+RE::NiPoint3 fixedPreCollision() { return provider->GetLastCameraPosition(); }
+// Why a frame was not eligible, from state the frame service can read without
+// advancing any policy. state is the update hook's selected State, -1 if silent.
+unsigned fixedCause(int state) {
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    auto cause = state < 0 ? fixed::Exit::hookSilent : fixed::Exit::special;
+    if (loading) cause = fixed::Exit::load;
+    else if (player && player->IsDead()) cause = fixed::Exit::death;
+    else if (!settings.enabled) cause = fixed::Exit::disable;
+    else if (provider && !provider->IsCameraEnabled()) cause = fixed::Exit::f8;
+    else if (camera && camera->currentState && camera->currentState->id == RE::CameraState::kFirstPerson) cause = fixed::Exit::firstPerson;
+    else if (state == static_cast<int>(State::menu)) cause = fixed::Exit::menu;
+    return static_cast<unsigned>(cause);
 }
 bool thinEligible() {
     // The all-state thin tick observes lock decisions; it never advances them.
@@ -1088,6 +1130,7 @@ void resetLifecycle(const char* event) {
     thin::requestRestore(std::strstr(event,"load") ? thin::Exit::load : thin::Exit::cell);
     if (thin::enabled() && thin::onMain() && std::strcmp(event,"player-detach") == 0)
         thin::restoreAll(thin::Exit::cell);
+    fixed::lifecycle(std::strstr(event,"load") ? fixed::Exit::load : fixed::Exit::cell);
     interruptTargetLock();
     bool owned = false;
     resetTransient(owned,recenter,applyZoom,keys);
@@ -1105,6 +1148,8 @@ void observeLifecycle(Context c, bool hard, PrecisionReturn::Token sessionToken)
     else if (c.targetLock) resetObstruction();
 }
 void sampleObstruction(RE::ThirdPersonState* state) {
+    // The spike removes the pull-in this policy measures (DYL-157 suppressed).
+    if (!fixed::obstructionSampled(fixed::engaged())) { resetObstruction(); return; }
     auto c = context();
     const auto camera = RE::PlayerCamera::GetSingleton();
     const auto player = RE::PlayerCharacter::GetSingleton();
@@ -1141,7 +1186,7 @@ void sampleObstruction(RE::ThirdPersonState* state) {
         {actual.x,actual.y,actual.z},{goal.x,goal.y,goal.z},focus)),dt,obstructionSettings);
 }
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
-    if (cursorSettings.enabled && cursorMode::look(input)) { previousLook(state,RE::NiPoint2{}); return; }
+    if (cursorSettings.enabled && cursorMode::look(input)) { fixed::dropSnaps(); previousLook(state,RE::NiPoint2{}); return; }
     if (targetLockEnabled && lockFrameTraceEnabled && lockTraceWindow.budget.lines < LockFrameTraceBudget::limit && onTargetLockThread()) {
         lockLookInput.x += input.x; lockLookInput.y += input.y; ++lockLookCalls;
     }
@@ -1150,7 +1195,9 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     if (!heldFramingAllowed(c) || !camera || camera->currentState.get() != state || !state->freeRotationEnabled) {
         suspend(); previousLook(state,input); return;
     }
-    if (pauseCorrection(c)) { previousLook(state,input); return; }
+    // Spike rig: yaw and pitch stay held through a native POV slide as well.
+    const bool rig = fixed::engaged() && fixed::rigEligible(true,select(c));
+    if (pauseCorrection(c) && !rig) { previousLook(state,input); return; }
     auto setting = RE::GetINISetting("fFreeRotationSpeed:Camera");
     static REL::Relocation<float*> delta{REL::ID(410200)};
     const float dt = *delta;
@@ -1164,7 +1211,12 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     RE::NiPoint2 filtered = input;
     const float pitch = obstructionPitch(settings.pitch,obstructionFrame.blend,obstructionSettings);
     filtered.y = correction(currentPitch-radians(pitch),radians(settings.pitchSpeed),gain,dt);
-    if (recenter) {
+    if (rig) {
+        // Player yaw is discarded; the request holds world heading (player
+        // heading + freeRotation.x) on the current snap heading. F7 = home.
+        filtered.x = fixed::yawInput(c.slide,input.x,player->GetAngleZ(),state->freeRotation.x,gain,dt,recenter);
+        recenter = false;
+    } else if (recenter) {
         const float error = wrap(-state->freeRotation.x);
         filtered.x = correction(error,radians(settings.recenterSpeed),gain,dt);
         if (std::abs(error) < radians(.2f)) recenter = false;
@@ -1173,6 +1225,7 @@ void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
 }
 void traceLockFrame(Context c);
 void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>& next) {
+    if (fixed::runtime) fixed::clearFrame();
     if (cursorSettings.enabled) {
         if (next && next.get() != state) cursorMode::requestExit(cursor::Exit::special);
         cursorMode::service();
@@ -1185,6 +1238,7 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
     bool hard = true;
     bool failure = false;
     const auto c = context(&hard,false,&failure);
+    if (fixed::runtime) fixed::observeFrame(select(c),c.slide);
     observeLifecycle(c,hard,sessionToken);
     observePrerequisiteFailure(c,failure);
     if (targetLockEnabled && onTargetLockThread() && lockRefusalRequested.exchange(false)) notifyLockRefusal(c);
@@ -1194,6 +1248,13 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
         resetObstruction(); return;
     }
     if (RE::PlayerCharacter::GetSingleton()->IsWeaponDrawn()) resetObstruction();
+    // Spike rig: one requested distance. Wheel and POV-slide requests are
+    // overwritten here, before SmoothCam reads the scalar; the stored
+    // preference is not touched. This also arms cast suppression for the frame.
+    if (fixed::runtime && fixed::holdFrame()) {
+        state->targetZoomOffset = fixed::heldZoom(true,fixed::runtime->config.zoom,state->targetZoomOffset);
+        return;
+    }
     // Native controller POV-slide zoom bypasses HandleLookInput, so bound the
     // requested scalar after native update and BEFORE the outer provider update.
     // stateNotActive/POV transitions are excluded; current distance is never written.
@@ -1274,8 +1335,10 @@ public:
             cursorMode::requestExit(cursor::Exit::menu);
         // Cancel entry even when lock-off service waits for the deferred task.
         // An active first-person session keeps its ownership across menu focus.
-        if (event && lockMenuPublishesFocus(event->menuName.c_str(),event->opening))
+        if (event && lockMenuPublishesFocus(event->menuName.c_str(),event->opening)) {
             precisionReturn.cancel(false);
+            fixed::lifecycle(fixed::Exit::menu);
+        }
         // Queue before any context() can consider releasing the lease.
         if (targetLockEnabled) {
             if (!event) return RE::BSEventNotifyControl::kContinue;
@@ -1340,6 +1403,22 @@ public:
             const auto after = traceState(c,hardSpecial,0);
             auto before = after; before.owned = ownedBefore;
             tracePrecision(PrecisionTraceEvent::retention,before,after);
+        }
+        if (fixed::engaged()) {
+            // Spike snap turns: fresh keyboard presses only, never in a menu or
+            // a handed-off state, never on a key the game has mapped.
+            for (auto event = *events; event; event = event->next) {
+                const auto button = event->AsButtonEvent();
+                if (!button || !button->IsDown() || event->GetDevice() != RE::INPUT_DEVICE::kKeyboard) continue;
+                const int direction = fixed::snapDirection(fixed::runtime->config,static_cast<int>(button->GetIDCode()));
+                if (!direction || !fixed::rigEligible(true,select(c))) continue;
+                const auto map = RE::ControlMap::GetSingleton();
+                if (!map || !map->GetUserEventName(button->GetIDCode(),RE::INPUT_DEVICE::kKeyboard).empty() || !button->QUserEvent().empty()) {
+                    fixed::refuse(fixed::Refusal::snapMapped,"a snap key is mapped to a native control; the press was ignored");
+                    continue;
+                }
+                fixed::requestSnap(direction);
+            }
         }
         // Deliberate F6 can return from its OWN first-person request; native POV never auto-restores.
         const bool lifecycleSafe = c.prerequisites && c.world && !c.special && !c.menu;
@@ -1535,6 +1614,7 @@ void messages(SKSE::MessagingInterface::Message* message) {
             lockHooksReady = false;
             if (!targetLockEnabled) ready = false;
         }
+        fixed::install(ready && provider,previousCameraCall != nullptr);
         if (const auto source = RE::ScriptEventSourceHolder::GetSingleton()) {
             source->AddEventSink<RE::TESLoadGameEvent>(&events);
             source->AddEventSink<RE::TESCellAttachDetachEvent>(&events);

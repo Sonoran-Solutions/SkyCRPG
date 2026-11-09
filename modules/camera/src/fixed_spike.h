@@ -1,0 +1,673 @@
+// Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
+#pragma once
+// Included by plugin.cpp after thin_occluder.h. P5.5-02 wave 1 disposable
+// spike adapter (DYL-217): nothing is allocated, installed or evaluated unless
+// [FixedCameraSpike] bEnabled=1. SmoothCam stays the only transform writer.
+#include "fixed_spike_policy.h"
+#include <memory>
+
+namespace skycrpg::camera::fixed {
+using RoomTest = bool(*)(RE::BSMultiBoundRoom*,const RE::NiPoint3&);
+// One code per refusal site, logged once: FixedCameraSpike refused code=FCS-NN.
+enum class Refusal : unsigned {
+    settings = 1, prerequisites = 2, service = 3,
+    casterModule = 10, casterAddress = 11, casterPrologue = 12, casterMemory = 13,
+    roomTable = 20, roomSlot = 21, roomPrologue = 22,
+    pickSlot = 30,
+    snapMapped = 40, snapUnbound = 41,
+    traceWriter = 50,
+    restoreConflict = 60, offMain = 61
+};
+struct Hidden {
+    RE::ObjectRefHandle handle;
+    RE::NiPointer<RE::NiAVObject> root;
+    Track track;
+    RE::FormID ref{},base{};
+    Reason reason{Reason::none};
+    bool used{};
+};
+struct Runtime {
+    Config config;
+    void (*logger)(const char*){};
+    RE::NiPoint3 (*goalNow)(){};
+    RE::NiPoint3 (*preCollisionNow)(){};
+    unsigned (*causeNow)(int){}; // Exit for an ineligible frame; -1 = the update hook did not run
+    std::atomic_bool active{};   // look/update hold and the all-state frame bracket are usable
+    std::atomic<std::uint64_t> refusals{};
+    bool castReady{},castChained{},roomHook{},pickChecked{},pickRefused{},traceReady{};
+    // Frame bracket: written by the update hook, read by the caster, main thread only.
+    bool frameEligible{},frameSeen{},frameSlide{};
+    State frameState{State::disabled};
+    unsigned silentFrames{};
+    std::uint64_t frame{};
+    double now{};
+    // Rig.
+    SnapTurn turn;
+    std::atomic_uint snapLeft{},snapRight{};
+    float lastTarget{};
+    unsigned suppressed{},wouldHit{},passed{},passedHit{};
+    RigWindow window;
+    Vec previousCamera{};          // rendered position of the last eligible frame
+    std::uint64_t previousFrame{};
+    bool previousEligible{};
+    thin::Caster caster{};
+    HMODULE smooth{};
+    // Rooms: the hook runs on culling threads and reads only these.
+    std::atomic<std::shared_ptr<const RoomView>> view;
+    std::atomic_bool roomActive{};
+    RoomCounters counters;
+    RoomTest originalRoom{};
+    // Hide.
+    std::array<Hidden,maxHidden> hidden;
+    unsigned tracked{};
+    HideBudget budget;
+    HideCounters totals;
+    CutPlane cut;
+    std::array<RE::FormID,32> skipLog{};
+    unsigned skipNext{};
+    float lastCut{},lastFeet{};
+    double nextScan{},nextSummary{};
+    // Lifecycle.
+    std::atomic_uint requests{};
+    RE::FormID cell{};
+    // Trace.
+    TraceWriter writer;
+    LineBudget rigLines{rigTraceLines},roomLines{roomTraceLines},hideLines{hideTraceLines};
+    double nextRig{},nextRoom{};
+};
+// Process lifetime, like the thin runtime: hidden roots and the trace worker
+// must never be torn down under the loader lock.
+inline Runtime* runtime = nullptr;
+inline bool engaged() { return runtime && runtime->active.load(std::memory_order_acquire); }
+inline void note(const char* text) {
+    char line[320]{};
+    std::snprintf(line,sizeof(line),"FixedCameraSpike %s",text);
+    runtime->logger(line);
+}
+inline void refuse(Refusal code,const char* text) {
+    const std::uint64_t bit = std::uint64_t{1} << static_cast<unsigned>(code);
+    if (runtime->refusals.fetch_or(bit,std::memory_order_acq_rel) & bit) return;
+    char line[320]{};
+    std::snprintf(line,sizeof(line),"FixedCameraSpike refused code=FCS-%02u %s",static_cast<unsigned>(code),text);
+    runtime->logger(line);
+}
+inline void emit(LineBudget& lines,const char* text) {
+    if (runtime->traceReady && lines.take()) static_cast<void>(runtime->writer.append(text));
+}
+// Any thread: only flags are posted; the main-thread frame bracket acts on them.
+inline void requestRestore(Exit cause) {
+    if (runtime) runtime->requests.fetch_or(exitBit(cause),std::memory_order_release);
+}
+inline void requestSnap(int direction) {
+    if (direction > 0) runtime->snapRight.fetch_add(1u,std::memory_order_relaxed);
+    else if (direction < 0) runtime->snapLeft.fetch_add(1u,std::memory_order_relaxed);
+}
+inline void dropSnaps() {
+    if (!runtime) return;
+    runtime->snapLeft.store(0u,std::memory_order_relaxed); runtime->snapRight.store(0u,std::memory_order_relaxed);
+}
+
+// ---- hide -------------------------------------------------------------------
+inline const char* modelOf(RE::TESBoundObject* base) {
+    const auto model = base ? base->As<RE::TESModel>() : nullptr;
+    const auto path = model ? model->GetModel() : nullptr;
+    return path ? path : "";
+}
+inline void traceHide(const char* event,const Hidden& slot,const char* cause,const char* model) {
+    if (!runtime->config.hideTrace) return;
+    char line[640]{};
+    std::snprintf(line,sizeof(line),"FixedHide t=%.3f frame=%llu event=%s ref=%08X base=%08X reason=%s cause=%s hidden=%u cutZ=%.2f feetZ=%.2f model=%.200s",
+        runtime->now,static_cast<unsigned long long>(runtime->frame),event,slot.ref,slot.base,reasonName(slot.reason),cause,
+        runtime->budget.hidden,static_cast<double>(runtime->lastCut),static_cast<double>(runtime->lastFeet),model);
+    emit(runtime->hideLines,line);
+}
+// Undo only our own write, on the node we wrote it to, then drop the slot.
+inline void release(Hidden& slot,Exit cause) {
+    if (slot.track.hidden) {
+        if (restoreWrite(slot.root->GetAppCulled(),false)) { slot.root->SetAppCulled(false); ++runtime->totals.restores; }
+        else {
+            ++runtime->totals.conflicts;
+            refuse(Refusal::restoreConflict,"a hidden root was already visible at restore; another writer cleared it, nothing rewritten");
+        }
+        runtime->budget.release();
+        ++runtime->totals.exits[static_cast<std::size_t>(cause)];
+        traceHide("restore",slot,exitNames[static_cast<std::size_t>(cause)],"");
+    }
+    slot = {};
+    if (runtime->tracked) --runtime->tracked;
+}
+inline void restoreAll(Exit cause) {
+    if (!runtime->tracked) return;
+    for (auto& slot : runtime->hidden) if (slot.used) release(slot,cause);
+}
+// Lifecycle events can arrive on any thread; restore at once when on Main.
+inline void lifecycle(Exit cause) {
+    if (!runtime) return;
+    requestRestore(cause);
+    runtime->roomActive.store(false,std::memory_order_release);
+    if (runtime->active.load(std::memory_order_acquire) && thin::onMain()) restoreAll(cause);
+}
+// Plain placed references only. Light references are left out on purpose: the
+// 3D of a light is the light itself, and hiding a ceiling must not put out the
+// lamps under it.
+inline Kind kindOf(const RE::TESObjectREFR* ref,const RE::TESBoundObject* base) {
+    if (!base || ref->GetFormType() != RE::FormType::Reference) return Kind::excluded;
+    switch (base->GetFormType()) {
+    case RE::FormType::Static:
+    case RE::FormType::MovableStatic:
+        return Kind::architecture;
+    case RE::FormType::Furniture:
+    case RE::FormType::Activator:
+    case RE::FormType::TalkingActivator:
+    case RE::FormType::Container:
+    case RE::FormType::Door:
+    case RE::FormType::Tree:
+    case RE::FormType::Flora:
+    case RE::FormType::Misc:
+    case RE::FormType::Weapon:
+    case RE::FormType::Armor:
+    case RE::FormType::Book:
+    case RE::FormType::Ingredient:
+    case RE::FormType::AlchemyItem:
+    case RE::FormType::Scroll:
+    case RE::FormType::Ammo:
+    case RE::FormType::KeyMaster:
+    case RE::FormType::SoulGem:
+        return Kind::object;
+    default:
+        return Kind::excluded;
+    }
+}
+inline Extent extentOf(const RE::NiAVObject* root,const RE::TESBoundObject* base,bool& sphere) {
+    const auto& bounds = base->boundData;
+    const auto& transform = root->world;
+    const auto& m = transform.rotate.entry;
+    Extent box = worldExtent(
+        {static_cast<float>(bounds.boundMin.x),static_cast<float>(bounds.boundMin.y),static_cast<float>(bounds.boundMin.z)},
+        {static_cast<float>(bounds.boundMax.x),static_cast<float>(bounds.boundMax.y),static_cast<float>(bounds.boundMax.z)},
+        {m[2][0],m[2][1],m[2][2]},transform.scale,transform.translate.z);
+    sphere = !box.valid;
+    if (sphere) box = sphereExtent(root->worldBound.center.z,root->worldBound.radius);
+    return box;
+}
+inline Hidden* findSlot(RE::FormID ref,const RE::NiAVObject* root) {
+    for (auto& slot : runtime->hidden) if (slot.used && slot.ref == ref && slot.root.get() == root) return &slot;
+    return nullptr;
+}
+inline Hidden* claimSlot(RE::TESObjectREFR* ref,RE::NiAVObject* root,const RE::TESBoundObject* base) {
+    if (runtime->tracked >= runtime->config.hideTotal) { ++runtime->budget.totalCap; return nullptr; }
+    for (auto& slot : runtime->hidden) if (!slot.used) {
+        slot.used = true; slot.handle = ref->GetHandle(); slot.root.reset(root);
+        slot.ref = ref->GetFormID(); slot.base = base->GetFormID();
+        ++runtime->tracked;
+        return &slot;
+    }
+    return nullptr;
+}
+inline void noteSkip(const RE::TESObjectREFR* ref,RE::TESBoundObject* base,Skip skip,const Extent& box) {
+    ++runtime->totals.skips[static_cast<std::size_t>(skip)];
+    if (!runtime->config.hideTrace) return;
+    const auto id = ref->GetFormID();
+    for (const auto logged : runtime->skipLog) if (logged == id) return;
+    runtime->skipLog[runtime->skipNext] = id;
+    runtime->skipNext = (runtime->skipNext+1u)%static_cast<unsigned>(runtime->skipLog.size());
+    char line[640]{};
+    std::snprintf(line,sizeof(line),"FixedHide t=%.3f frame=%llu event=skip ref=%08X base=%08X reason=on-ray cause=%s minZ=%.2f maxZ=%.2f spanX=%.2f spanY=%.2f cutZ=%.2f feetZ=%.2f model=%.200s",
+        runtime->now,static_cast<unsigned long long>(runtime->frame),id,base->GetFormID(),skipName(skip),
+        static_cast<double>(box.minZ),static_cast<double>(box.maxZ),static_cast<double>(box.spanX),static_cast<double>(box.spanY),
+        static_cast<double>(runtime->lastCut),static_cast<double>(runtime->lastFeet),modelOf(base));
+    emit(runtime->hideLines,line);
+}
+template<std::size_t Size>
+bool listed(const std::array<const RE::TESObjectREFR*,Size>& refs,unsigned count,const RE::TESObjectREFR* ref) {
+    for (unsigned i = 0;i < count;++i) if (refs[i] == ref) return true;
+    return false;
+}
+// Sightline rays (camera to player, marching past each hit) and floor probes.
+// Reference pointers are compared, never dereferenced, by the scan that follows.
+inline void castRays(RE::PlayerCharacter* player,RE::TESObjectCELL* parent,Vec feet,Vec eye,
+    std::array<const RE::TESObjectREFR*,maxRayHits>& rayRefs,unsigned& rayCount,
+    std::array<const RE::TESObjectREFR*,maxFloorProbes>& floorRefs,unsigned& floorCount) {
+    auto& r = *runtime;
+    if (r.pickRefused) return;
+    const auto world = parent->GetbhkWorld();
+    const auto controller = player->GetCharController();
+    const float scale = RE::bhkWorld::GetWorldScale();
+    if (!world || !controller || !std::isfinite(scale) || scale <= 0) return;
+    if (!r.pickChecked) {
+        // CommonLib slot 0x33 is checked against the audited PickObject once.
+        const auto slots = *reinterpret_cast<const std::uintptr_t* const*>(world);
+        if (slots[0x33] != REL::Module::get().base()+0x104be80) {
+            r.pickRefused = true;
+            refuse(Refusal::pickSlot,"bhkWorld slot 0x33 is not the audited PickObject; on-ray hide and floor protection disabled, above-cut only");
+            return;
+        }
+        r.pickChecked = true;
+    }
+    RE::CFilter filter{};
+    controller->GetCollisionFilterInfo(filter);
+    const std::uint32_t layer = (filter.filter & 0xffff0000u) | static_cast<std::uint32_t>(RE::COL_LAYER::kLOS);
+    RE::BSReadLockGuard lock(world->worldLock);
+    const auto pick = [&](Vec from,Vec to,float& fraction,bool& hit) -> const RE::TESObjectREFR* {
+        RE::bhkPickData ray{};
+        ray.rayInput.from = RE::hkVector4(from.x*scale,from.y*scale,from.z*scale,0.0f);
+        ray.rayInput.to = RE::hkVector4(to.x*scale,to.y*scale,to.z*scale,0.0f);
+        ray.rayInput.filterInfo.filter = layer;
+        ray.rayInput.enableShapeCollectionFilter = false;
+        ray.rayOutput.Reset();
+        ++r.totals.rays;
+        world->PickObject(ray);
+        if (ray.pickFailed) ++r.totals.rayFailed;
+        hit = !ray.pickFailed && ray.rayOutput.rootCollidable != nullptr;
+        if (!hit) return nullptr;
+        fraction = ray.rayOutput.hitFraction;
+        ++r.totals.rayHits;
+        return RE::TESHavokUtilities::FindCollidableRef(*ray.rayOutput.rootCollidable);
+    };
+    for (const auto target : rayTargets(feet)) {
+        Vec from = eye;
+        for (unsigned segment = 0;segment < maxRaySegments;++segment) {
+            float fraction = 1.0f; bool hit = false;
+            const auto ref = pick(from,target,fraction,hit);
+            if (!hit) break;
+            if (ref && !listed(rayRefs,rayCount,ref)) {
+                if (rayCount == maxRayHits) { ++r.totals.rayCap; break; }
+                rayRefs[rayCount++] = ref;
+            }
+            const auto next = rayContinue(from,target,fraction);
+            if (!next) break;
+            from = *next;
+        }
+    }
+    for (const auto probe : floorProbes(feet)) {
+        float fraction = 1.0f; bool hit = false;
+        const auto ref = pick({probe.x,probe.y,probe.z+48.0f},{probe.x,probe.y,probe.z-160.0f},fraction,hit);
+        if (ref && !listed(floorRefs,floorCount,ref)) floorRefs[floorCount++] = ref;
+    }
+}
+inline void traceSummary() {
+    auto& r = *runtime;
+    if (!r.config.hideTrace || r.now < r.nextSummary) return;
+    r.nextSummary = r.now+1.0;
+    const auto& t = r.totals;
+    char line[768]{};
+    std::snprintf(line,sizeof(line),
+        "FixedHide t=%.3f frame=%llu event=summary hidden=%u tracked=%u scans=%llu visited=%llu rays=%llu rayHits=%llu hides=%llu restores=%llu "
+        "frameCap=%u totalCap=%u visitCap=%llu rayCap=%llu rayFailed=%llu skipNoBounds=%llu skipFloorContact=%llu skipFloorSpan=%llu conflicts=%llu foreign=%llu "
+        "cutZ=%.2f feetZ=%.2f exitDisable=%llu exitF8=%llu exitFirstPerson=%llu exitMenu=%llu exitLoad=%llu exitCell=%llu exitUnload=%llu "
+        "exitDeath=%llu exitSpecial=%llu exitHookSilent=%llu exitExpired=%llu sample=cumulative",
+        r.now,static_cast<unsigned long long>(r.frame),r.budget.hidden,r.tracked,t.scans,t.visited,t.rays,t.rayHits,t.hides,t.restores,
+        r.budget.frameCap,r.budget.totalCap,t.visitCap,t.rayCap,t.rayFailed,t.skips[static_cast<std::size_t>(Skip::noBounds)],
+        t.skips[static_cast<std::size_t>(Skip::floorContact)],t.skips[static_cast<std::size_t>(Skip::floorSpan)],t.conflicts,t.foreign,
+        static_cast<double>(r.lastCut),static_cast<double>(r.lastFeet),t.exits[0],t.exits[1],t.exits[2],t.exits[3],t.exits[4],t.exits[5],
+        t.exits[6],t.exits[7],t.exits[8],t.exits[9],t.exits[10]);
+    emit(r.hideLines,line);
+}
+inline void scanHide(RE::PlayerCharacter* player,RE::TESObjectCELL* parent) {
+    auto& r = *runtime;
+    if (r.now < r.nextScan) return;
+    r.nextScan = r.now+hideScanSeconds;
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    if (!camera || !camera->cameraRoot) return;
+    const auto feetPoint = player->GetPosition();
+    const auto eyePoint = camera->cameraRoot->world.translate;
+    const Vec feet{feetPoint.x,feetPoint.y,feetPoint.z},eye{eyePoint.x,eyePoint.y,eyePoint.z};
+    if (!finite(feet) || !finite(eye)) return;
+    r.budget.frame();
+    ++r.totals.scans;
+    const float cutZ = r.cut.update(feet.z,r.now)+r.config.cutHeight;
+    r.lastCut = cutZ; r.lastFeet = feet.z;
+    std::array<const RE::TESObjectREFR*,maxRayHits> rayRefs{};
+    std::array<const RE::TESObjectREFR*,maxFloorProbes> floorRefs{};
+    unsigned rayCount{},floorCount{},visited{};
+    castRays(player,parent,feet,eye,rayRefs,rayCount,floorRefs,floorCount);
+    parent->ForEachReference([&](RE::TESObjectREFR* ref) {
+        if (++visited > maxVisited) { ++r.totals.visitCap; return RE::BSContainer::ForEachResult::kStop; }
+        const auto root = ref->Get3D();
+        const auto base = ref->GetBaseObject();
+        if (!root || ref == player) return RE::BSContainer::ForEachResult::kContinue;
+        const Kind kind = kindOf(ref,base);
+        if (kind == Kind::excluded) return RE::BSContainer::ForEachResult::kContinue;
+        bool sphere = false;
+        const Extent box = extentOf(root,base,sphere);
+        const bool onRay = listed(rayRefs,rayCount,ref),onFloor = listed(floorRefs,floorCount,ref);
+        // The looser exit threshold first; most references fail it without a table lookup.
+        Verdict verdict = classify(kind,box,sphere,onRay,onFloor,cutZ,feet.z,true);
+        Hidden* slot = verdict.reason != Reason::none ? findSlot(ref->GetFormID(),root) : nullptr;
+        if (verdict.reason != Reason::none && (!slot || !slot->track.hidden)) verdict = classify(kind,box,sphere,onRay,onFloor,cutZ,feet.z,false);
+        if (verdict.reason == Reason::none) {
+            if (verdict.skip != Skip::none) noteSkip(ref,base,verdict.skip,box);
+            return RE::BSContainer::ForEachResult::kContinue;
+        }
+        if (!slot) slot = claimSlot(ref,root,base);
+        if (slot) { slot->reason = verdict.reason; slot->track.seen(r.now); }
+        return RE::BSContainer::ForEachResult::kContinue;
+    });
+    r.totals.visited += visited;
+    for (auto& slot : r.hidden) {
+        if (!slot.used) continue;
+        const auto live = slot.handle.get();
+        if (!live || live->Get3D() != slot.root.get()) { release(slot,Exit::unload); continue; }
+        if (slot.track.shouldHide(r.now)) {
+            // A root that is already hidden belongs to the engine or another mod.
+            if (slot.root->GetAppCulled()) { ++r.totals.foreign; release(slot,Exit::expired); continue; }
+            if (!r.budget.take()) continue;
+            slot.root->SetAppCulled(true);
+            slot.track.hidden = true;
+            ++r.totals.hides;
+            traceHide("hide",slot,"-",modelOf(live->GetBaseObject()));
+        } else if (slot.track.shouldRestore(r.now) || slot.track.expired(r.now)) release(slot,Exit::expired);
+    }
+}
+
+// ---- rooms ------------------------------------------------------------------
+inline bool hookRoom(RE::BSMultiBoundRoom* room,const RE::NiPoint3& point) {
+    auto& r = *runtime;
+    const bool vanilla = r.originalRoom(room,point);
+    r.counters.calls.fetch_add(1ull,std::memory_order_relaxed);
+    if (!r.roomActive.load(std::memory_order_acquire)) return vanilla;
+    const auto view = r.view.load(std::memory_order_acquire);
+    const Vec asked{point.x,point.y,point.z};
+    if (!view || !viewerQuery(*view,asked)) return vanilla;
+    r.counters.viewerCalls.fetch_add(1ull,std::memory_order_relaxed);
+    if (vanilla) { r.counters.vanillaTrue.fetch_add(1ull,std::memory_order_relaxed); return true; }
+    const auto& bound = room->worldBound;
+    const bool claim = seedClaim(*view,asked,{bound.center.x,bound.center.y,bound.center.z},bound.radius,[&](Vec other) {
+        const RE::NiPoint3 native{other.x,other.y,other.z};
+        return r.originalRoom(room,native);
+    });
+    if (claim) r.counters.claims.fetch_add(1ull,std::memory_order_relaxed);
+    return claim;
+}
+inline bool within(RE::BSMultiBoundRoom* room,Vec point) {
+    const RE::NiPoint3 native{point.x,point.y,point.z};
+    // Always the vanilla answer: the trace must not read our own claims back.
+    return runtime->originalRoom ? runtime->originalRoom(room,native) : room->QPointWithin(native);
+}
+inline void publishView(Vec viewer,Vec eye) {
+    auto& r = *runtime;
+    if (!r.roomHook || !r.config.roomSeedMode || !finite(viewer) || !finite(eye)) {
+        r.roomActive.store(false,std::memory_order_release); return;
+    }
+    auto next = std::make_shared<RoomView>();
+    next->mode = r.config.roomSeedMode; next->viewer = viewer; next->eye = eye;
+    next->radius = r.config.roomSeedRadius; next->tolerance = viewerTolerance;
+    r.view.store(std::shared_ptr<const RoomView>(std::move(next)),std::memory_order_release);
+    r.roomActive.store(true,std::memory_order_release);
+}
+inline void traceRoom(RE::TESObjectCELL* parent,Vec viewer,Vec eye) {
+    auto& r = *runtime;
+    if (!r.config.roomTrace || r.now < r.nextRoom) return;
+    r.nextRoom = r.now+.1;
+    RoomSample s;
+    s.seconds = r.now; s.frame = r.frame; s.mode = r.config.roomSeedMode; s.hook = r.roomHook;
+    s.active = r.roomActive.load(std::memory_order_acquire);
+    s.cell = parent ? parent->GetFormID() : 0u;
+    const auto loaded = parent ? parent->GetRuntimeData().loadedData : nullptr;
+    const auto graph = loaded ? loaded->portalGraph.get() : nullptr;
+    s.graph = graph != nullptr;
+    if (graph) {
+        s.rooms = graph->rooms.size();
+        unsigned index{};
+        for (const auto& room : graph->rooms) {
+            if (index == maxRooms) { s.capped = true; break; }
+            if (room) {
+                if (within(room.get(),eye)) { ++s.eyeRooms; if (s.playerRoom < 0) s.playerRoom = static_cast<int>(index); }
+                if (within(room.get(),viewer)) { ++s.cameraRooms; if (s.cameraRoom < 0) s.cameraRoom = static_cast<int>(index); }
+            }
+            ++index;
+        }
+    }
+    s.calls = r.counters.calls.exchange(0ull,std::memory_order_relaxed);
+    s.viewerCalls = r.counters.viewerCalls.exchange(0ull,std::memory_order_relaxed);
+    s.vanillaTrue = r.counters.vanillaTrue.exchange(0ull,std::memory_order_relaxed);
+    s.claims = r.counters.claims.exchange(0ull,std::memory_order_relaxed);
+    char line[640]{};
+    if (formatRoom(line,sizeof(line),s)) emit(r.roomLines,line);
+}
+
+// ---- rig --------------------------------------------------------------------
+// Main thread, eligible look call: consume snap presses, return the yaw request.
+inline float yawInput(bool slide,float rawX,float playerHeading,float freeRotationX,float gain,float dt,bool home) {
+    auto& r = *runtime;
+    const double t = thin::seconds();
+    if (home) r.turn.home(r.config.heading,t,r.config.snapSeconds);
+    for (unsigned presses = (std::min)(r.snapRight.exchange(0u,std::memory_order_relaxed),4u);presses;--presses)
+        r.turn.snap(1,r.config.heading,t,r.config.snapSeconds);
+    for (unsigned presses = (std::min)(r.snapLeft.exchange(0u,std::memory_order_relaxed),4u);presses;--presses)
+        r.turn.snap(-1,r.config.heading,t,r.config.snapSeconds);
+    r.lastTarget = r.turn.target(r.config.heading,t,r.config.snapSeconds);
+    return rigYawInput(slide,rawX,holdYawInput(r.lastTarget,playerHeading,freeRotationX,gain,dt));
+}
+// SmoothCam cast on the main thread. True = report "no hit": the caller returns
+// false and leaves end/result/character exactly as SmoothCam passed them.
+inline bool suppressCast(void* physics,RE::bhkWorld* world,float* start,float* end,float hull) {
+    auto& r = *runtime;
+    if (castDecision(r.castReady,r.frameEligible,true,true) != Cast::suppress) { ++r.passed; return false; }
+    ++r.suppressed;
+    if (r.config.castProbe) {
+        // The native sweep still runs on private copies, as on the branch base;
+        // its answer is only counted.
+        alignas(16) std::array<float,4> from{},to{};
+        std::memcpy(from.data(),start,16); std::memcpy(to.data(),end,16);
+        RE::hkpRootCdPoint ignored{}; RE::TESObjectREFR* actor{};
+        if (r.caster(physics,world,from.data(),to.data(),&ignored,&actor,hull)) ++r.wouldHit;
+    }
+    return true;
+}
+// Own detour, used only when the thin-occluder detour is not installed.
+inline bool hookCaster(void* physics,RE::bhkWorld* world,float* start,float* end,
+    RE::hkpRootCdPoint* result,RE::TESObjectREFR** character,float hull) {
+    const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    auto& r = *runtime;
+    if (!thin::onMain() || !world || !start || !end || !result || !character)
+        return r.caster(physics,world,start,end,result,character,hull);
+    MEMORY_BASIC_INFORMATION memory{};
+    if (!VirtualQuery(reinterpret_cast<const void*>(caller),&memory,sizeof(memory)) || memory.AllocationBase != r.smooth)
+        return r.caster(physics,world,start,end,result,character,hull);
+    if (suppressCast(physics,world,start,end,hull)) return false;
+    const bool hit = r.caster(physics,world,start,end,result,character,hull);
+    if (hit) ++r.passedHit;
+    return hit;
+}
+// Every eligible frame while the rig trace is on: pull-in for the previous
+// frame (see pullInPair) and this frame's rendered heading against its target.
+inline void measureRig(const RE::NiTransform& rendered) {
+    auto& r = *runtime;
+    if (pullInPair(r.previousEligible,r.previousFrame,r.frame)) {
+        const auto before = r.preCollisionNow();
+        r.window.pull(span(r.previousCamera,{before.x,before.y,before.z}));
+    }
+    r.window.heading(headingError(degrees(std::atan2(rendered.rotate.entry[0][1],rendered.rotate.entry[1][1])),degrees(r.lastTarget)));
+}
+inline void traceRig(bool eligible) {
+    auto& r = *runtime;
+    if (!r.config.rigTrace || r.now < r.nextRig) return;
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    if (!player || !player->GetParentCell() || !player->Is3DLoaded() || !camera || !camera->cameraRoot || !camera->currentState) return;
+    r.nextRig = r.now+.1;
+    RigSample s;
+    s.seconds = r.now; s.frame = r.frame; s.eligible = eligible; s.slide = r.frameSlide;
+    s.state = r.frameSeen ? static_cast<unsigned>(r.frameState) : 255u;
+    s.index = r.turn.index; s.turning = r.turn.turning;
+    const auto& rendered = camera->cameraRoot->world;
+    const auto position = player->GetPosition();
+    s.camera = {rendered.translate.x,rendered.translate.y,rendered.translate.z};
+    s.player = {position.x,position.y,position.z};
+    // The provider is asked only in frames it is known to own; otherwise the
+    // pre-collision fields read nan and pair=0.
+    constexpr float unavailable = std::numeric_limits<float>::quiet_NaN();
+    s.previousCamera = s.preCollision = s.goal = {unavailable,unavailable,unavailable};
+    if (eligible) {
+        const auto before = r.preCollisionNow();
+        const auto goal = r.goalNow();
+        s.preCollision = {before.x,before.y,before.z};
+        s.goal = {goal.x,goal.y,goal.z};
+        s.pair = pullInPair(r.previousEligible,r.previousFrame,r.frame);
+        if (s.pair) s.previousCamera = r.previousCamera;
+    }
+    const Vec forward{rendered.rotate.entry[0][1],rendered.rotate.entry[1][1],rendered.rotate.entry[2][1]};
+    s.heading = degrees(std::atan2(forward.x,forward.y));
+    s.pitch = degrees(std::atan2(-forward.z,std::hypot(forward.x,forward.y)));
+    s.target = degrees(r.lastTarget);
+    s.heldZoom = r.config.zoom;
+    s.zoom = camera->currentState->id == RE::CameraState::kThirdPerson ?
+        static_cast<RE::ThirdPersonState*>(camera->currentState.get())->targetZoomOffset : std::numeric_limits<float>::quiet_NaN();
+    s.suppressed = r.suppressed; s.wouldHit = r.wouldHit; s.passed = r.passed; s.passedHit = r.passedHit;
+    s.window = r.window;
+    r.suppressed = r.wouldHit = r.passed = r.passedHit = 0;
+    r.window = {};
+    char line[768]{};
+    if (formatRig(line,sizeof(line),s)) emit(r.rigLines,line);
+}
+
+// ---- frame bracket ----------------------------------------------------------
+// serviceCameraCall, before the camera update: nothing is eligible until this
+// frame's ThirdPersonState update says so.
+inline void beginFrame() {
+    auto& r = *runtime;
+    if (!r.active.load(std::memory_order_acquire) || !thin::onMain()) return;
+    r.frameEligible = r.frameSeen = false;
+    ++r.frame;
+}
+// ThirdPersonState update hook entry: a second, unbracketed camera update
+// (callers 746A79 and 9969F5) starts from "not eligible" too.
+inline void clearFrame() {
+    if (runtime->active.load(std::memory_order_acquire)) runtime->frameEligible = false;
+}
+// Update hook, after the native update and the policy context for this frame.
+inline void observeFrame(State state,bool slide) {
+    auto& r = *runtime;
+    if (!r.active.load(std::memory_order_acquire) || !thin::onMain()) return;
+    r.frameSeen = true; r.frameState = state; r.frameSlide = slide;
+}
+// Update hook, on the path that writes requested zoom: SmoothCam's casts for
+// this frame follow, so this is where suppression is switched on.
+inline bool holdFrame() {
+    auto& r = *runtime;
+    if (!r.frameSeen || !thin::onMain()) return false;
+    r.frameEligible = rigEligible(r.active.load(std::memory_order_acquire),r.frameState);
+    return r.frameEligible;
+}
+// serviceCameraCall, after the camera update (SmoothCam has written the frame).
+inline void endFrame() {
+    auto& r = *runtime;
+    if (!r.active.load(std::memory_order_acquire)) return;
+    if (!thin::onMain()) { refuse(Refusal::offMain,"camera frame service ran off the main thread; that frame was ignored"); return; }
+    r.now = thin::seconds();
+    const bool eligible = r.frameEligible;
+    r.frameEligible = false; // a cast outside the bracket is always native
+    if (const unsigned requests = r.requests.exchange(0u,std::memory_order_acq_rel)) restoreAll(firstExit(requests));
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    const auto parent = player ? player->GetParentCell() : nullptr;
+    const RE::FormID cellId = parent ? parent->GetFormID() : 0u;
+    if (cellId != r.cell) { restoreAll(Exit::cell); r.cell = cellId; r.cut.reset(); }
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    if (!eligible || !player || !parent || !camera || !camera->cameraRoot) {
+        const Exit cause = static_cast<Exit>(r.causeNow(r.frameSeen ? static_cast<int>(r.frameState) : -1));
+        r.silentFrames = cause == Exit::hookSilent ? r.silentFrames+1u : 0u;
+        r.roomActive.store(false,std::memory_order_release);
+        dropSnaps();
+        if (restoreNow(cause,r.silentFrames)) restoreAll(cause);
+        traceRig(false);
+        r.previousEligible = false;
+        return;
+    }
+    r.silentFrames = 0;
+    const auto rendered = camera->cameraRoot->world.translate;
+    const auto position = player->GetPosition();
+    const Vec viewer{rendered.x,rendered.y,rendered.z},eye{position.x,position.y,position.z+eyeLift};
+    publishView(viewer,eye);
+    if (r.config.seeThroughMode == 1) { scanHide(player,parent); traceSummary(); }
+    if (r.config.rigTrace) measureRig(camera->cameraRoot->world);
+    traceRig(true);
+    r.previousCamera = viewer; r.previousFrame = r.frame; r.previousEligible = true;
+    traceRoom(parent,viewer,eye);
+}
+
+// ---- install ----------------------------------------------------------------
+inline void installCaster(std::uintptr_t base) {
+    auto& r = *runtime;
+    constexpr std::array<std::uint8_t,14> prologue{0x48,0x8b,0xc4,0x4c,0x89,0x48,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55};
+    r.smooth = GetModuleHandleW(L"SmoothCam.dll");
+    if (!r.smooth) { refuse(Refusal::casterModule,"SmoothCam.dll not loaded; casts stay native (pull-in retained)"); return; }
+    if (thin::runtime && thin::runtime->installed) {
+        // One detour on ID 33007: the thin hook already owns it and asks us first.
+        r.caster = thin::runtime->caster;
+        thin::runtime->spikeCast = suppressCast;
+        r.castChained = r.castReady = true;
+        return;
+    }
+    const auto target = REL::ID(33007).address();
+    if (target != base+0x5574f0) { refuse(Refusal::casterAddress,"ID 33007 is not RVA 5574F0; casts stay native (pull-in retained)"); return; }
+    if (std::memcmp(reinterpret_cast<const void*>(target),prologue.data(),prologue.size()) != 0) {
+        refuse(Refusal::casterPrologue,"caster prologue differs (another patch owns it); casts stay native (pull-in retained)"); return;
+    }
+    // 14 bytes of whole instructions with no RIP-relative operand, then an
+    // absolute jump back: the gateway needs no trampoline and is never freed.
+    const auto gateway = static_cast<std::uint8_t*>(VirtualAlloc(nullptr,64,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE));
+    if (!gateway) { refuse(Refusal::casterMemory,"gateway allocation failed; casts stay native (pull-in retained)"); return; }
+    std::memcpy(gateway,prologue.data(),prologue.size());
+    const auto back = thin::jump(target+prologue.size());
+    std::memcpy(gateway+prologue.size(),back.data(),back.size());
+    FlushInstructionCache(GetCurrentProcess(),gateway,prologue.size()+back.size());
+    r.caster = reinterpret_cast<thin::Caster>(gateway);
+    const auto detour = thin::jump(reinterpret_cast<std::uintptr_t>(&hookCaster));
+    REL::safe_write(target,detour.data(),detour.size());
+    FlushInstructionCache(GetCurrentProcess(),reinterpret_cast<void*>(target),detour.size());
+    r.castReady = true;
+}
+inline void installRoomHook(std::uintptr_t base) {
+    auto& r = *runtime;
+    constexpr std::array<std::uint8_t,16> prologue{0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0x48,0x8b,0xfa};
+    REL::Relocation<std::uintptr_t> table{RE::VTABLE_BSMultiBoundRoom[0]};
+    const auto slots = reinterpret_cast<const std::uintptr_t*>(table.address());
+    if (table.address() != base+0x1a69ac8) { refuse(Refusal::roomTable,"BSMultiBoundRoom vtable is not RVA 1A69AC8; room seeding off, vanilla culling"); return; }
+    if (slots[0x3f] != base+0xfce0c0) { refuse(Refusal::roomSlot,"vtable slot 0x3F is not RVA FCE0C0 (already hooked or wrong build); room seeding off, vanilla culling"); return; }
+    if (std::memcmp(reinterpret_cast<const void*>(slots[0x3f]),prologue.data(),prologue.size()) != 0) {
+        refuse(Refusal::roomPrologue,"QPointWithin prologue differs; room seeding off, vanilla culling"); return;
+    }
+    // Published before the slot changes: a culling thread may enter at once.
+    r.originalRoom = reinterpret_cast<RoomTest>(slots[0x3f]);
+    static_cast<void>(table.write_vfunc(0x3f,hookRoom));
+    r.roomHook = true;
+}
+// kDataLoaded, after the look/update hooks and the all-state camera service.
+inline void install(bool prerequisites,bool service) {
+    if (!runtime) return;
+    auto& r = *runtime;
+    if (!prerequisites) { refuse(Refusal::prerequisites,"hash, provider or camera hook prerequisites not ready; spike inert, native behaviour"); return; }
+    if (!service) { refuse(Refusal::service,"all-state camera service not installed; spike inert, native behaviour"); return; }
+    const auto base = REL::Module::get().base();
+    installCaster(base);
+    if (r.config.roomSeedMode) installRoomHook(base);
+    r.active.store(true,std::memory_order_release);
+    char line[256]{};
+    std::snprintf(line,sizeof(line),"installed rig=1 caster=%s rooms=%s seeThrough=%u heading=%.3f zoom=%.3f snapKeys=%d,%d traces=%u,%u,%u",
+        !r.castReady ? "native" : r.castChained ? "thin-chain" : "own-detour",
+        !r.config.roomSeedMode ? "vanilla" : r.roomHook ? "hooked" : "refused",r.config.seeThroughMode,
+        static_cast<double>(r.config.heading),static_cast<double>(r.config.zoom),r.config.snapLeftKey,r.config.snapRightKey,
+        static_cast<unsigned>(r.config.rigTrace),static_cast<unsigned>(r.config.roomTrace),static_cast<unsigned>(r.config.hideTrace));
+    note(line);
+}
+// loadSettings, only when [FixedCameraSpike] bEnabled=1.
+inline void configure(const Config& requested,const Settings& base,int cursorKey,const std::filesystem::path& tracePath,
+    void (*logger)(const char*),RE::NiPoint3 (*goalNow)(),RE::NiPoint3 (*preCollisionNow)(),unsigned (*causeNow)(int)) {
+    runtime = new Runtime;
+    auto& r = *runtime;
+    r.logger = logger; r.goalNow = goalNow; r.preCollisionNow = preCollisionNow; r.causeNow = causeNow;
+    bool adjusted = false;
+    r.config = validate(requested,base,cursorKey,&adjusted);
+    r.budget.perFrame = r.config.hidePerFrame; r.budget.total = r.config.hideTotal;
+    if (adjusted) refuse(Refusal::settings,"one or more [FixedCameraSpike] values were out of range or reserved; safe values applied");
+    if (r.config.snapLeftKey < 0 || r.config.snapRightKey < 0) refuse(Refusal::snapUnbound,"a snap key is unbound or reserved; that turn direction is unavailable");
+    if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace) {
+        const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines : 0u)+
+            (r.config.hideTrace ? hideTraceLines : 0u);
+        r.traceReady = r.writer.start(tracePath,rows);
+        if (!r.traceReady) refuse(Refusal::traceWriter,"trace writer did not start; traces off, behaviour unchanged");
+    }
+    note("enabled: disposable P5.5-02 wave 1 spike; hooks pending data load");
+}
+} // namespace skycrpg::camera::fixed

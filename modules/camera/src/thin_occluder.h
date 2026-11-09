@@ -71,6 +71,8 @@ struct Runtime {
     Caster caster{};
     CameraUpdate update{};
     HMODULE smooth{};
+    // P5.5-02 spike only; null unless [FixedCameraSpike] chains through this detour.
+    bool (*spikeCast)(void*,RE::bhkWorld*,float*,float*,float){};
 };
 // Retain the bounded private allocations through process exit: renderer consumers
 // may outlive swap-back. Recycle idle slots only for the exact same source
@@ -623,6 +625,8 @@ inline bool hookCaster(void* physics,RE::bhkWorld* world,float* start,float* end
     const Point startPoint{start[0],start[1],start[2]}, goalPoint{end[0],end[1],end[2]};
     const bool nonzero = finite(startPoint) && finite(goalPoint) && distance(startPoint,goalPoint) > .001f;
     if (nonzero && hull == 15) { runtime->castOrigin = startPoint; runtime->haveOrigin = true; }
+    // Fixed-rig spike: every SmoothCam cast reports "no hit"; outputs stay as passed in.
+    if (runtime->spikeCast && runtime->spikeCast(physics,world,start,end,hull)) return false;
     if (!runtime->allowed || !safeNow()) {
         // Ineligible states pass straight through. Empty probes never engage
         // compression; eligible obstruction frames use the filtered path below.

@@ -89,3 +89,105 @@ trace = body("void tracePrecision(PrecisionTraceEvent event, PrecisionTraceState
 assert trace.index("if (!precisionTraceEnabled || !precisionTraceBudget.take()) return;") < trace.index("char line[")
 assert trace.index("precisionTraceBudget.take()") < trace.index("formatPrecisionTrace(") < trace.index("log(line)")
 print("PASS claim trace wiring: unique Main success emission after setter/read locks; stored input; inherited UI-lock guard; debug/budget before formatting and IO")
+
+# P5.5-02 disposable spike (DYL-217). With [FixedCameraSpike] off there is no
+# runtime object, so every entry point below must be unreachable or a no-op;
+# with it on, the frame bracket, hold and suppression must be wired in order.
+import re
+
+spike = (Path(__file__).resolve().parents[1] / "src/fixed_spike.h").read_text()
+thin = (Path(__file__).resolve().parents[1] / "src/thin_occluder.h").read_text()
+
+
+def spike_body(start, end):
+    return spike[spike.index(start):spike.index(end, spike.index(start))]
+
+
+assert spike.count("runtime = new Runtime;") == 1 and "runtime = new Runtime;" in spike_body("inline void configure(", "} // namespace")
+loader = body("void loadSettings() {", "void requestPreferences() {")
+gate = loader[loader.index('if (flag("FixedCameraSpike","bEnabled",0)) {'):loader.index("if (badSettings) log(")]
+assert source.count("fixed::configure(") == 1 and "fixed::configure(" in gate
+assert source.count('"FixedCameraSpike"') == loader.count('"FixedCameraSpike"') == gate.count('"FixedCameraSpike"')
+# Null-safe entry points used without a guard at the call site.
+for helper in ("inline bool engaged() { return runtime && ",
+               "inline void requestRestore(Exit cause) {\n    if (runtime) ",
+               "inline void dropSnaps() {\n    if (!runtime) return;",
+               "inline void lifecycle(Exit cause) {\n    if (!runtime) return;",
+               "inline void install(bool prerequisites,bool service) {\n    if (!runtime) return;"):
+    assert helper in spike, helper
+unguarded = ("fixed::engaged()", "fixed::dropSnaps()", "fixed::lifecycle(", "fixed::install(", "fixed::Exit::", "fixed::Config f;",
+             "fixed::configure(", "fixed::runtime")
+guarded_blocks = (body("    if (rig) {", "    previousLook(state,filtered);"),
+                  body("        if (fixed::engaged()) {", "        // Deliberate F6 can return from its OWN first-person request"))
+for line in source.splitlines():
+    if "fixed::" in line and not any(token in line for token in unguarded):
+        assert any(line in block for block in guarded_blocks), line
+assert callback.index("if (fixed::runtime) fixed::beginFrame();") < callback.index("previousCameraCall(camera);") < \
+    callback.index("if (fixed::runtime) fixed::endFrame();")
+update_hook = body("void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>& next) {", "void pollLockInput(")
+assert update_hook.index("if (fixed::runtime) fixed::clearFrame();") < update_hook.index("previousUpdate(state,next);") < \
+    update_hook.index("if (fixed::runtime) fixed::observeFrame(select(c),c.slide);") < \
+    update_hook.index("resetObstruction(); return;") < update_hook.index("if (fixed::runtime && fixed::holdFrame()) {") < \
+    update_hook.index("settings.zoom = preferredZoomRequest(")
+assert update_hook.count("previousUpdate(state,next);") == 1
+hold = update_hook[update_hook.index("if (fixed::runtime && fixed::holdFrame()) {"):update_hook.index("// Native controller POV-slide zoom")]
+assert "settings.zoom" not in hold and "applyZoom" not in hold and "return;" in hold
+look_hook = body("void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {", "void traceLockFrame(Context c);")
+assert look_hook.count("previousLook(") == 5  # one native call on every path, as on the branch base
+assert "const bool rig = fixed::engaged() && fixed::rigEligible(true,select(c));" in look_hook
+assert "if (pauseCorrection(c) && !rig) { previousLook(state,input); return; }" in look_hook
+assert look_hook.index("if (rig) {") < look_hook.index("} else if (recenter) {") < look_hook.index("previousLook(state,filtered);")
+assert "freeRotation.x =" not in look_hook and "freeRotation.x =" not in spike  # input requests only, no direct write
+sample = body("void sampleObstruction(RE::ThirdPersonState* state) {", "void look(")
+assert sample.index("if (!fixed::obstructionSampled(fixed::engaged())) { resetObstruction(); return; }") < sample.index("auto c = context();")
+startup_spike = body("        if (!installLockCameraService()) {", "        if (const auto source = RE::ScriptEventSourceHolder")
+assert "fixed::install(ready && provider,previousCameraCall != nullptr);" in startup_spike
+assert "fixed::lifecycle(std::strstr(event,\"load\") ? fixed::Exit::load : fixed::Exit::cell);" in body("void resetLifecycle(", "void observeLifecycle(")
+snap = body("        if (fixed::engaged()) {", "        // Deliberate F6 can return from its OWN first-person request")
+assert snap.index("button->IsDown()") < snap.index("fixed::rigEligible(true,select(c))") < snap.index("GetUserEventName(") < \
+    snap.index("fixed::requestSnap(direction);")
+assert "RE::INPUT_DEVICE::kKeyboard" in snap and "kGamepad" not in snap
+print("PASS spike off wiring: no runtime without the INI flag; null-safe helpers; base look/update/zoom paths unchanged when off")
+
+# Suppression is armed only by this frame's update hook and disarmed by the
+# bracket; the detour is shared with the thin hook, never doubled.
+caster = thin[thin.index("inline bool hookCaster("):thin.index("inline std::array<std::uint8_t,14> jump(")]
+chain = "if (runtime->spikeCast && runtime->spikeCast(physics,world,start,end,hull)) return false;"
+assert caster.count(chain) == 1 and thin.count("spikeCast") == 3
+assert caster.index("runtime->smoothCastSeen = true;") < caster.index(chain) < caster.index("if (!runtime->allowed || !safeNow()) {")
+assert spike.count("thin::runtime->spikeCast = suppressCast;") == 1 and "spikeCast" not in source
+install_caster = spike_body("inline void installCaster(", "inline void installRoomHook(")
+assert install_caster.index("if (thin::runtime && thin::runtime->installed) {") < install_caster.index("REL::ID(33007).address()")
+assert "target != base+0x5574f0" in install_caster and "std::memcmp(reinterpret_cast<const void*>(target),prologue.data(),prologue.size()) != 0" in install_caster
+assert "AllocTrampoline" not in spike  # a second trampoline allocation could release the camera-call relay
+assert install_caster.index("r.caster = reinterpret_cast<thin::Caster>(gateway);") < install_caster.index("REL::safe_write(target,")
+suppress = spike_body("inline bool suppressCast(", "inline bool hookCaster(")
+assert suppress.index("castDecision(r.castReady,r.frameEligible,true,true) != Cast::suppress") < suppress.index("++r.suppressed;")
+assert "std::memcpy(end" not in suppress and "*end" not in suppress  # the requested end point is left as passed
+own = spike_body("inline bool hookCaster(", "inline void traceRig(")
+assert own.index("_ReturnAddress()") < own.index("!thin::onMain()") < own.index("memory.AllocationBase != r.smooth") < own.index("suppressCast(")
+end_frame = spike_body("inline void endFrame() {", "// ---- install")
+assert end_frame.index("r.frameEligible = false;") < end_frame.index("restoreAll(") < end_frame.index("publishView(")
+assert end_frame.index("if (!thin::onMain())") < end_frame.index("r.now = thin::seconds();")
+assert "r.frameEligible = r.frameSeen = false;" in spike_body("inline void beginFrame() {", "inline void clearFrame() {")
+assert "runtime->frameEligible = false;" in spike_body("inline void clearFrame() {", "inline void observeFrame(")
+assert spike.count("r.frameEligible = rigEligible(") == 1 and "r.frameEligible = true" not in spike
+room = spike_body("inline void installRoomHook(", "// kDataLoaded, after the look/update hooks")
+assert "table.address() != base+0x1a69ac8" in room and "slots[0x3f] != base+0xfce0c0" in room and "prologue.size()) != 0" in room
+assert room.index("r.originalRoom = reinterpret_cast<RoomTest>(slots[0x3f]);") < room.index("table.write_vfunc(0x3f,hookRoom)")
+assert "if (r.config.roomSeedMode) installRoomHook(base);" in spike
+hook_room = spike_body("inline bool hookRoom(", "inline bool within(")
+assert hook_room.index("r.originalRoom(room,point)") < hook_room.index("r.roomActive.load(") < hook_room.index("viewerQuery(*view,asked)") < \
+    hook_room.index("seedClaim(")
+for engine in ("RE::PlayerCharacter", "RE::PlayerCamera", "RE::TESObjectCELL", "GetAppCulled", "logger", "emit("):
+    assert engine not in hook_room, engine  # culling thread: the published copy and atomics only
+assert spike.count("SetAppCulled(true)") == 1 and spike.count("SetAppCulled(false)") == 1
+assert "SetAppCulled(false)" in spike_body("inline void release(", "inline void restoreAll(")
+assert "slots[0x33] != REL::Module::get().base()+0x104be80" in spike
+for forbidden in ("BSFixedString", "GetMenu(", "IsMenuOpen(", "RequestCameraControl", "AddTask("):
+    assert forbidden not in spike, forbidden
+codes = dict(re.findall(r"(\w+) = (\d+)", spike_body("enum class Refusal : unsigned {", "};")))
+assert len(codes) == 16 and len(set(codes.values())) == len(codes)
+for name in codes:
+    assert (spike + source).count("Refusal::" + name) == 1, name  # one site per code
+print("PASS spike on wiring: frame-scoped suppression; shared caster detour; guarded room hook; hook-thread isolation; one site per refusal code")
