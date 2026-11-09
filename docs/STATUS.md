@@ -6,13 +6,13 @@ Main `c10cd80` contains every Phase 3 merge (#15–#23). Main CI on `8eef712` [r
 
 ## Phase 5 — in progress
 
-Starting main `20e215d41a57d83f5e9f517aec8bca1fb33e1c8b`. Owner rulings D5-1 to D5-6 and D026 are recorded in [DECISIONS](DECISIONS.md). Nothing below has in-game evidence yet.
+Starting main `20e215d41a57d83f5e9f517aec8bca1fb33e1c8b`. Owner rulings D5-1 to D5-6 and D026 are recorded in [DECISIONS](DECISIONS.md). Phase 5 feature branches have bounded in-game evidence: target lock owner sessions (2026-11-02), occlusion spike runs (2026-11-02), fixed-height routes and owner session (2026-11-03), and cursor routes and owner session (2026-11-08). None are merged or accepted as a phase; per-feature evidence notes remain on their branches until merge, and the Phase 5 gate record (`docs/evidence/p5/gate.md`, PR #40; orchestrator recommendation REVISE, owner ruling REVISE 2026-11-08) is authoritative on status.
 
 | Ticket | Plan ID | State |
 | --- | --- | --- |
 | DYL-197 | P5-01 target lock | Wave 1. |
 | DYL-198 | P5-02 selection plugin | Wave 1; original plugin replacing BTPS ([D026](DECISIONS.md)). |
-| DYL-199 | P5-04 occlusion spike | Recommendation accepted under [D028](DECISIONS.md); [evidence](evidence/p5/occlusion-spike.md) on its branch. |
+| DYL-199 | P5-04 occlusion spike | Recommendation accepted under [D028](DECISIONS.md); [evidence](https://github.com/Sonoran-Solutions/SkyCRPG/blob/phase5/dyl-199-occlusion-spike/docs/evidence/p5/occlusion-spike.md) (on its branch until merged). |
 | DYL-200 | P5-03 cursor mode | Waiting on P5-02, whose plugin provides the target-injection path ([D026](DECISIONS.md)). |
 | DYL-201 | P5-05 fixed height | Started under [D028](DECISIONS.md): Stage 1, curated base-form list. |
 | DYL-202 | P5-06 gate | Waiting on the feature outcomes. |

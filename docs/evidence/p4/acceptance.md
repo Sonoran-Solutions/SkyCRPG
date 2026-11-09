@@ -30,8 +30,8 @@ Known limitations: [release notes](../../RELEASE_NOTES.md). Owner route: [PLAYTE
 
 | Owner result | Observation / disposition |
 | --- | --- |
-| Camera controls and aiming | ACCEPT, covered by the overall ruling; no separate observation recorded. |
-| Inventory readability and actions | ACCEPT, covered by the overall ruling; no separate observation recorded. |
-| Minimap and navigation | ACCEPT, covered by the overall ruling; no separate observation recorded. |
-| Module independence and recovery | ACCEPT, covered by the overall ruling; no separate observation recorded. |
+| Camera controls and aiming | Not separately recorded — covered only by the overall ACCEPT (D025); unreached-step inventory unknown. |
+| Inventory readability and actions | Not separately recorded — covered only by the overall ACCEPT (D025); unreached-step inventory unknown. |
+| Minimap and navigation | Not separately recorded — covered only by the overall ACCEPT (D025); unreached-step inventory unknown. |
+| Module independence and recovery | Not separately recorded — covered only by the overall ACCEPT (D025); unreached-step inventory unknown. |
 | Overall ACCEPT / revision request | **ACCEPT**; keyboard/mouse and controller; no revision request. |

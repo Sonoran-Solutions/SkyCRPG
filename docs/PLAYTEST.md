@@ -8,10 +8,10 @@ Allow about 20 minutes on an isolated profile and copied save. First complete th
 
 | Area | Device and observation | ACCEPT / revision request / NOT_RUN |
 | --- | --- | --- |
-| Camera controls and F6 aiming | Not recorded per area | ACCEPT (overall ruling) |
-| Inventory readability and actions | Not recorded per area | ACCEPT (overall ruling) |
-| Minimap and navigation | Not recorded per area | ACCEPT (overall ruling) |
-| Module independence and recovery | Not recorded per area | ACCEPT (overall ruling) |
+| Camera controls and F6 aiming | Not separately recorded — covered only by the overall ACCEPT (D025) | NOT_RUN |
+| Inventory readability and actions | Not separately recorded — covered only by the overall ACCEPT (D025) | NOT_RUN |
+| Minimap and navigation | Not separately recorded — covered only by the overall ACCEPT (D025) | NOT_RUN |
+| Module independence and recovery | Not separately recorded — covered only by the overall ACCEPT (D025) | NOT_RUN |
 | Overall | Keyboard/mouse and controller, 2026-11-02 | **ACCEPT** ([record](evidence/p4/acceptance.md)) |
 
 A revision request should identify a reproducible issue; acceptance is the owner's decision. [Limitations](RELEASE_NOTES.md) and [release checklist](RELEASE_CHECKLIST.md).
