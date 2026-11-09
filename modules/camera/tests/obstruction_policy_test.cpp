@@ -1,5 +1,6 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #include "obstruction_policy.h"
+#include "thin_occluder_policy.h"
 #include <cassert>
 #include <iostream>
 using namespace skycrpg::camera;
@@ -100,6 +101,31 @@ void closedLoop() {
     }
     for (int i=0; i<1000; ++i) frame = policy.step(normal,0,dt,config);
     assert(!frame.obstructed && frame.blend == 0); // entering a large room clears it
+}
+void filteredClearRecovery() {
+    auto policy = tightPolicy();
+    const Settings preferences;
+    float previousBlend = 1;
+    float previousZoom = obstructionZoom(preferences.zoom,previousBlend,config);
+    ObstructionFrame frame;
+    // SmoothCam can still be easing out of compression after the final retained
+    // non-beam hit. A clear filtered sample preserves the dwell and recovery rate.
+    for (int i=0; i<100; ++i) {
+        frame = policy.step(normal,thin::compressionSample(true,true,false,.75f),dt,config);
+        assert(frame.valid && frame.blend <= previousBlend);
+        assert(previousBlend-frame.blend <= config.recoverRate*dt+1e-6);
+        const float zoom = obstructionZoom(preferences.zoom,frame.blend,config);
+        assert(zoom >= previousZoom);
+        assert(zoom-previousZoom <= (preferences.zoom-config.tightZoom)*config.recoverRate*dt+1e-6);
+        if (i == 0) assert(frame.obstructed && frame.blend == 1 && zoom < preferences.zoom);
+        previousBlend = frame.blend; previousZoom = zoom;
+    }
+    assert(!frame.obstructed && frame.blend == 0 && previousZoom == preferences.zoom);
+    // A caller filter that never matches must not silently disable DYL-157.
+    ObstructionPolicy unobserved;
+    for (int i=0; i<20; ++i)
+        frame = unobserved.step(normal,thin::compressionSample(true,false,false,.75f),dt,config);
+    assert(frame.obstructed && frame.blend == 1);
 }
 void priorityAndInvalid() {
     for (int state=0; state<9; ++state) {
@@ -216,6 +242,6 @@ void resetZoomRecovery() {
 }
 }
 int main() {
-    measurements(); hysteresis(); closedLoop(); priorityAndInvalid(); ratesAndPreferences(); resetZoomRecovery();
-    std::cout << "PASS obstruction policy: measurements, timing, noisy closed loop, priorities, invalid inputs, rates/preferences\n";
+    measurements(); hysteresis(); closedLoop(); filteredClearRecovery(); priorityAndInvalid(); ratesAndPreferences(); resetZoomRecovery();
+    std::cout << "PASS obstruction policy: measurements, timing, noisy closed loop, filtered clear recovery, priorities, invalid inputs, rates/preferences\n";
 }
