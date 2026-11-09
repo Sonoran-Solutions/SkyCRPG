@@ -140,6 +140,24 @@ Ordered by what unblocks the most. Each names who closes it and what evidence cl
 
 R5, R6, R10 and R11 need the candidate from R2; R2 needs R1. R3, R4, R7, R8 and R9 can proceed now. A reasonable sequence is R1 → R3/R4/R9 (docs and decisions, no game time) → R2 → R6 → R7/R8/R10 → R5 → R11.
 
+## REVISE progress
+
+Kept current as items close. "Done" means the closing evidence named in the table above exists.
+
+| # | State | Record |
+| --- | --- | --- |
+| R1 | Open — awaiting the owner's merge go per PR; pre-merge re-reviews of #34, #36 and #37 requested 2026-11-08 (their post-review fixes had not been re-reviewed) | — |
+| R2 | Open — needs R1 and the packaging decision | — |
+| R3 | Open — needs the owner's key choices | — |
+| R4 | Open — needs the owner's wording decision | — |
+| R5 | Open — needs R2 | — |
+| R6 | Open — needs R2 | — |
+| R7 | Open | — |
+| R8 | Open | — |
+| R9 | **Done 2026-11-08** | #35 body and spike note header record D028 (`6f9834c`); #34 and #37 bodies name last code commits and DLL prefixes; #36 body and selection note reconciled (build PASS, co-load PARTIAL, DLL-absent by construction; `d133dae`); #38 body opening line and owner row corrected; fixed-height pre-run table marked superseded (`4e9d8e7`). |
+| R10 | Open — needs R2 | — |
+| R11 | Open — needs R2, R5, R6 | — |
+
 ## Documentation obligations
 
 This record adds Phase 5 sections to [STATUS](../../STATUS.md), the [release checklist](../../RELEASE_CHECKLIST.md) and the [runtime matrix](../../compatibility/runtime-matrix.md). It does not change the Phase 4 rows there; #33 does, and this PR merges after it. `docs/CONTROLS.md` (R3), `docs/compatibility/acceptance-matrix.md` (R6) and `docs/DECISIONS.md` (R4, plus the 2026-11-08 cursor decisions) are owed by the REVISE items, not by this record.
