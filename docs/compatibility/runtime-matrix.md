@@ -15,6 +15,22 @@ Same host, Proton build and provider pins as Phase 4. Feature evidence is from s
 | Occlusion spike `6667bf5` (`abff6b40…`, never shipped) | camera-only spike profile | Stage 1 GO by D028; evidence on its branch |
 | Harness route or combined candidate with two Phase 5 features enabled; UI-only or combined profile on a Phase 5 build | — | **NOT_RUN** (no session or route has combined two Phase 5 features; `owner-cursor-1` had only cursor mode on) |
 
+## Phase 5 accepted combined candidate 8 (2026-11-09, D041)
+
+The owner accepted the Phase 5 gate. This is a bounded internal candidate and does not establish support beyond the pinned host/provider set below or authorize public release. Source `53410cdc365999bc154fd5897fac3d6a0be33bcd`; all-module CI run `42679051460` PASS. Candidate manifest: `session-p5/dist-p5-candidate-8/candidate.json`.
+
+| Combined evidence | Profile / device | Result and limits |
+| --- | --- | --- |
+| Candidate archives | Combined candidate, modules independently packaged | Camera `SkyCRPG_Camera-0.1.0-rc.1-53410cd.zip`, SHA-256 `fc392483591e1469755ada847031c1264a98f6e78ee450436d34135d9a188877`; Selection `SkyCRPG_Selection-0.1.0-rc.1-53410cd.zip`, SHA-256 `d2481d281c579841e8f3e1e135068ffe0a0ba9bf66764c5c16aac92e2d1232c5`; reused UI Phase 4 rc1 `SkyCRPG_UI-0.1.0-rc.1-6b4c0fc.zip`, SHA-256 `f508a0e1343e2f15ea825e284f57fafed1108f62eb38acbef4b72582d2d940cb`. |
+| R6 regression, 41 owner-approved routes | Combined and related Camera/UI configurations; unattended routes, latest result per route | Seven D039 trace routes rerun on candidate 8: 7/7 PASS. The other 34 retain latest recorded builds; candidate 7's 21/24 PASS had three trace-assertion failures, superseded by candidate 8 for those seven trace routes; the other 17 approved routes retain their recorded builds. Final dispositions are PASS on each route's latest recorded build, not 41 candidate-8 reruns. Phase 4 regression and C1–C5 were not rerun as separate suites; R6 is the D034 substitute. |
+| R6 candidate 8 trace detail | D039 routes: on-main, on-ui-disabled, parity-off, combined-main, cam-malformed-ini, cam-obstruction, combined-ui-disabled | Six report precision-trace event 11 with `camera=9/0`; combined-main passed with entry-claimed and probe `9>0`, but no event 11 line because the trace budget was spent before F6 and the route does not assert that line. |
+| R10 frame p95 (standing / turning) | Matched performance routes | Baseline `16.844/16.906 ms`; off on `890a5da` `16.669/16.850 ms`; lock on candidate 7 `ecfd90c` `16.794/16.979 ms`; fixed on `890a5da` `16.799/16.796 ms`; Selection on `890a5da` `16.762/17.117 ms`; cursor on `8dbc5f9` `16.698/17.038 ms`; all on candidate 7 `16.832/16.790 ms`. All measured frame rows are within the ≤10% budget. Lock-off frame rows (off/fixed/Selection/baseline) were last measured on `890a5da`, before #50's per-frame lock-off camera hook, and were not rerun under D038/D039. Display-cap caveat: about 3,713 frames per 60-second window and 16.41–16.42 ms medians; over33/over50 were zero, so p95 ratios measure headroom under the cap, not raw policy cost. |
+| R10 resource-all | Candidate 7, `ecfd90c`; 601-sample resource window | Standing/turn/inventory/resource p95 `16.937/16.971/16.950/16.994 ms`; over33 `0/0/29/13`; private commit `1.688→2.133 GB`. |
+| R5 owner session | Candidate 8 combined profile, 8BitDo controller, owner session `owner-p5-r5` on 2026-11-09 (~4.9 min) | Owner reported “everything passed”. Logs corroborate lock/unlock, lock plus F6 entry/return, lock plus Start-menu release without re-lock, and clean quit/restore. R3 hold is owner-only and not independently corroborated; F8 has no log coverage; F7 owner PASS reaffirmed (“the F7 recent passed”) but no recenter-request line appears. These owner-only/log-gap qualifications remain limitations. |
+| Other carried controller evidence | Candidate 8 | Controller cursor reticle untested; pad cursor remains unbound under D032. |
+
+R7 auto-retarget with two hostiles remains NOT_RUN. R8 wardrobe/tankard/NPC rows and LOS through a wall remain NOT_RUN. R11 hands-on route was waived and ruled PASS by the owner under D040. The Phase 5 acceptance and known limitations are recorded in the [gate](../evidence/p5/gate.md) and [regression record](../evidence/p5/regression.md).
+
 ## Host and runtime
 
 | Field | Only tested value |

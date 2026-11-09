@@ -2,9 +2,17 @@
 
 This is not public-release authorization. Final candidate: source `6b4c0fc6a6da4effd9faeafc9a2c59874a612271`, [main CI run 41376680950](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41376680950); UI SHA-256 `f508a0e1343e2f15ea825e284f57fafed1108f62eb38acbef4b72582d2d940cb`, Camera SHA-256 `e3f6d61e2d2075a10d8a31c07ccfbe9c78e324230f5c399cadbc2c3c39c86838`. Packaged automated gameplay is bounded **PASS**; the owner accepted the Phase 4 MVP on 2026-11-02 ([D025](DECISIONS.md)).
 
-## Phase 5 (2026-11-08): no candidate yet
+## Phase 5 (2026-11-09): accepted internal candidate 8
 
-The owner recorded **REVISE, do R1–R11** on 2026-11-08 (D030); Phase 5 ACCEPT is not recorded ([gate](evidence/p5/gate.md)). There is no combined Phase 5 archive to list here. Feature builds `63e992e` (lock), `c10e6bc` (fixed height) and `4946c92` (cursor, Camera `8ca54149…` with Selection `6d8b12e2…`) have feature evidence; `owner-cursor-1` ran with cursor mode on and target lock and thin occluder off (preserved INI), with capped logs; no session or route has combined two Phase 5 features. D031 decides Selection ships in its own archive and the lock overlay folder ships inside Camera's archive. D032 approves U and `[` / `]` keyboard bindings; pad cycle/switch/cursor stay unbound. D033 rewords fixed height as “no additional beam-induced pull-in, subject to enclosure” and retains three beams. Remaining combined candidate and regression work follows R1/R2/R5/R6/R11 in the gate. Public redistribution stays deferred by D023.
+Owner Dylan recorded “ACCEPT” for the Phase 5 gate on 2026-11-09 (D041). This is an internal candidate, not public-release authorization; no release or tag is created. Candidate source is `53410cdc365999bc154fd5897fac3d6a0be33bcd`; all-module CI run `42679051460` passed.
+
+| Module archive | Candidate artifact | SHA-256 |
+| --- | --- | --- |
+| Camera | `SkyCRPG_Camera-0.1.0-rc.1-53410cd.zip` | `fc392483591e1469755ada847031c1264a98f6e78ee450436d34135d9a188877` |
+| Selection | `SkyCRPG_Selection-0.1.0-rc.1-53410cd.zip` | `d2481d281c579841e8f3e1e135068ffe0a0ba9bf66764c5c16aac92e2d1232c5` |
+| UI (reused Phase 4 rc1) | `SkyCRPG_UI-0.1.0-rc.1-6b4c0fc.zip` | `f508a0e1343e2f15ea825e284f57fafed1108f62eb38acbef4b72582d2d940cb` |
+
+Candidate manifest: `session-p5/dist-p5-candidate-8/candidate.json`. R6, R10, R5 and carried limitations remain as recorded in the [gate](evidence/p5/gate.md), [regression record](evidence/p5/regression.md), and [R5 owner session](evidence/p5/owner-r5.md). Public redistribution and associated rights clearance remain deferred under [D023](DECISIONS.md).
 
 ## Phase 4 rows
 
