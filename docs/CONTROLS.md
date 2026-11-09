@@ -27,6 +27,29 @@ The DYL-161 candidate maps keyboard hotkey events 1–8 to the slot shown. Nativ
 
 The keyboard sink observes Skyrim's mapped Hotkey1–Hotkey8 key-down events without consuming them. For a native quick-key-bound slot, Skyrim handles the press and the UI dispatches nothing. For an auto-filled `FAV` slot, the UI requests one action through `ActorEquipManager`; blocking menus prevent that dispatch. Resolve conflicting remaps in the game's or conflicting mod's bindings. F6/F7/F8 and map K/L retain their documented owners. Windows build **PASS** on UI source `ba10da6` ([build 40438723566](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40438723566)); keyboard FAV dispatch **PASS**, owner-reported and bounded, in run `8eb20c9ab8cf4a978fcfbbbfcf8833ec` with the controller off. On the test host the controller must be off for keyboard/mouse input. A truly native-number-bound press proving no duplicate action, weapon unequip on a second press, in-game shout recovery, and the full native cast/attack path are **NOT_RUN**; see [evidence](evidence/p2/hotbar.md). The voice line displays the selected shout or power and the native global voice recovery timer, sampled at most twice per second; `--` means unavailable and `0s` only means that timer is zero, not that a daily power is available.
 
+## Phase 5 — target lock, Selection and cursor mode (owner bindings 2026-11-08, gate REVISE)
+
+Opt-in features, each default OFF in its INI. Keys below are the owner-approved defaults (D027 for R3; U, `[` `]`, B on 2026-11-08). Native menus, dialogue, loading, death, first person (F6), F7 recenter and F8 all take precedence and end every Phase 5 mode; no mode resumes by itself. One consumer per input event: target lock reads its own key through an input tracker, Selection reads `[` `]` through an edge FIFO, cursor mode captures look deltas only while active, and Activate stays native E / A dispatched once through Selection's Pick. Combined device checks on one candidate are **NOT_RUN** ([gate](evidence/p5/gate.md) R5, R6).
+
+### Keyboard and mouse
+
+| Action | Binding | Notes |
+| --- | --- | --- |
+| Target lock toggle | **U** (`[TargetLock]` key) | Locks the nearest valid hostile through TDM's lease; a second press, target death, menu, F6 or F8 releases it. No target-switch key in Phase 5. |
+| Selection cycle next / previous | **[** / **]** (`[Selection] iCycleNextKey=26`, `iCyclePreviousKey=27`) | Latches the cycled candidate; the native prompt names it. Ordinary latch expires after 10 s or on movement; in cursor mode it holds until the pointer moves more than 12 px. |
+| Cursor mode toggle | **B** (`[CursorMode] iToggleKey=48`) | Mouse look moves the pointer instead of the camera (65 ≈ 1 px per count); the pointer picks the object whose screen box it is in or within 48 px of; `[` `]` visit only on-screen candidates. Requires Selection with `bAllowExternalTargets=1`. |
+| Activate | native **E** | The only activation input; pointing at nothing activates nothing. |
+| Exits | Esc/Tab menus, `~` console, F6, F7, F8, weapon draw, target lock, dialogue, load | Each ends cursor mode; menus and F6/F8 end a lock. |
+
+### Controller
+
+| Action | Binding | Notes |
+| --- | --- | --- |
+| Target lock / native POV | **R3 short press** locks; **hold 0.4 s** is native POV (D027) | Owner-tested 2026-11-02. |
+| Selection cycle, target switch, cursor toggle | **unbound** in Phase 5 (owner decision 2026-11-08) | No free stock button; D-pad Left would need a native Hotkey1 remap. Next phase. |
+| Cursor pointer | right stick while cursor mode is active | Same delta path as the mouse at reduced speed; untested on a controller (cursor mode cannot be toggled from the pad by default). |
+| Activate | native **A** | |
+
 ## Phase 2 Camera candidate — DYL-156
 
 These mappings describe the new candidate; [Camera evidence](evidence/p2/camera-controls.md) separately records build and gameplay validation. Native movement/combat/activation remain unchanged, with TDM movement-only and SmoothCam as the only normal third-person transform writer.

@@ -148,8 +148,8 @@ Kept current as items close. "Done" means the closing evidence named in the tabl
 | --- | --- | --- |
 | R1 | Open — awaiting the owner's merge go per PR; pre-merge re-reviews of #34, #36 and #37 requested 2026-11-08 (their post-review fixes had not been re-reviewed) | — |
 | R2 | Decided: Selection own archive, overlay inside Camera's. Build needs R1 | — |
-| R3 | Decided (U, [ ], R3-only on pad). `docs/CONTROLS.md` rows in progress | — |
-| R4 | Decided: reworded criterion, three beams. Note row update in progress | — |
+| R3 | **Done 2026-11-08** | Owner keys U, `[` `]`, B; pad R3 only. Phase 5 section added to `docs/CONTROLS.md` (this PR); the key-unmapped check stands from the feature notes' stock-map scans. |
+| R4 | **Done 2026-11-08** | Reworded criterion and the answered owner question recorded in the fixed-height note (`b755027` on #37); three beams kept. `DECISIONS.md` entry owed after #33 merges. |
 | R5 | Open — needs R2 | — |
 | R6 | Open — needs R2 | — |
 | R7 | Open | — |
