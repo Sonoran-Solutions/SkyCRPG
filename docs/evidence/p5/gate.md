@@ -1,8 +1,6 @@
 # DYL-202 / P5-06 — Phase 5 gate
 
-**REVISE — owner decision 2026-11-08 ("REVISE, do R1–R11", D030).** The orchestrator first wrote the recommendation on 2026-11-08; the owner then ruled REVISE on that date. The dated chronology and subsequent owner decisions are recorded below and in D030–D035. Nothing in this record turns a NOT_RUN or FAIL row into a pass.
-
-What REVISE means here: each feature has bounded in-game evidence and owner feedback as detailed below, the spike has its owner ruling (D028), and the owner decisions D026–D040 are recorded. The Phase 5 combined candidate is recorded under R2; the Phase 4 regression and C1–C5 rerun remain outstanding. Controller evidence exists for target lock R3 in owner-lock-3 (D027); the controller cursor reticle remains NOT_RUN. R5, the combined controller pass on candidate 8, has the owner's PASS with per-step log limitations ([R5 owner record](owner-r5.md)). The hands-on R11 route was waived and R11 ruled PASS under D040. Phase 5 remains REVISE. The Phase 5 controls table is present in `docs/CONTROLS.md`; its entries and remaining unrun coverage are listed below. The Phase 4 ACCEPT is recorded by D025 and merged in #33. These remaining work items are listed in [REVISE items](#revise-items). A HOLD is not warranted: no feature is blocked by an unresolved engine or provider problem, and the walking result is accepted under the owner's reworded fixed-height criterion in D033.
+**ACCEPT — owner decision 2026-11-09 (D041).** This decision supersedes D030's 2026-11-08 “REVISE, do R1–R11” ruling for the gate. The history is D030 → R1–R11 progress → D041. The accepted candidate is candidate 8, source `53410cdc365999bc154fd5897fac3d6a0be33bcd`, all-module CI run `42679051460` PASS. This acceptance carries the limitations listed in [Owner decision](#owner-decision); NOT_RUN, FAIL, owner-only and waived evidence remains classified as recorded.
 
 ## Candidate identity
 
@@ -178,7 +176,7 @@ Kept current as items close. "Done" means the closing evidence named in the tabl
 - **Feature-flag lesson.** A fix scoped by a feature flag needs routes in the other flag state; include lock-off F6 routes when validating lock-path changes.
 
 The earlier cursor toggle queued from native-menu text remains fixed in #44: menu-owned presses are dropped at the key edge. Its candidate 2 `on-main` rerun resolved the prior BLOCKED route; history remains in [regression.md](regression.md).
-The Phase 5 gate remains **REVISE (D030)**. The route detail, candidate hashes, performance measurements, and D036 rerun statuses are in [regression.md](regression.md).
+The REVISE progress table below preserves the work history that led to D041; the gate is now **ACCEPT (D041)** with the carried limitations above. Route detail, candidate hashes, performance measurements, and rerun statuses are in [regression.md](regression.md).
 
 This PR carries the Phase 5 sections in [STATUS](../../STATUS.md), the [release checklist](../../RELEASE_CHECKLIST.md), the [runtime matrix](../../compatibility/runtime-matrix.md) and the Phase 5 controls in [CONTROLS](../../CONTROLS.md). D025 and D029–D039 are recorded here; the acceptance matrix update remains part of R6. The #48 follow-up to put the source wiring audit in the repository and run it in Camera CI is **done in `3cdf2d0`** (`lock_refresh_wiring_test.py` runs in the Camera portable step).
 
@@ -188,7 +186,15 @@ Automatic merges and public release (D023), Stage 2 walls and ceilings, cursor-a
 
 ## Owner decision
 
-**REVISE — owner decision 2026-11-08 (D030).** The owner ruled, verbatim: “REVISE, do R1–R11”. All eleven items are required before the Phase 5 ACCEPT question is put again. This is a ruling on the gate. Hands-on evidence includes the earlier per-feature sessions (keyboard/mouse; controller for target-lock R3 only) and the combined R5 controller session on candidate 8, with per-step limitations recorded in [owner-r5.md](owner-r5.md). The hands-on R11 route was waived under D040; Phase 5 remains REVISE. D031–D034 record packaging, bindings, fixed-height criterion and initial regression scope; D035 records merge process; D037–D039 record the successive R6 rerun scopes; D040 records the R11 waiver:
+**ACCEPT — owner decision 2026-11-09 (D041).** The owner's verbatim ruling is “ACCEPT”. Accepted candidate 8 is source `53410cdc365999bc154fd5897fac3d6a0be33bcd`, all-module CI run `42679051460` PASS; Camera archive SHA-256 `fc392483591e1469755ada847031c1264a98f6e78ee450436d34135d9a188877`, Selection archive SHA-256 `d2481d281c579841e8f3e1e135068ffe0a0ba9bf66764c5c16aac92e2d1232c5`, and reused Phase 4 UI rc1 archive SHA-256 `f508a0e1343e2f15ea825e284f57fafed1108f62eb38acbef4b72582d2d940cb`. This supersedes D030 for the Phase 5 gate. D031–D034 record packaging, bindings, fixed-height criterion and regression scope; D035 records merge process; D037–D039 record successive R6 rerun scopes; D040 records the R11 waiver. The carried limitations accepted with the ruling are:
+
+- R7 auto-retarget with two hostiles: NOT_RUN.
+- R8 wardrobe/tankard/NPC rows and LOS through a wall: NOT_RUN.
+- R10 lock-off frame rows were last measured on `890a5da`, before #50's per-frame hook.
+- Controller cursor reticle: untested; pad cursor is unbound under D032.
+- Phase 4 regression and C1–C5 were not rerun as their own suites; R6 is the substitute under D034.
+- R5 owner-only steps: R3 hold, F8, and F7 (no recenter log line).
+- R11 hands-on route waived under D040.
 
 | Item | Owner choice |
 | --- | --- |
@@ -201,6 +207,6 @@ Automatic merges and public release (D023), Stage 2 walls and ceilings, cursor-a
 | R6 candidate 6 scope | After #49 fixed lock refresh, rerun only 12 lock-enabled routes; the other 29 retain recorded builds. Alternative considered: rerun the full 41-route set. (D037) |
 | R6 candidate 7 scope | After candidate 6 exposed lock-off F6 regression and #50 fixed it, rerun 12 lock-enabled plus 12 lock-off F6 routes. Alternative: retain the earlier 12-route lock-enabled scope. (D038) |
 | R6 candidate 8 scope | After #51 restores claim trace, rerun only seven routes with `iPrecisionTrace` enabled: on-main, on-ui-disabled, parity-off, combined-main, cam-malformed-ini, cam-obstruction, combined-ui-disabled. Alternative: rerun all 24 D038 routes. (D039) |
-| R11 combined route | 2026-11-09: owner waives the hands-on R11 route and rules it PASS on the automated route evidence: “We can skip my playtest for R11 and rule it as a PASS. I've watched the automated tests where it's done these tests and I approve” (D040). This is not the Phase 5 ACCEPT ruling. |
+| R11 combined route | 2026-11-09: owner waives the hands-on R11 route and rules it PASS on the automated route evidence: “We can skip my playtest for R11 and rule it as a PASS. I've watched the automated tests where it's done these tests and I approve” (D040). |
 
-D029 records cursor defaults. DYL-202 remains open (its Linear state is kept at In Progress by the orchestrator; a GitHub integration may auto-close it on merged branches, which does not change the ruling); Phase 5 is not accepted. R1 merges follow D035 and its recorded owner authorization.
+D029 records cursor defaults. The D030 REVISE ruling is superseded for the gate by D041 ACCEPT. D041 does not authorize public release or create a release/tag. R1 merges follow D035 and its recorded owner authorization.
