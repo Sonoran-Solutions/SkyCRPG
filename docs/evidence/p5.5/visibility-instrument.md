@@ -2,7 +2,7 @@
 
 [Phase 5.5](../../phases/PHASE_5_5.md) · [probe README](../../../tools/testprobe/README.md#view-samples-p55-01-view-protocol-1-runtime-not_run)
 
-**Status, 2026-11-09: code and portable tests only. Every in-game row is NOT_RUN.** The experimental scope of D045 applies: the change lives only in the never-shipped test probe. Its output is **diagnostic** until the oracle-validation checkpoint below passes; geometric clearance never passes an acceptance measure by itself. The probe still installs no hooks, sends no input and changes no game state.
+**Status, 2026-11-09: code and portable tests only. Every in-game row is NOT_RUN.** Wave 1a was committed as `59613f2`; the orchestrator's `61610d9` (two MSVC fixes) built in CI run 42719928362 (success). Wave 2b (below, "Review fixes") answers the independent binary review of `59613f2` (CHANGES, 0 BLOCKER / 2 MAJOR / 8 MINOR). The experimental scope of D045 applies: the change lives only in the never-shipped test probe. Its output is **diagnostic** until the oracle-validation checkpoint below passes; geometric clearance never passes an acceptance measure by itself. The probe still installs no hooks, sends no input and changes no game state.
 
 Worktree `p55-instrument`, branch `phase5.5/p55-01-visibility-instrument`, base `da16672`. Pinned host: SkyrimSE.exe 1.7.104 SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`, Address Library 13 (`versionlib-1-7-104-0.bin`, format 5, SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842`), CommonLibSSE-NG 7.2.0 at `7a60f4de794095d7b0f8928d1b930a52e9a7da83`.
 
@@ -11,12 +11,12 @@ Worktree `p55-instrument`, branch `phase5.5/p55-01-visibility-instrument`, base 
 | File | Change |
 | --- | --- |
 | `tools/testprobe/src/view_policy.h` (new) | Portable rules: `@view` grammar, INI bounds, projection, pose angles, ring and ray planning, treatment aggregation, ray status folding, transmittance, cadence coalescing, JSON shape. |
-| `tools/testprobe/src/plugin.cpp` | Windows adapter: `view_sample` event, request routing, optional view timer, binary and layout guards, Havok casts, skeleton and treatment reads. |
+| `tools/testprobe/src/plugin.cpp` | Windows adapter: `view_sample` event, request routing, optional view timer (opt-in), binary guard, Havok casts, cached bone reads and per-reference treatment. |
 | `tools/testprobe/src/json_line.h` | `Object::Append` (header + body in one line). |
 | `tools/testprobe/tests/view_policy_test.cpp` (new) | Portable test (picked up by the existing CI glob). |
 | `tools/testprobe/README.md`, `SkyCRPG_TestProbe.ini` | New "View samples" section, settings, schema rows. |
 
-`bViewSamples` gates everything. With the key absent or not exactly `1` (and with `bEnabled=0`), the probe reads six more INI keys and otherwise behaves exactly as the branch base: no `@view` namespace (an `@view x` file stays a raw `player_state` tag), no timer, no new `probe_loaded` fields. The sample INI sets `bViewSamples=1` and `iViewIntervalMs=0`, so a runner using it gets `@view` requests but no periodic samples.
+`bViewSamples` gates everything. With the key absent or not exactly `1` (and with `bEnabled=0`), the probe reads seven more INI keys and otherwise behaves exactly as the branch base: no `@view` namespace (an `@view x` file stays a raw `player_state` tag), no timer, no new `probe_loaded` fields. The sample INI sets `bViewSamples=1`, `iViewIntervalMs=0` and `bViewPeriodicOffMain=0`, so a runner using it gets `@view` requests but no periodic samples. A nonzero interval without `bViewPeriodicOffMain=1` (or `bViewMainThreadOnly=1`) creates no timer and writes one `view_sample` with `periodic_opt_in_missing`.
 
 ### `view_sample` fields (view protocol 1)
 
@@ -27,18 +27,18 @@ The README is the contract; this is the summary the route generator uses. Order 
 | `view_protocol`, `seq` | always | `1`; process-wide sequence in file order |
 | `requested`, `tag` | always / requests | label of `@view <label>` |
 | `available`, `reason` | always | `reason` null when available; codes below |
-| `frame`, `since_last_ms`, `since_last_frames`, `coalesced_ticks`, `hops`, `queued_ms` | always | cadence; `frame` is the engine update counter (ID 411489) or null |
+| `frame`, `since_last_ms`, `since_last_frames`, `coalesced_ticks`, `hops`, `queued_ms`, `sample_ms` | always | cadence and cost; `frame` is the engine update counter (ID 411489, a label) or null |
 | `current_thread_id`, `captured_main_thread_id`, `main_thread_id` | always | as `player_state` |
-| `camera_state` / `frame_end` | with those reasons | diagnostics |
+| `camera_state` | with that reason | diagnostic |
 | `camera` | available | `state`, `pos`, `yaw_deg`, `pitch_deg`, `fov_deg`, `vfov_deg`, `world_fov_deg`, `ortho`, `node` (`world_root_camera`), `under_camera_root`, `camera_root_pos`, `camera_root_delta`, `rotation_forward_delta_deg` |
 | `player` | available | `pos`, `heading_deg`, `cell {form_id, editor_id}`, `interior` |
 | `offset` | available | `{x,y,z,distance}` = rendered camera − player |
 | `points` | available | `head`, `chest`, `feet`, `shoulder_l`, `shoulder_r`, each `{name, world, screen {x,y} (top-left origin, 0..1), on_screen, ray}` |
 | `ring` | available | `ring_0..ring_{n-1}`, same shape |
-| `ray` | per point | `status` (`clear`/`faded_only`/`blocked`/`indeterminate`), `transmittance`, `hits [{ref, base, layer, distance, treatment (opaque/faded/hidden/unknown), alpha, reason}]`, `truncated`, `reason`, `skipped_player`, `casts` |
+| `ray` | per point | `status` (`clear`/`faded_only`/`blocked`/`indeterminate`), `transmittance`, `hits [{ref, base, layer, distance, surfaces, treatment (opaque/faded/hidden/unknown/volume), alpha, reason}]` (one entry per distinct reference), `truncated`, `reason`, `skipped_player`, `casts` |
 | `player_box`, `counts`, `casts`, `on_main_thread`, `config` | available | screen box of player points; status counts; cast total; thread; effective settings |
 
-Unavailable reasons, each with its own code and one log line per process: `view_busy`, `invalid_view_request`, `enqueue_failed`, `outside_task_drain`, `generation_changed`, `not_loaded`, `off_main_thread`, `player_unavailable`, `game_paused`, `camera_unavailable`, `camera_state`, `guard_binary`, `world_camera_unavailable`, `guard_layout`, `cell_unavailable`, `world_changed`, `frame_advanced`, `sample_failed`. Ray-level indeterminate reasons: `invalid_geometry`, `no_havok_world`, `cast_budget`, `point_unavailable`, `skeleton_cap`, `truncated`. Unknown-treatment reasons: `unresolved`, `node_cap`, `non_lighting_blend`, `invalid_alpha`, `no_geometry`, `actor` (actor hits are not walked; only the root's app-culled flag is read).
+Unavailable reasons, each with its own code and one log line per process: `periodic_opt_in_missing`, `view_busy`, `invalid_view_request`, `enqueue_failed`, `outside_task_drain`, `generation_changed`, `not_loaded`, `off_main_thread`, `player_unavailable`, `game_paused`, `camera_unavailable`, `camera_state`, `guard_binary`, `world_camera_unavailable`, `cell_unavailable`, `world_changed`, `sample_failed`. Ray-level indeterminate reasons: `invalid_geometry`, `no_havok_world`, `cast_budget`, `point_unavailable`, `skeleton_cap`, `truncated`. Unknown-treatment reasons: `unresolved`, `node_cap`, `non_lighting_blend`, `invalid_alpha`, `no_geometry`, `actor` (actor hits are not walked; only the root's app-culled flag is read). Opaque landscape hits carry reason `landscape`.
 
 ## Binary audit
 
@@ -66,16 +66,16 @@ Decision: the probe reports the world root NiCamera as the rendered camera (`nod
 | bhkWorld vtable | 238918 → 1A7CDA8 | slot 27h → 104B470 `mov rax,[rcx+10h]; ret` (GetWorld1); slot 33h → 104BE80 | binary |
 | `bhkWorld::PickObject` | 77860 → 104BE80 | early out: when a float at 3336520 exceeds 20D1758/20D175C (unless byte 3336528 is set) it sets `pickFailed` (+C0) and returns false, a per-frame pick budget (**Hypothesis** for the meaning). Otherwise `GetWorld2()->[+430h]+C598h` → LockForRead 68233, only if byte 20D18D0 ≠ 0 (file value 1); then all-hits collectors (+B0/+B8, sorted by 10A0670) or closest (+A8) or, with none, `hkpWorld::castRay(world,input,output)` 61399; unlock 68239 | binary |
 | `hkpWorld::castRay` | 61399 → B598C0 | profiling markers, kd-tree/broadphase cast; no BSReadWriteLock call (entry bytes guarded) | binary |
-| World lock | 68233 → CE3250, 68239 → CE3510 | owner fast path `[lock]==GetCurrentThreadId → lock inc [lock+4]`; else CAS on `count & 0FFFFFFFh`, spinning with Sleep after 10000 tries. A pending writer's high bits stop new readers, so a nested read under a waiting writer can deadlock. Unlock `lock dec [rcx+4]` | binary; matches `docs/evidence/p5/proximity-activation.md` F5 |
+| World lock | 68233 → CE3250, 68239 → CE3510 | owner fast path `[lock]==GetCurrentThreadId → lock inc [lock+4]`; else CAS on `count & 0FFFFFFFh`, spinning with Sleep after 10000 tries, so a reader waits only while a writer **holds** the lock (high bit set). LockForWrite 68234 → CE32D0 only CASes `[lock+4]` from 0 to 80000001h in a Sleep loop and sets no pending bit: readers can starve writers, and a nested read cannot deadlock behind a waiting writer (wave 1a said the opposite; corrected after the review). Unlock `lock dec [rcx+4]` | binary; matches `docs/evidence/p5/proximity-activation.md` F5 |
 | Engine practice | job "Pick reference" 39058 → 40620 → 26127 | makes the `+198h` virtual call (PickObject slot) and takes LockForRead inside the main job list | binary |
 | Hit → reference | FindCollidableRef 26003 → 404740 | 77988 (collidable owner → NiAVObject), `lock inc` on the object, 19750 walks `parent` (+30h) to the reference, `lock xadd` release | binary |
-| Hit → object | FindCollidableObject 15870 → 2236D0 | system group 1 entities: position lookup returning `[x+30h]`; otherwise tail-jump to 77988 (1051DE0) | binary |
+| Hit → object | FindCollidableObject 15870 → 2236D0 | when `[collidable+2Ch] & FFFF0000h == 10000h` and type is entity: position lookup through the TES singleton and cell grid (2236E8..22374D) returning `[x+30h]`; otherwise tail-jump to 77988 (1051DE0). The probe now avoids it for those collidables and for terrain (`landscape`), and calls it only for hits without a reference | binary |
 | Layer, app-culled | native caster at 5577D3/5577EB | `mov edi,[collidable+2Ch]; and edi,7Fh`; object from 77988; `test byte [obj+F4h],1` | binary |
 | Cell world | GetbhkWorld 18995 → 2BE9B0 | `test byte [cell+40h],1` → interior: extra data at `+48h`; exterior: global | binary (guarded) |
 | Scale | 188105 → 17FDE5C = 0.0142875; 187407 → 17F423C = 69.99125 | constants in `.rdata` | binary |
 | Ray layer | Skyrim.esm COLL `L_LOS` 0008878A, BNAM 41 | collides with 0,1,2,4,5,6,7,8,9,10,13,14,16,17,32,38,39,40,41,43,44,53; every COLL CNAM list is symmetric; no Update/Dawnguard/HearthFires/Dragonborn override | Skyrim.esm data |
 
-Decision: the probe calls `hkpWorld::castRay` (61399) itself while holding `bhkWorld::worldLock` for read, which is what PickObject does internally, and resolves the hit (layer, reference, base, scene object, reference root) **before** releasing the lock. Using PickObject instead would release the lock before the collidable could be resolved, and it can fail under the engine's pick budget. The cost: the probe's casts do not count against that budget (unmeasured). The ray filter is group 0, layer 41 (`L_LOS`): it sees statics, anim statics, clutter, props, trees, terrain, ground and actors, and not invisible walls, the character controller, water or transparent layers. Whether the runtime collision filter equals the ESM matrix is a **Hypothesis**. The player is excluded by reference identity, and the probe re-casts past each hit 1 unit along the ray (re-casts from inside a convex shape do not re-hit it; triangle meshes may report an exit face, **Hypothesis**).
+Decision: the probe calls `hkpWorld::castRay` (61399) itself while holding `bhkWorld::worldLock` for read, which is what PickObject does internally, and resolves the hit (layer, reference, base, scene object, reference root) **before** releasing the lock. Using PickObject instead would release the lock before the collidable could be resolved, and it can fail under the engine's pick budget. The cost: the probe's casts do not count against that budget (unmeasured). The ray filter is group 0, layer 41 (`L_LOS`). Compared with the camera layer `L_CAMERA` (39, CNAM 0,1,2,3,8,9,13,14,16,17,20,26,28,30,40,41,43,44), L_LOS does not see `L_TRANSPARENT` (3), `L_DEBRIS_LARGE` (20), `L_TRANSPARENT_SMALL` (26), `L_TRANSPARENT_SMALL_ANIM` (28) or `L_CHARCONTROLLER` (30), and it does see clutter (4), weapons (5), projectiles (6), spells (7), props (10), cloud traps (16), cone projectiles (38), the query layers (40, 41, 43, 44) and `L_DETECTION` (53); neither sees invisible walls (27) or water (11). So `clear` is not "the camera caster is clear". Hits on 7, 16, 38, 39, 40, 41, 43, 44 and 53 are reported as `volume` and never block: 16 is the only one of them with the COLL sensor flag (GNAM 02); the rest are chosen from their names and purpose (spell and cone-projectile bodies, query layers, detection volumes), an engineering reading (**Hypothesis**), not a render test. Projectiles (6), weapons (5), traps (14) and clutter stay ordinary hits because they are drawn objects. Whether the runtime collision filter equals the ESM matrix is a **Hypothesis**. The player is excluded by reference identity, and the probe re-casts past each hit 1 unit along the ray (re-casts from inside a convex shape do not re-hit it; triangle meshes may report an exit face, **Hypothesis**).
 
 ### Scene graph, materials, threads
 
@@ -85,7 +85,7 @@ Decision: the probe calls `hkpWorld::castRay` (61399) itself while holding `bhkW
 | Geometry vtables | BSTriShape, BSDynamicTriShape | slot 7 returns `this`, slot 3 returns 0 |
 | Names, parents | EE0A40, 2EECE0 | name compared at `+10h`; parent walk at `+30h` |
 | `lastUpdatedFrameCounter` | NiAVObject::UpdateWorldData (NiNode slot 30h → EEBF40) | stores the global at 33363F4 (ID 411489) into `node+104h` |
-| Frame counter | 411489 → 33363F4 | 28 RIP-relative references in `.text`: 27 `mov`/`cmp` reads and one write, `inc dword [rip]` at 100A02B, right after a renderer virtual call. "Once per frame" is a **Hypothesis**. |
+| Frame counter | 411489 → 33363F4 | 28 RIP-relative references in `.text`: 27 `mov`/`cmp` reads and one write, `inc dword [rip]` at 100A02B (a chunk of 1009F70, which `Main` ID 36555 calls at 656BB1), right after a renderer virtual call. The reviewer found that 36555 waits for the UI job before reaching it, so the counter cannot change during a sample; I confirmed the call chain, not the wait. "Once per frame" is a **Hypothesis**. |
 | Material type | BSShaderMaterial slot 7 | BSLightingShaderMaterial/Base/Envmap → `mov eax,2`; BSEffectShaderMaterial → `mov eax,1` |
 | Material alpha | BSLightingShaderMaterialBase slot 4 (ComputeCRC32, 1523A30) | reads `+70h`, `+78h`, float `+80h`, `+88h`, consistent with CommonLib (`materialAlpha` +80h); the DYL-201 audit and its in-game fade use the same offset |
 | Shader material | 105544 entry `48 8b 79 78` | `mov rdi,[rcx+78h]` |
@@ -102,25 +102,27 @@ Probe history (Source: `session-p4/autotest/runs/*/evidence/probe-slice.jsonl`, 
 
 1. A main-thread-only policy gives **no samples in steady play**: the UI drain never runs on `Main::threadID` there (history above). The probe has no hook, and adding one would break its contract. So the default (`bViewMainThreadOnly=0`) samples in the same UI task drain as `player_state`, on whatever thread runs it. `bViewMainThreadOnly=1` keeps a strict mode: a drain on another thread hops through the main task queue (whose helper only re-queues, so neither queue requeues into its own drain), at most 600 times or 5 s, then reports `off_main_thread`.
 2. Havok: every cast holds the world read lock exactly as PickObject does, and the probe never holds it across another engine call that takes it. Casts from job threads under that lock are engine practice ("Pick reference" job).
-3. Camera: the NiCamera and PlayerCamera are process-lifetime objects. The camera update runs on `Main::threadID` (Phase 5 finding), and in steady play the drain runs inside the job list's "UI" job. That the main thread is inside the job list, and so not updating the camera, while that job runs is a **Hypothesis** from the job table, not proven. Backstop: the frame counter is read before and after the sample, and any change gives `frame_advanced`.
-4. Scene-graph reads (player skeleton, hit-reference subtrees) take a reference count on each node before reading it and are bounded (1024 and 256 nodes). Actor hits are not walked at all (root app-culled flag only, else `unknown`/`actor`). No engine lock protects scene-graph structure. The "UI" job shares its job-list segment with Process lists, Update low list helpers, Script clear and Wait For Shadow Culling (between "Quests/Scenes update sync" and "Shadow Culling sync"), and I found no proof either way that those jobs never attach or detach children of the player or of static references. This is the **residual crash risk** of the default mode. Equipping during a view request and samples during cell streaming are the likeliest triggers. Mitigation for the first game run: request samples only at settled poses; if a crash appears, switch to `bViewMainThreadOnly=1` and report gameplay rows as BLOCKED.
-5. Guards: on the first sample, the seven called engine entries (61399, 26003, 15870, 36609, 18995, 68233, 68239) must have exactly the audited bytes at the audited RVA, and ID 411489 must resolve to 33363F4, or every sample is `guard_binary` (logged with the ID). The NiCamera/PlayerCamera accessor offsets are checked once on live objects (`guard_layout`), and plain member offsets have `static_assert`s.
+3. Camera: the NiCamera and PlayerCamera are process-lifetime objects. The camera update runs on `Main::threadID` (Phase 5 finding), and in steady play the drain runs inside the job list's "UI" job. That the main thread is inside the job list, and so not updating the camera, while that job runs is a **Hypothesis** from the job table, not proven. Wave 1a's `frame_advanced` backstop could not fire (the counter's writer runs after the main thread waits for the UI job) and was removed; `frame` is only a label.
+4. Scene-graph reads take a reference count on each node before reading it and are bounded (1024 skeleton nodes, 256 per hit reference). The player skeleton is searched only when `Get3D(false)` returns a new root or the load generation changes; otherwise the four held bone nodes' `world.translate` is all that is read. Actor hits are not walked (root app-culled flag only, else `unknown`/`actor`); landscape and volume hits resolve no scene object at all. A reference count taken on the job thread can become the last one if the engine drops its own meanwhile, so the probe's release would run that node's destructor on the job thread. Superseded bone holds are therefore parked and released on `Main::threadID` (load messages, observed on main 606/606, or a menu event that arrives there), up to 10; beyond that, and for per-sample hit holds, the release happens on the job thread. No engine lock protects scene-graph structure. The "UI" job shares its job-list segment with Process lists, Update low list helpers, Script clear and Wait For Shadow Culling (between "Quests/Scenes update sync" and "Shadow Culling sync"), and I found no proof either way that those jobs never attach or detach children of the player or of static references. This is the **residual crash risk** of the default mode, together with destructors on the job thread. Equipping during a view request and samples during cell streaming are the likeliest triggers. Usage rule (README): default mode only for `@view` requests at settled poses on the disposable profile; periodic samples through movement, cell borders or load doors only with the explicit `bViewPeriodicOffMain=1` opt-in, which the reviewer did not endorse. If a crash appears, switch to `bViewMainThreadOnly=1` and report gameplay rows as BLOCKED.
+6. Cost: the sample runs while SKSE holds its UI queue lock and the main thread waits for the UI job, so its whole duration adds to that frame (not a deadlock). `sample_ms` reports it per sample; the bound is 256 casts plus the walks above.
+5. Guards: on the first sample, the seven called engine entries (61399, 26003, 15870, 36609, 18995, 68233, 68239) must have exactly the audited bytes at the audited RVA, and ID 411489 must resolve to 33363F4, or every sample is `guard_binary` (logged with the ID). Wave 1a also compared the NiCamera/PlayerCamera accessor offsets on live objects (`guard_layout`); that was a tautology (the accessors are `this` + a CommonLib constant) and was removed. Layout assurance comes from the binary audit: plain member offsets (including `TESCamera::cameraRoot` +20h and the collidable filter info +2Ch) have `static_assert`s, and in a flat build so do `NiCamera` `worldToCam` +110h, `viewFrustum` +150h, `port` +174h and `PlayerCamera::worldFOV` +13Ch.
 
 ## Unverified and NOT_RUN
 
 | Item | Status |
 | --- | --- |
-| MSVC `/W4 /WX` build of the probe | NOT_RUN. A g++ `-fsyntax-only -Wall -Wextra -Wshadow -Wconversion -pedantic` check of the new adapter block against hand-written stubs of the CommonLib declarations passed; that is not a CommonLib compile. |
-| Any `view_sample` in game (pose, projection against screenshots, rays, treatments, thread distribution, `frame_advanced` rate, guards passing live) | NOT_RUN |
+| MSVC `/W4 /WX` build | `61610d9` (wave 1a + two orchestrator fixes): CI run 42719928362 **success**. Wave 2b changes: NOT_RUN in CI; g++ stub check only (not a CommonLib compile). |
+| Any `view_sample` in game (pose, projection against screenshots, rays, treatments, merging, landscape/volume classification, thread distribution, guards passing live, `sample_ms`) | NOT_RUN |
 | Rig hold, player visible, surroundings visible, room drawn measures | NOT_RUN; diagnostic only until the checkpoint |
 | Per-sample CPU cost and frame-time impact | NOT_RUN |
-| Hypotheses marked above (frame counter cadence, frustum tangents, camera X axis, UI job concurrency, alpha bit 0, ESM layer matrix = runtime filter, triangle two-sidedness, pick budget meaning) | Unverified |
+| Hypotheses marked above (frame counter cadence, frustum tangents, camera X axis, UI job concurrency, alpha bit 0, ESM layer matrix = runtime filter for a group-0 layer-41 ray, triangle two-sidedness, pick budget meaning, the volume-layer list) | Unverified |
+| Also not claimed (reviewer could not verify either): that job lists run strictly in table order; whether SmoothCam or TDM detour any of the seven guarded entries (a detour would give `guard_binary`, not a crash) | Unverified |
 
 ## Rendered visibility (design)
 
 The senior review's point stands: geometric clearance is not rendered visibility. A ray asks "which collision surfaces lie on this line and what does the probe know about their drawing". The screen is decided by render geometry, culling, rooms, materials, textures, fog and post-processing. Three candidates were compared.
 
-**(a) Accumulated transmittance from the ray hits (built here).** Each faded hit multiplies by `1 − alpha`, hidden hits are free, opaque hits block.
+**(a) Accumulated transmittance from the ray hits (built here).** Each faded reference multiplies by `1 − alpha` once, however many of its surfaces the ray crosses; hidden and volume hits are free, opaque hits block.
 - Needs: this probe; the spike's mechanism must leave its marks where the probe reads them (app-culled bit, material alpha with a blending property).
 - Blind to: per-draw clipping (collision and material unchanged, so a clipped wall still reads opaque, a false *blocked*); undrawn rooms (no occluder, so a void reads *clear*, a false *pass*, the dangerous case); render geometry without collision (banners, cobwebs, hanging lights, LOD, particles, fog); collision without render geometry; hulls coarser than meshes; texture alpha (grates, foliage); shader discards.
 - Cost: bounded casts per sample; any time, any cadence.
@@ -161,7 +163,8 @@ Each test runs at a settled pose with one `@view` request, then screenshots per 
 | V7 | Undrawn room | camera outside a small room, seeding off | (a) any; recorded | floor-present check FAILs (void detected) |
 | V8 | Unavailable paths | open a menu; switch to first person; request across a load door; set `iViewMaxHits=1` before two walls | `game_paused`; `camera_state` 0; `generation_changed`/`world_changed`; ray `indeterminate` `truncated` | none counted as clear |
 | V9 | Rig hold | walk 10 s with the rig on | `offset` constant within the recorded tolerance; `camera_root_delta` ≈ 0 | — |
-| V10 | Thread/consistency soak | `iViewIntervalMs=250`, 10 min across load doors | no crash; rates of `frame_advanced` and `on_main_thread` recorded; guards pass | — |
+| V10 | Thread/consistency soak (opt-in, not default) | `iViewIntervalMs=250` with `bViewPeriodicOffMain=1`, 10 min across load doors; run only after V1–V9 and only if the orchestrator accepts the risk | no crash; `on_main_thread` rate and `sample_ms` distribution recorded; guards pass | — |
+| V13 | Merging and classification | a closed faded mesh crossed on entry and exit; terrain in an exterior; a trigger/spell volume between camera and player | one hit with `surfaces` ≥ 2 and transmittance `1 − alpha`; terrain `opaque`/`landscape` with `ref:null`; volume hit does not block | — |
 | V11 | Cost | `@perf` capture with and without periodic view samples | frame-time delta recorded against the Phase 4 budget | — |
 | V12 | Strict mode | `bViewMainThreadOnly=1` in steady play | `off_main_thread` (confirms the thread finding) | — |
 
@@ -170,6 +173,23 @@ The checkpoint repeats when the set of mechanisms changes (PHASE_5_5).
 ## Capture cadence
 
 A `view_sample` is one moment in one frame (`frame`). It says nothing about the frames between samples. A periodic sample is queued only after the previous one was emitted; ticks in between are counted in `coalesced_ticks`, and `since_last_ms` and `since_last_frames` state the real gap. A sample can wait several frames in the queue (`queued_ms`). Claims therefore scale with cadence: "no interval longer than 1 s with the player fully hidden" holds only if every gap between consecutive available samples is well under 1 s (for example a 250 ms interval with no gap above 500 ms). Unavailable samples count as gaps, never as visible. "Zero blank frames among the frames captured" can be claimed only for frames that were captured as images. The view sample cannot claim it. A per-frame claim needs per-frame image or depth evidence, candidate (c), in the spike build.
+
+## Review fixes (wave 2b)
+
+| Finding | Confirmed? | Change |
+| --- | --- | --- |
+| M1 culled chain marks the whole reference hidden | Yes: `chainCulled` set `hidden` before the opaque test | Only a culled **root** hides a reference (`rootCulled`); a culled node below it marks only its subtree's parts culled and the parts decide (hidden only if every drawn part is culled). Actors: root flag only. Tests: culled proxy + opaque sibling → opaque; culled proxy + faded sibling → faded. |
+| M2 repeated hits per reference | Yes | `AddHit` merges by reference key (form ID, else tagged object/collidable address); `surfaces` counts raw surfaces; merges use no `iViewMaxHits` slot and no extra factor. Per-ray cap 48 casts. Tests: two faces of one 0.35 wall → 0.65; eight references each crossed twice → 0.65^8 with 8 entries; ninth → full. |
+| m1 parameter named like `part()` | Renamed (`sample`); MSVC `/W4 /WX` of `59613f2`+fixes passed in CI, so it was not an error there. Rechecked both files for parameters/locals named like members. |
+| m2 lock not writer-preferring | Yes (LockForWrite CE32D0 disassembled) | Comment and audit row corrected; no-nesting kept. |
+| m3 `frame_advanced` cannot fire | Accepted (call chain 36555 → 1009F70 → 100A02B confirmed; the wait is the reviewer's) | Check, reason and `frame_end` removed; `frame` documented as a label. |
+| m4 layout guard tautology | Yes | `ViewLayoutGuard` and `guard_layout` removed; `static_assert`s added (flat-build member offsets, `cameraRoot`, filter info). |
+| m5 terrain grid walk | Yes for system group 1 and layer 13 | Those hits are `opaque`/`landscape` without FindCollidableObject or a walk. **Partly disagree on layer 17:** many statics use `L_GROUND` (floors), and a floor above the player is exactly what a cut hides or fades; recording it opaque would hide that. Layer-17 hits with a reference are treated normally; FindCollidableObject's grid path is only taken for system group 1, which is skipped. |
+| m6 what layer 41 sees | Yes | Documented above and in the README; `volume` treatment for non-drawn layers, never blocking. |
+| m7 destructors on the job thread | Yes | Residual-risk text; bone holds parked and released on the main thread (cap 10); hit holds stay per sample. |
+| m8 frame-time cost under the queue lock | Yes | Stated; `sample_ms` added. |
+| Bone caching | Done | Search once per root/generation; holding the root prevents address reuse; retire on root change or generation change. |
+| Periodic timer | Done | Refused (`periodic_opt_in_missing`, `probe_loaded.view_periodic:"refused"`) unless `bViewPeriodicOffMain=1` or `bViewMainThreadOnly=1`; README usage rule. |
 
 ## Proposed shared-file changes
 
@@ -181,7 +201,8 @@ A `view_sample` is one moment in one frame (`frame`). It says nothing about the 
 
 | Command | Result |
 | --- | --- |
-| `for t in tools/testprobe/tests/*_test.cpp; do g++ -std=c++20 -Wall -Wextra -Werror -pedantic "$t" -o /tmp/p55-probe1/$(basename $t .cpp) && /tmp/p55-probe1/$(basename $t .cpp); done` (g++ 15.2.0) | PASS: all nine tests, including `view_policy_test` |
+| `for t in tools/testprobe/tests/*_test.cpp; do g++ -std=c++20 -Wall -Wextra -Werror -pedantic "$t" -o /tmp/p55-probe1/$(basename $t .cpp) && /tmp/p55-probe1/$(basename $t .cpp); done` (g++ 15.2.0) | PASS: all nine tests, including `view_policy_test` (wave 1a and again after wave 2b) |
+| `gh run view 42719928362 --json status,conclusion` | `completed` / `success` (Windows MSVC build of `61610d9`) |
 | Mutation check: faded folded to clear; truncation ignored; behind-camera projected | each mutant aborts `view_policy_test` (exit 134) |
 | `g++ -std=c++20 -fsyntax-only -Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversion -pedantic` on the extracted adapter block with CommonLib stubs | no diagnostics (not a substitute for the MSVC build) |
 | Binary and ESM reads described above | as recorded; no game launch |

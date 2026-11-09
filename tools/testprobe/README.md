@@ -50,6 +50,7 @@ iViewRingPoints=8
 iViewRingRadius=128
 iViewMaxHits=8
 bViewMainThreadOnly=0
+bViewPeriodicOffMain=0
 ```
 
 Settings are read once at startup. The probe is **opt-in**: only an explicit
@@ -430,6 +431,13 @@ acceptance measure by itself (`docs/phases/PHASE_5_5.md`, "Acceptance
 measures"; design and binary audit in `docs/evidence/p5.5/visibility-instrument.md`).
 Rebuild the Windows probe in CI before use; earlier DLLs ignore these keys.
 
+**Usage rule.** In the default mode the sample runs on a job thread (see
+Dispatch). Use it for `@view` requests at **settled poses** on a disposable
+profile: player standing, no equip change, not at a load door or a cell border.
+Do not run periodic samples through movement, cell borders or load doors in the
+default mode. For that reason the periodic timer is refused unless
+`bViewPeriodicOffMain=1` (or `bViewMainThreadOnly=1`) is set explicitly.
+
 ### Settings
 
 All keys are in `[Probe]`, read once at load, digits only.
@@ -438,10 +446,16 @@ All keys are in `[Probe]`, read once at load, digits only.
 | --- | --- | --- |
 | `bViewSamples` | absent = 0 | Exactly `1` enables the `@view ` request namespace, the view timer and the `probe_loaded` view fields. Anything else: the probe behaves exactly as before (an `@view x` request stays a raw `player_state` checkpoint tag). |
 | `iViewIntervalMs` | 0 | Periodic samples; 0 or invalid = off; 1-99 are raised to 100; at most 2147483647. Ignored unless `bViewSamples=1`. |
+| `bViewPeriodicOffMain` | 0 | Exactly `1` allows the periodic timer in the default (off-main) mode. Without it, or `bViewMainThreadOnly=1`, a nonzero interval creates no timer and one `view_sample` with `reason:"periodic_opt_in_missing"` is written at data load. |
 | `iViewRingPoints` | 8 | Floor ring points, 0-16 (invalid = 8). |
 | `iViewRingRadius` | 128 | Ring radius in game units, 16-1024 (invalid = 128). |
-| `iViewMaxHits` | 8 | Surfaces recorded per ray, 1-16 (invalid = 8). |
+| `iViewMaxHits` | 8 | Distinct references recorded per ray, 1-16 (invalid = 8). |
 | `bViewMainThreadOnly` | 0 | `1` samples only when the drain runs on `Main::threadID` (see Dispatch); otherwise retries and then reports `off_main_thread`. |
+
+`probe_loaded` then also carries `view_protocol`, `view_interval_ms`,
+`view_ring_points`, `view_ring_radius`, `view_max_hits`,
+`view_main_thread_only`, `view_periodic_off_main` and `view_periodic`
+(`"off"`, `"on"` or `"refused"`).
 
 ### Request grammar
 
@@ -467,14 +481,14 @@ route generator uses.
 | `seq` | 1, 2, ... over all `view_sample` lines of this process, in file order |
 | `requested`, `tag` | `true` and the label for `@view`; `false` and no `tag` for periodic samples |
 | `available`, `reason` | `reason` is `null` when available, otherwise one code from the table below |
-| `frame` | Engine update counter (Address Library ID 411489) at sample start, or `null` before the binary guard passed. Hypothesis: it increments once per frame (single writer, see the evidence doc). |
+| `frame` | Engine update counter (Address Library ID 411489) at sample start, or `null` before the binary guard passed. A label for correlating samples, not a consistency check: its only writer (RVA 100A02B) is reached from `Main` ID 36555, which the binary review found runs after the main thread has waited for the UI job, so it cannot change during a sample. |
 | `since_last_ms` | Probe QPC milliseconds since the previous `view_sample` of any kind, `null` for the first |
 | `since_last_frames` | `frame` minus the previous sample's `frame`, `null` if either is unknown |
 | `coalesced_ticks` | Periodic ticks merged into this sample because the previous periodic sample was still outstanding; always 0 for requests |
 | `hops`, `queued_ms` | Main-queue retries (only with `bViewMainThreadOnly=1`) and milliseconds from queueing to emission |
+| `sample_ms` | Milliseconds spent inside the sample (from the start of the engine reads to emission), `null` when the sample never started; this time adds to the frame (see Dispatch) |
 | `current_thread_id`, `captured_main_thread_id`, `main_thread_id` | As in `player_state` |
 | `camera_state` | Only on `reason:"camera_state"`: the numeric camera state |
-| `frame_end` | Only on `reason:"frame_advanced"` |
 | `camera` | `state` (9 = third person), `pos {x,y,z}`, `yaw_deg` (0 = +Y/north, clockwise), `pitch_deg` (positive = looking down), `fov_deg`, `vfov_deg` (from the NiCamera frustum, `null` if orthographic or invalid), `world_fov_deg` (PlayerCamera::worldFOV), `ortho`, `node` (`"world_root_camera"`), `under_camera_root` (that NiCamera is a child of PlayerCamera's cameraRoot), `camera_root_pos`, `camera_root_delta` (distance), `rotation_forward_delta_deg` (angle between the projection's view axis and the node rotation's X axis; a consistency check, `null` if degenerate) |
 | `player` | `pos {x,y,z}` (reference position, at the feet), `heading_deg`, `cell {form_id, editor_id}`, `interior` |
 | `offset` | `camera.pos - player.pos` as `{x,y,z,distance}`; the rig-hold measure uses this, not a goal position |
@@ -484,7 +498,7 @@ route generator uses.
 | `counts` | `{points:{clear,faded_only,blocked,indeterminate}, ring:{...}}` |
 | `casts` | Havok casts used by this sample (at most 256) |
 | `on_main_thread` | Whether the sample ran on `Main::threadID` |
-| `config` | `ring_points`, `ring_radius`, `max_hits`, `layer` (41), `end_clearance` (2), `point_lift` (8), `main_thread_only` |
+| `config` | `ring_points`, `ring_radius`, `max_hits`, `layer` (41), `end_clearance` (2), `point_lift` (8), `main_thread_only`, `periodic_off_main` |
 
 `camera`, `player`, `offset`, `points`, `ring`, `player_box`, `counts`,
 `casts`, `on_main_thread` and `config` are present only when `available:true`.
@@ -494,18 +508,20 @@ Each point and ring entry:
 ```text
 {"name":"head","world":{x,y,z}|null,"screen":{x,y}|null,"on_screen":bool|null,
  "ray":{"status":"clear|faded_only|blocked|indeterminate","transmittance":number|null,
-        "hits":[{"ref":"0x........"|null,"base":"0x........"|null,"layer":N,"distance":units,
-                 "treatment":"opaque|faded|hidden|unknown","alpha":number|null,"reason":null|"..."}],
+        "hits":[{"ref":"0x........"|null,"base":"0x........"|null,"layer":N,"distance":units,"surfaces":N,
+                 "treatment":"opaque|faded|hidden|unknown|volume","alpha":number|null,"reason":null|"..."}],
         "truncated":bool,"reason":null|"...","skipped_player":N,"casts":N}}
 ```
 
 - Points: `head`, `chest`, `shoulder_l`, `shoulder_r` are the third-person
   skeleton nodes `NPC Head [Head]`, `NPC Spine2 [Spn2]`, `NPC L UpperArm [LUar]`
   and `NPC R UpperArm [RUar]` (case-insensitive name match, at most 1024 nodes
-  searched). A missing node (for example a beast skeleton) gives `world:null` and
-  an indeterminate ray with reason `point_unavailable` (or `skeleton_cap`).
-  `feet` and ring points are 8 units above `player.pos.z`; ring points assume a
-  flat floor, so steps and slopes can add conservative hits.
+  searched). The search runs once per player 3D root and load; later samples read
+  only the held nodes' world positions. A missing node (for example a beast
+  skeleton) gives `world:null` and an indeterminate ray with reason
+  `point_unavailable` (or `skeleton_cap`). `feet` and ring points are 8 units
+  above `player.pos.z`; ring points assume a flat floor, so steps and slopes can
+  add conservative hits.
 - `screen`: normalized `x` 0..1 left to right and `y` 0..1 **top to bottom**
   (pixel = `x*width`, `y*height`). `on_screen` is true inside the 0..1 square,
   false for a point outside it or at/behind the camera plane (then `screen` is
@@ -515,34 +531,53 @@ Each point and ring entry:
   does not.
 - Rays run from `camera.pos` towards the point and stop 2 units short of it.
   After each hit the probe casts again 1 unit past it. The player's own
-  surfaces are skipped and counted (`skipped_player`, at most 8). `distance` is
-  from the camera. After `iViewMaxHits` recorded surfaces, one more surface
-  before the point sets `truncated:true`.
-- `layer` is the hit collidable's collision layer; the ray uses layer 41
-  (`L_LOS`), which collides with statics, anim statics, clutter, bipeds, trees,
-  props, terrain and ground, but not the character controller, invisible walls,
-  water or the transparent layers. A hit with no reference has `ref:null`.
-- `treatment` is read from the hit reference's 3D (or the hit object when there
-  is no reference), at most 256 nodes: `hidden` when the reference root or a
-  node between the hit object and the root is app-culled, or every drawn part
-  is app-culled; otherwise `opaque` when any drawn part has no blending alpha
-  property, or blends with a lighting material alpha of 1; `faded` with
-  `alpha` = the highest lighting material alpha when every drawn part blends
-  with an alpha below 1 (the DYL-201 fade); `unknown` with a `reason`
-  (`unresolved`, `node_cap`, `non_lighting_blend`, `invalid_alpha`,
-  `no_geometry`) when it cannot be read. Actor hits (form type ACHR) read only
-  the root's app-culled flag: `hidden`, otherwise `unknown` with reason
-  `actor`, because other jobs may restructure actor 3D during the sample.
+  surfaces are skipped and counted (`skipped_player`, at most 8). A ray uses at
+  most 48 casts.
+- **One hit per reference.** Another surface of a reference already on the ray
+  (several collision shapes, or the entry and exit faces of a closed mesh) is
+  merged: its `surfaces` count rises, `distance` stays the nearest, and it uses
+  no `iViewMaxHits` slot and no extra transmittance factor. Identity is the
+  reference's form ID, or for a hit without a reference the resolved object (or
+  collidable) address. After `iViewMaxHits` distinct references, one more
+  reference before the point, or the 48-cast limit, sets `truncated:true`.
+- `layer` is the hit collidable's collision layer. The ray uses layer 41
+  (`L_LOS`). From the Skyrim.esm COLL records it collides with layers 0, 1, 2,
+  4, 5, 6, 7, 8, 9, 10, 13, 14, 16, 17, 32, 38, 39, 40, 41, 43, 44 and 53. Unlike
+  the camera's own layer `L_CAMERA` (39) it does **not** see `L_TRANSPARENT` (3),
+  `L_DEBRIS_LARGE` (20), `L_TRANSPARENT_SMALL` (26), `L_TRANSPARENT_SMALL_ANIM`
+  (28) or the character controller (30); neither sees invisible walls (27) or
+  water (11). So `clear` here does **not** mean the camera's collision caster is
+  clear, and drawn objects that exist only on those layers are invisible to the
+  rays. A hit with no reference has `ref:null`.
+- `treatment`, decided once per reference:
+  - `volume` for hits on layers that are not drawn surfaces: `L_SPELL` (7),
+    `L_CLOUDTRAP` (16), `L_CONEPROJECTILE` (38), the query layers 39, 40, 41,
+    43, 44 and `L_DETECTION` (53). Volumes never block and are not walked.
+  - `opaque` with reason `landscape` for terrain (layer 13) and any collidable
+    in system group 1, without resolving its scene object (that lookup walks the
+    TES cell grid).
+  - Actor hits (form type ACHR) read only the root's app-culled flag: `hidden`,
+    otherwise `unknown` with reason `actor` (actor 3D is not walked).
+  - Other references: their 3D is walked (at most 256 nodes). `hidden` only
+    when the reference root is app-culled, or when every drawn part is
+    app-culled. A culled node below the root (the collision node, a switch
+    branch) hides only its own subtree, so a drawn opaque sibling still makes
+    the reference `opaque`. Otherwise `opaque` when any drawn part has no
+    blending alpha property, or blends with a lighting material alpha of 1;
+    `faded` with `alpha` = the highest lighting material alpha when every
+    drawn part blends with an alpha below 1 (the DYL-201 fade); `unknown` with
+    a `reason` (`unresolved`, `node_cap`, `non_lighting_blend`,
+    `invalid_alpha`, `no_geometry`) when it cannot be read.
 - `status`: `indeterminate` if the cast could not run (`reason`
   `invalid_geometry`, `no_havok_world`, `cast_budget`, `point_unavailable`,
   `skeleton_cap`) or `truncated`; otherwise `blocked` if any hit is `opaque` or
   `unknown`; otherwise `faded_only` if any hit is `faded`; otherwise `clear` (no
-  hits, or only `hidden` hits). A faded hit is never folded into `clear`.
-- `transmittance`: 1 for `clear`; the product of `1 - alpha` over the faded
-  hits for `faded_only` (eight stacked 0.35 fades give 0.65^8, about 0.032);
-  0 when an opaque hit blocks; `null` for an unknown block or indeterminate. Each
-  hit surface counts, so a faded mesh whose entry and exit faces are both hit is
-  counted twice (conservative).
+  hits, or only `hidden` and `volume` hits). A faded hit is never folded into
+  `clear`.
+- `transmittance`: 1 for `clear`; for `faded_only` the product of `1 - alpha`
+  over the faded **references** (eight stacked 0.35 fades give 0.65^8, about
+  0.032; one faded wall hit on entry and exit gives 0.65); 0 when an opaque hit
+  blocks; `null` for an unknown block or indeterminate.
 
 ### Unavailable reasons
 
@@ -550,6 +585,7 @@ Checked in this order; each is logged once per process in `SkyCRPG_TestProbe.log
 
 | `reason` | Meaning |
 | --- | --- |
+| `periodic_opt_in_missing` | Written once at data load when `iViewIntervalMs>0` without `bViewPeriodicOffMain=1` or `bViewMainThreadOnly=1`; no timer runs |
 | `view_busy` | Four samples already outstanding |
 | `invalid_view_request` | Bad `@view` label |
 | `enqueue_failed` | SKSE task interface refused the task |
@@ -561,31 +597,42 @@ Checked in this order; each is logged once per process in `SkyCRPG_TestProbe.log
 | `camera_state` | Camera state is not 9 (third person); the state is in `camera_state` |
 | `guard_binary` | A called engine function's entry bytes or address differ from the audited 1.7.104 values (logged with the ID) |
 | `world_camera_unavailable` | `Main::WorldRootCamera()` returned null |
-| `guard_layout` | A CommonLib accessor offset differs from the audited layout |
 | `cell_unavailable` | No parent cell |
 | `world_changed` | The load generation or the player's cell changed during the sample |
-| `frame_advanced` | `frame` changed during the sample (diagnostic backstop for a torn read) |
 | `sample_failed` | A C++ exception during the sample |
+
+Layout of the CommonLib accessors the sample uses is not checked at run time:
+the accessors are `this` plus a constant, and those constants and the plain
+member offsets are compile-time asserted against the binary audit.
 
 ### Dispatch, threads and cost
 
 Samples run inside the same SKSE UI task drain as `player_state` and read nothing
-outside it; both timers only queue. During unpaused play the drain runs inside
+outside it; the timers only queue. During unpaused play the drain runs inside
 the main job list's `UI` job on a worker thread; around menu transitions and
 while paused it runs in `Main::Update` on `Main::threadID` (probe history:
 359 runs, see the evidence doc). Each Havok cast takes the world read lock the
 way the engine's own `bhkWorld::PickObject` does and resolves the hit before
-releasing it. Scene-graph reads (camera, skeleton, hit references) take no
-engine lock: no lock protects them, and concurrent structural edits by other
-jobs of the same job-list segment are not excluded. This residual risk is stated
-in the evidence doc; `bViewMainThreadOnly=1` removes it at the cost of no
-samples during unpaused play.
+releasing it. The lock lets readers delay a writer but does not let a waiting
+writer block a nested reader; the probe still never nests it.
 
-A sample casts at most 256 rays in total (5 points + ring, each up to
-`iViewMaxHits` + 8 casts) and walks at most 256 nodes per distinct hit
-reference plus 1024 skeleton nodes. Its CPU time is unmeasured (NOT_RUN); keep
-`iViewIntervalMs` well above the frame time and do not combine periodic view
-samples with a performance capture whose numbers matter.
+Scene-graph reads (camera, held bone nodes, hit references) take no engine
+lock: no lock protects them, and concurrent structural edits by other jobs of
+the same job-list segment are not excluded. The probe holds a reference count
+on every node it reads; if the engine drops its own reference meanwhile, the
+probe's release runs that node's destructor on the job thread. Superseded bone
+holds are kept until a load message or a menu event on `Main::threadID`
+releases them (at most 10; beyond that they are released on the job thread).
+This residual risk is stated in the evidence doc; `bViewMainThreadOnly=1`
+removes it at the cost of no samples during unpaused play.
+
+The sample runs while SKSE holds its UI queue lock and while the main thread
+waits for the UI job, so its whole duration (`sample_ms`) adds to that frame's
+time. A sample casts at most 256 rays in total (5 points + ring, at most 48
+each) and walks at most 256 nodes per distinct hit reference, plus up to 1024
+skeleton nodes when the player's 3D root changes. The real cost is unmeasured
+(NOT_RUN); do not combine view samples with a performance capture whose numbers
+matter.
 
 ### Cadence and what a sample can claim
 
@@ -597,9 +644,11 @@ was. "No interval longer than 1 s with the player hidden" can only be checked at
 a cadence well under 1 s with no gap above it, and "zero blank frames" cannot
 be claimed from view samples at all; it needs per-frame image evidence.
 
-`view_policy_test.cpp` covers the request grammar and settings bounds,
-projection (including behind-camera points and non-unit ports), pose angles and
-frustum FOV, ring and ray planning, every folding rule, transmittance (single,
-eight stacked 0.35 fades), treatment aggregation, cadence coalescing and the
-exact JSON shape. It does not compile the Windows adapter or prove any engine
-behaviour; all in-game rows are NOT_RUN.
+`view_policy_test.cpp` covers the request grammar and settings bounds, the
+periodic opt-in, projection (including behind-camera points and non-unit
+ports), pose angles and frustum FOV, ring and ray planning, every folding rule,
+per-reference merging, transmittance (single, a two-faced wall, eight stacked
+0.35 fades), treatment aggregation (including a culled proxy beside an opaque
+sibling), volume and landscape layers, cadence coalescing and the exact JSON
+shape. It does not compile the Windows adapter or prove any engine behaviour;
+all in-game rows are NOT_RUN.

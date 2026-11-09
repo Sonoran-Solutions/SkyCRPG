@@ -117,7 +117,6 @@ struct Probe {
 	bool viewHasFrame{};
 	std::atomic_uint32_t viewInFlight{ 0 };
 	std::atomic_int viewBinaryGuard{ 0 };  // 0 unchecked, 1 pass, 2 fail
-	std::atomic_int viewLayoutGuard{ 0 };
 	std::atomic_uint32_t viewReasonsLogged{ 0 };
 	std::atomic<std::uintptr_t> frameCounter{ 0 };  // ID 411489, set by a passing binary guard
 	HANDLE viewTimer{};
@@ -910,15 +909,19 @@ void RegisterInputObserver(InputEvents* observer)
 // transitions and while paused Main::Update (ID 36564) runs it on
 // Main::threadID. Havok reads follow bhkWorld::PickObject (ID 77860): the
 // world read lock (bhkWorld+0xC598) around hkpWorld::castRay (ID 61399), with
-// each hit collidable resolved before the lock is released. The lock is
-// writer-preferring and never held across an engine call that takes it again.
-// With bViewMainThreadOnly=1 a drain on another thread is retried through the
-// main task queue (whose helper only re-queues) and otherwise refused.
+// each hit collidable resolved before the lock is released. LockForWrite
+// (68234) only CASes the count from 0 and sets no pending bit, so readers can
+// delay writers but a nested read cannot deadlock; the probe still never holds
+// the lock across an engine call that takes it again. A sample runs while
+// SKSE holds its UI queue lock and the main thread waits for the UI job, so
+// its cost (sample_ms) adds to that frame. With bViewMainThreadOnly=1 a drain
+// on another thread is retried through the main task queue (whose helper only
+// re-queues) and otherwise refused.
 struct ViewJob {
 	bool requested{}, valid{ true }, timer{};
 	std::string tag;
 	std::uint64_t generation{};
-	double queuedMs{};
+	double queuedMs{}, startedMs{};
 	std::uint32_t hops{}, coalesced{};
 };
 
@@ -940,7 +943,7 @@ constexpr std::array<ViewGuardBytes, 7> kViewGuards{ {
 	{ 68233, 0xCE3250, "\x40\x57\x48\x83\xec\x20\x48\x8b\xf9", 9 },  // BSReadWriteLock::LockForRead
 	{ 68239, 0xCE3510, "\xf0\xff\x49\x04\xc3", 5 },  // BSReadWriteLock::UnlockForRead
 } };
-constexpr std::uint64_t kFrameCounterID = 411489;     // sole writer: inc at RVA 100A02B
+constexpr std::uint64_t kFrameCounterID = 411489;     // label only; sole writer inc at RVA 100A02B
 constexpr std::uintptr_t kFrameCounterRVA = 0x33363F4;
 constexpr std::uint32_t kThirdPersonState = 9;        // PlayerCamera state id of normal play
 // Plain members read by the view sample, each checked in the binary (evidence doc).
@@ -959,14 +962,27 @@ static_assert(offsetof(RE::hkpWorldRayCastInput, filterInfo) == 0x24);
 static_assert(offsetof(RE::hkpShapeRayCastCollectorOutput, hitFraction) == 0x10);
 static_assert(offsetof(RE::hkpWorldRayCastOutput, rootCollidable) == 0x50);
 static_assert(sizeof(RE::hkpWorldRayCastInput) == 0x30 && sizeof(RE::hkpWorldRayCastOutput) == 0x60);
+static_assert(offsetof(RE::hkpCollidable, broadPhaseHandle) == 0x24);
+static_assert(offsetof(RE::hkpTypedBroadPhaseHandle, collisionFilterInfo) == 0x8);  // filter info at +0x2C (5577D3)
+static_assert(offsetof(RE::TESCamera, cameraRoot) == 0x20);
+// The NiCamera and PlayerCamera accessors are this + constant by construction
+// (CommonLib NiCamera.h 0x110/0x150, PlayerCamera.h 0x13C); those constants
+// match the binary audit. In a flat build the members exist directly and are
+// checked here as well.
+#if defined(EXCLUSIVE_SKYRIM_FLAT)
+static_assert(offsetof(RE::NiCamera, worldToCam) == 0x110);
+static_assert(offsetof(RE::NiCamera, viewFrustum) == 0x150);
+static_assert(offsetof(RE::NiCamera, port) == 0x174);
+static_assert(offsetof(RE::PlayerCamera, worldFOV) == 0x13C);
+#endif
 
 // One log line per distinct refusal code per process.
 void LogViewReason(std::string_view reason) noexcept
 {
-	static constexpr std::array<std::string_view, 18> kReasons{ "invalid_view_request", "view_busy", "enqueue_failed",
+	static constexpr std::array<std::string_view, 17> kReasons{ "invalid_view_request", "view_busy", "enqueue_failed",
 		"outside_task_drain", "generation_changed", "not_loaded", "off_main_thread", "player_unavailable", "game_paused",
-		"camera_unavailable", "camera_state", "guard_binary", "world_camera_unavailable", "guard_layout",
-		"cell_unavailable", "world_changed", "frame_advanced", "sample_failed" };
+		"camera_unavailable", "camera_state", "guard_binary", "world_camera_unavailable", "cell_unavailable",
+		"world_changed", "sample_failed", "periodic_opt_in_missing" };
 	std::uint32_t bit = 31;
 	for (std::uint32_t index = 0; index < kReasons.size(); ++index)
 		if (kReasons[index] == reason) bit = index;
@@ -1015,6 +1031,8 @@ void FinishView(const ViewJob& job, std::string_view reason, const json::Object*
 		if (frame && g_probe->viewHasFrame) fields.Numeric("since_last_frames", *frame - g_probe->viewLastFrame);
 		else fields.Null("since_last_frames");
 		fields.Numeric("coalesced_ticks", job.coalesced).Numeric("hops", job.hops).Numeric("queued_ms", now - job.queuedMs);
+		if (job.startedMs > 0) fields.Numeric("sample_ms", now - job.startedMs);
+		else fields.Null("sample_ms");
 		ThreadFields(fields);
 		if (body) fields.Append(*body);
 		g_probe->viewLastMs = now;
@@ -1061,27 +1079,6 @@ bool ViewBinaryGuard() noexcept
 	return pass;
 }
 
-std::uintptr_t FieldOffset(const void* object, const void* field) noexcept
-{
-	return static_cast<std::uintptr_t>(static_cast<const std::byte*>(field) - static_cast<const std::byte*>(object));
-}
-
-// CommonLib accessor bases, compared once against a live object.
-bool ViewLayoutGuard(RE::NiCamera* camera, RE::PlayerCamera* playerCamera) noexcept
-{
-	const int state = g_probe->viewLayoutGuard.load();
-	if (state != 0) return state == 1;
-	const bool pass = FieldOffset(camera, &camera->GetRuntimeData().worldToCam) == 0x110 &&
-		FieldOffset(camera, &camera->GetRuntimeData2().viewFrustum) == 0x150 &&
-		FieldOffset(camera, &camera->GetRuntimeData2().port) == 0x174 &&
-		FieldOffset(camera, &camera->world) == 0x7C &&
-		FieldOffset(playerCamera, &playerCamera->cameraRoot) == 0x20 &&
-		FieldOffset(playerCamera, &playerCamera->GetRuntimeData2().worldFOV) == 0x13C;
-	if (!pass) Log("SkyCRPG_TestProbe: view layout guard failed (NiCamera/PlayerCamera accessor offsets)\n");
-	g_probe->viewLayoutGuard.store(pass ? 1 : 2);
-	return pass;
-}
-
 bool SameNodeName(const char* name, std::string_view expected) noexcept
 {
 	if (!name) return false;
@@ -1095,30 +1092,29 @@ bool SameNodeName(const char* name, std::string_view expected) noexcept
 	return index == expected.size() && name[index] == 0;
 }
 
-// Head, chest and shoulder bones of the third-person skeleton, by reading node
-// names (no BSFixedString construction, so no string-pool lock).
+// Head, chest and shoulder bones of the third-person skeleton, found by node
+// name (no BSFixedString construction, so no string-pool lock).
+constexpr std::array<std::string_view, 4> kBoneNames{ "NPC Head [Head]", "NPC Spine2 [Spn2]",
+	"NPC L UpperArm [LUar]", "NPC R UpperArm [RUar]" };
 struct BoneSearch {
-	std::array<std::optional<json::Vec3>, 4> world;
+	std::array<RE::NiPointer<RE::NiAVObject>, 4> nodes;
 	bool capped{};
 };
 BoneSearch FindBones(RE::NiAVObject* root)
 {
-	static constexpr std::array<std::string_view, 4> kBones{ "NPC Head [Head]", "NPC Spine2 [Spn2]",
-		"NPC L UpperArm [LUar]", "NPC R UpperArm [RUar]" };
 	BoneSearch result;
 	if (!root) return result;
 	std::vector<RE::NiPointer<RE::NiAVObject>> stack;
 	stack.emplace_back(root);
 	std::uint32_t visited = 0, found = 0;
-	while (!stack.empty() && found < kBones.size()) {
+	while (!stack.empty() && found < kBoneNames.size()) {
 		if (++visited > json::kViewSkeletonNodes) { result.capped = true; break; }
-		const RE::NiPointer<RE::NiAVObject> current = std::move(stack.back());
+		RE::NiPointer<RE::NiAVObject> current = std::move(stack.back());
 		stack.pop_back();
 		const char* name = current->name.c_str();
-		for (std::size_t index = 0; index < kBones.size(); ++index) {
-			if (result.world[index] || !SameNodeName(name, kBones[index])) continue;
-			const auto& translate = current->world.translate;
-			result.world[index] = json::Vec3{ translate.x, translate.y, translate.z };
+		for (std::size_t index = 0; index < kBoneNames.size(); ++index) {
+			if (result.nodes[index] || !SameNodeName(name, kBoneNames[index])) continue;
+			result.nodes[index] = current;
 			++found;
 		}
 		if (auto* node = current->AsNode()) {
@@ -1131,7 +1127,82 @@ BoneSearch FindBones(RE::NiAVObject* root)
 	return result;
 }
 
-// Bounded Havok rays plus per-hit treatment for one sample.
+// The skeleton is searched once per player 3D root and load generation; later
+// samples read only the held bones' world.translate. Holding the root means a
+// replacement root (3D reload, race menu, beast form) has a different address.
+// Only UI-drain tasks touch the cache, and SKSE runs them one at a time.
+// Superseded holds are released on Main::threadID (load messages, or a menu
+// event delivered there) because the probe's reference may be the last one;
+// beyond kRetiredCap they are released where they are, on the drain thread.
+struct BoneCache {
+	RE::NiPointer<RE::NiAVObject> root;
+	std::array<RE::NiPointer<RE::NiAVObject>, 4> nodes;
+	std::uint64_t generation{};
+	bool capped{}, valid{};
+};
+BoneCache* g_viewBones = nullptr;  // process lifetime, like g_probe
+std::mutex g_viewRetiredMutex;
+std::vector<RE::NiPointer<RE::NiAVObject>>* g_viewRetired = nullptr;
+constexpr std::size_t kRetiredCap = 10;
+
+void RetireViewNodes(BoneCache& cache) noexcept
+{
+	std::vector<RE::NiPointer<RE::NiAVObject>> overflow;
+	try {
+		std::scoped_lock lock(g_viewRetiredMutex);
+		if (!g_viewRetired) g_viewRetired = new std::vector<RE::NiPointer<RE::NiAVObject>>();
+		if (cache.root) g_viewRetired->push_back(std::move(cache.root));
+		for (auto& node : cache.nodes)
+			if (node) g_viewRetired->push_back(std::move(node));
+		if (g_viewRetired->size() > kRetiredCap) overflow.swap(*g_viewRetired);
+	} catch (...) { Log("SkyCRPG_TestProbe: view bone retirement failed\n"); }
+	cache = {};
+	if (!overflow.empty()) Log("SkyCRPG_TestProbe: view bone holds released on the drain thread (cap reached)\n");
+}
+
+// Releases superseded holds, only on Main::threadID: load messages (observed
+// on main 606/606) and the menu events that arrive there.
+void ReleaseRetiredViewNodes() noexcept
+{
+	if (!g_probe->view.enabled) return;  // base behaviour without bViewSamples
+	const auto* main = RE::Main::GetSingleton();
+	if (!main || main->threadID != GetCurrentThreadId()) return;
+	std::vector<RE::NiPointer<RE::NiAVObject>> released;
+	try {
+		std::scoped_lock lock(g_viewRetiredMutex);
+		if (g_viewRetired) released.swap(*g_viewRetired);
+	} catch (...) { return; }
+}
+
+std::array<std::optional<json::Vec3>, 4> PlayerBones(RE::PlayerCharacter* player, std::uint64_t generation, bool& capped)
+{
+	std::array<std::optional<json::Vec3>, 4> result;
+	if (!g_viewBones) g_viewBones = new BoneCache();
+	auto& cache = *g_viewBones;
+	auto* root = player->Get3D(false);
+	if (!root) {
+		if (cache.valid) RetireViewNodes(cache);
+		return result;
+	}
+	if (!cache.valid || cache.root.get() != root || cache.generation != generation) {
+		if (cache.valid) RetireViewNodes(cache);
+		auto search = FindBones(root);
+		cache.root.reset(root);
+		cache.nodes = std::move(search.nodes);
+		cache.capped = search.capped;
+		cache.generation = generation;
+		cache.valid = true;
+	}
+	capped = cache.capped;
+	for (std::size_t index = 0; index < cache.nodes.size(); ++index) {
+		if (!cache.nodes[index]) continue;
+		const auto& translate = cache.nodes[index]->world.translate;
+		result[index] = json::Vec3{ translate.x, translate.y, translate.z };
+	}
+	return result;
+}
+
+// Bounded Havok rays plus per-reference treatment for one sample.
 class ViewCaster {
 public:
 	ViewCaster(RE::TESObjectCELL* cell, RE::TESObjectREFR* player, std::uint32_t maxHits) :
@@ -1153,6 +1224,7 @@ public:
 		json::Vec3 from = plan->from;
 		for (;;) {
 			if (casts_ >= json::kViewCastBudget) { ray.reason = "cast_budget"; return ray; }
+			if (ray.casts >= json::kViewRayCasts) { ray.truncated = true; ray.ran = true; return ray; }
 			++casts_;
 			++ray.casts;
 			RE::hkpWorldRayCastInput input;
@@ -1163,11 +1235,12 @@ public:
 			input.enableShapeCollectionFilter = false;
 			input.filterInfo.filter = json::kViewRayLayer;  // group 0, layer L_LOS
 			RE::hkpWorldRayCastOutput output;
-			bool hit = false, isPlayer = false, isActor = false, chainCulled = false;
+			bool hit = false, isPlayer = false, isActor = false, landscape = false, volume = false;
 			double fraction = 1;
 			std::uint32_t layer = 0;
+			std::uint64_t key = 0;
 			std::optional<std::uint32_t> refID, baseID;
-			RE::NiPointer<RE::NiAVObject> object, root;
+			RE::NiPointer<RE::NiAVObject> root;
 			{
 				RE::BSReadLockGuard lock(world_->worldLock);
 				havok_->CastRay(input, output);
@@ -1175,23 +1248,26 @@ public:
 				if (collidable && output.hitFraction >= 0.0f && output.hitFraction <= 1.0f) {
 					hit = true;
 					fraction = output.hitFraction;
-					layer = static_cast<std::uint32_t>(collidable->GetCollisionLayer());
+					const std::uint32_t filterInfo = collidable->broadPhaseHandle.collisionFilterInfo.filter;
+					layer = filterInfo & 0x7F;
 					auto* ref = RE::TESHavokUtilities::FindCollidableRef(*collidable);
-					object.reset(RE::TESHavokUtilities::FindCollidableObject(*collidable));
 					isPlayer = ref && ref == player_;
-					if (ref && !isPlayer) {
-						// Form type 3Eh, the Character test the native caster makes at 5578C7.
-						isActor = ref->GetFormType() == RE::FormType::ActorCharacter;
-						refID = ref->GetFormID();
-						if (const auto* base = ref->GetBaseObject()) baseID = base->GetFormID();
-						root.reset(ref->Get3D());
-					}
-					// Hit object -> reference root, under the lock like FindCollidableRef's own walk.
-					const auto* top = root ? root.get() : object.get();
-					std::uint32_t links = 0;
-					for (const RE::NiAVObject* node = object.get(); node && links < json::kViewParentLinks; node = node->parent, ++links) {
-						if (node->GetAppCulled()) { chainCulled = true; break; }
-						if (node == top) break;
+					if (!isPlayer) {
+						if (ref) {
+							// Form type 3Eh, the Character test the native caster makes at 5578C7.
+							isActor = ref->GetFormType() == RE::FormType::ActorCharacter;
+							refID = ref->GetFormID();
+							if (const auto* base = ref->GetBaseObject()) baseID = base->GetFormID();
+						}
+						landscape = json::LandscapeHit(layer, filterInfo);
+						volume = !landscape && json::VolumeLayer(layer);
+						// Landscape skips FindCollidableObject's grid lookup; volumes need no 3D.
+						if (!landscape && !volume) {
+							if (ref) root.reset(ref->Get3D());
+							else root.reset(RE::TESHavokUtilities::FindCollidableObject(*collidable));
+						}
+						key = json::HitKey(refID, root ? reinterpret_cast<std::uintptr_t>(root.get()) :
+							reinterpret_cast<std::uintptr_t>(collidable));
 					}
 				}
 			}
@@ -1201,18 +1277,24 @@ public:
 			if (isPlayer) {
 				if (++ray.skippedPlayer > json::kViewPlayerSkips) { ray.truncated = true; ray.ran = true; return ray; }
 			} else {
-				if (ray.hits.size() >= maxHits_) { ray.truncated = true; ray.ran = true; return ray; }
 				json::HitRecord record;
-				record.ref = refID;
-				record.base = baseID;
-				record.layer = layer;
+				record.key = key;
 				record.distance = json::Length(point - eye);
-				const auto treated = isActor ? ActorTreatment(root.get(), chainCulled) :
-					Treat(root ? root.get() : object.get(), object.get(), chainCulled);
-				record.treatment = treated.treatment;
-				record.alpha = treated.alpha;
-				record.reason = treated.reason;
-				ray.hits.push_back(record);
+				if (!json::KnownHit(ray, key)) {
+					// A new reference is treated once; another surface of a known one is merged by AddHit.
+					record.ref = refID;
+					record.base = baseID;
+					record.layer = layer;
+					json::TreatmentResult treated;
+					if (landscape) treated = { json::Treatment::opaque, std::nullopt, "landscape" };
+					else if (volume) treated = { json::Treatment::volume, std::nullopt, {} };
+					else if (isActor) treated = ActorTreatment(root.get());
+					else treated = Treat(root.get());
+					record.treatment = treated.treatment;
+					record.alpha = treated.alpha;
+					record.reason = treated.reason;
+				}
+				if (json::AddHit(ray, record, maxHits_) == json::AddResult::full) { ray.truncated = true; ray.ran = true; return ray; }
 			}
 			if (!(json::Dot(plan->to - next, direction) > 0)) { ray.ran = true; return ray; }
 			from = next;
@@ -1222,28 +1304,28 @@ public:
 private:
 	struct Cached {
 		RE::NiAVObject* root;
-		RE::NiAVObject* object;
 		json::TreatmentResult result;
 	};
 
 	// Actor 3D may be restructured by jobs that run beside the UI job (Process
 	// lists), so only the root's app-culled flag is read; the rest is unknown.
-	static json::TreatmentResult ActorTreatment(RE::NiAVObject* root, bool chainCulled)
+	static json::TreatmentResult ActorTreatment(RE::NiAVObject* root)
 	{
 		if (!root) return { json::Treatment::unknown, std::nullopt, "unresolved" };
-		if (chainCulled || root->GetAppCulled()) return { json::Treatment::hidden, std::nullopt, {} };
+		if (root->GetAppCulled()) return { json::Treatment::hidden, std::nullopt, {} };
 		return { json::Treatment::unknown, std::nullopt, "actor" };
 	}
 
-	// hidden: the reference root, or a node between the hit object and it, is
-	// app-culled. Otherwise every drawn geometry part decides (view_policy.h).
-	json::TreatmentResult Treat(RE::NiAVObject* root, RE::NiAVObject* object, bool chainCulled)
+	// hidden only when the reference root is app-culled; otherwise every drawn
+	// geometry part decides, with culled nodes hiding only their own subtree
+	// (view_policy.h TreatmentAccumulator).
+	json::TreatmentResult Treat(RE::NiAVObject* root)
 	{
 		if (!root) return { json::Treatment::unknown, std::nullopt, "unresolved" };
 		for (const auto& cached : cache_)
-			if (cached.root == root && cached.object == object) return cached.result;
+			if (cached.root == root) return cached.result;
 		json::TreatmentAccumulator accumulator;
-		if (chainCulled || root->GetAppCulled()) accumulator.hiddenChain();
+		if (root->GetAppCulled()) accumulator.rootCulled();
 		struct Entry {
 			RE::NiPointer<RE::NiAVObject> node;
 			bool culled;
@@ -1277,8 +1359,8 @@ private:
 			}
 		}
 		const auto result = accumulator.result();
-		cache_.push_back({ root, object, result });
-		holds_.emplace_back(root);  // cached keys stay valid for this sample
+		cache_.push_back({ root, result });
+		holds_.emplace_back(root);  // cache and merge keys must not be reused by a new object within the sample
 		return result;
 	}
 
@@ -1292,8 +1374,9 @@ private:
 	std::vector<RE::NiPointer<RE::NiAVObject>> holds_;
 };
 
-void SampleView(const ViewJob& job, bool onMain)
+void SampleView(ViewJob& job, bool onMain)
 {
+	job.startedMs = PerfNow();
 	auto* player = RE::PlayerCharacter::GetSingleton();
 	auto* ui = RE::UI::GetSingleton();
 	if (!player || !player->Is3DLoaded() || (ui && (ui->IsMenuOpen("Main Menu") || ui->IsMenuOpen("Loading Menu"))))
@@ -1311,7 +1394,6 @@ void SampleView(const ViewJob& job, bool onMain)
 	const auto frame = ReadFrame();
 	auto* camera = RE::Main::WorldRootCamera();
 	if (!camera) return FinishView(job, "world_camera_unavailable", nullptr, frame);
-	if (!ViewLayoutGuard(camera, playerCamera)) return FinishView(job, "guard_layout", nullptr, frame);
 	auto* cell = player->GetParentCell();
 	if (!cell) return FinishView(job, "cell_unavailable", nullptr, frame);
 
@@ -1366,19 +1448,20 @@ void SampleView(const ViewJob& job, bool onMain)
 	const auto offsetJson = json::Object{}.Numeric("x", offset.x).Numeric("y", offset.y).Numeric("z", offset.z)
 		.Numeric("distance", json::Length(offset)).Json();
 
-	const auto bones = FindBones(player->Get3D(false));
+	bool bonesCapped = false;
+	const auto bones = PlayerBones(player, job.generation, bonesCapped);
 	const json::Vec3 lift{ 0, 0, json::kViewPointLift };
 	std::vector<json::PointRecord> points(5);
 	points[0].name = "head";
-	points[0].world = bones.world[0];
+	points[0].world = bones[0];
 	points[1].name = "chest";
-	points[1].world = bones.world[1];
+	points[1].world = bones[1];
 	points[2].name = "feet";
 	points[2].world = feet + lift;
 	points[3].name = "shoulder_l";
-	points[3].world = bones.world[2];
+	points[3].world = bones[2];
 	points[4].name = "shoulder_r";
-	points[4].world = bones.world[3];
+	points[4].world = bones[3];
 	const auto& settings = g_probe->view;
 	std::vector<json::PointRecord> ring(settings.ringPoints);
 	for (std::uint32_t index = 0; index < settings.ringPoints; ++index) {
@@ -1390,21 +1473,16 @@ void SampleView(const ViewJob& job, bool onMain)
 	for (auto* list : { &points, &ring }) {
 		for (auto& point : *list) {
 			if (!point.world) {
-				point.ray.reason = bones.capped ? "skeleton_cap" : "point_unavailable";
+				point.ray.reason = bonesCapped ? "skeleton_cap" : "point_unavailable";
 				continue;
 			}
 			point.projection = json::Project(matrix, port, *point.world);
 			point.ray = caster.Cast(eye, *point.world);
 		}
 	}
-	// Backstops: a world swap or a frame boundary during the sample discards it.
+	// Backstop: a world swap during the sample discards it.
 	if (job.generation != g_probe->generation.load() || !g_probe->loaded.load() || player->GetParentCell() != cell)
 		return FinishView(job, "world_changed", nullptr, frame);
-	if (const auto frameEnd = ReadFrame(); frame && frameEnd && *frame != *frameEnd) {
-		json::Object extra;
-		extra.Numeric("frame_end", *frameEnd);
-		return FinishView(job, "frame_advanced", &extra, frame);
-	}
 	json::Object body;
 	body.Raw("camera", cameraFields.Json()).Raw("player", playerFields.Json()).Raw("offset", offsetJson)
 		.Raw("points", json::PointsJson(points)).Raw("ring", json::PointsJson(ring))
@@ -1414,7 +1492,7 @@ void SampleView(const ViewJob& job, bool onMain)
 		.Raw("config", json::Object{}.Numeric("ring_points", settings.ringPoints).Numeric("ring_radius", settings.ringRadius)
 			.Numeric("max_hits", settings.maxHits).Numeric("layer", json::kViewRayLayer)
 			.Numeric("end_clearance", json::kViewEndClearance).Numeric("point_lift", json::kViewPointLift)
-			.Boolean("main_thread_only", settings.mainThreadOnly).Json());
+			.Boolean("main_thread_only", settings.mainThreadOnly).Boolean("periodic_off_main", settings.periodicOffMain).Json());
 	FinishView(job, {}, &body, frame);
 }
 
@@ -1688,6 +1766,7 @@ public:
 			if (!event) { Log("SkyCRPG_TestProbe: null menu event\n"); return RE::BSEventNotifyControl::kContinue; }
 			// Capture the open endpoint before JSON/log I/O on this callback.
 			if (event->menuName == "InventoryMenu") InventoryMenuEvent(event->opening, PerfNow());
+			ReleaseRetiredViewNodes();  // no-op unless on Main::threadID
 			ThreadContext("menu");
 			Emit("menu", json::Object{}.String("name", event->menuName.c_str()).Boolean("opening", event->opening));
 			if (!event->opening) QueueSnapshot();
@@ -1761,15 +1840,30 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 			if (g_probe->interval != 0 && !CreateTimerQueueTimer(&g_probe->timer, nullptr, TimerTick, nullptr,
 				g_probe->interval, g_probe->interval, WT_EXECUTEDEFAULT))
 				Log("SkyCRPG_TestProbe: timer creation failed; event snapshots remain available\n");
-			// A separate timer, only with bViewSamples=1 and iViewIntervalMs>0. It
-			// only queues; engine reads happen in the task drain.
-			if (g_probe->view.enabled && g_probe->view.intervalMs != 0 && !CreateTimerQueueTimer(&g_probe->viewTimer, nullptr,
-				ViewTimerTick, nullptr, g_probe->view.intervalMs, g_probe->view.intervalMs, WT_EXECUTEDEFAULT))
-				Log("SkyCRPG_TestProbe: view timer creation failed; @view requests remain available\n");
+			// A separate timer, only with bViewSamples=1, iViewIntervalMs>0 and either
+			// bViewMainThreadOnly=1 or bViewPeriodicOffMain=1. It only queues; engine
+			// reads happen in the task drain. Without the opt-in the timer is refused
+			// and one view_sample says so.
+			switch (json::Periodic(g_probe->view)) {
+			case json::PeriodicMode::on:
+				if (!CreateTimerQueueTimer(&g_probe->viewTimer, nullptr, ViewTimerTick, nullptr,
+					g_probe->view.intervalMs, g_probe->view.intervalMs, WT_EXECUTEDEFAULT))
+					Log("SkyCRPG_TestProbe: view timer creation failed; @view requests remain available\n");
+				break;
+			case json::PeriodicMode::refused: {
+				ViewJob job;
+				job.queuedMs = PerfNow();
+				g_probe->viewInFlight.fetch_add(1);
+				FinishView(job, "periodic_opt_in_missing");
+				break;
+			}
+			default: break;
+			}
 			break;
 		}
 		case SKSE::MessagingInterface::kPreLoadGame: {
 			g_probe->loaded.store(false);
+			ReleaseRetiredViewNodes();
 			g_probe->generation.fetch_add(1);
 			ResetPerformance();
 			ThreadContext("pre_load_game");
@@ -1782,6 +1876,7 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 		}
 		case SKSE::MessagingInterface::kPostLoadGame: {
 			ThreadContext("post_load_game");
+			ReleaseRetiredViewNodes();
 			// SKSE encodes success in the pointer value (0/1), not a bool*.
 			const bool success = message->data != nullptr;
 			g_probe->loaded.store(success);
@@ -1872,7 +1967,7 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* sks
 		g_probe->view = json::ParseViewSettings(ReadDigits(ini, L"bViewSamples", L"").data(),
 			ReadDigits(ini, L"iViewIntervalMs", L"").data(), ReadDigits(ini, L"iViewRingPoints", L"").data(),
 			ReadDigits(ini, L"iViewRingRadius", L"").data(), ReadDigits(ini, L"iViewMaxHits", L"").data(),
-			ReadDigits(ini, L"bViewMainThreadOnly", L"").data());
+			ReadDigits(ini, L"bViewMainThreadOnly", L"").data(), ReadDigits(ini, L"bViewPeriodicOffMain", L"").data());
 		auto fields = json::Object{}.String("runtime", Version(skseInterface->runtimeVersion))
 			.String("skse", Version(skseInterface->skseVersion)).String("probe_version", SKYCRPG_VERSION)
 			.String("snapshot_dispatch", "ui_task_drain_v3").Numeric("perf_protocol", 1).Numeric("observation_protocol", json::kObservationProtocol)
@@ -1881,7 +1976,10 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const skse::Interface* sks
 		if (g_probe->view.enabled)
 			fields.Numeric("view_protocol", json::kViewProtocol).Numeric("view_interval_ms", g_probe->view.intervalMs)
 				.Numeric("view_ring_points", g_probe->view.ringPoints).Numeric("view_ring_radius", g_probe->view.ringRadius)
-				.Numeric("view_max_hits", g_probe->view.maxHits).Boolean("view_main_thread_only", g_probe->view.mainThreadOnly);
+				.Numeric("view_max_hits", g_probe->view.maxHits).Boolean("view_main_thread_only", g_probe->view.mainThreadOnly)
+				.Boolean("view_periodic_off_main", g_probe->view.periodicOffMain)
+				.String("view_periodic", json::Periodic(g_probe->view) == json::PeriodicMode::on ? "on" :
+					json::Periodic(g_probe->view) == json::PeriodicMode::refused ? "refused" : "off");
 		if (!PinnedAddressLibrary()) {
 			Log("SkyCRPG_TestProbe: pinned Address Library 13 missing/unreadable/mismatched; CommonLib Init skipped\n");
 			return false;

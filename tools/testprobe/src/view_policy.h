@@ -20,17 +20,37 @@
 namespace skycrpg::testprobe {
 inline constexpr unsigned kViewProtocol = 1;
 // Skyrim.esm COLL L_LOS (0x0008878A) is BNAM 41; its CNAM list is symmetric
-// with every other COLL record and contains statics, anim statics, clutter,
-// bipeds, trees, props, terrain, ground and dead bipeds, but not
-// L_CHARCONTROLLER, L_INVISIBLE_WALL or the transparent layers.
+// with every other COLL record. It collides with layers 0, 1, 2, 4, 5, 6, 7,
+// 8, 9, 10, 13, 14, 16, 17, 32, 38, 39, 40, 41, 43, 44 and 53. Unlike the
+// camera layer L_CAMERA (39) it does NOT collide with L_TRANSPARENT (3),
+// L_DEBRIS_LARGE (20), L_TRANSPARENT_SMALL (26), L_TRANSPARENT_SMALL_ANIM (28)
+// or L_CHARCONTROLLER (30); neither sees L_INVISIBLE_WALL (27) or water (11).
 inline constexpr std::uint32_t kViewRayLayer = 41;
+// Layers in that list whose bodies are not drawn surfaces: L_SPELL (7),
+// L_CLOUDTRAP (16, the only one with the COLL "sensor" flag 0x02),
+// L_CONEPROJECTILE (38), the query layers L_CAMERA/L_ITEMPICKER/L_LOS/
+// L_CUSTOMPICK1/L_CUSTOMPICK2 (39, 40, 41, 43, 44) and L_DETECTION (53).
+// Hits on them are reported as `volume` and never block. Choosing them is an
+// engineering reading of the COLL names and flags (Hypothesis), not a render test.
+inline constexpr bool VolumeLayer(std::uint32_t layer) noexcept
+{
+	return layer == 7 || layer == 16 || layer == 38 || layer == 39 || layer == 40 || layer == 41 ||
+		layer == 43 || layer == 44 || layer == 53;
+}
+// FindCollidableObject (ID 15870) resolves system-group-1 entities through a
+// TES grid lookup (2236E8..22374D). Those and terrain (13) are recorded as
+// opaque landscape without resolving an object or walking a land node.
+inline constexpr bool LandscapeHit(std::uint32_t layer, std::uint32_t filterInfo) noexcept
+{
+	return layer == 13 || (filterInfo & 0xFFFF0000U) == 0x10000U;
+}
 inline constexpr unsigned kViewMaxInFlight = 4;      // outstanding samples, requested + periodic
 inline constexpr unsigned kViewMaxHops = 600;        // UI -> main-queue -> UI retries for a main-thread drain
 inline constexpr double kViewMaxWaitMs = 5000;       // and the wall-clock bound on the same wait
 inline constexpr unsigned kViewCastBudget = 256;     // Havok casts per sample, all rays together
 inline constexpr unsigned kViewPlayerSkips = 8;      // player surfaces skipped per ray
+inline constexpr unsigned kViewRayCasts = 48;        // casts per ray, merged surfaces included
 inline constexpr unsigned kViewTreatmentNodes = 256; // nodes visited per hit reference
-inline constexpr unsigned kViewParentLinks = 64;     // hit object -> reference root walk
 inline constexpr unsigned kViewSkeletonNodes = 1024; // player bone search
 inline constexpr double kViewEndClearance = 2;       // rays stop this many units before the point
 inline constexpr double kViewRecastStep = 1;         // re-cast this many units past each hit
@@ -83,6 +103,7 @@ inline std::uint32_t ParseViewInterval(std::string_view text) noexcept
 struct ViewSettings {
 	bool enabled{};
 	bool mainThreadOnly{};
+	bool periodicOffMain{};  // explicit opt-in for periodic samples off the main thread
 	std::uint32_t intervalMs{};
 	std::uint32_t ringPoints{ 8 };
 	std::uint32_t ringRadius{ 128 };
@@ -90,16 +111,26 @@ struct ViewSettings {
 };
 inline ViewSettings ParseViewSettings(std::string_view enabled, std::string_view interval,
 	std::string_view ringPoints, std::string_view ringRadius, std::string_view maxHits,
-	std::string_view mainThreadOnly = {}) noexcept
+	std::string_view mainThreadOnly = {}, std::string_view periodicOffMain = {}) noexcept
 {
 	ViewSettings result;
 	result.enabled = enabled == "1";
 	result.mainThreadOnly = mainThreadOnly == "1";
+	result.periodicOffMain = periodicOffMain == "1";
 	result.intervalMs = result.enabled ? ParseViewInterval(interval) : 0;
 	result.ringPoints = ParseBounded(ringPoints, 0, 16, 8);
 	result.ringRadius = ParseBounded(ringRadius, 16, 1024, 128);
 	result.maxHits = ParseBounded(maxHits, 1, 16, 8);
 	return result;
+}
+// Periodic samples move with the player across cell borders and load doors,
+// where the off-main reads are least safe. They run only in strict main-thread
+// mode or with bViewPeriodicOffMain=1; otherwise the timer is refused.
+enum class PeriodicMode { off, on, refused };
+inline PeriodicMode Periodic(const ViewSettings& settings) noexcept
+{
+	if (!settings.enabled || settings.intervalMs == 0) return PeriodicMode::off;
+	return settings.mainThreadOnly || settings.periodicOffMain ? PeriodicMode::on : PeriodicMode::refused;
 }
 
 // ---- Geometry ------------------------------------------------------------
@@ -225,7 +256,7 @@ inline Vec3 Advance(Vec3 from, Vec3 to, double fraction, double step = kViewReca
 }
 
 // ---- Treatment and folding ----------------------------------------------
-enum class Treatment { opaque, faded, hidden, unknown };
+enum class Treatment { opaque, faded, hidden, unknown, volume };
 enum class RayStatus { clear, faded_only, blocked, indeterminate };
 inline std::string_view TreatmentName(Treatment value) noexcept
 {
@@ -233,6 +264,7 @@ inline std::string_view TreatmentName(Treatment value) noexcept
 	case Treatment::opaque: return "opaque";
 	case Treatment::faded: return "faded";
 	case Treatment::hidden: return "hidden";
+	case Treatment::volume: return "volume";
 	default: return "unknown";
 	}
 }
@@ -256,31 +288,34 @@ struct PartSample {
 struct TreatmentResult {
 	Treatment treatment{ Treatment::unknown };
 	std::optional<double> alpha;
-	std::string_view reason;  // set only for unknown
+	std::string_view reason;  // unknown: why; opaque landscape: "landscape"
 };
 // Conservative: any visible opaque part makes the reference opaque, because
-// the probe cannot tell which drawn part a collision ray corresponds to.
+// the probe cannot tell which drawn part a collision ray corresponds to. Only
+// a culled reference root hides the whole reference; a culled node below it
+// (for example the collision-carrying node, or one switch branch) only marks
+// its own subtree's parts culled, and the parts decide.
 class TreatmentAccumulator {
 	bool hidden_{}, capped_{}, opaque_{}, unknown_{};
 	std::string_view unknownReason_;
 	unsigned visible_{}, culled_{};
 	double maxAlpha_{ -1 };
 public:
-	void hiddenChain() noexcept { hidden_ = true; }
+	void rootCulled() noexcept { hidden_ = true; }
 	void nodeCap() noexcept { capped_ = true; }
-	void part(const PartSample& part) noexcept
+	void part(const PartSample& sample) noexcept
 	{
-		if (part.culled) { ++culled_; return; }
+		if (sample.culled) { ++culled_; return; }
 		++visible_;
-		if (!part.blending) { opaque_ = true; return; }
-		if (!part.lighting) { if (!unknown_) unknownReason_ = "non_lighting_blend"; unknown_ = true; return; }
-		if (!std::isfinite(part.alpha) || part.alpha < 0 || part.alpha > 1) {
+		if (!sample.blending) { opaque_ = true; return; }
+		if (!sample.lighting) { if (!unknown_) unknownReason_ = "non_lighting_blend"; unknown_ = true; return; }
+		if (!std::isfinite(sample.alpha) || sample.alpha < 0 || sample.alpha > 1) {
 			if (!unknown_) unknownReason_ = "invalid_alpha";
 			unknown_ = true;
 			return;
 		}
-		if (part.alpha >= 1) { opaque_ = true; return; }
-		maxAlpha_ = (std::max)(maxAlpha_, part.alpha);
+		if (sample.alpha >= 1) { opaque_ = true; return; }
+		maxAlpha_ = (std::max)(maxAlpha_, sample.alpha);
 	}
 	TreatmentResult result() const noexcept
 	{
@@ -295,13 +330,22 @@ public:
 };
 
 struct HitRecord {
+	std::uint64_t key{};       // identity for merging: form ID, or a tagged object address
 	std::optional<std::uint32_t> ref, base;
 	std::uint32_t layer{};
-	double distance{};
+	double distance{};         // to the nearest surface of this reference
+	std::uint32_t surfaces{ 1 };
 	Treatment treatment{ Treatment::unknown };
 	std::optional<double> alpha;
 	std::string_view reason;
 };
+// Reference identity: the form ID when there is a reference, otherwise the
+// resolved object's (or collidable's) address with bit 63 set, which no form
+// ID and no user-mode address uses.
+inline constexpr std::uint64_t HitKey(std::optional<std::uint32_t> ref, std::uintptr_t object) noexcept
+{
+	return ref ? static_cast<std::uint64_t>(*ref) : (static_cast<std::uint64_t>(object) | (1ULL << 63));
+}
 struct RayRecord {
 	bool ran{};          // every cast needed for a complete answer ran
 	bool truncated{};    // more surfaces lay before the point than maxHits
@@ -311,12 +355,36 @@ struct RayRecord {
 	std::uint32_t skippedPlayer{};
 	std::uint32_t casts{};
 };
+// Treatment is per reference, so folding is per distinct reference: another
+// surface of a reference already on the ray (several shapes, or the entry and
+// exit faces of a closed mesh) is merged into its record and does not use one
+// of the maxHits slots.
+enum class AddResult { appended, merged, full };
+inline AddResult AddHit(RayRecord& ray, const HitRecord& hit, std::uint32_t maxHits)
+{
+	for (auto& existing : ray.hits) {
+		if (existing.key != hit.key) continue;
+		++existing.surfaces;
+		existing.distance = (std::min)(existing.distance, hit.distance);
+		return AddResult::merged;
+	}
+	if (ray.hits.size() >= maxHits) return AddResult::full;
+	ray.hits.push_back(hit);
+	return AddResult::appended;
+}
+inline bool KnownHit(const RayRecord& ray, std::uint64_t key) noexcept
+{
+	for (const auto& existing : ray.hits)
+		if (existing.key == key) return true;
+	return false;
+}
 struct RayFold {
 	RayStatus status{ RayStatus::indeterminate };
 	std::optional<double> transmittance;
 };
-// clear only with no hits or hidden hits; faded never folds into clear;
-// truncated, not run and changed worlds are indeterminate.
+// clear only with no hits or hidden/volume hits; faded never folds into clear;
+// truncated, not run and changed worlds are indeterminate. One factor per
+// distinct reference (hits are merged by AddHit).
 inline RayFold FoldRay(const RayRecord& ray) noexcept
 {
 	if (!ray.ran || ray.truncated || ray.worldChanged) return {};
@@ -325,7 +393,8 @@ inline RayFold FoldRay(const RayRecord& ray) noexcept
 	for (const auto& hit : ray.hits) {
 		switch (hit.treatment) {
 		case Treatment::opaque: opaque = true; break;
-		case Treatment::hidden: break;
+		case Treatment::hidden:
+		case Treatment::volume: break;
 		case Treatment::faded:
 			if (!hit.alpha || !std::isfinite(*hit.alpha) || *hit.alpha < 0 || *hit.alpha >= 1) unknown = true;
 			else { faded = true; transmittance *= 1 - *hit.alpha; }
@@ -377,7 +446,8 @@ inline std::string HitJson(const HitRecord& hit)
 	Object o;
 	if (hit.ref) o.String("ref", FormID(*hit.ref)); else o.Null("ref");
 	if (hit.base) o.String("base", FormID(*hit.base)); else o.Null("base");
-	o.Numeric("layer", hit.layer).Numeric("distance", hit.distance).String("treatment", TreatmentName(hit.treatment));
+	o.Numeric("layer", hit.layer).Numeric("distance", hit.distance).Numeric("surfaces", hit.surfaces)
+		.String("treatment", TreatmentName(hit.treatment));
 	if (hit.treatment == Treatment::faded && hit.alpha) o.Numeric("alpha", *hit.alpha); else o.Null("alpha");
 	if (hit.reason.empty()) o.Null("reason"); else o.String("reason", hit.reason);
 	return o.Json();

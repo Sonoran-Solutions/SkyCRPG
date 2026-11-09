@@ -219,8 +219,18 @@ void Treatments()
 	assert(someCulled.result().treatment == Treatment::faded);
 	TreatmentAccumulator hidden;
 	hidden.part({ false, false, true, 1 });
-	hidden.hiddenChain();
-	assert(hidden.result().treatment == Treatment::hidden);  // app-culled reference wins
+	hidden.rootCulled();
+	assert(hidden.result().treatment == Treatment::hidden);  // an app-culled reference root wins
+	// A culled collision proxy or switch branch only hides its own parts: a
+	// drawn opaque sibling under the same root keeps the reference opaque.
+	TreatmentAccumulator proxy;
+	proxy.part({ true, false, true, 1 });
+	proxy.part({ false, false, true, 1 });
+	assert(proxy.result().treatment == Treatment::opaque);
+	TreatmentAccumulator proxyFaded;
+	proxyFaded.part({ true, false, true, 1 });
+	proxyFaded.part({ false, true, true, .35 });
+	assert(proxyFaded.result().treatment == Treatment::faded && Near(*proxyFaded.result().alpha, .35));
 	TreatmentAccumulator capped;
 	capped.part({ false, true, true, .35 });
 	capped.nodeCap();
@@ -254,7 +264,7 @@ void Json()
 	const auto json = PointJson(point);
 	assert(json == "{\"name\":\"head\",\"world\":{\"x\":1,\"y\":2,\"z\":3.5},\"screen\":{\"x\":0.25,\"y\":0.5},"
 		"\"on_screen\":true,\"ray\":{\"status\":\"faded_only\",\"transmittance\":0.65,\"hits\":[{\"ref\":\"0x0001A2B3\","
-		"\"base\":\"0x00012345\",\"layer\":1,\"distance\":100,\"treatment\":\"faded\",\"alpha\":0.35,\"reason\":null}],"
+		"\"base\":\"0x00012345\",\"layer\":1,\"distance\":100,\"surfaces\":1,\"treatment\":\"faded\",\"alpha\":0.35,\"reason\":null}],"
 		"\"truncated\":false,\"reason\":null,\"skipped_player\":0,\"casts\":2}}");
 	// Projection unavailable: screen and on_screen are null, never false.
 	point.projection.reset();
@@ -276,7 +286,10 @@ void Json()
 	unknown.reason = "node_cap";
 	unknown.ref.reset();
 	assert(HitJson(unknown) == "{\"ref\":null,\"base\":\"0x00012345\",\"layer\":1,\"distance\":100,"
-		"\"treatment\":\"unknown\",\"alpha\":null,\"reason\":\"node_cap\"}");
+		"\"surfaces\":1,\"treatment\":\"unknown\",\"alpha\":null,\"reason\":\"node_cap\"}");
+	HitRecord volume = Hit(Treatment::volume, .5);
+	volume.surfaces = 3;
+	assert(Has(HitJson(volume), "\"surfaces\":3,\"treatment\":\"volume\",\"alpha\":null"));
 	std::vector<PointRecord> points(4);
 	points[0].ray = Ray({});
 	points[1].ray = Ray({ Hit(Treatment::faded, .35) });
@@ -302,6 +315,61 @@ void Json()
 	assert(line == "{\"t\":5,\"wall\":\"2026-11-09T00:00:00Z\",\"ev\":\"view_sample\",\"view_protocol\":1,\"seq\":1,"
 		"\"requested\":true,\"tag\":\"arrive\",\"available\":false,\"reason\":\"game_paused\"}\n");
 }
+void Merging()
+{
+	// M2: one faded wall hit on entry and exit counts once, not 0.65^2.
+	RayRecord ray = Ray({});
+	HitRecord wall = Hit(Treatment::faded, .35);
+	wall.key = HitKey(0x0001A2B3, 0);
+	assert(AddHit(ray, wall, 8) == AddResult::appended);
+	HitRecord exitFace = wall;
+	exitFace.distance = 140;
+	assert(KnownHit(ray, wall.key) && AddHit(ray, exitFace, 8) == AddResult::merged);
+	assert(ray.hits.size() == 1 && ray.hits[0].surfaces == 2 && Near(ray.hits[0].distance, 100));
+	auto fold = FoldRay(ray);
+	assert(fold.status == RayStatus::faded_only && Near(*fold.transmittance, .65));
+	// Merged surfaces do not use maxHits slots; eight distinct references still multiply.
+	RayRecord eight = Ray({});
+	for (std::uint32_t i = 0; i < 8; ++i) {
+		HitRecord layer = Hit(Treatment::faded, .35);
+		layer.key = HitKey(0x00100000 + i, 0);
+		assert(AddHit(eight, layer, 8) == AddResult::appended);
+		assert(AddHit(eight, layer, 8) == AddResult::merged);  // its exit face
+	}
+	fold = FoldRay(eight);
+	assert(eight.hits.size() == 8 && fold.status == RayStatus::faded_only && Near(*fold.transmittance, std::pow(.65, 8), 1e-12));
+	HitRecord ninth = Hit(Treatment::faded, .35);
+	ninth.key = HitKey(0x00200000, 0);
+	assert(AddHit(eight, ninth, 8) == AddResult::full && eight.hits.size() == 8);
+	// Keys: form IDs and tagged addresses never collide.
+	assert(HitKey(0x14, 0x14) == 0x14 && HitKey(std::nullopt, 0x14) == (0x14ULL | (1ULL << 63)));
+	assert(HitKey(std::nullopt, 0x7FF600001000ULL) != HitKey(0x00001000, 0));
+}
+
+void Layers()
+{
+	// m6: non-drawn layers seen by L_LOS are volumes and never block.
+	for (const std::uint32_t layer : { 7u, 16u, 38u, 39u, 40u, 41u, 43u, 44u, 53u }) assert(VolumeLayer(layer));
+	for (const std::uint32_t layer : { 0u, 1u, 2u, 4u, 5u, 6u, 8u, 9u, 10u, 13u, 14u, 17u, 32u }) assert(!VolumeLayer(layer));
+	assert(FoldRay(Ray({ Hit(Treatment::volume), Hit(Treatment::hidden) })).status == RayStatus::clear);
+	assert(FoldRay(Ray({ Hit(Treatment::volume), Hit(Treatment::faded, .35) })).status == RayStatus::faded_only);
+	assert(FoldRay(Ray({ Hit(Treatment::volume), Hit(Treatment::opaque) })).status == RayStatus::blocked);
+	// m5: terrain and system-group-1 collidables skip the grid lookup.
+	assert(LandscapeHit(13, 13) && LandscapeHit(1, 0x10001) && LandscapeHit(17, 0x10011));
+	assert(!LandscapeHit(17, 17) && !LandscapeHit(1, 0x20001) && !LandscapeHit(1, 0x1));
+}
+
+void Periodics()
+{
+	auto settings = ParseViewSettings("1", "250", "", "", "");
+	assert(Periodic(settings) == PeriodicMode::refused);  // no opt-in: refused, never silently on
+	assert(Periodic(ParseViewSettings("1", "250", "", "", "", "1")) == PeriodicMode::on);
+	assert(Periodic(ParseViewSettings("1", "250", "", "", "", "", "1")) == PeriodicMode::on);
+	assert(ParseViewSettings("1", "", "", "", "", "", "1").periodicOffMain);
+	assert(Periodic(ParseViewSettings("1", "0", "", "", "", "", "1")) == PeriodicMode::off);
+	assert(Periodic(ParseViewSettings("0", "250", "", "", "", "", "1")) == PeriodicMode::off);
+	assert(Periodic(ParseViewSettings("", "", "", "", "")) == PeriodicMode::off);
+}
 }  // namespace
 
 int main()
@@ -317,4 +385,7 @@ int main()
 	Treatments();
 	Cadence();
 	Json();
+	Merging();
+	Layers();
+	Periodics();
 }
