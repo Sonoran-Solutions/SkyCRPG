@@ -146,16 +146,16 @@ Kept current as items close. "Done" means the closing evidence named in the tabl
 
 | # | State | Record |
 | --- | --- | --- |
-| R1 | Open — awaiting the owner's merge go per PR; pre-merge re-reviews of #34, #36 and #37 requested 2026-11-08 (their post-review fixes had not been re-reviewed) | — |
-| R2 | Decided: Selection own archive, overlay inside Camera's. Build needs R1 | — |
+| R1 | Open — re-reviews done 2026-11-08 (no blockers; #34: 3 minor/4 nit, #36: 2 major/7 minor/2 nit, #37: 3 minor/5 nit); all findings fixed by Codex Astra workers and committed (#34 `46f3072`, #37 `9607e20`, #36 `6af10e3`), CI pending; the #36 fixes still have to be forward-merged into #38. Then the owner's merge go per PR. | review scratch under `session-p5/logs/review*-scratch/`; evidence notes carry a "Pre-merge re-review fixes (2026-11-08)" section each |
+| R2 | Packaging implemented on PR #41 (`cbccd24`, Terra worker): `package.py native --module selection`, three-module assembly, overlay folder with README; CI pending. The combined candidate itself needs R1. | `docs/evidence/p5/packaging.md` |
 | R3 | **Done 2026-11-08** | Owner keys U, `[` `]`, B; pad R3 only. Phase 5 section added to `docs/CONTROLS.md` (this PR); the key-unmapped check stands from the feature notes' stock-map scans. |
 | R4 | **Done 2026-11-08** | Reworded criterion and the answered owner question recorded in the fixed-height note (`b755027` on #37); three beams kept. `DECISIONS.md` entry owed after #33 merges. |
 | R5 | Open — needs R2 | — |
-| R6 | Open — needs R2 | — |
-| R7 | Open | — |
-| R8 | Open | — |
+| R6 | Plan drafted (Sol worker): `session-p5/routes/regression-plan.md`, 16 stage families, all 22 Phase 4 routes mapped, C1–C5 mapping, 69 draft routes (64 200 s of watchdog) in `routes/gen/regression/`. Scope decision pending with the owner (UI-only reruns of a byte-identical module; 19 extra union cases). Runs need R2. | — |
+| R7 | Routes drafted (Luna worker): `p5-lock-look`, `p5-lock-interrupts`, `p5-lock-retarget` (two-hostile fixture is a hypothesis) in `routes/gen/revise/`; orchestrator reconciliation and the `46f3072` lock stage pending. | `session-p5/routes/revise-routes.md` |
+| R8 | Route drafted (Luna worker): `p5-selection-breadth` (door, wardrobe, owned tankard prompt-only, Hulda, bench, wall LOS); fixture coordinates to reconcile against `vanilla-scan.json`. | `session-p5/routes/revise-routes.md` |
 | R9 | **Done 2026-11-08** | #35 body and spike note header record D028 (`6f9834c`); #34 and #37 bodies name last code commits and DLL prefixes; #36 body and selection note reconciled (build PASS, co-load PARTIAL, DLL-absent by construction; `d133dae`); #38 body opening line and owner row corrected; fixed-height pre-run table marked superseded (`4e9d8e7`). |
-| R10 | Open — needs R2 | — |
+| R10 | Protocol drafted in the R6 plan (frame matrix ×7, dense cell ×3, resource ×3). Runs need R2. | — |
 | R11 | Open — needs R2, R5, R6 | — |
 
 ## Documentation obligations
