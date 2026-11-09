@@ -48,6 +48,7 @@ constexpr bool lockMenuInterrupt(std::string_view name, bool opening) {
 // a request after it stays pending for the next service, without blocking input.
 class LockInterrupt {
 public:
+    bool requested() const { return (state.load() & pending) != 0; }
     void request() { state.fetch_or(pending); }
     bool consume() { return (state.fetch_and(~pending) & pending) != 0; }
     template<class F> bool releaseIfClear(F release) {

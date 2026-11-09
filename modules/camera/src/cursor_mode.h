@@ -124,6 +124,17 @@ private:
     RE::UI* held = nullptr;
     RE::BSSpinLock* heldOuter = nullptr;
 };
+// Deferred main-thread work may allocate or perform IO only when this thread
+// owns neither UI lock. Other threads holding them do not affect this check.
+bool outsideMenuLocks() {
+    const auto ui = RE::UI::GetSingleton();
+    if (!ui) return false;
+    static REL::Relocation<RE::BSSpinLock*> global{REL::ID(412033)};
+    const auto thread = GetCurrentThreadId();
+    _mm_lfence();
+    return *reinterpret_cast<const volatile std::uint32_t*>(global.get()) != thread &&
+        *reinterpret_cast<const volatile std::uint32_t*>(&ui->processMessagesLock) != thread;
+}
 void refuse(Exit reason) {
     const auto bit = std::uint64_t{1} << static_cast<unsigned>(reason);
     static unsigned overlayLines = 0; // overlay exits carry diagnostics: log a few
@@ -285,13 +296,12 @@ bool nativeMenu() {
     }
     return false;
 }
-bool inputNativeMenu() {
+// Caller holds both ordered UI locks. Shared by input and the F6 camera service.
+bool callbackMenu(bool passiveOnly) {
     const auto menuKeys = inputMenuKeys.load(std::memory_order_acquire);
     if (!menuKeys) return true;
     const auto ui = RE::UI::GetSingleton();
     if (!ui) return true;
-    const UITryLock lock; // one ordered attempt; never wait on the input thread
-    if (!lock) return true;
     if (ui->GameIsPaused() || ui->IsApplicationMenuOpen() || ui->IsModalMenuOpen()) return true;
     // Borrow under both locks: no temporary strings, GPtr copies or engine calls.
     const auto get = [&](const RE::BSFixedString& key) -> RE::IMenu* {
@@ -309,9 +319,22 @@ bool inputNativeMenu() {
         if (!menu) return true;
         if (cursor::inputOwnMenu(ui->menuSystemVisible,menu == instance,menu == own,menu->menuFlags.underlying(),required)) continue;
         if (menu->menuFlags.any(RE::UI_MENU_FLAGS::kUsesCursor,RE::UI_MENU_FLAGS::kUsesMenuContext,RE::UI_MENU_FLAGS::kModal)) return true;
-        if (menu != hud && menu != fader && menu != mist) return true;
+        if (passiveOnly && menu != hud && menu != fader && menu != mist) return true;
     }
     return false;
+}
+bool inputNativeMenu() {
+    if (!inputMenuKeys.load(std::memory_order_acquire)) return true;
+    const UITryLock lock; // one ordered attempt; never wait on the input thread
+    return !lock || callbackMenu(true);
+}
+// DataLoaded initializes this even when the cursor overlay is disabled.
+void prepareInputMenuKeys() {
+    static const auto menuKeys = new const InputMenuKeys;
+    const auto ui = RE::UI::GetSingleton();
+    const UITryLock lock; // prewarm singleton and lock relocation before publication
+    // The keys are immutable; publication needs no menuMap access or held lock.
+    if (ui) inputMenuKeys.store(menuKeys,std::memory_order_release);
 }
 bool apiLive() { return selection && selectionModule; } // process-lifetime DLL; no live unload contract
 Exit captureExit() {
@@ -527,7 +550,7 @@ void pick(const api::CursorFrame& frame, bool fresh) {
 cursor::Registration registerOverlay() {
     // Only data-ready registration / main-service fallback can intern these.
     // Retain for process lifetime; publication also prewarms the UI/lock relocations.
-    static const auto menuKeys = new const InputMenuKeys;
+    prepareInputMenuKeys();
     const auto ui = RE::UI::GetSingleton();
     if (!ui) {
         static bool deferred = false;
@@ -538,7 +561,6 @@ cursor::Registration registerOverlay() {
     // later inside ProcessMessages (normally the UI job thread).
     const UITryLock lock;
     if (!lock) return cursor::Registration::deferred;
-    inputMenuKeys.store(menuKeys,std::memory_order_release);
     if (ui->menuMap.find(std::string_view(menuName)) != ui->menuMap.end()) { overlaySite.store(21); refuse(Exit::overlay); return cursor::Registration::failed; }
     ui->Register(menuName,Overlay::create);
     return cursor::Registration::ready;

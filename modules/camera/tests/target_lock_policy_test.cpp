@@ -191,6 +191,15 @@ int main() {
     assert(leaseLog.changed(3) && !leaseLog.changed(3) && leaseLog.changed(0));
     for (float yaw : {-3.0f,-1.57f,-.1f,0.0f,.1f,1.57f,3.0f})
         assert(std::abs(lockWorldYaw(std::sin(yaw),std::cos(yaw))-yaw) < .00001f);
+    LockInterrupt refresh;
+    assert(!refresh.requested());
+    refresh.request();
+    assert(refresh.requested() && refresh.requested()); // observation never drains work
+    i = {true,true,!refresh.requested(),true,true,true,false,true};
+    assert(targetLockLease(i).action == LockLeaseAction::keep);
+    assert(refresh.consume() && !refresh.requested());
+    i.settingsSafe = !refresh.requested();
+    assert(targetLockLease(i).action == LockLeaseAction::release);
     LockInterrupt interrupt;
     unsigned releases = 0;
     auto release = [&] { ++releases; };

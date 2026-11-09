@@ -18,6 +18,7 @@
 #include "third_party/TrueDirectionalMovementAPI.h"
 #pragma warning(pop)
 #include <bcrypt.h>
+#include <bit>
 #include <array>
 #include <charconv>
 #include <atomic>
@@ -69,8 +70,13 @@ bool adjustedZoomWritten = false;
 float lastAdjustedZoom = 0;
 std::atomic<bool> ready{false};
 bool loading = true, recenter = false;
-std::atomic<bool> ownFirstPerson{false};
 PrecisionReturn precisionReturn;
+std::atomic<std::uint64_t> preferencesToSave{0};
+std::atomic<bool> deferredIndicatorStop{false};
+std::atomic<bool> deferredCameraQueued{false};
+HANDLE deferredCameraTimer = nullptr;
+const SKSE::TaskInterface* deferredCameraTasks = nullptr;
+std::atomic<bool> publishedReturnChainReady{false};
 SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
 bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
@@ -306,13 +312,20 @@ void loadSettings() {
     if (!s.enabled) log("Camera disabled in INI; native camera controls remain available.");
     if (!compatibleSettings) prerequisiteFailed = true;
 }
-void savePreferences() {
+void requestPreferences() {
+    // One preallocated snapshot: the task never reads input-owned preferences.
+    const auto zoomBits = std::bit_cast<std::uint32_t>(settings.zoom);
+    preferencesToSave.store((std::uint64_t{1} << 33) |
+        (static_cast<std::uint64_t>(settings.enabled) << 32) | zoomBits);
+}
+void savePreferences(std::uint64_t snapshot) {
     if (!compatibleSettings) return;
     // Write only owned preferences, preserving other sections/keys; never touch saves.
     const auto path = iniPath.string();
-    const auto zoom = std::to_string(settings.zoom);
+    const auto zoom = std::to_string(std::bit_cast<float>(static_cast<std::uint32_t>(snapshot)));
+    const bool enabled = (snapshot & (std::uint64_t{1} << 32)) != 0;
     if (!WritePrivateProfileStringA("Camera","iSchemaVersion","1",path.c_str()) ||
-        !WritePrivateProfileStringA("Camera","bEnabled",settings.enabled?"1":"0",path.c_str()) ||
+        !WritePrivateProfileStringA("Camera","bEnabled",enabled?"1":"0",path.c_str()) ||
         !WritePrivateProfileStringA("Camera","fZoom",zoom.c_str(),path.c_str())) log("Preferences write failed; session remains usable, disk settings unchanged or partial.");
 }
 bool onTargetLockThread() {
@@ -332,12 +345,13 @@ bool onTargetLockThread() {
     }
     return matches;
 }
-bool acquireMovementLease() {
+bool acquireMovementLease(bool report = true) {
     if (!movement) return false;
     const auto lease = movement->RequestDisableTargetLock(SKSE::GetPluginHandle());
     movementLease = lease == TDM_API::APIResult::OK || lease == TDM_API::APIResult::AlreadyGiven;
     publishedMovementLease.store(movementLease);
     if (!movementLease) prerequisiteFailed = true;
+    if (!report) return movementLease;
     if (!targetLockEnabled) {
         if (!movementLease) log("TDM target-lock-disable lease refused; controller suspended.");
         else log("TDM target-lock-disable lease acquired.");
@@ -454,14 +468,13 @@ void updateTargetLock(Context& c, unsigned sampledMenuEpoch) {
 void updateTargetLockMain(Context& c) {
     observeTargetLock();
     consumeLockInterrupt();
-    if (lockConfigRefresh.consume()) { movementConfigSafe = checkLockMovementConfig(); checkLockBindings(); }
     c.prerequisites = c.prerequisites && movementConfigSafe;
     const bool eligible = c.enabled && c.prerequisites && c.world && !c.special && !c.menu &&
         !c.firstPerson && !c.precision && !c.slide;
-    const bool safe = lockConfigSafe && indicatorReady();
+    const bool safe = lockConfigSafe && !lockConfigRefresh.requested() && !deferredIndicatorStop.load() && indicatorReady();
     if (!eligible || !safe || !observedLock) interruptTargetLock();
     consumeLockInterrupt();
-    const auto decision = targetLockLease({targetLockEnabled,eligible,lockConfigSafe,indicatorReady(),
+    const auto decision = targetLockLease({targetLockEnabled,eligible,safe,indicatorReady(),
         movement != nullptr,movementLease,observedLock,lockInputIdle()});
     {
         // One bounded line per state change; idle input alone does not spend the budget.
@@ -568,6 +581,31 @@ bool providerChainReady() {
     }
     return module != nullptr;
 }
+void readCameraWorld(Context& c, bool* hardSpecial) {
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
+    if (!c.world) return;
+    c.firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
+    c.tween = camera->currentState->id == RE::CameraState::kTween;
+    const bool stateSpecial = !c.firstPerson && camera->currentState->id != RE::CameraState::kThirdPerson;
+    const auto actorState = player->AsActorState();
+    Hazards hazards{player->IsOnMount(), player->IsInKillMove(), actorState->IsSwimming(),
+        actorState->GetSitSleepState() != RE::SIT_SLEEP_STATE::kNormal, actorState->IsBleedingOut(),
+        false, false};
+    const auto controls = RE::PlayerControls::GetSingleton();
+    const auto controlMap = RE::ControlMap::GetSingleton();
+    hazards.beast = controls && controls->data.povBeastMode;
+    hazards.scripted = !controlMap || !controls || controls->data.povScriptMode;
+    c.slide = controls && controls->data.fovSlideMode;
+    const bool hazard = specialHazard(hazards);
+    c.special = stateSpecial || hazard;
+    if (!c.firstPerson && camera->currentState->id == RE::CameraState::kThirdPerson &&
+        static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) c.special = true;
+    // Tween is indeterminate, but real non-camera hazards remain hard.
+    if (hardSpecial) *hardSpecial = c.tween ? hazard : c.special;
+    if (controlMap && (!controlMap->IsLookingControlsEnabled() || !controlMap->IsPOVSwitchControlsEnabled())) c.special = true;
+}
 Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, bool* failure = nullptr,
     bool readOnlyLock = false) {
     Context c;
@@ -593,32 +631,11 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     // With lock enabled, off-main observations cannot diagnose lease failure.
     if (failure) *failure = lockFailureReportable(targetLockEnabled,lockThread) && prerequisiteFailure(baseReady,leaseReady,
         !provider || providerEnabled || !ready || !compatibleSettings || !configSafe || !movement);
-    const auto player = RE::PlayerCharacter::GetSingleton();
-    const auto camera = RE::PlayerCamera::GetSingleton();
-    c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
+    readCameraWorld(c,hardSpecial);
     if (!c.world) {
         if (targetLockEnabled && !readOnlyLock) updateTargetLock(c,sampledMenuEpoch);
         return c;
     }
-    c.firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
-    c.tween = camera->currentState->id == RE::CameraState::kTween;
-    const bool stateSpecial = !c.firstPerson && camera->currentState->id != RE::CameraState::kThirdPerson;
-    const auto actorState = player->AsActorState();
-    Hazards hazards{player->IsOnMount(), player->IsInKillMove(), actorState->IsSwimming(),
-        actorState->GetSitSleepState() != RE::SIT_SLEEP_STATE::kNormal, actorState->IsBleedingOut(),
-        false, false};
-    const auto controls = RE::PlayerControls::GetSingleton();
-    const auto controlMap = RE::ControlMap::GetSingleton();
-    hazards.beast = controls && controls->data.povBeastMode;
-    hazards.scripted = !controlMap || !controls || controls->data.povScriptMode;
-    c.slide = controls && controls->data.fovSlideMode;
-    const bool hazard = specialHazard(hazards);
-    c.special = stateSpecial || hazard;
-    if (!c.firstPerson && camera->currentState->id == RE::CameraState::kThirdPerson &&
-        static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) c.special = true;
-    // Tween is indeterminate, but real non-camera hazards remain hard.
-    if (hardSpecial) *hardSpecial = c.tween ? hazard : c.special;
-    if (controlMap && (!controlMap->IsLookingControlsEnabled() || !controlMap->IsPOVSwitchControlsEnabled())) c.special = true;
     c.menu = targetLockEnabled && !lockThread ? publishedLockMenu.load() : focused();
     // DYL-158 supplies precision/targeting intervention; select() reserves their priority.
     c.obstruction = obstructionFrame.obstructed;
@@ -627,31 +644,92 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
 }
 #include "cursor_mode.h"
 
+// SKSE's task drain is outside camera/input callbacks. A process-lifetime
+// timer only bridges dirty flags into that existing drain; callbacks never
+// allocate a task or acquire SKSE's queue lock. At most one task is outstanding.
+void serviceDeferredCameraWork() {
+    if (cursorMode::mainThread() && cursorMode::outsideMenuLocks()) {
+        if (lockConfigRefresh.consume()) {
+            movementConfigSafe = targetLockEnabled ? checkLockMovementConfig() : checkMovementConfig();
+            if (targetLockEnabled) checkLockBindings();
+            publishedLockMovementConfigSafe.store(movementConfigSafe);
+        }
+        publishedReturnChainReady.store(providerChainReady());
+        if (deferredIndicatorStop.exchange(false)) stopIndicator();
+        if (const auto snapshot = preferencesToSave.exchange(0)) savePreferences(snapshot);
+    }
+    deferredCameraQueued.store(false);
+}
+void CALLBACK queueDeferredCameraWork(PVOID, BOOLEAN) {
+    if (!preferencesToSave.load() && !lockConfigRefresh.requested() && !deferredIndicatorStop.load()) return;
+    if (deferredCameraQueued.exchange(true)) return;
+    deferredCameraTasks->AddTask(serviceDeferredCameraWork);
+}
+bool prepareDeferredCameraWork() {
+    deferredCameraTasks = SKSE::GetTaskInterface();
+    // No live DLL unload is supported; Windows tears down this timer at exit.
+    if (!deferredCameraTasks || !CreateTimerQueueTimer(&deferredCameraTimer,nullptr,
+        queueDeferredCameraWork,nullptr,100,100,WT_EXECUTEDEFAULT)) {
+        log("Camera deferred service unavailable; camera hooks left inert.");
+        return false;
+    }
+    return true;
+}
+
 using CameraCall = void(*)(RE::PlayerCamera*);
 CameraCall previousCameraCall = nullptr;
+// This reader never advances lock policy, refreshes configuration or diagnoses
+// failures. UI keys/relocations are prepared at DataLoaded; menu objects are borrowed.
+Context returnContext(bool& hardSpecial) {
+    Context c;
+    c.enabled = settings.enabled;
+    c.prerequisites = compatibleSettings && ready && lockHooksReady &&
+        publishedLockMovementConfigSafe.load() && publishedReturnChainReady.load() && movement && provider &&
+        provider->IsCameraEnabled() && provider->GetCameraOwner() == SKSE::kInvalidPluginHandle;
+    readCameraWorld(c,&hardSpecial);
+    c.menu = cursorMode::callbackMenu(false);
+    return c;
+}
 void serviceFirstPersonReturn() {
-    if (!ready || !lockHooksReady || !onTargetLockThread()) return;
-    // Drain even if the UI job is busy. No menu traversal or lease release here.
-    consumeLockInterrupt();
+    if (!ready || !lockHooksReady || !cursorMode::mainThread()) return;
+    movementLease = movement && movement->GetDisableTargetLockOwner() == SKSE::GetPluginHandle();
+    publishedMovementLease.store(movementLease);
+    // No indicator traversal (engine lock), diagnostics or IO on this callback.
+    // Acquisition is the TDM API's atomic lease request; cleanup stays deferred.
+    if (lockInterrupt.consume()) {
+        noteLockInputActivity();
+        lockRetargetWindow.started.reset();
+        deferredIndicatorStop = true;
+        if (!movementLease) static_cast<void>(acquireMovementLease(false));
+    }
+    const auto sessionToken = precisionReturn.snapshot();
     const auto player = RE::PlayerCharacter::GetSingleton();
     if (loading || !player || !player->GetParentCell() || !player->Is3DLoaded() || player->IsDead()) {
-        precisionReturn.cancel(); ownFirstPerson = false;
+        static_cast<void>(precisionReturn.invalidate(sessionToken));
         return;
     }
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (!camera || !camera->currentState || camera->currentState->id != RE::CameraState::kFirstPerson) {
-        if (ownFirstPerson) precisionReturn.cancel();
-        return; // third-person lock acquisition/release still belongs to context()
+        // Retire even an unowned session: a producer may still hold its token.
+        static_cast<void>(precisionReturn.invalidate(sessionToken));
+        return;
     }
-    const cursorMode::UITryLock menuLock; // one attempt, global then UI+0x158
-    if (!menuLock) return;
-    bool hard = true;
-    const auto c = context(&hard);
-    if (!retainPrecisionOwnership(c,ownFirstPerson,hard)) ownFirstPerson = false;
-    if (!precisionReturn.take(c,ownFirstPerson,movementLease,observedLock)) return;
-    settings.enabled = true; ownFirstPerson = false; suspend(); applyZoom = true;
+    if (!PrecisionReturn::requested(sessionToken) || lockConfigRefresh.requested()) return;
+    {
+        const cursorMode::UITryLock menuLock; // one attempt, global then UI+0x158
+        if (!menuLock) return;
+        bool hard = true;
+        const auto c = returnContext(hard);
+        precisionReturn.retain(c,hard,sessionToken);
+        // Retry a refused acquisition without running configuration/indicator policy.
+        if (c.prerequisites && !movementLease) static_cast<void>(acquireMovementLease(false));
+        const bool haveLease = movement && movement->GetDisableTargetLockOwner() == SKSE::GetPluginHandle();
+        const auto locked = movement ? std::optional<bool>{movement->GetTargetLockState()} : std::nullopt;
+        if (!precisionReturn.take(c,haveLease,locked,sessionToken)) return;
+    }
+    settings.enabled = true; suspend(); applyZoom = true;
     static_cast<void>(camera->ForceThirdPerson());
-    savePreferences();
+    requestPreferences(); // drained on the SKSE main task path, outside UI locks
 }
 void serviceCameraCall(RE::PlayerCamera* camera) {
     serviceFirstPersonReturn();
@@ -728,7 +806,7 @@ void observePrerequisiteFailure(Context c, bool failure) {
     }
 }
 PrecisionTraceState traceState(Context c, bool hard, std::size_t key) {
-    PrecisionTraceState result{c,hard,ownFirstPerson,keys[key].armed,keys[key].down};
+    PrecisionTraceState result{c,hard,precisionReturn.owned(),keys[key].armed,keys[key].down};
     if (!precisionTraceEnabled) return result;
     if (!c.world) { result.hazardBits = UINT32_MAX; return result; }
     const auto player = RE::PlayerCharacter::GetSingleton();
@@ -766,18 +844,17 @@ void lifecycleLog(const char* event, Context c, unsigned stateId) {
     if (!targetLockEnabled) {
         std::snprintf(line,sizeof(line),"Lifecycle event=%s hook=%s state=%u decision=%u owned=%u",event,
             std::strcmp(event,"observe") == 0 ? "update" : "event",stateId,
-            static_cast<unsigned>(select(c)),static_cast<unsigned>(ownFirstPerson.load()));
+            static_cast<unsigned>(select(c)),static_cast<unsigned>(precisionReturn.owned()));
     } else if (onTargetLockThread()) {
         std::snprintf(line,sizeof(line),"Lifecycle event=%s hook=%s state=%u decision=%u owned=%u lease=%u lock=%d target=%08X",event,
             std::strcmp(event,"observe") == 0 ? "update" : "event",stateId,
-            static_cast<unsigned>(select(c)),static_cast<unsigned>(ownFirstPerson.load()),static_cast<unsigned>(movementLease),
+            static_cast<unsigned>(select(c)),static_cast<unsigned>(precisionReturn.owned()),static_cast<unsigned>(movementLease),
             observedLock ? (*observedLock ? 1 : 0) : -1,observedTarget.native_handle());
     } else return;
     log(line);
 }
 void resetLifecycle(const char* event) {
     precisionReturn.cancel();
-    ownFirstPerson = false;
     cursorMode::requestExit(std::strstr(event,"load") ? cursor::Exit::load : cursor::Exit::cell);
     thin::requestRestore(std::strstr(event,"load") ? thin::Exit::load : thin::Exit::cell);
     if (thin::enabled() && thin::onMain() && std::strcmp(event,"player-detach") == 0)
@@ -789,8 +866,8 @@ void resetLifecycle(const char* event) {
     lifecycleTrace.resetCandidate();
     lifecycleLog(event,Context{},UINT32_MAX);
 }
-void observeLifecycle(Context c, bool hard) {
-    if (!retainPrecisionOwnership(c,ownFirstPerson,hard)) ownFirstPerson = false;
+void observeLifecycle(Context c, bool hard, PrecisionReturn::Token sessionToken) {
+    precisionReturn.retain(c,hard,sessionToken);
     const auto camera = RE::PlayerCamera::GetSingleton();
     const unsigned id = camera && camera->currentState ? static_cast<unsigned>(camera->currentState->id) : UINT32_MAX;
     if (lifecycleTraceEnabled && lifecycleTrace.observe(select(c),id)) lifecycleLog("observe",c,id);
@@ -875,10 +952,11 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
     if (next && next.get() != state) { interruptTargetLock(); resetObstruction(); }
     else sampleObstruction(state);
     previousUpdate(state,next); // native first; outer SmoothCam wrapper performs transforms AFTER us
+    const auto sessionToken = precisionReturn.snapshot();
     bool hard = true;
     bool failure = false;
     const auto c = context(&hard,false,&failure);
-    observeLifecycle(c,hard);
+    observeLifecycle(c,hard,sessionToken);
     observePrerequisiteFailure(c,failure);
     if (targetLockEnabled && onTargetLockThread() && lockRefusalRequested.exchange(false)) notifyLockRefusal(c);
     if (targetLockEnabled) traceLockFrame(c);
@@ -970,7 +1048,7 @@ public:
             if (!event) return RE::BSEventNotifyControl::kContinue;
             const std::string_view name{event->menuName.c_str()};
             if (lockMenuPublishesFocus(name,event->opening)) {
-                precisionReturn.cancel();
+                precisionReturn.cancel(false);
                 lockMenuOpenEpoch.fetch_add(1u);
                 publishedLockMenu.store(true);
             }
@@ -981,10 +1059,10 @@ public:
         bool hard = true;
         const auto c = precisionTraceEnabled ? context(&hard) : Context{};
         const auto before = traceState(c,hard,0);
-        if (!targetLockEnabled) movementConfigSafe = checkMovementConfig();
+        if (!targetLockEnabled) lockConfigRefresh.request();
         failureDebounce.observe(false,0);
         suspend();
-        if (precisionTraceEnabled && event && (c.world || ownFirstPerson)) {
+        if (precisionTraceEnabled && event && (c.world || precisionReturn.owned())) {
             bool afterHard = true;
             const auto after = context(&afterHard);
             tracePrecision(event->opening ? PrecisionTraceEvent::menuOpen : PrecisionTraceEvent::menuClose,
@@ -994,7 +1072,7 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
         if (!events) return RE::BSEventNotifyControl::kContinue;
-        const unsigned returnGeneration = precisionReturn.generation();
+        const auto returnSession = precisionReturn.snapshot();
         cursorMode::input(*events);
         if (thin::enabled()) {
             for (auto event = *events; event; event = event->next) {
@@ -1021,9 +1099,9 @@ public:
         const auto c = context(&hardSpecial,!settings.enabled && !haveLease,&failure);
         observePrerequisiteFailure(c,failure);
         if (targetLockEnabled) lockRefusalRequested.store(true);
-        const bool ownedBefore = ownFirstPerson;
-        if (!retainPrecisionOwnership(c,ownFirstPerson,hardSpecial)) ownFirstPerson = false;
-        if (precisionTraceEnabled && ownedBefore != ownFirstPerson) {
+        const bool ownedBefore = precisionReturn.owned();
+        precisionReturn.retain(c,hardSpecial,returnSession);
+        if (precisionTraceEnabled && ownedBefore != precisionReturn.owned()) {
             const auto after = traceState(c,hardSpecial,0);
             auto before = after; before.owned = ownedBefore;
             tracePrecision(PrecisionTraceEvent::retention,before,after);
@@ -1031,15 +1109,14 @@ public:
         // Deliberate F6 can return from its OWN first-person request; native POV never auto-restores.
         const bool lifecycleSafe = c.prerequisites && c.world && !c.special && !c.menu;
         const bool safe = lifecycleSafe && !c.slide;
-        if (!safe || (c.firstPerson && !ownFirstPerson)) precisionReturn.cancel();
+        if (!safe || (c.firstPerson && !precisionReturn.owned())) static_cast<void>(precisionReturn.invalidate(returnSession,false));
         if (!lifecycleSafe) suspend();
         for (auto event = *events; event; event = event->next) {
             auto button = event->AsButtonEvent();
             if (!button) continue;
             if (button->IsDown() && button->QUserEvent() == "Toggle POV") {
-                precisionReturn.cancel();
                 const auto before = traceState(c,hardSpecial,0);
-                ownFirstPerson = false;
+                precisionReturn.cancel();
                 tracePrecision(PrecisionTraceEvent::nativePov,before,traceState(c,hardSpecial,0),
                     event->GetDevice() == RE::INPUT_DEVICE::kGamepad ? 2u : 1u,true,true);
             }
@@ -1063,9 +1140,9 @@ public:
                         const auto map = RE::ControlMap::GetSingleton();
                         if (map && map->GetUserEventName(button->GetIDCode(),device).empty() && button->QUserEvent().empty()) {
                             interruptTargetLock();
-                            settings.enabled = false; ownFirstPerson = false;
+                            settings.enabled = false; precisionReturn.cancel();
                             static_cast<void>(RE::PlayerCamera::GetSingleton()->ForceFirstPerson());
-                            savePreferences();
+                            requestPreferences();
                         }
                     }
                     keys[keyIndex].observeSuppressed(button->IsPressed());
@@ -1085,20 +1162,20 @@ public:
                 }
                 if (i == 0) {
                     auto camera = RE::PlayerCamera::GetSingleton();
-                    const auto request = toggleRequest(c,ownFirstPerson);
+                    const auto request = toggleRequest(c,precisionReturn.owned());
                     enableIntent.request(request);
                     tracePrecision(PrecisionTraceEvent::toggleDecision,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,true,true,static_cast<unsigned>(request));
                     if (request == ToggleRequest::firstPerson) {
-                        settings.enabled = false; ownFirstPerson = false; interruptTargetLock(); suspend();
+                        settings.enabled = false; interruptTargetLock(); suspend();
                         static_cast<void>(camera->ForceFirstPerson());
                         // Do not claim a late or unrelated first-person transition.
                         bool afterHard = true;
                         const auto after = context(&afterHard);
-                        ownFirstPerson = precisionReturn.generation() == returnGeneration && claimPrecisionOwnership(c,after);
+                        static_cast<void>(precisionReturn.claim(c,after,returnSession));
                         if (precisionTraceEnabled) {
                             tracePrecision(PrecisionTraceEvent::toggleClaim,before,traceState(after,afterHard,keyIndex),pad?2u:1u,true,true);
                         }
-                        savePreferences();
+                        requestPreferences();
                     } else if (request == ToggleRequest::enableOnly) {
                         if (targetLockEnabled && !lockThread) {
                             if (!publishedMovementLease.load()) { interruptTargetLock(); continue; }
@@ -1106,17 +1183,17 @@ public:
                             if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
                             if (!enableAfterLease(movementLease)) continue;
                         }
-                        settings.enabled = true; ownFirstPerson = false; applyZoom = true; suspend(); savePreferences();
+                        settings.enabled = true; precisionReturn.cancel(); applyZoom = true; suspend(); requestPreferences();
                     } else if (request == ToggleRequest::thirdPerson) {
                         if (targetLockEnabled) {
                             // Both threads post one intent. Main revalidates the
                             // session/focus/provider and TDM's unlocked reply.
-                            if (precisionReturn.request(c,ownFirstPerson,returnGeneration)) lockInterrupt.request();
+                            if (precisionReturn.request(c,returnSession)) lockInterrupt.request();
                             continue;
                         }
                         if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
                         if (!enableAfterLease(movementLease)) continue;
-                        settings.enabled = true; ownFirstPerson = false; suspend(); applyZoom = true; static_cast<void>(camera->ForceThirdPerson()); savePreferences();
+                        settings.enabled = true; precisionReturn.cancel(); suspend(); applyZoom = true; static_cast<void>(camera->ForceThirdPerson()); requestPreferences();
                     }
                 } else if (heldFramingAllowed(c)) {
                     recenter = true;
@@ -1200,6 +1277,10 @@ void messages(SKSE::MessagingInterface::Message* message) {
             thin::refuseInstall("ThinOccluder: camera slot owner guard failed; no thin hooks installed.");
             return;
         }
+        cursorMode::prepareInputMenuKeys();
+        static_cast<void>(cursorMode::outsideMenuLocks());
+        if (!prepareDeferredCameraWork()) { ready = false; return; }
+        publishedLockMovementConfigSafe.store(movementConfigSafe);
         previousLook = reinterpret_cast<Look>(table.write_vfunc(0xF,look));
         previousUpdate = reinterpret_cast<Update>(table.write_vfunc(3,update));
         lockHooksReady = targetLockEnabled;
@@ -1223,7 +1304,10 @@ void messages(SKSE::MessagingInterface::Message* message) {
     case SKSE::MessagingInterface::kPostLoadGame:
         if (cursorSettings.enabled) cursorMode::worldLoaded.store(message->type == SKSE::MessagingInterface::kNewGame || message->data != nullptr);
         thin::setLoaded(true); loading = false; resetLifecycle("post-load-or-new-game"); break;
-    case SKSE::MessagingInterface::kSaveGame: interruptTargetLock(); savePreferences(); break;
+    case SKSE::MessagingInterface::kSaveGame:
+        interruptTargetLock();
+        requestPreferences();
+        break;
     default: break;
     }
 }
