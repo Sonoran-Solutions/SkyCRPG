@@ -1,6 +1,7 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #include "cursor_policy.h"
 #include <cassert>
+#include <atomic>
 #include <iostream>
 #include <chrono>
 #include <latch>
@@ -9,6 +10,35 @@
 #include <vector>
 #include <string_view>
 using namespace skycrpg::camera::cursor;
+void menuTogglePress() {
+    const Eligibility ready{true,true,false,true,false,true,false,false,false,false,true,true,true};
+    for (bool pad : {false,true}) {
+        std::atomic<unsigned> queued{0};
+        Session session;
+        // Console/native-menu down, then close before service: nothing to replay.
+        queued.fetch_or(togglePress(pad,true));
+        if (queued.exchange(0)) static_cast<void>(session.toggle(ready,1920,1080));
+        assert(!session.active && queued.load() == 0);
+        // A fresh gameplay press still enters and preserves its device mask.
+        queued.fetch_or(togglePress(pad,false));
+        assert(queued.load() == (pad ? 2u : 1u));
+        if (queued.exchange(0)) assert(session.toggle(ready,1920,1080));
+        assert(session.active);
+        // Dropping input does not replace the existing active-session menu exit.
+        queued.fetch_or(togglePress(pad,true));
+        assert(queued.load() == 0 && session.active);
+        auto menu = ready; menu.menu = true;
+        assert(refusal(menu) == Exit::menu);
+        session.exit();
+        if (queued.exchange(0)) static_cast<void>(session.toggle(ready,1920,1080));
+        assert(!session.active);
+        // Gameplay toggle-off remains unchanged.
+        assert(session.toggle(ready,1920,1080));
+        queued.fetch_or(togglePress(pad,false));
+        if (queued.exchange(0)) assert(!session.toggle(ready,1920,1080));
+        assert(!session.active);
+    }
+}
 void menuContention() {
     static_assert(menuBusyFrameLimit == 20);
     assert(std::string_view(exitNames[static_cast<unsigned>(Exit::busy)]) == "busy");
@@ -112,6 +142,7 @@ void menuLocks() {
     outerFinish.count_down(); sorter.join();
 }
 int main() {
+    menuTogglePress();
     menuContention();
     menuLocks();
     const Eligibility ready{true,true,false,true,false,true,false,false,false,false,true,true,true};

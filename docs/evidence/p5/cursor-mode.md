@@ -633,3 +633,78 @@ Engineering choices: B proposal after all-context stock scan; D-pad Left remap p
 Owner review after CI/game evidence: approve/revise B and the controller remap proposal; judge pointer/cross scale, sensitivity,48px radius and12px latch threshold; confirm whether an opt-in installer should coordinate external-target enablement. No owner decision was silently changed.
 
 Remaining risks: MSVC/API/link errors despite source-signature review; provider camera child graph mismatch; projection sampled before the outer SmoothCam transform (up to a frame of visual lag); low-frame-rate/raw mouse/stick scaling; loose CursorMenu replacements; aspect/reticle sizing and pointer hotspot; UI creation/render thread or menu-stack differences; Pick/Activate ordering, target invalidation and stale native prompt timing. The checked cycle token prevents a known hover/cycle race but actual cross-thread lifecycle behavior still needs the serialized game routes. Selection's bounded candidate prefix means an object outside that prefix cannot be hovered. No claim of complete world enumeration, dynamic DLL unload support, performance acceptance or in-game behavior is made.
+
+## Console-typed toggle (2026-11-09)
+
+DYL-200 regression follow-up on `phase5/dyl-200-cursor-console-toggle`, base `0ec1eb106654afb50c22b4ba3494b70f1e0079dc`. Read the common worker brief, project contracts, P5-03 and the Linear ticket; later D026 and the assigned regression brief supersede the ticket's historical BTPS assumptions. No commit, push, PR, download, game launch or shared-file change was made.
+
+### Defect and retained run evidence
+
+**FAIL (existing candidate behavior):** a toggle-key down in Console was stored in the `toggle` atomic without checking focus. `service()` later exchanged that request and evaluated `nativeMenu()` against the then-current menu stack. Closing Console before service therefore turned a text-input B into a gameplay toggle. **Source:** [candidate cursor_mode.h, revision 890a5da](https://github.com/Sonoran-Solutions/SkyCRPG/blob/890a5da1354ba29130ac88596cb3cfd0b242e1b5/modules/camera/src/cursor_mode.h#L640), original lines 640 (publication), 543–547 (exchange), 560–569 (eligibility). Those source files are unchanged between that candidate and this worktree's base.
+
+All paths below are under `/srv/storage/Projects/SkyCRPG/session-p4/autotest/runs/`; these are reused observations, not runs performed for this diff.
+
+- `batch-p5-r6-s6-01` (combined): `report.json:428` is **BLOCKED**, `recovery refuses unknown menus: ['SkyCRPGCameraWorldPointer']`. Console commands include `player.additem 00012EB7 1` at line 880 and `player.additem 0001CF2B 1` at line 1551. The brief calls the save `SkyCRPG_Auto170_combined_prep`; the actual report records `SkyCRPG_Auto170_combined_main_prep` at lines 8972–8976. Both contain B. `evidence/probe-slice.jsonl:113` closes Console at t=38463, then line 119 opens the overlay at t=38495 (32 ms later, wall second 05:13:18Z); lines 123/127 show the next Console opening and overlay exit. The probe's `wall` field has whole-second precision; use its `t` for the interval. `evidence/log-timeline.txt:412` records `Cursor sample=1` at 05:13:18.439; line 456 records `reason=menu` at 05:13:18.871. Corresponding provider-log lines are 129 and 172. The overlay opens again at probe lines 219, 377 and 479, including after the final save, and the runner refuses recovery.
+- `batch-p5-r6-s6-00` (`smoke-cam-all`, lock/fixed/cursor ON): `report.json:2650,2737` records both F6 key steps; probe line 383 has `f6-cursor-active`, state 9 and the overlay. Provider log line 1311 records `Cursor refused/exit reason=F6`. Probe line 398 has `f6-cursor-return`, state **0**, HUD only; subsequent requested states at lines 402, 414, 418 and 440 remain 0. The report's overall **PASS** at line 632 means its steps completed; it did not assert the expected return state. The F6-return behavior is **FAIL**.
+- `batch-p5-r6-s4-03` (`smoke-cam-cursor`, cursor only): `report.json:1616,1703` records both F6 steps. Provider log line 440 records the same cursor F6 exit. Probe lines 287/302 show state **9 → 9** across the F6 pair, with the overlay absent on return; lines 308/323/329/354 also remain 9. This is the successful comparison, not proof that all-features F6 works.
+
+**Provenance:** all three report hashes identify Camera DLL SHA-256 `04f1d32871ec13377e729efd9962e8b93313c19cd9a5350dec913c982e10d377`, source `890a5da1354ba29130ac88596cb3cfd0b242e1b5` (Camera log line 1), Skyrim 1.7.104 executable SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`, SKSE 2.3.1 / Address Library format 5 (Camera log line 2). Host: `dq-MEG-Z590-Trident-X-MS-B926`, Linux 7.0.0-42, i9-11900K, RTX 3080 / 595.99.02, per reports. TDM log identifies 2.3.1.0; SmoothCam's log banner says `v0-0-1-3` (the pinned provider is documented as 1.8.1; do not infer a package version from that banner). Exact loaded SmoothCam SHA-256 `b20bf8a276bf76fbe35277dd9b25c64c57d17bfdcc20daa74a5f941c90f563da`, TDM `5ba3abd82fe070e2a6e9af7f07eca82b9ddb1a53dcd47bc34af571efab01899f`, Selection `ef010805456de8b101f5948e76dd479a1a613c6e88935a7f729f88a4c8c15a19`. Full dependency/settings hashes remain in each `report.json` under `hashes` and `deployment_manifest`.
+
+The all-features/combined Camera archive hash is `c3f0c2095f456bbcc3a8cd13368ad97feb2072b30f74c835c5d5b4539e770b4e`; cursor-only is `e6c9b018b85431b6969a92f5ac2251fa6119ccb48c2d5c01dd215d22e798ed79`. Both are named `SkyCRPG_Camera-0.1.0-rc.1-890a5da.zip` but contain different configuration. Combined also records UI archive `SkyCRPG_UI-0.1.0-rc.1-6b4c0fc.zip`, SHA-256 `f508a0e1343e2f15ea825e284f57fafed1108f62eb38acbef4b72582d2d940cb`. These are existing candidate identities, not artifacts of this change.
+
+### Fix and input contract
+
+`cursor::togglePress(pad, menu)` returns zero for menu-owned presses, otherwise the existing keyboard/gamepad mask (1/2). The sink calls it with `nativeMenu()` only after the existing binding, fresh-edge and native-user-event checks. A zero result never enters `toggle`; held/release tracking still runs, so a menu-held key cannot become a fresh gameplay press on close. Gameplay masks and the service's entry/exit policy remain unchanged.
+
+The existing `nativeMenu()` checks Console through `focused()`, excludes only the exact owned overlay and passive HUD/Fader/Mist movies, and fails closed if its ordered try-lock cannot be acquired. No new lock or retry loop is added to the sink. `menuToggleDropped` is an atomic diagnostic flag only: main-thread `service()` drains it through the existing deduplicating `refuse(Exit::menu)` before registration/frame/idle early returns. This deliberately defers file logging (the existing logger builds a path and opens a file) and keeps `refusalBits` on its existing service thread. No toggle is deferred. Logging may wait for the next main service, and repeated menu refusals retain the existing once-per-reason behavior.
+
+The active-session menu-open exit, capture checks, Selection API and sole-Pick ownership are unchanged. SmoothCam remains the sole normal camera-transform writer; there is no UI dependency or third-party addition. Portable tests cover menu-stamped input serviced after close, fresh gameplay entry and toggle-off, keyboard/gamepad mask preservation, and the existing active-session menu refusal/exit.
+
+### F6 diagnosis (read-only)
+
+**Source:** [plugin.cpp at 890a5da](https://github.com/Sonoran-Solutions/SkyCRPG/blob/890a5da1354ba29130ac88596cb3cfd0b242e1b5/modules/camera/src/plugin.cpp), identical to the current base for the cited lines:
+
+1. Lines 1028–1034 disable Camera, call `interruptTargetLock()`, force first person and attempt `claimPrecisionOwnership`. An off-main interrupt only posts work: lines 376–388 require `onTargetLockThread()` before consuming it and acquiring the lease. Lines 437–442 use the last published lock decision for off-main input.
+2. Lines **1047–1054** make third-person return depend on that lease. With target lock enabled and off-main input, **1049** sees `!publishedMovementLease`, posts another interrupt and `continue`s before `ForceThirdPerson()` at **1054**. It does not retain a pending return action. With target lock disabled, lines **1050–1052** use the ordinary acquisition path instead.
+3. Main-thread lock advancement normally comes from the **ThirdPersonState** update/look paths (785, 812–826; vtable installation 1117, 1139–1140). First person no longer supplies those updates. The all-state thin-occluder tick does not substitute for them: `thinEligible()` at **639–646** explicitly calls `context(..., readOnlyLock=true)`, and `context()` at **624** skips lock advancement for that mode. Thus an off-main F6 can leave a lease request waiting while the return key waits for that lease: a concrete first-person handoff gap outside the owned files.
+4. Evidence is consistent with that mechanism: all-features provider log **1160–1163** last releases the lease (`lease=0`) before F6; after **1311**, no acquired-lease line appears until **1453–1454**, at shutdown. Cursor-only retains the Phase 4 lease path and returns to 9. Cursor's F6 exit itself occurs in both runs, and the failed return has HUD only, so an overlay left open is not the observed obstruction.
+
+**Hypothesis / limit:** the stalled off-main lease handoff is the leading code-and-evidence diagnosis, not a fully instrumented attribution of the second F6. These runs lack `iPrecisionTrace` decision/claim/retention records and per-F6 callback thread IDs. The once-only sink banner at all-features log line 21 says `thread=368 main=368` for its first callback; it does **not** identify either later F6 callback. An unclaimed/revoked `ownFirstPerson` can also refuse return (`precision_policy.h:11–14,23–25`; `policy.h:72–75`; sink retention `plugin.cpp:964`), and the available logs do not distinguish that from the lease guard. A rerun with precision tracing must establish the exact branch. No speculative F6 fix was made in cursor code; the handoff belongs to `plugin.cpp`, outside this worker's ownership.
+
+### Portable verification and outstanding gates
+
+Job declaration before execution: `/tmp/p5-cursor-console-toggle/jobs.md`; command/PID/output log: `/tmp/p5-cursor-console-toggle/portable.log`. Owner: cursor worker / DYL-200. Purpose: verify input admission and all ten Camera portable tests. g++ 15.2.0; 60-second deadline per compile/run, 600 seconds total; each command had a child process-group handle and exit completion signal, timeout cleanup scoped to that group. All children exited and task test binaries were removed. No game/Windows job was started.
+
+Commands run from `modules/camera` (each compiler and test completed with exit 0 in the final evidence):
+
+```sh
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I include tests/cursor_policy_test.cpp -o /tmp/p5-cursor-cursor_policy_test && /tmp/p5-cursor-cursor_policy_test
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I include tests/lifecycle_policy_test.cpp -o /tmp/p5-cursor-lifecycle_policy_test && /tmp/p5-cursor-lifecycle_policy_test
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I include tests/lock_frame_trace_test.cpp -o /tmp/p5-cursor-lock_frame_trace_test && /tmp/p5-cursor-lock_frame_trace_test
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I include tests/obstruction_policy_test.cpp -o /tmp/p5-cursor-obstruction_policy_test && /tmp/p5-cursor-obstruction_policy_test
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I include tests/obstruction_probe_test.cpp -o /tmp/p5-cursor-obstruction_probe_test && /tmp/p5-cursor-obstruction_probe_test
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I include tests/policy_test.cpp -o /tmp/p5-cursor-policy_test && /tmp/p5-cursor-policy_test
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I include tests/precision_policy_test.cpp -o /tmp/p5-cursor-precision_policy_test && /tmp/p5-cursor-precision_policy_test
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I include tests/precision_trace_test.cpp -o /tmp/p5-cursor-precision_trace_test && /tmp/p5-cursor-precision_trace_test
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I include tests/target_lock_policy_test.cpp -o /tmp/p5-cursor-target_lock_policy_test && /tmp/p5-cursor-target_lock_policy_test
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I include tests/thin_occluder_policy_test.cpp -o /tmp/p5-cursor-thin_occluder_policy_test && /tmp/p5-cursor-thin_occluder_policy_test
+```
+
+| Test | Result / actual stdout |
+| --- | --- |
+| cursor_policy_test | **PASS**, `PASS cursor policy` |
+| lifecycle_policy_test | **PASS**, no stdout |
+| lock_frame_trace_test | **PASS**, no stdout |
+| obstruction_policy_test | **PASS**, `PASS obstruction policy: measurements, timing, noisy closed loop, filtered clear recovery, priorities, invalid inputs, rates/preferences` |
+| obstruction_probe_test | **PASS**, no stdout |
+| policy_test | **PASS**, no stdout |
+| precision_policy_test | **PASS**, no stdout |
+| precision_trace_test | **PASS**, no stdout |
+| target_lock_policy_test | **PASS** after fixture-path correction, no stdout |
+| thin_occluder_policy_test | **PASS**, no stdout |
+
+Initial target-lock test **FAIL** is retained in the log: `tests/target_lock_policy_test.cpp:237: int main(): Assertion 'fragment' failed`, process return -6. Its old `modules/camera/config/...` path assumed repository-root cwd. The owned test now tries `config/...` first, retaining the old root path as fallback for CI. Only this changed test was rerun; the remaining thin-occluder test was then run. Earlier eight valid results were reused. The harness printed `PASS 10/10 Camera portable tests; no child job remains`. The execution wrapper also emitted `Failed to create stream fd: Operation not permitted` before both batches; compilation and the recorded child exits proceeded normally.
+
+`git diff --check`: **PASS**, empty output. `git diff --stat`: reviewed for the five owned files only (cursor source/header, two portable tests, this append-only evidence section). No source outside ownership was changed.
+
+Windows build/link: **NOT_RUN**, CI-only after orchestrator review/commit. In-game Console/menu and controller rerun: **NOT_RUN**; native event timing, deferred diagnostic output, own-overlay recognition on actual input threads, and active-session exits need the rebuilt candidate. F6 branch attribution/repair and rerun: **NOT_RUN**. No new DLL/package hash or owner acceptance is claimed. Proposed shared-file changes: none. Questions for owner: none; the integrator should route the F6 handoff investigation to the owner of `plugin.cpp` and retain the runtime gate until CI and reruns.

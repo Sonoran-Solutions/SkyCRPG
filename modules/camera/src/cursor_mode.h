@@ -21,6 +21,7 @@ HMODULE selectionModule = nullptr;
 cursor::Session session;
 cursor::MenuContention menuContention;
 std::atomic<bool> dataReady{false}, worldLoaded{false}, padInput{false};
+std::atomic<bool> menuToggleDropped{false};
 std::atomic<unsigned> stop{0}, toggle{0}, held{0};
 cursor::OverlayRegistration registration;
 bool pending = false, resolving = false;
@@ -529,6 +530,8 @@ void traceFrame() {
 }
 void service() {
     if (!cursorSettings.enabled || !mainThread() || !dataReady.load()) return;
+    // Logging allocates/does file IO; keep it and refusalBits on the main service.
+    if (menuToggleDropped.exchange(false)) refuse(Exit::menu);
     if (registration.state != cursor::Registration::ready &&
         !registration.prepare(true,registrationFallbackSafe(),session.active,pending,registerOverlay)) return;
     if (const auto reason = stop.exchange(0)) { leave(static_cast<Exit>(reason)); return; }
@@ -639,7 +642,11 @@ void input(RE::InputEvent* events) {
         if (id != (pad ? cursorSettings.toggleGamepad : cursorSettings.toggleKey)) continue;
         const unsigned mask = pad ? 2u : 1u;
         const unsigned old = button->IsPressed() ? held.fetch_or(mask) : held.fetch_and(~mask);
-        if (button->IsDown() && !(old & mask) && button->QUserEvent().empty()) toggle.fetch_or(mask);
+        if (button->IsDown() && !(old & mask) && button->QUserEvent().empty()) {
+            const auto request = cursor::togglePress(pad,nativeMenu());
+            if (request) toggle.fetch_or(request);
+            else menuToggleDropped.store(true);
+        }
     }
 }
 } // namespace cursorMode

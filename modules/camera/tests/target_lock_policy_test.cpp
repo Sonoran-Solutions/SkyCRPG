@@ -233,7 +233,8 @@ int main() {
     c.world = false; assert(select(c) == State::invalidWorld);
     c.enabled = false; assert(select(c) == State::disabled);
     // Test the opt-in overlay and the runtime guard's shared parser.
-    std::ifstream fragment("modules/camera/config/TrueDirectionalMovement-target-lock.fragment.ini");
+    std::ifstream fragment("config/TrueDirectionalMovement-target-lock.fragment.ini");
+    if (!fragment) fragment.open("modules/camera/config/TrueDirectionalMovement-target-lock.fragment.ini");
     assert(fragment);
     std::map<std::string,std::string> values;
     std::string line, section;

@@ -39,6 +39,8 @@ inline Settings validate(Settings s, const camera::Settings& camera) {
 enum class Exit { none, toggle, disabled, lifecycle, menu, load, death, cell, firstPerson, special, precision, lock, f6, f8, selection, overlay, thread, stale, busy };
 inline constexpr std::array exitNames{"none","toggle","disabled","lifecycle","menu","load","death","cell","first-person","special","precision","lock","F6","F8","selection","overlay","thread","stale","busy"};
 static_assert(exitNames.size() == static_cast<unsigned>(Exit::busy)+1u);
+// Stamp focus at the input edge; a menu-owned press must not survive its close.
+constexpr unsigned togglePress(bool pad, bool menu) { return menu ? 0u : (pad ? 2u : 1u); }
 // Tolerate brief UI jobs, but bound capture without a focus check to about
 // one third of a second at 60 fps. This is a fixed policy, not an INI setting.
 inline constexpr unsigned menuBusyFrameLimit = 20;
