@@ -106,8 +106,11 @@ class PackageTests(unittest.TestCase):
         (self.swfs / "build.json").write_bytes(pkg.json_bytes(self.proof))
 
     def args(self, module="ui"):
-        name = "SkyCRPG_UI" if module == "ui" else "SkyCRPG_Camera"
+        name = {"ui": "SkyCRPG_UI", "camera": "SkyCRPG_Camera", "selection": "SkyCRPG_Selection"}[module]
         files = {p: b"notice\n" for p in pkg.native_paths(name)}
+        if module == "camera":
+            files[pkg.OVERLAY_README] = pkg.OVERLAY_INSTRUCTIONS
+            files[pkg.OVERLAY_FRAGMENT] = (pkg.ROOT / "modules/camera/config/TrueDirectionalMovement-target-lock.fragment.ini").read_bytes()
         files[f"SKSE/Plugins/{name}.dll"] = pe()
         files[f"SKSE/Plugins/{name}.ini"] = b"[Debug]\niLogLevel=1\n"
         archive = self.root / f"{name}.zip"
@@ -151,9 +154,29 @@ class PackageTests(unittest.TestCase):
             self.assertIn(b"uAdjustCameraYawDuringMovement = 0", data)
         self.assertEqual(manifest["requires"], ["SKSE64 2.3.1", "Address Library 13", "SkyUI Community 6.11",
                          "SmoothCam 1.8.1", "True Directional Movement 2.3.1", "MCM Helper 1.6.3"])
-        pkg.check_independence({"camera": manifest["files"], "ui": pkg.expected_paths("SkyCRPG_UI", True)})
+        pkg.check_independence({"camera": manifest["files"], "ui": pkg.expected_paths("SkyCRPG_UI", True), "selection": pkg.expected_paths("SkyCRPG_Selection", True)})
         with self.assertRaisesRegex(ValueError, "shared"):
             pkg.check_independence({"camera": ["a.ini"], "ui": ["A.INI"]})
+
+    def test_selection_assembly_and_overlay_are_independent(self):
+        args = self.args("selection")
+        manifest = pkg.assemble(args)
+        self.assertEqual(set(manifest["files"]), pkg.expected_paths("SkyCRPG_Selection", True))
+        self.assertEqual(manifest["optional"], [])
+        self.assertEqual(manifest["requires_skycrpg_modules"], [])
+        with zipfile.ZipFile(args.out / manifest["archive"]) as z:
+            self.assertFalse(any("SkyCRPG_Camera" in p or "SkyCRPG_UI" in p for p in z.namelist()))
+        camera = self.args("camera")
+        cm = pkg.assemble(camera)
+        with zipfile.ZipFile(camera.out / cm["archive"]) as z:
+            fragment = z.read(pkg.OVERLAY_FRAGMENT)
+            baseline = z.read("MCM/Config/TrueDirectionalMovement/settings.ini")
+            self.assertIn(b"uTargetLockKey = 22", fragment)
+            self.assertNotIn(b"uTargetLockKey = 22", baseline)
+            self.assertIn(b"merge", z.read(pkg.OVERLAY_README))
+        pkg.check_independence({n: pkg.expected_paths(n, True) for n in pkg.PACKAGES})
+        with self.assertRaisesRegex(ValueError, "shared"):
+            pkg.check_independence({"selection": ["SKSE/Plugins/x.ini"], "camera": ["skse/plugins/X.ini"]})
 
     def test_native_archive_and_file_integrity(self):
         args = self.args()
