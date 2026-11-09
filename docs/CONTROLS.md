@@ -35,7 +35,7 @@ Opt-in features, each default OFF in its INI. Keys below are the owner-approved 
 
 | Action | Binding | Notes |
 | --- | --- | --- |
-| Target lock toggle | **U** (`[TargetLock]` key) | Locks the nearest valid hostile through TDM's lease; a second press, target death, menu, F6 or F8 releases it. No target-switch key in Phase 5. |
+| Target lock toggle | **U**, bound in the TDM target-lock overlay fragment that ships with Camera (TDM's own key; Camera's `[TargetLock] bEnabled=1` only authorizes the lease) | Locks the nearest valid hostile through TDM's lease; a second press, target death, menu, F6 or F8 releases it. No target-switch key in Phase 5. |
 | Selection cycle next / previous | **[** / **]** (`[Selection] iCycleNextKey=26`, `iCyclePreviousKey=27`) | Latches the cycled candidate; the native prompt names it. Ordinary latch expires after 10 s or on movement; in cursor mode it holds until the pointer moves more than 12 px. |
 | Cursor mode toggle | **B** (`[CursorMode] iToggleKey=48`) | Mouse look moves the pointer instead of the camera (65 ≈ 1 px per count); the pointer picks the object whose screen box it is in or within 48 px of; `[` `]` visit only on-screen candidates. Requires Selection with `bAllowExternalTargets=1`. |
 | Activate | native **E** | The only activation input; pointing at nothing activates nothing. |
