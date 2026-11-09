@@ -790,7 +790,9 @@ inline void installHooks(bool hashes) {
     runtime->logger("ThinOccluder: optional Stage 1 hooks installed; main-thread form resolution pending.");
 }
 inline std::optional<float> obstructionSample(std::optional<float> measured) {
-    return compressionSample(runtime && runtime->installed,runtime && runtime->smoothCastSeen,
-        runtime && runtime->previousKept,measured);
+    // A feature that refused after installing (a later form failed to resolve)
+    // keeps its hooks but must not filter compression.
+    const bool active = enabled() && runtime->installed && runtime->resolved;
+    return compressionSample(active,active && runtime->smoothCastSeen,active && runtime->previousKept,measured);
 }
 } // namespace skycrpg::camera::thin
