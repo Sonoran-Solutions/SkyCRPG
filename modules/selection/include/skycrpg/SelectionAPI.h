@@ -33,6 +33,9 @@ using GetAPI = const Interface* (*)(std::uint32_t requestedVersion);
 // kDataLoaded. Version 1 is rejected: it promised synchronous main-thread work.
 // All methods now support any thread and never initiate a scan or call engine
 // functions. Snapshot/list reads return unavailable on contention/reentrancy.
+// Legacy readers share Pick's nonblocking state gate: an overlapping read can
+// make that Pick forward the native target, briefly interrupting substitution.
+// Poll sparingly; do not spin on unavailable. Reads do not guarantee injection.
 // wrongThread is a reserved legacy enum value and is never returned by v2.
 // Buffers belong to the caller; no engine pointers or STL types cross the ABI.
 // Snapshots describe the most recent Pick job. available=0 means no injection
@@ -56,7 +59,8 @@ using GetAPI = const Interface* (*)(std::uint32_t requestedVersion);
 // including <=8 retained latch members). lastCostMicros measures the scan;
 // lastPickCostMicros includes due scans and fresh selected/external validation.
 // Each validation uses <=3 body LOS rays plus <=3 native-layer ACTI rays.
-// Activation text is cached by accepted scan membership; never read per Pick.
+// Activation text is not queried by selection; native main-thread prompt code
+// owns it. Text-empty objects can pass selection's native eligibility checks.
 // raysTotal includes all paths. SmoothCam's second Pick shares the refresh gate.
 // eventSuppressed counts duplicate/budget-suppressed event rows; requestDrops
 // counts full/contended cycle mailboxes. No cursor or activation action is built.
