@@ -286,8 +286,8 @@ bool nativeMenu() {
     return false;
 }
 bool inputNativeMenu() {
-    const auto keys = inputMenuKeys.load(std::memory_order_acquire);
-    if (!keys) return true;
+    const auto menuKeys = inputMenuKeys.load(std::memory_order_acquire);
+    if (!menuKeys) return true;
     const auto ui = RE::UI::GetSingleton();
     if (!ui) return true;
     const UITryLock lock; // one ordered attempt; never wait on the input thread
@@ -298,10 +298,10 @@ bool inputNativeMenu() {
         const auto it = ui->menuMap.find(key);
         return it != ui->menuMap.end() ? it->second.menu.get() : nullptr;
     };
-    for (const auto key : {&keys->dialogue,&keys->console,&keys->loading}) {
+    for (const auto key : {&menuKeys->dialogue,&menuKeys->console,&menuKeys->loading}) {
         if (const auto menu = get(*key); menu && menu->OnStack()) return true;
     }
-    const auto own = get(keys->own), hud = get(keys->hud), fader = get(keys->fader), mist = get(keys->mist);
+    const auto own = get(menuKeys->own), hud = get(menuKeys->hud), fader = get(menuKeys->fader), mist = get(menuKeys->mist);
     const auto instance = current();
     const auto required = flags | static_cast<std::uint32_t>(RE::UI_MENU_FLAGS::kOnStack);
     for (const auto& entry : ui->menuStack) {
@@ -527,7 +527,7 @@ void pick(const api::CursorFrame& frame, bool fresh) {
 cursor::Registration registerOverlay() {
     // Only data-ready registration / main-service fallback can intern these.
     // Retain for process lifetime; publication also prewarms the UI/lock relocations.
-    static const auto keys = new const InputMenuKeys;
+    static const auto menuKeys = new const InputMenuKeys;
     const auto ui = RE::UI::GetSingleton();
     if (!ui) {
         static bool deferred = false;
@@ -538,7 +538,7 @@ cursor::Registration registerOverlay() {
     // later inside ProcessMessages (normally the UI job thread).
     const UITryLock lock;
     if (!lock) return cursor::Registration::deferred;
-    inputMenuKeys.store(keys,std::memory_order_release);
+    inputMenuKeys.store(menuKeys,std::memory_order_release);
     if (ui->menuMap.find(std::string_view(menuName)) != ui->menuMap.end()) { overlaySite.store(21); refuse(Exit::overlay); return cursor::Registration::failed; }
     ui->Register(menuName,Overlay::create);
     return cursor::Registration::ready;
