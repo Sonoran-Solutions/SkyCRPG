@@ -3,6 +3,7 @@
 #include "lifecycle_policy.h"
 #include "obstruction_policy.h"
 #include <cassert>
+#include <atomic>
 #include <fstream>
 #include <map>
 #include <string>
@@ -42,6 +43,102 @@ int main() {
         assert(leaseWanted(enabled,requested,have) == ((enabled || requested) && !have));
     }
     assert(!leaseWanted(false,false,false)); // disabled startup does not request
+    for (unsigned bits = 0; bits < 32; ++bits) {
+        const bool enabled = bits&1, mainThread = bits&2, base = bits&4, lease = bits&8, reportable = bits&16;
+        const bool failure = lockFailureReportable(enabled,mainThread) && prerequisiteFailure(base,lease,reportable);
+        assert(failure == ((!enabled || mainThread) && !(base && lease) && reportable));
+    }
+    FailureDebounce failureDebounce;
+    for (double now : {10.0,11.0,12.0}) {
+        const bool failure = lockFailureReportable(true,false) && prerequisiteFailure(true,false,true);
+        assert(!failure && !failureDebounce.observe(failure,now)); // off-main first-person input cannot latch
+    }
+    assert(!failureDebounce.observe(lockFailureReportable(true,true) && prerequisiteFailure(true,false,true),13));
+    assert(failureDebounce.observe(lockFailureReportable(true,true) && prerequisiteFailure(true,false,true),14));
+    for (const auto name : {"HUD Menu","Cursor Menu","Fader Menu","Mist Menu","LoadWaitSpinner"}) {
+        assert(!lockMenuPublishesFocus(name,true) && !lockMenuPublishesFocus(name,false));
+        assert(!lockMenuInterrupt(name,true) && !lockMenuInterrupt(name,false));
+        assert(!lockMenuRefresh(name,true) && !lockMenuRefresh(name,false));
+    }
+    for (const auto name : {"Dialogue Menu","Console","Loading Menu"}) {
+        assert(lockMenuPublishesFocus(name,true) && !lockMenuPublishesFocus(name,false));
+        assert(lockMenuInterrupt(name,true) && lockMenuInterrupt(name,false));
+        assert(lockMenuRefresh(name,true) && lockMenuRefresh(name,false));
+    }
+    for (const auto name : {"InventoryMenu","Custom Menu","TDM_BossBar","Tutorial Menu","StatsMenuSkillRing"}) {
+        assert(lockMenuPublishesFocus(name,true) && !lockMenuPublishesFocus(name,false));
+        assert(!lockMenuInterrupt(name,true) && lockMenuInterrupt(name,false));
+        assert(!lockMenuRefresh(name,true) && !lockMenuRefresh(name,false));
+    }
+    assert(!lockMenuInterrupt("Journal Menu",true) && lockMenuInterrupt("Journal Menu",false));
+    assert(!lockMenuRefresh("Journal Menu",true) && lockMenuRefresh("Journal Menu",false));
+    assert(lockMenuPublishesFocus("Journal Menu",true) && !lockMenuPublishesFocus("Journal Menu",false));
+    assert(lockMenuPublishesFocus("",true) && !lockMenuPublishesFocus("",false));
+    static_assert(!publishedMenuFocus(false,0u,0u));
+    static_assert(publishedMenuFocus(true,0u,0u));
+    static_assert(publishedMenuFocus(false,0u,1u));
+    static_assert(publishedMenuFocus(true,0u,1u));
+    static_assert(!menuFocusNeedsReassert(1u,1u));
+    static_assert(menuFocusNeedsReassert(0u,1u));
+    // Enumerate all 21 orders of main {capture, sample, load, store, re-load}
+    // against event {increment, store(true)}. Slots 0, 3 and 4 cover opening
+    // before capture, after the pre-store load, and after the store respectively.
+    for (unsigned incrementSlot = 0; incrementSlot <= 5; ++incrementSlot) {
+        for (unsigned eventStoreSlot = incrementSlot; eventStoreSlot <= 5; ++eventStoreSlot) {
+            std::atomic<unsigned> epoch{0};
+            std::atomic<bool> focus{false};
+            unsigned before = 0;
+            bool menuOpen = false, sampled = false, published = false;
+            for (unsigned step = 0; step <= 5; ++step) {
+                if (step == incrementSlot) { menuOpen = true; epoch.fetch_add(1u); }
+                if (step == eventStoreSlot) focus.store(true);
+                switch (step) {
+                case 0: before = epoch.load(); break;
+                case 1: sampled = menuOpen; break;
+                case 2: published = publishedMenuFocus(sampled,before,epoch.load()); break;
+                case 3: focus.store(published); break;
+                case 4:
+                    if (menuFocusNeedsReassert(before,epoch.load())) focus.store(true);
+                    break;
+                default: break; // event after main's re-load is the final writer
+                }
+                if (incrementSlot == 0 && step == 3) assert(sampled && published && focus.load());
+                if (incrementSlot == 3 && eventStoreSlot == 3 && step == 3)
+                    assert(!focus.load()); // reproduce the round-4 lost opening
+                if ((incrementSlot == 3 || incrementSlot == 4) && step == 4)
+                    assert(!sampled && focus.load()); // re-assert after the stale store
+            }
+            assert(focus.load());
+        }
+    }
+    // Main samples no focus, then an unlisted pausing menu opens before
+    // publication. Neither the stale sample nor closing may clear focus.
+    std::atomic<bool> publishedMenu{false};
+    std::atomic<unsigned> menuOpenEpoch{0};
+    const unsigned sampledEpoch = menuOpenEpoch.load();
+    const bool sampledMenu = false;
+    std::thread menuOpening([&] {
+        if (lockMenuPublishesFocus("Tutorial Menu",true)) {
+            menuOpenEpoch.fetch_add(1u);
+            publishedMenu.store(true);
+        }
+    });
+    menuOpening.join();
+    assert(publishedMenu.load());
+    assert(menuOpenEpoch.load() == sampledEpoch+1u);
+    publishedMenu.store(publishedMenuFocus(sampledMenu,sampledEpoch,menuOpenEpoch.load()));
+    if (menuFocusNeedsReassert(sampledEpoch,menuOpenEpoch.load())) publishedMenu.store(true);
+    assert(publishedMenu.load());
+    std::thread menuClosing([&] {
+        if (lockMenuPublishesFocus("Tutorial Menu",false)) publishedMenu.store(true);
+    });
+    menuClosing.join();
+    assert(publishedMenu.load());
+    const unsigned nextSampledEpoch = menuOpenEpoch.load();
+    assert(nextSampledEpoch == sampledEpoch+1u);
+    publishedMenu.store(publishedMenuFocus(false,nextSampledEpoch,menuOpenEpoch.load()));
+    if (menuFocusNeedsReassert(nextSampledEpoch,menuOpenEpoch.load())) publishedMenu.store(true);
+    assert(!publishedMenu.load());
     static_assert(static_cast<unsigned>(State::targeting) == 6);
     static_assert(static_cast<unsigned>(State::obstruction) == 7);
     static_assert(static_cast<unsigned>(State::normal) == 8);
@@ -78,9 +175,6 @@ int main() {
     indicator.reset(); assert(!indicator.effect && !indicator.waiting(5.1) && !indicator.isNew(12));
     indicator.begin({10,11,12},6.0); // retarget/retry excludes previous sources
     assert(!indicator.isNew(12) && indicator.isNew(13));
-    const float savedAge = 123.5f;
-    const float savedLifetime = savedAge+LockIndicatorAttempt::duration;
-    assert(savedLifetime-savedAge == 2.0f); // save/load retains both audited fields
     LockRetargetWindow retarget;
     assert(retarget.awaiting(true,10.0));
     assert(retarget.awaiting(true,10.99));
@@ -100,7 +194,12 @@ int main() {
     LockInterrupt interrupt;
     unsigned releases = 0;
     auto release = [&] { ++releases; };
-    std::thread callback([&] { interrupt.request(); });
+    std::thread callback([&] {
+        // An unlisted menu opens and closes entirely between main-thread
+        // observations. Only its close queues the fresh-input barrier.
+        if (lockMenuInterrupt("Custom Menu",true)) interrupt.request();
+        if (lockMenuInterrupt("Custom Menu",false)) interrupt.request();
+    });
     callback.join();
     assert(!interrupt.releaseIfClear(release) && releases == 0);
     if (interrupt.consume()) input.activity(20);

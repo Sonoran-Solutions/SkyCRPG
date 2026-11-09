@@ -150,7 +150,7 @@ struct FadeState {
         return recent || alpha < 1;
     }
 };
-enum class Exit { disable, f8, menu, firstPerson, special, load, cell, unload, shutdown, conflict };
+enum class Exit { disable, f8, menu, firstPerson, special, load, cell, unload, shutdown, conflict, expired };
 constexpr bool immediateRestore(Exit) { return true; }
 // A menu leaves the camera where it was, so a faded beam is still valid on close.
 constexpr bool carriesAdmission(Exit cause,bool faded) { return cause == Exit::menu && faded; }
@@ -161,5 +161,13 @@ struct RestoreCheck {
     constexpr bool material() const { return geometryShader && installedMaterial && alphaUnchanged; }
     constexpr bool property() const { return geometryShader && installedProperty && flagsUnchanged; }
 };
-constexpr bool compressionAllowed(bool featureInstalled,bool nativeKept) { return !featureInstalled || nativeKept; }
+constexpr bool compressionAllowed(bool featureInstalled,bool castSeen,bool nativeKept) {
+    return !featureInstalled || !castSeen || nativeKept;
+}
+constexpr std::optional<float> compressionSample(bool featureInstalled,bool castSeen,bool nativeKept,
+    std::optional<float> measured) {
+    // An unobserved caster retains the base measurement; a filtered clear frame
+    // releases through the ordinary policy ramp, never through a reset.
+    return !measured || compressionAllowed(featureInstalled,castSeen,nativeKept) ? measured : std::optional<float>{0.0f};
+}
 } // namespace skycrpg::camera::thin

@@ -15,6 +15,34 @@ namespace skycrpg::camera {
 constexpr bool phase4Prerequisites(bool baseReady, bool leaseReady, bool allowLeaseRequest, bool haveLease) {
     return baseReady && (leaseReady || (allowLeaseRequest && !haveLease));
 }
+constexpr bool lockFailureReportable(bool enabled, bool mainThread) {
+    return !enabled || mainThread;
+}
+constexpr bool lockMenuRefresh(std::string_view name, bool opening) {
+    return name == "Dialogue Menu" || name == "Console" || name == "Loading Menu" ||
+        (name == "Journal Menu" && !opening);
+}
+constexpr bool lockMenuPassive(std::string_view name) {
+    return name == "HUD Menu" || name == "Cursor Menu" || name == "Fader Menu" || name == "Mist Menu" ||
+        name == "LoadWaitSpinner";
+}
+constexpr bool lockMenuPublishesFocus(std::string_view name, bool opening) {
+    return opening && !lockMenuPassive(name);
+}
+constexpr bool menuFocusNeedsReassert(unsigned epochBefore, unsigned epochAfterStore) {
+    return epochBefore != epochAfterStore;
+}
+constexpr bool publishedMenuFocus(bool sampled, unsigned epochBefore, unsigned epochAfter) {
+    return sampled || menuFocusNeedsReassert(epochBefore,epochAfter);
+}
+constexpr bool lockMenuInterrupt(std::string_view name, bool opening) {
+    if (lockMenuPassive(name)) return false;
+    if (name == "Dialogue Menu" || name == "Console" || name == "Loading Menu") return true;
+    // Openings publish conservative focus until main-thread focused() runs.
+    // The close barrier catches menus between two main-thread observations.
+    // Never read UI::GetMenu or menu flags on the event thread.
+    return !opening;
+}
 // Callbacks only publish interrupts. The main-thread consumer resets freshness
 // and cleans up before release; the mutex closes the check/release race.
 class LockInterrupt {

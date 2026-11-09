@@ -51,6 +51,8 @@ static_assert(offsetof(RE::ShaderReferenceEffect,effectID) == 0x28);
 static_assert(offsetof(RE::ShaderReferenceEffect,target) == 0x38);
 static_assert(offsetof(RE::ShaderReferenceEffect,finished) == 0x40);
 static_assert(offsetof(RE::ShaderReferenceEffect,effectData) == 0x108);
+static_assert(offsetof(RE::ProcessLists,magicEffects) == 0x108);
+static_assert(offsetof(RE::ProcessLists,magicEffectsLock) == 0x120);
 Settings settings;
 cursor::Settings cursorSettings;
 namespace cursorMode {
@@ -65,12 +67,13 @@ std::chrono::steady_clock::time_point obstructionSampleTime{};
 RE::FormID obstructionCell = 0;
 bool adjustedZoomWritten = false;
 float lastAdjustedZoom = 0;
-bool ready = false, loading = true, ownFirstPerson = false, recenter = false;
+std::atomic<bool> ready{false};
+bool loading = true, ownFirstPerson = false, recenter = false;
 SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
 bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
 bool targetLockEnabled = false, lockConfigSafe = false, lockConfigLogged = false;
-bool lockHooksReady = false;
+std::atomic<bool> lockHooksReady{false};
 bool lockFrameTraceEnabled = false;
 LockTraceWindow lockTraceWindow;
 LockFrameWriter lockFrameWriter;
@@ -79,6 +82,7 @@ unsigned lockLookCalls = 0;
 LockRetargetWindow lockRetargetWindow;
 LockStateChange<TDM_API::APIResult> lockLeaseLog;
 bool lockRefusalNotified = false;
+std::atomic<bool> lockRefusalRequested{false};
 LockInterrupt lockInterrupt, lockConfigRefresh;
 float lockHoldSeconds = .4f;
 RE::FormID indicatorShaderForm = 0xAAEB3;
@@ -90,6 +94,10 @@ std::atomic<double> lockInputLast{0};
 std::atomic<bool> lockInputSeen{false};
 // Last main-thread decision, read when context() runs on another thread.
 std::atomic<bool> publishedLockPrerequisites{false}, publishedTargetLock{false};
+std::atomic<bool> publishedLockMenu{true}, publishedLockMovementConfigSafe{false};
+std::atomic<unsigned> lockMenuOpenEpoch{0};
+// Lease changes also occur at data load; opt-in off-main input reads only this copy.
+std::atomic<bool> publishedMovementLease{false};
 unsigned lockStateLogs = 0;
 std::optional<bool> observedLock;
 RE::ActorHandle observedTarget;
@@ -326,6 +334,7 @@ bool acquireMovementLease() {
     if (!movement) return false;
     const auto lease = movement->RequestDisableTargetLock(SKSE::GetPluginHandle());
     movementLease = lease == TDM_API::APIResult::OK || lease == TDM_API::APIResult::AlreadyGiven;
+    publishedMovementLease.store(movementLease);
     if (!movementLease) prerequisiteFailed = true;
     if (!targetLockEnabled) {
         if (!movementLease) log("TDM target-lock-disable lease refused; controller suspended.");
@@ -386,6 +395,7 @@ void observeTargetLock() {
     if (!ready || !movement || !onTargetLockThread()) return;
     const auto owner = movement->GetDisableTargetLockOwner();
     movementLease = owner == SKSE::GetPluginHandle();
+    publishedMovementLease.store(movementLease);
     if (!movementLease && owner != SKSE::kInvalidPluginHandle) return;
     const bool locked = movement->GetTargetLockState();
     observedTarget = movement->GetCurrentTarget();
@@ -418,7 +428,7 @@ void checkLockBindings() {
     }
 }
 void updateTargetLockMain(Context& c);
-void updateTargetLock(Context& c) {
+void updateTargetLock(Context& c, unsigned sampledMenuEpoch) {
     if (!ready || !lockHooksReady) {
         interruptTargetLock();
         if (onTargetLockThread() && movement && !movementLease) static_cast<void>(acquireMovementLease());
@@ -434,6 +444,10 @@ void updateTargetLock(Context& c) {
     updateTargetLockMain(c);
     publishedLockPrerequisites.store(c.prerequisites);
     publishedTargetLock.store(c.targetLock);
+    publishedLockMenu.store(publishedMenuFocus(c.menu,sampledMenuEpoch,lockMenuOpenEpoch.load()));
+    // An opening can land between the preceding epoch load and focus store.
+    if (menuFocusNeedsReassert(sampledMenuEpoch,lockMenuOpenEpoch.load())) publishedLockMenu.store(true);
+    publishedLockMovementConfigSafe.store(movementConfigSafe);
 }
 void updateTargetLockMain(Context& c) {
     observeTargetLock();
@@ -448,15 +462,15 @@ void updateTargetLockMain(Context& c) {
     const auto decision = targetLockLease({targetLockEnabled,eligible,lockConfigSafe,indicatorReady(),
         movement != nullptr,movementLease,observedLock,lockInputIdle()});
     {
-        // One bounded line per change, so a refusal can never be silent.
+        // One bounded line per state change; idle input alone does not spend the budget.
         static std::uint32_t lastState = UINT32_MAX;
         const std::uint32_t state = (eligible?1u:0u)|(lockConfigSafe?2u:0u)|(indicatorReady()?4u:0u)|(observedLock?8u:0u)|
-            (observedLock.value_or(false)?16u:0u)|(movementLease?32u:0u)|(lockInputIdle()?64u:0u)|(static_cast<unsigned>(decision.action)<<8);
+            (observedLock.value_or(false)?16u:0u)|(movementLease?32u:0u)|(static_cast<unsigned>(decision.action)<<8);
         if (state != lastState && lockStateLogs < 256) {
             lastState = state; ++lockStateLogs;
             char line[192]{};
             std::snprintf(line,sizeof(line),"Target lock state eligible=%u config=%u indicator=%u observed=%u locked=%u lease=%u input_idle=%u action=%u",
-                state&1u,(state>>1)&1u,(state>>2)&1u,(state>>3)&1u,(state>>4)&1u,(state>>5)&1u,(state>>6)&1u,state>>8);
+                state&1u,(state>>1)&1u,(state>>2)&1u,(state>>3)&1u,(state>>4)&1u,(state>>5)&1u,static_cast<unsigned>(lockInputIdle()),state>>8);
             log(line);
         }
     }
@@ -468,6 +482,7 @@ void updateTargetLockMain(Context& c) {
         if (!lockInterrupt.releaseIfClear([&] {
             const auto result = movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle());
             movementLease = false;
+            publishedMovementLease.store(movementLease);
             lockLeaseLog.previous.reset();
             if (result == TDM_API::APIResult::OK)
                 log("TDM target-lock-disable lease released after unlocked acknowledgement and idle input.");
@@ -552,25 +567,36 @@ bool providerChainReady() {
     }
     return module != nullptr;
 }
-Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, bool* failure = nullptr) {
+Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, bool* failure = nullptr,
+    bool readOnlyLock = false) {
     Context c;
     if (hardSpecial) *hardSpecial = true;
     c.enabled = settings.enabled;
     const bool providerEnabled = provider && provider->IsCameraEnabled();
-    const bool baseReady = compatibleSettings && movementConfigSafe && ready && movement && providerEnabled &&
-        provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
     const bool lockThread = targetLockEnabled && onTargetLockThread();
-    const bool leaseReady = !targetLockEnabled ? movement && movementLease && !movement->GetTargetLockState() :
-        lockThread && movement && (movementLease ? !movement->GetTargetLockState() : lockConfigSafe && indicatorReady());
-    c.prerequisites = targetLockEnabled ? baseReady : phase4Prerequisites(baseReady,leaseReady,allowLeaseRequest,movementLease);
+    // Capture before focused() so an intervening opening keeps published focus.
+    const unsigned sampledMenuEpoch = lockThread ? lockMenuOpenEpoch.load() : 0u;
+    const bool haveLease = targetLockEnabled && !lockThread ? publishedMovementLease.load() : movementLease;
+    const bool configSafe = targetLockEnabled && !lockThread ? publishedLockMovementConfigSafe.load() : movementConfigSafe;
+    const bool baseReady = compatibleSettings && configSafe && ready && movement && providerEnabled &&
+        provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
+    const bool leaseReady = !targetLockEnabled ? movement && haveLease && !movement->GetTargetLockState() :
+        readOnlyLock ? publishedLockPrerequisites.load() :
+        lockThread && lockHooksReady && movement && (haveLease ? !movement->GetTargetLockState() : lockConfigSafe && indicatorReady());
+    c.prerequisites = targetLockEnabled ? baseReady : phase4Prerequisites(baseReady,leaseReady,allowLeaseRequest,haveLease);
+    if (targetLockEnabled && readOnlyLock) {
+        c.prerequisites = c.prerequisites && leaseReady;
+        c.targetLock = publishedTargetLock.load();
+    }
     // An intentionally disabled SmoothCam (F8) is not a failure.
-    if (failure) *failure = prerequisiteFailure(baseReady,leaseReady,
-        !provider || providerEnabled || !ready || !compatibleSettings || !movementConfigSafe || !movement);
+    // With lock enabled, off-main observations cannot diagnose lease failure.
+    if (failure) *failure = lockFailureReportable(targetLockEnabled,lockThread) && prerequisiteFailure(baseReady,leaseReady,
+        !provider || providerEnabled || !ready || !compatibleSettings || !configSafe || !movement);
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto camera = RE::PlayerCamera::GetSingleton();
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
     if (!c.world) {
-        if (targetLockEnabled) updateTargetLock(c);
+        if (targetLockEnabled && !readOnlyLock) updateTargetLock(c,sampledMenuEpoch);
         return c;
     }
     c.firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
@@ -592,10 +618,10 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     // Tween is indeterminate, but real non-camera hazards remain hard.
     if (hardSpecial) *hardSpecial = c.tween ? hazard : c.special;
     if (controlMap && (!controlMap->IsLookingControlsEnabled() || !controlMap->IsPOVSwitchControlsEnabled())) c.special = true;
-    c.menu = focused();
+    c.menu = targetLockEnabled && !lockThread ? publishedLockMenu.load() : focused();
     // DYL-158 supplies precision/targeting intervention; select() reserves their priority.
     c.obstruction = obstructionFrame.obstructed;
-    if (targetLockEnabled) updateTargetLock(c);
+    if (targetLockEnabled && !readOnlyLock) updateTargetLock(c,sampledMenuEpoch);
     return c;
 }
 #include "cursor_mode.h"
@@ -611,7 +637,8 @@ RE::NiPoint3 thinFocus() {
     return {goal.x-local.x,goal.y-local.y,goal.z-local.z};
 }
 bool thinEligible() {
-    const auto c = context();
+    // The all-state thin tick observes lock decisions; it never advances them.
+    const auto c = context(nullptr,false,nullptr,true);
     const auto state = select(c);
     thin::runtime->ineligibleCause = state == State::disabled ? thin::Exit::disable :
         c.firstPerson ? thin::Exit::firstPerson : c.menu ? thin::Exit::menu : thin::Exit::special;
@@ -630,19 +657,8 @@ bool noActiveMenus() {
     }
     return true;
 }
-bool lockBlockingMenu(const RE::MenuOpenCloseEvent* event) {
-    if (!event) return false;
-    const auto& name = event->menuName;
-    if (name == "HUD Menu" || name == "Cursor Menu" || name == "Fader Menu" || name == "Mist Menu") return false;
-    if (name == "Dialogue Menu" || name == "Console" || name == "Loading Menu") return true;
-    const auto ui = RE::UI::GetSingleton();
-    if (!ui) return true;
-    const auto menu = ui->GetMenu(name);
-    return menu && menu->menuFlags.any(RE::UI_MENU_FLAGS::kPausesGame,
-        RE::UI_MENU_FLAGS::kUsesCursor,RE::UI_MENU_FLAGS::kUsesMenuContext,RE::UI_MENU_FLAGS::kModal);
-}
 void notifyLockRefusal(Context c) {
-    if (targetLockEnabled && !lockRefusalNotified && !lockConfigSafe &&
+    if (targetLockEnabled && ready && lockHooksReady && !lockRefusalNotified && (!lockConfigSafe || !indicatorReady()) &&
         c.world && !c.menu && !loading && noActiveMenus()) {
         RE::SendHUDMessage::ShowHUDMessage("SkyCRPG target lock unavailable: check the TDM overlay and Camera log");
         lockRefusalNotified = true;
@@ -708,6 +724,8 @@ void lifecycleLog(const char* event, Context c, unsigned stateId) {
 void resetLifecycle(const char* event) {
     cursorMode::requestExit(std::strstr(event,"load") ? cursor::Exit::load : cursor::Exit::cell);
     thin::requestRestore(std::strstr(event,"load") ? thin::Exit::load : thin::Exit::cell);
+    if (thin::enabled() && thin::onMain() && std::strcmp(event,"player-detach") == 0)
+        thin::restoreAll(thin::Exit::cell);
     interruptTargetLock();
     resetTransient(ownFirstPerson,recenter,applyZoom,keys);
     resetObstruction();
@@ -730,7 +748,7 @@ void sampleObstruction(RE::ThirdPersonState* state) {
     // No combat-mode classification is assumed on this branch. Conservatively
     // release automatic framing for ALL drawn weapons/spells pending DYL-158.
     if (player && precisionSuppressesObstruction(player->IsWeaponDrawn())) c.precision = true;
-    if (!thin::keptNativeHit() || !obstructionSettings.enabled || !obstructionFramingAllowed(c) || !camera || !player ||
+    if (!obstructionSettings.enabled || !obstructionFramingAllowed(c) || !camera || !player ||
         camera->currentState.get() != state || !state->freeRotationEnabled || !camera->cameraRoot ||
         camera->cameraTarget.get().get() != player) {
         resetObstruction(); return;
@@ -756,8 +774,8 @@ void sampleObstruction(RE::ThirdPersonState* state) {
     const ObstructionPoint focus{static_cast<double>(goal.x)-local.x,
                                  static_cast<double>(goal.y)-local.y,
                                  static_cast<double>(goal.z)-local.z};
-    obstructionFrame = obstructionPolicy.step(c,cameraCompression(
-        {actual.x,actual.y,actual.z},{goal.x,goal.y,goal.z},focus),dt,obstructionSettings);
+    obstructionFrame = obstructionPolicy.step(c,thin::obstructionSample(cameraCompression(
+        {actual.x,actual.y,actual.z},{goal.x,goal.y,goal.z},focus)),dt,obstructionSettings);
 }
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     if (cursorSettings.enabled && cursorMode::look(input)) { previousLook(state,RE::NiPoint2{}); return; }
@@ -805,6 +823,7 @@ void update(RE::ThirdPersonState* state,RE::BSTSmartPointer<RE::TESCameraState>&
     const auto c = context(&hard,false,&failure);
     observeLifecycle(c,hard);
     observePrerequisiteFailure(c,failure);
+    if (targetLockEnabled && onTargetLockThread() && lockRefusalRequested.exchange(false)) notifyLockRefusal(c);
     if (targetLockEnabled) traceLockFrame(c);
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (!heldFramingAllowed(c) || !camera || camera->currentState.get() != state || (next && next.get() != state)) {
@@ -891,8 +910,14 @@ public:
             cursorMode::requestExit(cursor::Exit::menu);
         // Queue before any context() can consider releasing the lease.
         if (targetLockEnabled) {
-            lockConfigRefresh.request();
-            if (!lockBlockingMenu(event)) return RE::BSEventNotifyControl::kContinue;
+            if (!event) return RE::BSEventNotifyControl::kContinue;
+            const std::string_view name{event->menuName.c_str()};
+            if (lockMenuPublishesFocus(name,event->opening)) {
+                lockMenuOpenEpoch.fetch_add(1u);
+                publishedLockMenu.store(true);
+            }
+            if (lockMenuRefresh(name,event->opening)) lockConfigRefresh.request();
+            if (!lockMenuInterrupt(name,event->opening)) return RE::BSEventNotifyControl::kContinue;
             interruptTargetLock();
         }
         bool hard = true;
@@ -930,9 +955,11 @@ public:
         }
         bool hardSpecial = true;
         bool failure = false;
-        const auto c = context(&hardSpecial,!settings.enabled && !movementLease,&failure);
+        const bool lockThread = targetLockEnabled && onTargetLockThread();
+        const bool haveLease = targetLockEnabled && !lockThread ? publishedMovementLease.load() : movementLease;
+        const auto c = context(&hardSpecial,!settings.enabled && !haveLease,&failure);
         observePrerequisiteFailure(c,failure);
-        if (targetLockEnabled) notifyLockRefusal(c);
+        if (targetLockEnabled) lockRefusalRequested.store(true);
         const bool ownedBefore = ownFirstPerson;
         ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hardSpecial);
         if (precisionTraceEnabled && ownedBefore != ownFirstPerson) {
@@ -1010,12 +1037,20 @@ public:
                         }
                         savePreferences();
                     } else if (request == ToggleRequest::enableOnly) {
-                        if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
-                        if (!enableAfterLease(movementLease)) continue;
+                        if (targetLockEnabled && !lockThread) {
+                            if (!publishedMovementLease.load()) { interruptTargetLock(); continue; }
+                        } else {
+                            if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
+                            if (!enableAfterLease(movementLease)) continue;
+                        }
                         settings.enabled = true; ownFirstPerson = false; applyZoom = true; suspend(); savePreferences();
                     } else if (request == ToggleRequest::thirdPerson) {
-                        if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
-                        if (!enableAfterLease(movementLease)) continue;
+                        if (targetLockEnabled && !lockThread) {
+                            if (!publishedMovementLease.load()) { interruptTargetLock(); continue; }
+                        } else {
+                            if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
+                            if (!enableAfterLease(movementLease)) continue;
+                        }
                         settings.enabled = true; ownFirstPerson = false; suspend(); applyZoom = true; static_cast<void>(camera->ForceThirdPerson()); savePreferences();
                     }
                 } else if (heldFramingAllowed(c)) {
@@ -1049,14 +1084,23 @@ void messages(SKSE::MessagingInterface::Message* message) {
             hashMatches(L"SmoothCam.dll","b20bf8a276bf76fbe35277dd9b25c64c57d17bfdcc20daa74a5f941c90f563da") &&
             hashMatches(L"TrueDirectionalMovement.dll","5ba3abd82fe070e2a6e9af7f07eca82b9ddb1a53dcd47bc34af571efab01899f") &&
             hashMatches(L"MCMHelper.dll","d58f433bef7690614d42aaac69cc35f60d179a85429a385e21858a1f276aef38");
-        if (!ready) { prerequisiteFailed = true; log("Exact executable/provider prerequisite hash mismatch; controller disabled."); break; }
+        if (!ready) {
+            thin::refuseInstall("ThinOccluder: prerequisite hash mismatch; no thin hooks installed.");
+            prerequisiteFailed = true; log("Exact executable/provider prerequisite hash mismatch; controller disabled."); break;
+        }
         movementConfigSafe = checkMovementConfig();
         if (!movementConfigSafe) { prerequisiteFailed = true; log("TDM camera-yaw config absent/unsafe; custom policy suspended until corrected and a menu closes."); }
         movement = static_cast<TDM_API::IVTDM5*>(TDM_API::RequestPluginAPI());
-        if (!movement) { prerequisiteFailed = true; ready = false; log("TDM V5 API absent; controller suspended."); break; }
+        if (!movement) {
+            thin::refuseInstall("ThinOccluder: TDM V5 API absent; no thin hooks installed.");
+            prerequisiteFailed = true; ready = false; log("TDM V5 API absent; controller suspended."); break;
+        }
         if (!targetLockEnabled) {
             if (leaseWanted(settings.enabled,false,movementLease)) {
-                if (!acquireMovementLease()) { ready = false; break; }
+                if (!acquireMovementLease()) {
+                    thin::refuseInstall("ThinOccluder: movement lease unavailable; no thin hooks installed.");
+                    ready = false; break;
+                }
             } else if (!settings.enabled) log("TDM target-lock-disable lease not requested because Camera is disabled.");
         } else {
             // TDM's disable-request API permits startup acquisition without a
@@ -1084,9 +1128,11 @@ void messages(SKSE::MessagingInterface::Message* message) {
             } else {
                 if (movementLease) static_cast<void>(movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle()));
                 movementLease = false;
+                publishedMovementLease.store(movementLease);
             }
             ready = false; prerequisiteFailed = true;
             log("Unexpected camera hook order/owner before SmoothCam deferred attach; policy left inert.");
+            thin::refuseInstall("ThinOccluder: camera slot owner guard failed; no thin hooks installed.");
             return;
         }
         previousLook = reinterpret_cast<Look>(table.write_vfunc(0xF,look));

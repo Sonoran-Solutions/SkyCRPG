@@ -1,4 +1,7 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include "../include/selection_policy.h"
 #include "../include/skycrpg/SelectionAPI.h"
 #include <array>
@@ -340,7 +343,7 @@ void nativeSafety() {
     assert(policy.latched() && policy.current() == 20);
 }
 void preRunRegressions() {
-    const std::array<std::uint32_t,7> clutterTypes{0x22,0x23,0x24,0x2f,0x1f,0x25,0x32};
+    const std::array<std::uint32_t,3> clutterTypes{0x22,0x23,0x1f};
     std::vector<Candidate> refs;
     for (std::uint32_t i = 0; i < 70; ++i) {
         Candidate c{i+1,{1,0,0}};
@@ -355,7 +358,23 @@ void preRunRegressions() {
     assert(attempts == 8 && checked.accepted.size() == 8 && !checked.exhausted);
     assert(checked.accepted.front().id == 100 && checked.accepted.back().id == 107);
     assert(interactiveType(0x1f,true)); // native carryable torches, not scenery lights
-    for (auto type : {0x18u,0x19u,0x1cu,0x1du,0x26u,0x27u,0x28u,0x2bu}) assert(interactiveType(type));
+    for (auto type : {0x17u,0x18u,0x19u,0x1cu,0x1du,0x26u,0x27u,0x28u,0x2bu,0x32u}) assert(interactiveType(type));
+    // Binary-reviewed canPick type branch (40B2DF..40B2F4), all byte values.
+    for (std::uint32_t type = 0; type <= 0xff; ++type) {
+        for (const bool carryLight : {false,true}) {
+            const bool nativeAllows = type != 0x22 && type != 0x23 && (type != 0x1f || carryLight);
+            assert(interactiveType(type,carryLight) == nativeAllows);
+        }
+    }
+    std::array<Candidate,3> loot{Candidate{1,{10,0,0}},Candidate{2,{20,0,0}},Candidate{3,{30,0,0}}};
+    loot[0].activatable = interactiveType(0x17); // scroll before book
+    loot[1].activatable = interactiveType(0x1b);
+    loot[2].activatable = interactiveType(0x32); // stuck arrow remains reachable
+    Policy lootPolicy;
+    lootPolicy.refresh(active(),loot,{},180,0,{});
+    assert(lootPolicy.current() == 1 && lootPolicy.order().size() == 3);
+    assert(lootPolicy.cycle(1,{},0) && lootPolicy.current() == 2);
+    assert(lootPolicy.cycle(1,{},0) && lootPolicy.current() == 3);
     // Named eligibility is an adapter predicate, with no ranking bonus.
     refs.back().activatable = false;
     assert(rank(refs,{},180).size() == 7);
@@ -392,6 +411,36 @@ void preRunRegressions() {
     CycleRequests edges;
     assert(edges.post(1) && edges.post(-1));
     assert(CycleRequests::count(edges.take()) == 2 && CycleRequests::count(edges.take()) == 0);
+}
+void rayBudgetExhaustion() {
+    const std::array<Candidate,3> refs{Candidate{1,{10,0,0}},Candidate{2,{20,0,0}},Candidate{3,{30,0,0}}};
+    ScanBudget rays{1};
+    unsigned attempts = 0;
+    const auto checked = lazyValidate(refs,{},180,false,8,[&](const Candidate&) {
+        ++attempts;
+        return rays.inspect() ? Validation::valid : Validation::exhausted;
+    });
+    assert(attempts == 2 && !rays.complete && rays.inspected == 1);
+    assert(checked.exhausted && !checked.unknown);
+    assert(checked.evaluated == std::vector<std::uint32_t>({1}));
+    assert(checked.accepted.size() == 1 && checked.accepted.front().id == 1);
+    Policy policy;
+    policy.refresh(active(),refs,{},180,0,{});
+    assert(policy.cycle(1,{},0) && policy.current() == 2);
+    const auto frozen = policy.order();
+    // Adapter passes no ray-incomplete scan to policy; preserve the latch/list.
+    assert(!policy.acceptScan(active(),checked,{},180,.01,{},rays.complete));
+    assert(policy.latched() && policy.current() == 2 && policy.order() == frozen);
+    RefreshGate gate; gate.last = 0;
+    assert(!gate.due(.01,.1) && gate.due(.1,.1));
+
+    ScanBudget empty{0};
+    const auto noPrefix = lazyValidate(refs,{},180,false,8,[&](const Candidate&) {
+        return empty.inspect() ? Validation::valid : Validation::exhausted;
+    });
+    assert(noPrefix.exhausted && !noPrefix.unknown && noPrefix.accepted.empty() && noPrefix.evaluated.empty());
+    assert(!policy.acceptScan(active(),noPrefix,{},180,.1,{},true));
+    assert(policy.latched() && policy.current() == 2);
 }
 void eventDiagnostics() {
     EventLog events;
@@ -503,6 +552,7 @@ void visibleCycling() {
     assert(q.cycle(1,{},0) && q.current() == 30);
 }
 int main() {
-    ranking(); latches(); visibleCycling(); passthroughTable(); inputEdges(); configurationAndBudget(); accessGate(); nativeSafety(); requestsAndLazyValidation(); preRunRegressions(); eventDiagnostics();
+    ranking(); latches(); visibleCycling(); passthroughTable(); inputEdges(); configurationAndBudget(); accessGate(); nativeSafety(); requestsAndLazyValidation(); preRunRegressions(); rayBudgetExhaustion(); eventDiagnostics();
     std::cout << "PASS selection: surface rank/ties/long rotated bench, latch/wrap/invalidation, passthrough, edges, config/budget/API layout, pool-thread/reentrancy gate, atomic FIFO, lazy validation/unknown rays/native seeding/body probes, sneak/combat/telekinesis/collider safety, cheap clutter filtering/reference poses/bounded reader retries, event pairs/repeated cycles/suppression/budget/format\n";
+    std::cout << "PASS re-review: all 256 canPick types/carry-light states, scroll/book/projectile cycling, definite ray exhaustion/preserved latch/refresh interval\n";
 }

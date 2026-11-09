@@ -38,6 +38,8 @@ struct Reference {
 struct Runtime {
     std::atomic_bool enabled{};
     bool installed{},resolved{},refused{},trace{},allowed{},frameKept{},previousKept{},shaderCountLogged{};
+    bool smoothCastSeen{},missingCastLogged{};
+    double castWaitStart{};
     unsigned prepareReasons{},worldGuards{};
     Exit ineligibleCause{Exit::special};
     bool (*eligibleNow)(){};
@@ -56,7 +58,7 @@ struct Runtime {
     unsigned carriedCount{};
     Budget budget;
     std::array<std::uint64_t,10> totals{};
-    std::array<std::uint64_t,10> restores{};
+    std::array<std::uint64_t,11> restores{};
     HeightWindow heights;
     double hookSeconds{},nativeSeconds{},tickSeconds{},maxHookSeconds{},maxFrameSeconds{};
     std::uint64_t framesOverBudget{},samples{},resumes{};
@@ -77,6 +79,7 @@ struct Runtime {
 inline Runtime* runtime = nullptr;
 inline bool guardResult(const char* name,bool passed);
 inline void prepareRefusal(unsigned reason,const char* name);
+inline void restoreAll(Exit cause);
 inline bool enabled() { return runtime && runtime->enabled; }
 inline bool onMain() {
     const auto main = RE::Main::GetSingleton();
@@ -86,11 +89,18 @@ inline double seconds() { return std::chrono::duration<double>(std::chrono::stea
 inline void refuse(const char* reason) {
     if (!runtime->refused) { runtime->logger(reason); runtime->refused = true; }
 }
+inline void refuseInstall(const char* reason) {
+    if (!enabled()) return;
+    refuse(reason); runtime->enabled = false;
+}
 inline void requestRestore(Exit cause = Exit::special) {
     if (enabled()) runtime->requests.fetch_or(1u << static_cast<unsigned>(cause),std::memory_order_release);
 }
 inline void setLoaded(bool value) {
-    if (enabled()) { runtime->loaded.store(value,std::memory_order_release); requestRestore(Exit::load); }
+    if (enabled()) {
+        runtime->loaded.store(value,std::memory_order_release); requestRestore(Exit::load);
+        if (!value && onMain()) restoreAll(Exit::load);
+    }
 }
 inline void attach(RE::BSShaderProperty* shader,RE::BSShaderMaterial* material) {
     using Function = void(*)(RE::BSShaderProperty*,RE::BSShaderMaterial*);
@@ -105,7 +115,7 @@ inline RestoreCheck check(const Part& part) {
         part.privateProperty && part.privateProperty->alphaFlags == part.flags && part.privateProperty->alphaThreshold == 0};
 }
 inline bool fadeReady(const Reference* ref) {
-    if (!ref || !ref->prepared || !ref->fade.admitted) return false;
+    if (!ref || !ref->prepared || !ref->fade.admitted || !(ref->fade.alpha < .999f)) return false;
     for (unsigned i = 0;i < ref->count;++i) {
         const auto& part = *ref->parts[i];
         const auto state = check(part);
@@ -138,7 +148,7 @@ inline void restoreAll(Exit cause = Exit::special) {
             runtime->carriedCount < maxReferences) runtime->carried[runtime->carriedCount++] = ref.handle;
         restore(ref,cause);
     }
-    runtime->haveOrigin = false; runtime->nextScan = 0;
+    runtime->haveOrigin = false; runtime->nextScan = 0; runtime->castWaitStart = 0;
     runtime->allowed = false;
 }
 inline bool listed(RE::TESObjectREFR* ref) {
@@ -360,7 +370,7 @@ inline void traceFrame(double dt) {
     char line[1600]{};
     const auto& h = runtime->heights; const auto& t = runtime->totals; const auto& r = runtime->restores;
     std::snprintf(line,sizeof(line),
-        "ThinOccluder frame=%llu seconds=%.3f engaged=%u z=%.3f minZ=%.3f maxZ=%.3f maxDeltaZ=%.3f goalZ=%.3f playerX=%.3f playerY=%.3f alpha=%.3f refs=%u parts=%u fadedRefs=%u fadedParts=%u casts=%llu gaps=%llu fades=%llu scans=%llu discarded=%llu kept=%llu refused=%llu unknown=%llu overlap=%llu cap=%llu pool=%u keptRef=%08X gapRef=%08X reason=%u restoresDisable=%llu restoresF8=%llu restoresMenu=%llu restoresPOV=%llu restoresSpecial=%llu restoresLoad=%llu restoresCell=%llu restoresUnload=%llu restoresConflict=%llu hookUs=%.3f nativeUs=%.3f adapterUs=%.3f maxHookUs=%.3f tickUs=%.3f maxFrameMs=%.3f framesOverBudget=%llu frames=%llu resumes=%llu sample=cumulative",
+        "ThinOccluder frame=%llu seconds=%.3f engaged=%u z=%.3f minZ=%.3f maxZ=%.3f maxDeltaZ=%.3f goalZ=%.3f playerX=%.3f playerY=%.3f alpha=%.3f refs=%u parts=%u fadedRefs=%u fadedParts=%u casts=%llu gaps=%llu fades=%llu scans=%llu discarded=%llu kept=%llu refused=%llu unknown=%llu overlap=%llu cap=%llu pool=%u keptRef=%08X gapRef=%08X reason=%u restoresDisable=%llu restoresF8=%llu restoresMenu=%llu restoresPOV=%llu restoresSpecial=%llu restoresLoad=%llu restoresCell=%llu restoresUnload=%llu restoresConflict=%llu restoresExpired=%llu hookUs=%.3f nativeUs=%.3f adapterUs=%.3f maxHookUs=%.3f tickUs=%.3f maxFrameMs=%.3f framesOverBudget=%llu frames=%llu resumes=%llu sample=cumulative",
         static_cast<unsigned long long>(runtime->frame),runtime->now,static_cast<unsigned>(runtime->allowed),
         h.previous,h.minimum,h.maximum,h.maxDelta,goal.z,pos.x,pos.y,alpha,active,parts,fadedRefs,fadedParts,
         static_cast<unsigned long long>(t[0]),static_cast<unsigned long long>(t[1]),static_cast<unsigned long long>(t[2]),
@@ -370,6 +380,7 @@ inline void traceFrame(double dt) {
         static_cast<unsigned long long>(r[0]),static_cast<unsigned long long>(r[1]),static_cast<unsigned long long>(r[2]),
         static_cast<unsigned long long>(r[3]),static_cast<unsigned long long>(r[4]),static_cast<unsigned long long>(r[5]),
         static_cast<unsigned long long>(r[6]),static_cast<unsigned long long>(r[7]),static_cast<unsigned long long>(r[9]),
+        static_cast<unsigned long long>(r[10]),
         runtime->hookSeconds*1e6,runtime->nativeSeconds*1e6,(runtime->hookSeconds-runtime->nativeSeconds)*1e6,runtime->maxHookSeconds*1e6,runtime->tickSeconds*1e6,runtime->maxFrameSeconds*1e3,
         static_cast<unsigned long long>(runtime->framesOverBudget),static_cast<unsigned long long>(runtime->samples),
         static_cast<unsigned long long>(runtime->resumes));
@@ -411,6 +422,13 @@ inline void tick() {
     // Exactly one eligibility/context computation per tick, never inside a cast.
     runtime->allowed = runtime->enabled && runtime->resolved && runtime->eligibleNow();
     if (!runtime->allowed) { restoreAll(runtime->ineligibleCause); return; }
+    if (runtime->installed && !runtime->smoothCastSeen && !runtime->missingCastLogged) {
+        if (!runtime->castWaitStart) runtime->castWaitStart = runtime->now;
+        else if (runtime->now-runtime->castWaitStart >= 2) {
+            runtime->logger("ThinOccluder: no SmoothCam cast observed after 2 eligible seconds; caller filter may not match; native compression measurement retained.");
+            runtime->missingCastLogged = true;
+        }
+    }
     // Before this frame's casts, or the kept beam hit pulls the camera in on menu close.
     for (unsigned i = 0;i < runtime->carriedCount;++i) {
         const auto live = runtime->carried[i].get();
@@ -437,7 +455,7 @@ inline void tick() {
         if (narrowSightline(live.get(),from,{eye.x,eye.y,eye.z})) ref.lastNarrow = runtime->now;
         const bool visible = (ref.lastContact >= 0 && runtime->now-ref.lastContact <= .4) ||
             (ref.lastNarrow >= 0 && runtime->now-ref.lastNarrow <= .4);
-        if (!ref.fade.step(runtime->now,dt,runtime->targetAlpha,true,!visible)) { restore(ref); continue; }
+        if (!ref.fade.step(runtime->now,dt,runtime->targetAlpha,true,!visible)) { restore(ref,Exit::expired); continue; }
         bool valid = true;
         for (unsigned i = 0;i < ref.count;++i) {
             const auto& part = *ref.parts[i]; const auto state = check(part);
@@ -600,6 +618,7 @@ inline bool hookCaster(void* physics,RE::bhkWorld* world,float* start,float* end
     MEMORY_BASIC_INFORMATION memory{};
     if (!VirtualQuery(reinterpret_cast<const void*>(caller),&memory,sizeof(memory)) || memory.AllocationBase != runtime->smooth)
         return runtime->caster(physics,world,start,end,result,character,hull);
+    runtime->smoothCastSeen = true;
     Cost cost;
     const Point startPoint{start[0],start[1],start[2]}, goalPoint{end[0],end[1],end[2]};
     const bool nonzero = finite(startPoint) && finite(goalPoint) && distance(startPoint,goalPoint) > .001f;
@@ -609,8 +628,9 @@ inline bool hookCaster(void* physics,RE::bhkWorld* world,float* start,float* end
         // compression; eligible obstruction frames use the filtered path below.
         ++runtime->budget.casts;
         const bool hit = measuredCast(physics,world,start,end,result,character,hull);
-        runtime->frameKept = runtime->frameKept || (hit && nonzero);
-        if (hit && nonzero) ++runtime->budget.kept;
+        if (countsAsKept(hit,hit && listed(hitReference(world,*result)),nonzero)) {
+            runtime->frameKept = true; ++runtime->budget.kept;
+        }
         return hit;
     }
     alignas(16) std::array<float,4> origin{},goal{};
@@ -769,5 +789,10 @@ inline void installHooks(bool hashes) {
     runtime->installed = true;
     runtime->logger("ThinOccluder: optional Stage 1 hooks installed; main-thread form resolution pending.");
 }
-inline bool keptNativeHit() { return compressionAllowed(runtime && runtime->installed,runtime && runtime->previousKept); }
+inline std::optional<float> obstructionSample(std::optional<float> measured) {
+    // A feature that refused after installing (a later form failed to resolve)
+    // keeps its hooks but must not filter compression.
+    const bool active = enabled() && runtime->installed && runtime->resolved;
+    return compressionSample(active,active && runtime->smoothCastSeen,active && runtime->previousKept,measured);
+}
 } // namespace skycrpg::camera::thin

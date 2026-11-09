@@ -1,5 +1,115 @@
 # DYL-200 / P5-03 — world cursor mode candidate
 
+## Eighth pass — senior merge review fixes (2026-11-08)
+
+Base `4dbf84cb12058cfc259a7c0ac9f316a0bda5f6a6`, branch `phase5/dyl-200-cursor-mode`; uncommitted worker diff. **PASS** for the portable tests and static checks described below. **NOT_RUN in game:** these changes have no game evidence; the seventh-pass routes and owner session ran `4946c92`, not this diff. Windows compilation/linking is also **NOT_RUN**. This section supersedes the sixth-pass claims that UI+0x158 alone protects the cursor stack traversal and that PostDisplay needs a blocking lock. The cursor6 refinement below also supersedes the initial eighth-pass immediate `menu` exit on contention. **All changes after `4946c92` remain NOT_RUN in game.**
+
+| Finding | Change | Verification |
+| --- | --- | --- |
+| MAJOR 1: after `service()` timed out, the remainder of `update()` could reach `focused()` → `ownMenu()` and block on UI+0x158. | `ownMenu()` now makes one ordered try-acquisition and returns false on contention before touching flags, the map or UI visibility. No blocking `UILock` remains. Movie helpers rely on their already-serialized callers; PostDisplay and registration also use bounded try-acquisitions. | **PASS**, source call-path review below and a portable held-lock continuation test. Executing the actual native update with the lock held remains **NOT_RUN**. |
+| MAJOR 2: ProcessMessages sorts the stack before taking UI+0x158, racing `nativeMenu()`'s inner-lock-only traversal. | Chose **option (b)**: acquire global AL 412033 first, then UI+0x158. Service, look, PostDisplay, `nativeMenu()` and `ownMenu()` use the same guard, so nesting never introduces the reverse order. `nativeMenu()` returns true without traversing on failure. | **PASS**, exact-binary sort/lock audit and portable acquisition-order, rollback, contention and recursion tests. Runtime contention/performance remains **NOT_RUN**. |
+
+This keeps the existing exact menu identity/flags checks and current native-menu decision instead of maintaining a second, potentially stale menu snapshot. Each attempt uses the engine's reentrant owner/count algorithm with Interlocked operations and fences; it never calls `Lock()`. An inner-only owner is refused before attempting global. Failure to acquire inner immediately releases the newly acquired outer reference; success releases inner then outer at scope exit. Service retries against **one shared 1 ms deadline** for both locks, retaining the existing PostDisplay retry. All other cursor acquisition sites make one attempt with no wait loop. These are acquisition budgets, not a claim that the entire camera update or OS scheduling completes within 1 ms.
+
+On contention, active cursor ticks now use the pure `MenuContention` policy: failures in the first 19 distinct update frames skip work; failure in the twentieth exits with `Exit::busy`, releases Selection exclusivity and queues hide. `look()` keeps input captured and the pointer unchanged below the limit, with no movement, projection or movie reads; at the limit it returns false. PostDisplay skips both paint and retry-service on failure. Successful acquisition by service/look/PostDisplay resets the streak, as does session exit; multiple failing callbacks in one `gUpdateCounter` frame count only once. The named compile-time `menuBusyFrameLimit = 20` is about one third of a second at 60 fps, not a wall-clock deadline or an INI setting. Registration contention still defers within the existing one-fallback policy; if that fallback also contends, registration stays unavailable for that process.
+
+**Source (binary), reverified read-only:** SkyrimSE.exe 1.7.104.0, SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`; Address Library `versionlib-1-7-104-0.bin`, SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842`. Image base `0x140000000`; all addresses below are RVAs unless labelled VA. Format-5 dense offsets were decoded at `96 + 4*ID`, checked against the local CommonLibSSE-NG 7.2.0 `IDDB` reader. The new global-lock relocation is AL **412033**, not an absolute VA in code.
+
+| Verified static fact | RVAs / instructions |
+| --- | --- |
+| ProcessMessages AL 82082 → `0x1169D20` acquires global first. Global is VA `0x14333B050`, owner +0 / recursive count +4. | `0x1169D7D` loads global; owner comparison `0x1169D96`, recursive increment `0x1169D9E`, CAS `0x1169DA9`, owner publication `0x1169DFA`. |
+| Stack sort is outside the inner lock. | UI+0x110 at `0x1169E05`; depth comparison `0x1169E52–0x1169E57`; non-atomic pointer swaps **`0x1169E5D` / `0x1169E60`**. Only afterward does `0x1169E77` form UI+0x158 and **`0x1169E82`** call guard `0x199FA0`. |
+| Inner lock and UI-job calls. | Guard `0x199FA0` compares owner at `0x199FC3` and increments recursion at `0x199FC7`. AdvanceMenus AL 82083 → `0x116AA10` forms UI+0x158 at `0x116AA39`, acquires at `0x116AA44`, dispatches AdvanceMovie at `0x116ABD4`. UI job AL 39042 → `0x6E4E80` calls ProcessMessages at `0x6E4E94` and AdvanceMenus at `0x6E4EA0`; job table `0x20B4EF0` points to it, with name `UI` at `0x1905E0C`. |
+| UI draw follows the main wait and holds global at PostDisplay. | UI job signals event 2 at `0x6E4EB2–0x6E4EBB` through `0xEC1D30` → SetEvent. Main waits for event 2 at `0x6568EC–0x6568F3` through `0xEC1DD0` → WaitForSingleObject, before calling draw AL 82084 (`0x116AC80`) at `0x656921`. Draw loads global at `0x116AE0F`, acquires before stack iteration and invokes PostDisplay (vtable +0x30) at `0x116AF56`. The new guard still uses a try-acquisition here rather than relying on the wait to justify blocking. |
+
+Audit script/log and disassemblies: `/tmp/cursor5/audit.py`, `audit.log`, `process.asm`, `advance_draw.asm`, `ui_job.asm`, `lock.asm`, `frame_wait.asm`, `job_wait.asm`, `job_signal.asm`. No binary bytes/assets added to the repository. **Source:** local [CommonLibSSE-NG 7.2.0](https://github.com/alandtse/CommonLibSSE-NG/tree/7a60f4de794095d7b0f8928d1b930a52e9a7da83), `BSAtomic.cpp`, `IMenu.h`, `UI`/`Relocation` headers and `IDDB.cpp`.
+
+Main-thread path review with the UI lock held, including after service timeout (**PASS**, static review only):
+
+- `update()` → `service()`: registration is now a single try; normal service acquisition uses the shared 1 ms budget. Failure returns before `context()`, map/stack/movie reads, preserving the retry request.
+- The same `update()` continues through `traceFrame()` → `sampleObstruction()` → `context()` → `focused()` → `ownMenu()`, and through `previousUpdate()` then the second `context()` / lifecycle checks. The cursor-added `ownMenu()` makes one attempt and returns false if either lock is unavailable. Trace, `requestExit()` and `leave()` take neither UI lock; leave queues removal rather than calling a movie helper. This removes the newly introduced wait from both pre- and post-native-update focus paths.
+- `look()` → cursor look → `captureExit()` → `nativeMenu()` → `focused()` / `ownMenu()`: outer look holds both locks on success; nested guards only increment recursion. Failure skips with capture retained and no pointer/movie access below the 20-frame limit, or exits with `busy` at the limit. The ordinary look continuation's `context()` → `focused()` has the same bounded `ownMenu()` behavior.
+- `Overlay::PostDisplay()` → retry `service()` / `captureExit()` / `ownMenu()` / `paint()` / Display: one outer try guard covers all menu/movie reads, including retry-service projection dimensions. On failure it skips service and drawing; only the twentieth contended frame exits with `busy`. Off-main draw returns before acquiring.
+- `service()` → pending/active `ownMenu()`, `paint()` → `dimensions()`, and `pick()` → `dimensions()`: reached only with both locks held. Constructor `hide()`/`dimensions()` and ProcessMessage `hide()` instead rely on the engine's existing UI+0x158; they perform no additional acquisition. `AdvanceMovie()` is empty.
+- Input/menu/lifecycle callbacks → `requestExit()` / `leave()` and the idle/same-frame service early-outs add no UI lock. DataLoaded registration and the main fallback make a single ordered attempt; the existing nested-ProcessMessages fallback guard remains.
+
+The pre-existing unlocked `focused()` / `noActiveMenus()` walks used by other features remain an accepted follow-up, **not fixed or claimed race-free here**. `plugin.cpp`, target-lock/thin-occluder regions, Selection, `modules/ui`, INI and API are unchanged. Feature OFF retains base behavior: existing enabled guards bypass cursor registration, service, look and the ownership exception; the new relocation is never resolved on that path. SmoothCam remains the only normal third-person transform writer; Selection alone hooks Pick.
+
+Jobs were declared before execution in `/tmp/cursor5/jobs.md` (purpose, command, expected output, 600 s deadline, owner, PID/log, exit completion and task-only timeout cleanup). Host `dq-MEG-Z590-Trident-X-MS-B926`, Linux, g++ 15.2.0 (Ubuntu 15.2.0-16ubuntu1). Focused test **PASS** (`focused.log`); full suite **PASS**, tool session 20388 exited 0, recorded focused/portable processes no longer exist. No timeout or failing test attempt. Exact full-suite commands, each followed by running the emitted executable:
+
+```sh
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I modules/camera/include "$source" -o "/tmp/cursor5-$name"
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -Wshadow -I modules/selection/include "$source" -o "/tmp/cursor5-$name"
+```
+
+`timeout --kill-after=5s 600 bash /tmp/cursor5/portable.sh` iterated every `*.cpp` in each module's tests directory. Actual per-executable results from `portable.log`:
+
+```text
+PASS Camera cursor_policy_test
+PASS Camera lifecycle_policy_test
+PASS Camera lock_frame_trace_test
+PASS Camera obstruction_policy_test
+PASS Camera obstruction_probe_test
+PASS Camera policy_test
+PASS Camera precision_policy_test
+PASS Camera precision_trace_test
+PASS Camera target_lock_policy_test
+PASS Camera thin_occluder_policy_test
+Camera: 10/10 PASS
+PASS Selection cursor_override_test
+PASS Selection selection_policy_test
+Selection: 2/2 PASS
+EXIT=0
+```
+
+New `tryMenuLocks` coverage: exact outer/inner order, no inner attempt when outer is busy, outer rollback when inner is busy, refusal when only inner is already owned, recursive success, cross-thread verification of complete release, and a worker retaining inner through a 1 ms service-like timeout followed by ownership=false / native-focus=true decisions. The worker is released only after those decisions complete. This exercises the portable acquire policy with real mutex contention; it does **not** execute the Windows Interlocked wrapper or Skyrim's update/IMenu code.
+
+`git diff --check`: **PASS**. Re-read every changed native line for `/W4 /WX` hazards: explicit LONG conversion, volatile Interlocked operand types/fences, pointer-returning `Relocation::get()`, RAII destruction order, callback captures/returns and helper call-site lock coverage. `plugin.cpp` was reread for wiring but has no changed lines. Manual review found no new hazard; **plugin.cpp/cursor_mode.h cannot be compiled here**, so this is not a native compiler PASS. No DLL/package was built and no new package hash exists. All new game behavior, acquisition cost, contention exit frequency, registration contention and same-frame rendering/input behavior are **NOT_RUN**. No owner decisions changed; no new owner question is required for these two fixes. No commit, push, PR or game launch.
+
+
+### Eighth-pass refinement — bounded contention (cursor6)
+
+| Finding | Change | Verification |
+| --- | --- | --- |
+| A single failed try caused an immediate `menu` exit, which could feel like random cursor-mode exits; no current route measures this frequency. | Keep the ordered bounded tries and fail-closed movie access. Share a 20-frame contention policy across service/look/PostDisplay, skipping below the limit and exiting distinctly with `busy` at the limit. | **PASS**, pure policy tests for skips, exactly-at-limit exit, same-frame deduplication, saturation, reset on success before/after the limit and frame-counter wrap. Held-inner-lock continuation tests complete the skip/exit window before releasing the worker lock. Native callback execution and contention frequency: **NOT_RUN**. |
+| Skipped callbacks and terminated sessions need separate diagnostics. | `busyTicks` still counts failed/skipped tick callbacks (including the terminal tick), independently of the deduplicated frame streak. `busyExits` increments once per active-session busy exit; both the cursor sample line and refusal/exit line include `busyExits=`. Move the names table into the portable header and append `Exit::busy`, preserving prior enum values and `menu` for real menus. | **PASS**, `busy` and `menu` name tests plus source review of counter/reset and format arguments; native trace output **NOT_RUN**. |
+
+**Rationale / static call-path review:** a pausing menu opened during contention is still caught by the main-thread `focused()` eligibility drop on the next uncontended cursor tick, before pointer movement, projection or movie access. Existing menu-event stop requests are unchanged and may exit earlier. Holding input capture for this bounded window is therefore the requested safe policy: no blocking lock wait is introduced and no movie may be read without both locks. The existing service acquisition retains its bounded 1 ms total retry budget; look/PostDisplay remain single tries. This source reasoning is not a runtime acceptance claim.
+
+`ownMenu()` still returns false and `nativeMenu()` still returns true immediately on a failed try. Cursor service/look/PostDisplay call their eligibility paths only after their outer guard succeeds; nested acquisition is reentrant, so contention first goes through the new skip/exit policy. **Confirmed by source review:** `focused()` callers outside cursor mode are unaffected by this refinement: neither it nor `context()` changes, and ownership/native-focus queries neither advance nor reset the contention policy. Their pre-existing unlocked stack walks remain outside this fix. No changes to module ownership, Selection, UI, native activation, INI or dependencies.
+
+**Verification jobs:** declared before execution in `/tmp/cursor6/jobs.md`. Local sandbox: Linux 7.0.0-42-generic x86_64, g++ 15.2.0 (Ubuntu 15.2.0-16ubuntu1); sandbox hostname was empty, so no new physical-host identity is asserted. `timeout --kill-after=5s 600 bash /tmp/cursor6/tests.sh focused` ran cursor_policy_test first; `timeout --kill-after=5s 600 bash /tmp/cursor6/tests.sh remaining` ran the other nine Camera tests and both Selection tests. Logs: `/tmp/cursor6/focused.log`, `/tmp/cursor6/remaining.log`; each exited 0. Remaining-suite tool session `15200` completed with exit 0. PID files record command-local namespace PID 3 for each separate sandbox, not persistent host PIDs. Both job sandboxes completed; no timeout, cleanup signal or retry was needed. No game or native-build job ran.
+
+Exact compile/run commands (`source` and `name` iterate every test `.cpp`, with cursor_policy_test run in the focused job):
+
+```sh
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I modules/camera/include "$source" -o "/tmp/cursor6-$name" && "/tmp/cursor6-$name"
+g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -Wshadow -I modules/selection/include "$source" -o "/tmp/cursor6-$name" && "/tmp/cursor6-$name"
+```
+
+Actual per-executable results, pasted from the two logs:
+
+```text
+PASS Camera cursor_policy_test
+EXIT=0
+PASS Camera lifecycle_policy_test
+PASS Camera lock_frame_trace_test
+PASS Camera obstruction_policy_test
+PASS Camera obstruction_probe_test
+PASS Camera policy_test
+PASS Camera precision_policy_test
+PASS Camera precision_trace_test
+PASS Camera target_lock_policy_test
+PASS Camera thin_occluder_policy_test
+PASS Selection cursor_override_test
+PASS Selection selection_policy_test
+EXIT=0
+```
+
+**PASS:** Camera 10/10, Selection 2/2, `git diff --check`. Re-read every changed `cursor_mode.h` line, including the preserved previous-pass changes, for `/W4 /WX` hazards: explicit bool/LONG casts, matching `%llu` arguments, enum/name indexing, unsigned frame/count comparisons, declarations, lambda/RAII lock lifetimes and return paths. No new hazard found by manual review. **`cursor_mode.h` cannot be compiled here**; Windows compilation/linking remains **NOT_RUN**, not a compiler PASS. Runtime lock behavior, contention frequency, 20-frame busy exit, pausing-menu recovery, pointer/input capture and rendering remain **NOT_RUN**. No new DLL/package/hash or owner acceptance exists; everything after `4946c92` remains **NOT_RUN in game**.
+
+**Decisions:** apply the requested fixed 20-frame limit with no INI key; count at most one failure per update frame across the three tick sites, reset on any successful tick acquisition and every exit, preserve fail-closed query behavior, and distinguish cumulative busy ticks from busy exits. These implement this refinement request and change no standing owner decision. **Proposed shared-file changes:** none. **Questions for owner:** none. No commit, push, PR or game launch.
+
 ## Seventh pass — owner decisions and visible-only cycling (2026-11-08)
 
 The owner accepted the orchestrator's recommendation on all four open decisions:
@@ -11,7 +121,7 @@ The owner accepted the orchestrator's recommendation on all four open decisions:
 | Off-screen cycling | **On-screen only.** While cursor mode is active, `[` `]` visit only candidates with a projected box. | Code change below |
 | Selection default | Ship **`bAllowExternalTargets=0`** (opt-in). Installer coordination is a gate-time question. | `SkyCRPG_Selection.ini` |
 
-**Visible-only cycling.** The skip lives in Selection, not Camera, so an off-screen candidate is never Selection's target, not even for one Pick tick; a Camera-side cancel would have left a window of one refresh (about 100 ms) in which E could still have acted on the hidden object.
+**Visible-only cycling.** The skip lives in Selection, not Camera: a `[`/`]` press visits only the candidates Camera reported as having a projected box on its last frame. That is a last-reported-frame guarantee, not an absolute one — the limitations below name the two exceptions (a cycle consumed in the same Pick tick a candidate leaves the screen or from the frame before entry can make a hidden candidate the target for one Pick tick, after which Camera refuses the latch and replaces it; an established latch is kept after its object leaves the screen, owner-accepted). A Camera-side cancel instead would have left a window of one refresh (about 100 ms) in which E could still have acted on the hidden object.
 
 - `SelectionAPI.h` appends `setCursorVisible(ids, count)` after the v2 cursor extension, size-checked like the extension itself, and adds `setCursorMode(3)`: enter with visibility reports. The version stays 2; `cursorListCapacity` names the shared 16-entry limit. A Camera built against the new header still accepts a Selection without the member, enters with mode 1 and logs once that cycling is unrestricted; an old Camera against the new Selection enters with mode 1 and is unrestricted too.
 - Camera enters with mode 3 when the member exists, reports its projected ID set from `pick()` whenever it changes (`reportVisible`), and marks it dirty on entry and exit. A `busy` reply retries on the next projection. The trace line gains `visible=<count>/<accepted writes>`.
@@ -43,7 +153,7 @@ The `Cursor cycling unrestricted` line is absent from both Camera logs: the memb
 
 ## Owner hands-on run owner-cursor-1 — 2026-11-08
 
-`4946c92`, Camera DLL `8ca54149…`, Selection DLL `6d8b12e2…`, camera-only profile, cursor mode and external targets enabled by `session-p5/routes/owner_cursor_overrides.py`, target lock left on. Keyboard and mouse. Sheet: `session-p5/briefs/owner-cursor-1.md` (steps A–G). The owner reported "Finished, everything passed" and, asked which steps, "All of A–G". Logs: `session-p5/logs/owner-cursor-1/` (Camera.log `2e312046…`, Selection.log `cff08795…`). Watchdog exit 0, no leftover processes; the watchdog does not restore after a normal quit, so the orchestrator ran the restore: PASS, 0 SkyCRPG files left.
+`4946c92`, Camera DLL `8ca54149…`, Selection DLL `6d8b12e2…`, camera-only profile, cursor mode and external targets enabled by `session-p5/routes/owner_cursor_overrides.py`; target lock and thin occluder were **off** (the staged INI kept the repository defaults — preserved configuration `session-p4/owner-cursor-1/after-owned-files/33`, SHA-256 `8600e14a…`: `[TargetLock] bEnabled=0`, `[ThinOccluder] bEnabled=0`, `[CursorMode] bEnabled=1`). The earlier wording "target lock left on" was wrong; corrected 2026-11-09 at the Phase 5 gate review. Keyboard and mouse. Sheet: `session-p5/briefs/owner-cursor-1.md` (steps A–G). The owner reported "Finished, everything passed" and, asked which steps, "All of A–G". Logs: `session-p5/logs/owner-cursor-1/` (Camera.log `2e312046…`, Selection.log `cff08795…`). Watchdog exit 0, no leftover processes; the watchdog does not restore after a normal quit, so the orchestrator ran the restore: PASS, 0 SkyCRPG files left.
 
 **Coverage caveat.** The game session lasted 4 minutes from deploy to quit, with Selection's last logged event at 2:40 of game time (its event log reached its budget there; its 5-second diagnostic line stops at about 2:15) and the Camera trace capped at 512 samples, about the first ten seconds of cursor time. Camera lifecycle events are not capped and show one load. The rows below therefore carry two results: the owner's word, and what the logs can confirm.
 
@@ -54,7 +164,8 @@ The `Cursor cycling unrestricted` line is absent from both Camera logs: the memb
 | C. Activate (empty E, bench E) | **PASS, owner** | Not separable in the logs. |
 | D. On-screen-only cycling, 15 s hold, 12 px release | **PASS, owner** | One cycle event at 2:20 (`previous`, index 2 of 3, to `00060343`, which had a box); `cycle_refusals=0`. Repeated presses, the hold and the release fall after the log budget: owner-only. 12 stays. |
 | E. Latch while walking; latched object leaving the screen | **PASS, owner** (current behaviour accepted: the latch is kept) | Beyond log coverage: owner-only. |
-| F.1–F.5, F.7, F.8 Tab, console, F6, F8, dialogue, weapon draw, lock | **PASS, owner** | Beyond log coverage, except the one `reason=selection` exit, consistent with a menu or dialogue. Owner-only. |
+| F.1–F.5, F.7 Tab, console, F6, F8, dialogue, weapon draw | **PASS, owner** | Beyond log coverage, except the one `reason=selection` exit, consistent with a menu or dialogue. Owner-only. |
+| F.8 Target lock key while active | **NOT_RUN** (as a lock interaction) | Target lock was disabled in this session's INI, so the key press exercised no lock; the lock-exits-cursor row needs a session with both features enabled (gate R5/R6). |
 | F.6 Quickload while active | **Owner: pass; log: NOT_RUN** | Camera lifecycle shows exactly one `pre-load`/`load-game` pair (the initial load). A quickload would have logged a second pair. Treated as not run. |
 | G. Walking with the mode on | **PASS, owner** | Pick cost median 7 µs, p99 13 µs, max 20 µs, `busy=0` over the traced window. |
 
