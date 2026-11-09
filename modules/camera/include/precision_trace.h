@@ -1,9 +1,11 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #pragma once
 #include "policy.h"
+#include "precision_policy.h"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 
 namespace skycrpg::camera {
 // Diagnostic-only numeric state; never stores menu names, form IDs or input text.
@@ -27,6 +29,38 @@ struct PrecisionTraceRecord {
     bool pressed{}, edge{};
     unsigned decision{}; // ToggleRequest, or zero when not applicable
     std::uint64_t monotonicMs{};
+};
+struct PrecisionClaimInput {
+    unsigned device{};
+    bool pressed{}, edge{};
+    FreshPress key{};
+};
+// Debug-only input sample for the event-11 claim line. The entry intent is
+// always published and serviced without it: a busy flag or a missing sample
+// only degrades the trace (device 0), never F6. One bounded try per caller; no
+// engine work or IO under the flag; rejected/stale producers cannot replace it.
+class PrecisionClaimTrace {
+public:
+    bool publish(PrecisionReturn& intent, Context c, PrecisionReturn::Token token, PrecisionClaimInput input) {
+        const bool accepted = intent.requestEntry(c,token);
+        if (accepted && !busy_.test_and_set(std::memory_order_acquire)) {
+            token_ = token; input_ = input;
+            busy_.clear(std::memory_order_release);
+        }
+        return accepted;
+    }
+    std::optional<PrecisionClaimInput> read(PrecisionReturn::Token token) {
+        if (busy_.test_and_set(std::memory_order_acquire)) return std::nullopt;
+        std::optional<PrecisionClaimInput> result;
+        if (PrecisionReturn::entryRequested(token) &&
+            (token & PrecisionReturn::epochLimit) == token_) result = input_;
+        busy_.clear(std::memory_order_release);
+        return result;
+    }
+private:
+    std::atomic_flag busy_ = ATOMIC_FLAG_INIT;
+    PrecisionReturn::Token token_{PrecisionReturn::epochLimit};
+    PrecisionClaimInput input_{};
 };
 // An opt-in session has a hard bound; callers decide which event boundaries
 // are useful and only write when take() succeeds. No per-frame logging.
