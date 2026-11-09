@@ -86,6 +86,7 @@ std::atomic<bool> lockInputSeen{false};
 // Last main-thread decision, read when context() runs on another thread.
 std::atomic<bool> publishedLockPrerequisites{false}, publishedTargetLock{false};
 std::atomic<bool> publishedLockMenu{true}, publishedLockMovementConfigSafe{false};
+std::atomic<unsigned> lockMenuOpenEpoch{0};
 // Lease changes also occur at data load; opt-in off-main input reads only this copy.
 std::atomic<bool> publishedMovementLease{false};
 unsigned lockStateLogs = 0;
@@ -386,7 +387,7 @@ void checkLockBindings() {
     }
 }
 void updateTargetLockMain(Context& c);
-void updateTargetLock(Context& c) {
+void updateTargetLock(Context& c, unsigned sampledMenuEpoch) {
     if (!ready || !lockHooksReady) {
         interruptTargetLock();
         if (onTargetLockThread() && movement && !movementLease) static_cast<void>(acquireMovementLease());
@@ -402,7 +403,7 @@ void updateTargetLock(Context& c) {
     updateTargetLockMain(c);
     publishedLockPrerequisites.store(c.prerequisites);
     publishedTargetLock.store(c.targetLock);
-    publishedLockMenu.store(c.menu);
+    publishedLockMenu.store(publishedMenuFocus(c.menu,sampledMenuEpoch,lockMenuOpenEpoch.load()));
     publishedLockMovementConfigSafe.store(movementConfigSafe);
 }
 void updateTargetLockMain(Context& c) {
@@ -528,6 +529,8 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     c.enabled = settings.enabled;
     const bool providerEnabled = provider && provider->IsCameraEnabled();
     const bool lockThread = targetLockEnabled && onTargetLockThread();
+    // Capture before focused() so an intervening opening keeps published focus.
+    const unsigned sampledMenuEpoch = lockThread ? lockMenuOpenEpoch.load() : 0u;
     const bool haveLease = targetLockEnabled && !lockThread ? publishedMovementLease.load() : movementLease;
     const bool configSafe = targetLockEnabled && !lockThread ? publishedLockMovementConfigSafe.load() : movementConfigSafe;
     const bool baseReady = compatibleSettings && configSafe && ready && movement && providerEnabled &&
@@ -543,7 +546,7 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     const auto camera = RE::PlayerCamera::GetSingleton();
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
     if (!c.world) {
-        if (targetLockEnabled) updateTargetLock(c);
+        if (targetLockEnabled) updateTargetLock(c,sampledMenuEpoch);
         return c;
     }
     c.firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
@@ -568,7 +571,7 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     c.menu = targetLockEnabled && !lockThread ? publishedLockMenu.load() : focused();
     // DYL-158 supplies precision/targeting intervention; select() reserves their priority.
     c.obstruction = obstructionFrame.obstructed;
-    if (targetLockEnabled) updateTargetLock(c);
+    if (targetLockEnabled) updateTargetLock(c,sampledMenuEpoch);
     return c;
 }
 bool noActiveMenus() {
@@ -825,7 +828,10 @@ public:
         if (targetLockEnabled) {
             if (!event) return RE::BSEventNotifyControl::kContinue;
             const std::string_view name{event->menuName.c_str()};
-            if (lockMenuPublishesFocus(name,event->opening)) publishedLockMenu.store(true);
+            if (lockMenuPublishesFocus(name,event->opening)) {
+                lockMenuOpenEpoch.fetch_add(1u);
+                publishedLockMenu.store(true);
+            }
             if (lockMenuRefresh(name,event->opening)) lockConfigRefresh.request();
             if (!lockMenuInterrupt(name,event->opening)) return RE::BSEventNotifyControl::kContinue;
             interruptTargetLock();

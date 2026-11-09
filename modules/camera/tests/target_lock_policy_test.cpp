@@ -74,20 +74,35 @@ int main() {
     assert(!lockMenuRefresh("Journal Menu",true) && lockMenuRefresh("Journal Menu",false));
     assert(lockMenuPublishesFocus("Journal Menu",true) && !lockMenuPublishesFocus("Journal Menu",false));
     assert(lockMenuPublishesFocus("",true) && !lockMenuPublishesFocus("",false));
-    // Gameplay published no focus, then an unlisted pausing menu opens before
-    // the next main-thread observation. Closing must not clear that publication.
+    static_assert(!publishedMenuFocus(false,0u,0u));
+    static_assert(publishedMenuFocus(true,0u,0u));
+    static_assert(publishedMenuFocus(false,0u,1u));
+    static_assert(publishedMenuFocus(true,0u,1u));
+    // Main samples no focus, then an unlisted pausing menu opens before
+    // publication. Neither the stale sample nor closing may clear focus.
     std::atomic<bool> publishedMenu{false};
+    std::atomic<unsigned> menuOpenEpoch{0};
+    const unsigned sampledEpoch = menuOpenEpoch.load();
+    const bool sampledMenu = false;
     std::thread menuOpening([&] {
-        if (lockMenuPublishesFocus("Tutorial Menu",true)) publishedMenu.store(true);
+        if (lockMenuPublishesFocus("Tutorial Menu",true)) {
+            menuOpenEpoch.fetch_add(1u);
+            publishedMenu.store(true);
+        }
     });
     menuOpening.join();
+    assert(publishedMenu.load());
+    assert(menuOpenEpoch.load() == sampledEpoch+1u);
+    publishedMenu.store(publishedMenuFocus(sampledMenu,sampledEpoch,menuOpenEpoch.load()));
     assert(publishedMenu.load());
     std::thread menuClosing([&] {
         if (lockMenuPublishesFocus("Tutorial Menu",false)) publishedMenu.store(true);
     });
     menuClosing.join();
     assert(publishedMenu.load());
-    publishedMenu.store(false); // only the next main-thread focused() result clears it
+    const unsigned nextSampledEpoch = menuOpenEpoch.load();
+    assert(nextSampledEpoch == sampledEpoch+1u);
+    publishedMenu.store(publishedMenuFocus(false,nextSampledEpoch,menuOpenEpoch.load()));
     assert(!publishedMenu.load());
     static_assert(static_cast<unsigned>(State::targeting) == 6);
     static_assert(static_cast<unsigned>(State::obstruction) == 7);

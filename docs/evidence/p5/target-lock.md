@@ -19,6 +19,7 @@ Verification job declared before execution: owner DYL-197 pre-merge worker; purp
 | 5: idle-only state-log churn | Remove input-idle from change detection; retain its value in emitted diagnostic lines. Correct the absolute logging guarantee in the comment. | **PASS** diff review; 256-line cap retained. |
 | 6: process-list layout pins | Assert `magicEffects == 0x108` and `magicEffectsLock == 0x120`. | **PASS** source match to CommonLibSSE-NG 7.2.0 `ProcessLists.h`; supplied independent binary audit reused (1.7.104 `0x7888CB`/`0x7888F0`). Native assertion compilation **NOT_RUN**. |
 | 7: vacuous save/load test | Delete arithmetic-only assertion; no replacement save/load claim. | **PASS** diff review; actual save/load remains **NOT_RUN** for this patch. |
+| Round 4: stale main-thread focus publication overwrote a non-passive opening sampled later by the event sink | Increment atomic `lockMenuOpenEpoch` on qualifying openings and retain immediate `publishedLockMenu=true`. Capture the epoch in `context()` before `focused()` and carry it to publication; `publishedMenuFocus` publishes true if the epoch changed, otherwise the sample. | **PASS** constexpr sample/epoch cases, threaded stale-publication regression and all 8 Camera tests; native compilation/game behavior **NOT_RUN**. |
 
 First-round decision at `46f3072`: use a name-only menu filter instead of filesystem timestamps. That version ignored unlisted menus on both edges and did **not** refresh on Journal/MCM close; the earlier claims to the contrary were incorrect. Round 2 below restores the close barrier and adds a separate Journal-close refresh policy, following the orchestrator ruling. No dependency changed; no questions for the owner.
 
@@ -134,6 +135,30 @@ All four assignment sites (294, 355, 440, 1018) immediately store the published 
 Every changed native line was re-read for `/W4 /WX`: no new unused locals/parameters, narrowing, format, signedness, copy-of-atomic, declaration-order or shadowing hazards found. Atomic boolean conditions use the standard bool conversion, not copies or variadic arguments. The publication helper uses the existing `string_view` contract and no UI API. The missing-lease off-main branch queues the existing mutex-protected interrupt and does not touch the mutable lease logger. Source checks and `git diff --check` **PASS**. Portable feature-OFF prerequisite/state truth tables pass; baseline lease/POV behavior remains selected when OFF, with the opt-in overlay removed as previously required.
 
 Unverified: `plugin.cpp`/MSVC compilation, runtime thread scheduling and callback order, menu timing, off-main missing-lease recovery, notification/indicator behavior, game regression and runtime feature-OFF parity are **NOT_RUN** for round 3. No new package, runtime hash or owner acceptance is claimed. No commit, push, PR, game launch, UI/shared-file edit, INI or API change.
+
+### Round 4 — senior-review fix (2026-11-08)
+
+Base `618d49a`, branch `phase5/dyl-197-target-lock`. One focus-publication fix in the four assigned files. The sampled epoch stays local to `context()` and is passed to `updateTargetLock`, including the invalid-world return; the shared `Context` layout is unchanged. Epoch operations use the default sequentially consistent ordering. Lease and refusal paths are unchanged. Feature OFF skips the epoch load and the target-lock publication/event paths; no INI, external API, dependency or owner decision changes. No owner questions.
+
+Verification job declared before execution: owner DYL-197 round-4 worker; purpose all eight Camera portable regressions, target-lock first, including same-epoch false/true samples, changed-epoch invalidation and the next unchanged-epoch sample restoring false. Per-test command `g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I modules/camera/include modules/camera/tests/<name>.cpp -o /tmp/lock8-<name> && /tmp/lock8-<name>`. Driver `timeout --kill-after=5s 600s bash /tmp/lock8-tests.sh > /tmp/lock8-tests.log 2>&1`; expected eight PASS lines, exit 0; deadline 10 minutes; completion process exit plus log; timeout PID recorded in `/tmp/lock8-tests.pid`. Timeout owns/cleans child compilers/tests; only this job's processes may be cleaned up. Binaries/logs remain under `/tmp`. Native `plugin.cpp` compilation and all gameplay for round 4 remain **NOT_RUN**.
+
+Actual round-4 result: **PASS**, 8/8 Camera binaries, driver exit 0; g++ `(Ubuntu 15.2.0-16ubuntu1) 15.2.0`, host `dq-MEG-Z590-Trident-X-MS-B926`; completed tool session `21883`. No retry or timeout. Full `/tmp/lock8-tests.log`:
+
+```text
+PASS target_lock_policy_test exit=0
+PASS lifecycle_policy_test exit=0
+PASS lock_frame_trace_test exit=0
+PASS obstruction policy: measurements, timing, noisy closed loop, priorities, invalid inputs, rates/preferences
+PASS obstruction_policy_test exit=0
+PASS obstruction_probe_test exit=0
+PASS policy_test exit=0
+PASS precision_policy_test exit=0
+PASS precision_trace_test exit=0
+```
+
+Source review **PASS**: re-read every changed `plugin.cpp` line for `/W4 /WX` hazards. Epoch values/parameters are unsigned throughout (`0u`/`1u`); atomics are loaded, never copied; no new unused variable/parameter, narrowing, signedness, format or shadowing hazard found. Both callers pass the local epoch; the epoch load precedes `focused()`, and event increment/immediate true publication precede the existing filters. No change to `updateTargetLockMain`, lease operations, interrupts, refusal paths or feature-OFF behavior. `git diff --check` **PASS**. Process inspection found no remaining round-4 timeout, driver, compiler or test process.
+
+Unverified: `plugin.cpp` cannot be compiled on this host; Windows/MSVC compilation, runtime callback scheduling/menu timing and in-game feature-OFF parity remain **NOT_RUN**. Portable/source evidence does not establish gameplay behavior or extend owner acceptance. No commit, push, PR, game launch, UI edit or shared-file change.
 
 ## Findings and implementation
 

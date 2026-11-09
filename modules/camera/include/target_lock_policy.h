@@ -29,6 +29,9 @@ constexpr bool lockMenuPassive(std::string_view name) {
 constexpr bool lockMenuPublishesFocus(std::string_view name, bool opening) {
     return opening && !lockMenuPassive(name);
 }
+constexpr bool publishedMenuFocus(bool sampled, unsigned epochBefore, unsigned epochAfter) {
+    return sampled || epochBefore != epochAfter;
+}
 constexpr bool lockMenuInterrupt(std::string_view name, bool opening) {
     if (lockMenuPassive(name)) return false;
     if (name == "Dialogue Menu" || name == "Console" || name == "Loading Menu") return true;
