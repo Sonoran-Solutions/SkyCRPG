@@ -6,7 +6,7 @@ Main `c10cd80` contains every Phase 3 merge (#15–#23). Main CI on `8eef712` [r
 
 ## Phase 5 — targeting, activation and camera features (gate REVISE, 2026-11-08)
 
-Orchestrator recommendation was **REVISE**, then the owner recorded **REVISE, do R1–R11** on 2026-11-08 (D030); Phase 5 ACCEPT is not recorded. [Gate record](evidence/p5/gate.md). D025 and D029–D035 are recorded on main. PRs #33, #34, #36, #37, #38 and #42 are merged to `main` under D035 (each after an Astra senior-review PASS; the feature PRs also with green Windows CI on their merge heads). #39 (vinput tooling spike) is closed unmerged. No combined candidate exists; the Phase 4 regression and C1–C5 have not been rerun on a Phase 5 build. Controller evidence includes target-lock R3 in owner-lock-3 (D027); cursor reticle and combined controller checks remain NOT_RUN.
+Orchestrator recommendation was **REVISE**, then the owner recorded **REVISE, do R1–R11** on 2026-11-08 (D030); Phase 5 ACCEPT is not recorded. [Gate record](evidence/p5/gate.md). D025 and D029–D035 are recorded on main. PRs #33, #34, #36, #37, #38, #41 and #42 are merged to `main` under D035 (each after an Astra senior-review PASS; the feature PRs also with green Windows CI on their merge heads). #39 (vinput tooling spike) is closed unmerged. No combined candidate exists; the Phase 4 regression and C1–C5 have not been rerun on a Phase 5 build. Controller evidence includes target-lock R3 in owner-lock-3 (D027); cursor reticle and combined controller checks remain NOT_RUN.
 
 | Ticket | Current evidence and remaining obligation |
 | --- | --- |
