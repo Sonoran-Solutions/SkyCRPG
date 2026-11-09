@@ -120,6 +120,8 @@ Portable additions cover obstruction eligibility, zero-length/listed contact acc
 
 ## P5-05 acceptance
 
+_Superseded table, written before any run. The results are in the run sections below (fx1-2359/fx2-0002, fx4-1850, owner-fixed-1) and in the [Phase 5 gate](gate.md); this table is kept as the pre-run plan only._
+
 | Requirement | Current production result | Required interpretation/evidence |
 | --- | --- | --- |
 | Beam translucent; 30-second stable hold without beam-induced pull-in | NOT_RUN | Run 60-second beam hold. Ceiling-limited z≈552 is not configured preference. Literal preference-height criterion requires owner correction. |
