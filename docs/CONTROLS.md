@@ -29,17 +29,17 @@ The keyboard sink observes Skyrim's mapped Hotkey1–Hotkey8 key-down events wit
 
 ## Phase 5 — target lock, Selection and cursor mode (owner bindings 2026-11-08, gate REVISE)
 
-Opt-in features, each default OFF in its INI. Keys below are the owner-approved defaults (D027 for R3; U, `[` `]`, B on 2026-11-08). Native menus, dialogue, loading, death, first person (F6), F7 recenter and F8 all take precedence and end every Phase 5 mode; no mode resumes by itself. One consumer per input event: target lock reads its own key through an input tracker, Selection reads `[` `]` through an edge FIFO, cursor mode captures look deltas only while active, and Activate stays native E / A dispatched once through Selection's Pick. Combined device checks on one candidate are **NOT_RUN** ([gate](evidence/p5/gate.md) R5, R6).
+Target lock, fixed height and cursor mode are default OFF in the Camera INI. The Selection plugin is enabled by default (`[Selection] bEnabled=1`); external-target requests are opt-in (`bAllowExternalTargets=0`). Keys below are owner-approved defaults (D027/D032 for R3 and U, `[` `]`; D029 for B). Interrupt behavior differs by feature: target lock exits on menu and F6 (owner PASS); dialogue, load and F8 interrupting a held lock are **NOT_RUN**, and F7 recenters without interrupting lock. Cursor mode exits on toggle, Tab/menus, console, F6, F8, weapon draw, lock, dialogue and load; the cursor routes/owner sheet cover these exits, but F.6 quickload remains **NOT_RUN**. Fixed height restores on F6/F8/menu/load/cell/unload/disable and resumes automatically after menu or F8 by design. One consumer per input event: target lock reads its own key through an input tracker, Selection reads `[` `]` through an edge FIFO, cursor mode captures look deltas only while active, and Activate stays native E / A dispatched once through Selection's Pick. Combined device checks on one candidate are **NOT_RUN** ([gate](evidence/p5/gate.md) R5, R6).
 
 ### Keyboard and mouse
 
 | Action | Binding | Notes |
 | --- | --- | --- |
-| Target lock toggle | **U**, bound in the TDM target-lock overlay fragment that ships with Camera (TDM's own key; Camera's `[TargetLock] bEnabled=1` only authorizes the lease) | Locks the nearest valid hostile through TDM's lease; a second press, target death, menu, F6 or F8 releases it. No target-switch key in Phase 5. |
-| Selection cycle next / previous | **[** / **]** (`[Selection] iCycleNextKey=26`, `iCyclePreviousKey=27`) | Latches the cycled candidate; the native prompt names it. Ordinary latch expires after 10 s or on movement; in cursor mode it holds until the pointer moves more than 12 px. |
+| Target lock toggle | **U**, bound in the TDM target-lock overlay fragment that ships with Camera (TDM's own key; Camera's `[TargetLock] bEnabled=1` only authorizes the lease) | A second press toggles lock off. Menu and F6 interrupts are owner **PASS**; dialogue/load/F8 interrupting a held lock is **NOT_RUN**. F7 only recenters and does not interrupt lock. No target-switch key in Phase 5. |
+| Selection cycle next / previous | **[** next / **]** previous (`[Controls] iCycleNextKey=26`, `iCyclePreviousKey=27`) | Latches the cycled candidate; the native prompt names it. Ordinary latch expires after 10 s or on movement; in cursor mode it holds until the pointer moves more than 12 px. |
 | Cursor mode toggle | **B** (`[CursorMode] iToggleKey=48`) | Mouse look moves the pointer instead of the camera (65 ≈ 1 px per count); the pointer picks the object whose screen box it is in or within 48 px of; `[` `]` visit only on-screen candidates. Requires Selection with `bAllowExternalTargets=1`. |
 | Activate | native **E** | The only activation input; pointing at nothing activates nothing. |
-| Exits | Esc/Tab menus, `~` console, F6, F7, F8, weapon draw, target lock, dialogue, load | Each ends cursor mode; menus and F6/F8 end a lock. |
+| Exits | Esc/Tab menus, `~` console, F6, F8, weapon draw, target lock, dialogue, load | Cursor mode exits on these triggers. F.6 quickload remains **NOT_RUN**. Lock: menu/F6 PASS; dialogue/load/F8 NOT_RUN; F7 does not interrupt. Fixed height restores on menu/load/F6/F8 and resumes automatically after menu or F8 by design. |
 
 ### Controller
 

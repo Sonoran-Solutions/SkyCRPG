@@ -4,7 +4,7 @@ This is not public-release authorization. Final candidate: source `6b4c0fc6a6da4
 
 ## Phase 5 (2026-11-08): no candidate yet
 
-Gate recommendation **REVISE** ([record](evidence/p5/gate.md)). There is no combined Phase 5 archive to list here: Camera feature builds `63e992e` (lock), `c10e6bc` (fixed height) and `4946c92` (cursor, Camera `8ca54149…` with Selection `6d8b12e2…`) were each tested alone, Selection's packaging is undecided, and #33–#38 are unmerged. Before any Phase 5 checklist row can read PASS: merge order #33 → #34 → #36 → #37 → #38 (R1), one combined candidate with hashes (R2), `docs/CONTROLS.md` Phase 5 rows and the open bindings (R3), the Phase 4 regression and C1–C5 on that candidate (R6), a controller pass (R5) and the owner's combined route (R11). Public redistribution stays deferred by D023.
+The owner recorded **REVISE, do R1–R11** on 2026-11-08 (D030); Phase 5 ACCEPT is not recorded ([gate](evidence/p5/gate.md)). There is no combined Phase 5 archive to list here. Feature builds `63e992e` (lock), `c10e6bc` (fixed height) and `4946c92` (cursor, Camera `8ca54149…` with Selection `6d8b12e2…`) have feature evidence; `owner-cursor-1` is the one bounded cursor-plus-lock owner session, with capped logs, not a combined candidate or harness route. D031 decides Selection ships in its own archive and the lock overlay folder ships inside Camera's archive. D032 approves U and `[` / `]` keyboard bindings; pad cycle/switch/cursor stay unbound. D033 rewords fixed height as “no additional beam-induced pull-in, subject to enclosure” and retains three beams. Remaining combined candidate and regression work follows R1/R2/R5/R6/R11 in the gate. Public redistribution stays deferred by D023.
 
 ## Phase 4 rows
 

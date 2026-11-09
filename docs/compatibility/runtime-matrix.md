@@ -4,16 +4,16 @@ DYL-154 baseline, updated with DYL-155 evidence on 2026-10-26. The [Phase 3 cand
 
 ## Phase 5 feature builds (2026-11-08)
 
-Same host, Proton build and provider pins as Phase 4. Each Phase 5 feature was tested on its own build and profile, keyboard and mouse unless stated; nothing below is a combined-candidate claim. [Gate](../evidence/p5/gate.md).
+Same host, Proton build and provider pins as Phase 4. Feature evidence is from separate builds/profiles unless stated. `owner-cursor-1` is the bounded exception: CursorMode and target lock were enabled together in an owner-only session with capped logs; it is not a harness route or combined candidate. Controller evidence includes owner-lock-3's target-lock R3 route (D027); cursor reticle and combined controller coverage remain NOT_RUN. [Gate](../evidence/p5/gate.md).
 
 | Feature / build | Profile and device | Status |
 | --- | --- | --- |
-| Target lock, Camera `63e992e` (`8be698a5…`) | camera-only; keyboard/mouse, controller R3 | Lock and lease **PASS** in owner sessions; mouse look/zoom while locked, switching, auto-retarget **NOT_RUN** |
+| Target lock, Camera `63e992e` (`8be698a5…`) | camera-only; keyboard/mouse, controller R3 | Lock and lease **PASS** in owner sessions; menu/F6 interrupt PASS owner; F7 recenters and does not interrupt; dialogue/load/F8 interrupt, mouse look/zoom, switching, auto-retarget **NOT_RUN** |
 | Selection `1506e6d` (`eba23c2e…`) and `4946c92` (`6d8b12e2…`) | camera-only with Selection; keyboard/mouse | Hook, bench prompt, cycling **PASS**; activation breadth, controller, DLL-absent on the final build **NOT_RUN** |
-| Fixed height, Camera `50a3dd2` (`28de1800…`) / `c10e6bc` (`5409d1bd…`) | camera-only, three curated beams; keyboard/mouse | Standing, transparency, enclosure, restores **PASS**; walking pull-in **FAIL as written**, owner-accepted; controller, lock together **NOT_RUN** |
-| Cursor mode, Camera `4946c92` (`8ca54149…`) with Selection `6d8b12e2…` | camera-only with Selection, `bAllowExternalTargets=1` override; keyboard/mouse | Hover, activation, on-screen-only cycling **PASS**; controller reticle, other resolutions **NOT_RUN** |
+| Fixed height, Camera `50a3dd2` (`28de1800…`) / `c10e6bc` (`5409d1bd…`) | camera-only, three curated beams; keyboard/mouse | Standing, transparency, enclosure, restores **PASS**; walking result accepted under D033's “no additional beam-induced pull-in, subject to enclosure”; fixed height resumes automatically after menu/F8 by design; controller and lock together **NOT_RUN** |
+| Cursor mode, Camera `4946c92` (`8ca54149…`) with Selection `6d8b12e2…` | camera-only with Selection; owner session used staged target-lock-enabled config; route override `bAllowExternalTargets=1`; keyboard/mouse | Hover, activation, on-screen-only cycling **PASS**; owner-cursor-1 is the bounded cursor+lock combination (logs capped); controller reticle, other resolutions **NOT_RUN** |
 | Occlusion spike `6667bf5` (`abff6b40…`, never shipped) | camera-only spike profile | Stage 1 GO by D028; evidence on its branch |
-| Any two features enabled together; UI-only or combined profile on a Phase 5 build | — | **NOT_RUN** |
+| Harness route or combined candidate with two Phase 5 features enabled; UI-only or combined profile on a Phase 5 build | — | **NOT_RUN**. `owner-cursor-1` is the bounded owner-only cursor+lock combination described above. |
 
 ## Host and runtime
 
