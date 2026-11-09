@@ -2,6 +2,12 @@
 
 This is not public-release authorization. Final candidate: source `6b4c0fc6a6da4effd9faeafc9a2c59874a612271`, [main CI run 41376680950](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41376680950); UI SHA-256 `f508a0e1343e2f15ea825e284f57fafed1108f62eb38acbef4b72582d2d940cb`, Camera SHA-256 `e3f6d61e2d2075a10d8a31c07ccfbe9c78e324230f5c399cadbc2c3c39c86838`. Packaged automated gameplay is bounded **PASS**; owner acceptance is pending.
 
+## Phase 5 (2026-11-08): no candidate yet
+
+Gate recommendation **REVISE** ([record](evidence/p5/gate.md)). There is no combined Phase 5 archive to list here: Camera feature builds `63e992e` (lock), `c10e6bc` (fixed height) and `4946c92` (cursor, Camera `8ca54149…` with Selection `6d8b12e2…`) were each tested alone, Selection's packaging is undecided, and #33–#38 are unmerged. Before any Phase 5 checklist row can read PASS: merge order #33 → #34 → #36 → #37 → #38 (R1), one combined candidate with hashes (R2), `docs/CONTROLS.md` Phase 5 rows and the open bindings (R3), the Phase 4 regression and C1–C5 on that candidate (R6), a controller pass (R5) and the owner's combined route (R11). Public redistribution stays deferred by D023.
+
+## Phase 4 rows
+
 | Ticket | Current state | Evidence / remaining work |
 | --- | --- | --- |
 | [DYL-170](phases/PHASE_4.md) | Scoped runtime **PASS**: 22/22 automated routes on Proton Experimental `experimental-11.0-20261027b-x86_64`, Steam Skyrim SE 1.7.104.0, SKSE 2.3.1, test probe `ac28d3c` (#30), UI `2d39d30` and Camera `1d95915`; the owner approved all 40 review screenshots on 2026-11-01. Camera `1daf2aa` adds the notice-intent fix after the runs (portable tests and Windows CI only). | [UI](evidence/p4/blocker-resolution-ui.md), [Camera](evidence/p4/blocker-resolution-camera.md). Controller play, follower lifecycle, the CC missing-icon fixture and marker travel accuracy remain **NOT_RUN**. Aim FAIL and lock BLOCKED stay accepted MVP limitations, not passes. |

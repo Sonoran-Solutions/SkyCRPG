@@ -2,6 +2,19 @@
 
 DYL-154 baseline, updated with DYL-155 evidence on 2026-10-26. The [Phase 3 candidate](#dyl-169-phase-3-candidate) section was added on 2026-10-28; the host and provider pins are unchanged. On 2026-10-31 Steam updated Proton Experimental and the owner accepted the new build as the Phase 4 test host; Phase 1–3 evidence remains on the earlier build. **One tested feasibility environment**, with scoped working behaviors and explicit failures below. This is not a finished MVP support certification. Other runtimes, operating systems, Proton builds and untested mod combinations are unsupported by Phase 1 evidence. [Acceptance matrix](acceptance-matrix.md) owns requirement status; [dependency lock](dependency-lock.md) owns exact upstream files, source commits and permissions.
 
+## Phase 5 feature builds (2026-11-08)
+
+Same host, Proton build and provider pins as Phase 4. Each Phase 5 feature was tested on its own build and profile, keyboard and mouse unless stated; nothing below is a combined-candidate claim. [Gate](../evidence/p5/gate.md).
+
+| Feature / build | Profile and device | Status |
+| --- | --- | --- |
+| Target lock, Camera `63e992e` (`8be698a5…`) | camera-only; keyboard/mouse, controller R3 | Lock and lease **PASS** in owner sessions; mouse look/zoom while locked, switching, auto-retarget **NOT_RUN** |
+| Selection `1506e6d` (`eba23c2e…`) and `4946c92` (`6d8b12e2…`) | camera-only with Selection; keyboard/mouse | Hook, bench prompt, cycling **PASS**; activation breadth, controller, DLL-absent on the final build **NOT_RUN** |
+| Fixed height, Camera `50a3dd2` (`28de1800…`) / `c10e6bc` (`5409d1bd…`) | camera-only, three curated beams; keyboard/mouse | Standing, transparency, enclosure, restores **PASS**; walking pull-in **FAIL as written**, owner-accepted; controller, lock together **NOT_RUN** |
+| Cursor mode, Camera `4946c92` (`8ca54149…`) with Selection `6d8b12e2…` | camera-only with Selection, `bAllowExternalTargets=1` override; keyboard/mouse | Hover, activation, on-screen-only cycling **PASS**; controller reticle, other resolutions **NOT_RUN** |
+| Occlusion spike `6667bf5` (`abff6b40…`, never shipped) | camera-only spike profile | Stage 1 GO by D028; evidence on its branch |
+| Any two features enabled together; UI-only or combined profile on a Phase 5 build | — | **NOT_RUN** |
+
 ## Host and runtime
 
 | Field | Only tested value |

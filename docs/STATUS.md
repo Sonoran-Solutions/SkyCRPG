@@ -4,6 +4,19 @@ Updated for the Phase 4 internal candidate handoff; Phase 3 gate recorded 2026-1
 
 Main `c10cd80` contains every Phase 3 merge (#15–#23). Main CI on `8eef712` [run 40753002080](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40753002080) **PASS**; on `c10cd80`, [run 40759295249](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/40759295249). Main's module sources equal the tested internal candidate: UI `9a8692e` and Camera `28aae27`.
 
+## Phase 5 — targeting, activation and camera features (gate REVISE, 2026-11-08)
+
+Orchestrator recommendation **REVISE**; no owner ACCEPT/REVISE/HOLD recorded yet. [Gate record](evidence/p5/gate.md). Six branches sit on `main` `20e215d` unmerged (#33 Phase 4 ACCEPT record, #34 target lock, #35 occlusion spike evidence, #36 selection, #37 fixed height, #38 cursor mode); #39 (vinput tooling spike) is closed unmerged. No combined candidate exists; no Phase 5 build has run the Phase 4 regression, C1–C5 or a controller pass beyond R3.
+
+| Ticket | Current evidence and remaining obligation |
+| --- | --- |
+| DYL-197 | Lock, lease release and retake, stable pitch/yaw **PASS** in owner sessions on `63e992e`; owner: "It worked and felt right, I approve" (R3, D027). **NOT_RUN:** mouse look/zoom while locked, target switching (no binding), auto-retarget, dialogue/load/F8 interrupting a held lock. Keyboard key U unapproved. [Evidence](evidence/p5/target-lock.md). |
+| DYL-198 | Original selection plugin (D026): hook, bench prompt, cycling and scan limits **PASS** on `1506e6d`; used as the activation path in the cursor routes and owner session. **NOT_RUN:** activation breadth, LOS through walls, combat/sneak, controller, DLL-absent on the final build. Packaging undecided. [Evidence](evidence/p5/proximity-activation.md). |
+| DYL-199 | Spike closed by **D028** (Stage 1 GO with a curated list). Height held, fade cost at the cap, automatic classifier **FAIL** (discards real enclosure). Evidence stays on its branch (#35). |
+| DYL-201 | Fixed height past three curated beams: standing, transparency, enclosure, restores, feature off **PASS** on `50a3dd2`; walking "no pull-in" **FAIL as written**, owner-accepted as felt 2026-11-03 ("everything passed and I approve"). **NOT_RUN:** low-space framing, lock with fixed height, controller, budget on `c10e6bc`. [Evidence](evidence/p5/fixed-height-camera.md). |
+| DYL-200 | Cursor mode (B, 65/48/12, on-screen-only cycling, Selection ships `bAllowExternalTargets=0`): route-cursor-8 **PASS** on `4946c92`; owner 2026-11-08 "Finished, everything passed" (4-minute session; logs corroborate the first minutes; quickload NOT_RUN). **NOT_RUN:** controller reticle, other resolutions, frame-cost sample. [Evidence](evidence/p5/cursor-mode.md). |
+| DYL-202 | **REVISE** recommended; eleven items R1–R11 in the [gate](evidence/p5/gate.md), starting with merging #33 and building one combined candidate. Owner decision pending. |
+
 ## Phase 4 — internal candidates
 
 Source `6b4c0fc` (merge #29), [CI 41376680950](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41376680950). Exact archives and hashes: [acceptance handoff](evidence/p4/acceptance.md). Automated evidence does not establish owner acceptance. Public redistribution is deferred by [D023](DECISIONS.md).
