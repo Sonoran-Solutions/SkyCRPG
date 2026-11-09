@@ -147,9 +147,9 @@ Kept current as items close. "Done" means the closing evidence named in the tabl
 | # | State | Record |
 | --- | --- | --- |
 | R1 | Open — awaiting the owner's merge go per PR; pre-merge re-reviews of #34, #36 and #37 requested 2026-11-08 (their post-review fixes had not been re-reviewed) | — |
-| R2 | Open — needs R1 and the packaging decision | — |
-| R3 | Open — needs the owner's key choices | — |
-| R4 | Open — needs the owner's wording decision | — |
+| R2 | Decided: Selection own archive, overlay inside Camera's. Build needs R1 | — |
+| R3 | Decided (U, [ ], R3-only on pad). `docs/CONTROLS.md` rows in progress | — |
+| R4 | Decided: reworded criterion, three beams. Note row update in progress | — |
 | R5 | Open — needs R2 | — |
 | R6 | Open — needs R2 | — |
 | R7 | Open | — |
@@ -168,4 +168,13 @@ Automatic merges and public release (D023), Stage 2 walls and ceilings, cursor-a
 
 ## Owner decision
 
-**REVISE — owner decision 2026-11-08.** After reading this record the owner ruled, verbatim: "REVISE, do R1–R11". The ruling adopts the full list: all eleven items are required before the Phase 5 ACCEPT question is put again. It is a ruling on the record, not a play session; the owner's hands-on sessions remain the three per-feature ones above (keyboard/mouse; controller for R3 lock only). The owner choices embedded in R2, R3 and R4 are still to be made and will be recorded here and in `DECISIONS.md` once #33 is merged. DYL-202 stays In Progress; Phase 5 is not accepted, and nothing in R1 merges without the owner's explicit go on the merge order and the review state of each pull request.
+**REVISE — owner decision 2026-11-08.** After reading this record the owner ruled, verbatim: "REVISE, do R1–R11". The ruling adopts the full list: all eleven items are required before the Phase 5 ACCEPT question is put again. It is a ruling on the record, not a play session; the owner's hands-on sessions remain the three per-feature ones above (keyboard/mouse; controller for R3 lock only). The owner choices embedded in R2, R3 and R4 were made the same day, from options the orchestrator presented with a recommendation each; the owner took the recommended option in all four:
+
+| Item | Owner choice (2026-11-08) |
+| --- | --- |
+| R2 packaging | **Selection ships in its own archive** (`SkyCRPG_Selection`); the lock indicator overlay ships inside Camera's archive. Camera and UI stay independent; cursor mode needs Camera and Selection both installed. |
+| R3 keyboard | **U** toggles target lock; **[** / **]** cycle previous/next. The tested defaults become the approved defaults. |
+| R3 controller | **R3 short press lock / 0.4 s hold native POV only** (D027). Pad cycle, target switch and cursor stay unbound in Phase 5 and move to the next phase; R5 covers lock, priority and no stranded state. |
+| R4 fixed height | Criterion reworded to **"no additional beam-induced pull-in, subject to enclosure"**; the owner's 2026-11-03 acceptance closes it. The curated list stays at three beams (`0602A6`, `0602AF`, `0616EA`). |
+
+These go into `DECISIONS.md` as numbered decisions once #33 is merged, so that file is edited by one PR at a time. DYL-202 stays In Progress; Phase 5 is not accepted, and nothing in R1 merges without the owner's explicit go on the merge order and the review state of each pull request.
