@@ -27,16 +27,16 @@ Sixth pass, 2026-11-02, base `8c5e9765c01133ff0d7fb34c98dd83fc383adcbf` plus thi
 | Low/long/rotated/scaled bench geometry, LOS endpoints | PASS | Portable geometry only. |
 | Frozen cycling, forward/back/wrap, latch invalidation/expiry, input edges, FIFO | PASS | Portable assertions including real-thread policy gate/FIFO checks. |
 | Passthrough table, bounded lazy validation, unknown preserving latch | PASS | Portable assertions; native adapter is not compiled by g++. |
-| Windows `/W4 /WX` build/link and CI of this diff | NOT_RUN | No MSVC/CMake on host; orchestrator builds after review/commit. |
+| Windows `/W4 /WX` build/link and CI of this diff | PASS (after this pass) | Written before the build; CI on `1506e6d` and head `f3c09a9` ([run 41513733275](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41513733275)) PASS; Selection DLL `eba23c2e…` ran in `j-p5`. |
 | Off-axis/similar-distance prompts and actual activation; Bannered Mare bench without F6 | NOT_RUN | Bounded route below. |
 | Doors, containers, loose items, NPCs, flora, activators, corpses | NOT_RUN | Includes harvested flora, collisionless/trigger/transparent ACTI and scripted activation. |
 | LOS/walls, range edges, moving/scaled/offset objects and body-height bias | NOT_RUN | OBND is an approximation, not a collision mesh. |
 | Keyboard/controller cycling, held input, wrap, native-map refusal | NOT_RUN | Keyboard proposals unchanged; controller unbound. |
 | Menu/dialogue/loading/death/F6/disable, passive overlays and API client | NOT_RUN | No runtime acceptance inferred from source. |
 | Combat/sneak/owned clutter/telekinesis/hold-to-grab and native aim | NOT_RUN | Existing provisional safeguards unchanged. |
-| SmoothCam/TDM co-load and optional second Pick; collider/aim/collisionPoint behavior | NOT_RUN | Source preserves native chain, targetActor and collisionPoint. |
+| SmoothCam/TDM co-load and optional second Pick; collider/aim/collisionPoint behavior | PARTIAL (after this pass) | `j-p5` on `1506e6d` loaded Selection with SmoothCam 1.8.1 and TDM 2.3.1 in the camera-only profile, no crash, hook installed; the cursor routes on `675db0a7…`/`6d8b12e2…` did the same. Collider/aim/collisionPoint behaviour under a second Pick is still NOT_RUN. |
 | Selection alone, Camera-only + Selection, combined + Selection, UI-only without Selection | NOT_RUN | No cross-module/provider dependency. |
-| DLL absent/removal and BTPS-present refusal | NOT_RUN | BTPS test only if an existing binary is available. |
+| DLL absent/removal and BTPS-present refusal | NOT_RUN as a Selection test | `p5-cam-off-main` (target-lock route) ran without a Selection DLL and Camera was unaffected, which is absence by construction, not a removal test of a deployed Selection; BTPS-present refusal needs a BTPS binary (none acquired). P5-06 R6/R8. |
 | Dense-cell cost, reader/cell contention, root lifetime, quiet-input logging/process exit | NOT_RUN | Counters/bounds and source checks are not runtime performance or concurrency proof. |
 
 ## Sixth-pass binary and source findings
