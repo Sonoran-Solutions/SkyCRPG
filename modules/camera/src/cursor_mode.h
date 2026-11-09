@@ -21,7 +21,7 @@ HMODULE selectionModule = nullptr;
 cursor::Session session;
 cursor::MenuContention menuContention;
 std::atomic<bool> dataReady{false}, worldLoaded{false}, padInput{false};
-std::atomic<bool> menuToggleDropped{false};
+std::atomic<unsigned> menuToggleDropped{0};
 std::atomic<unsigned> stop{0}, toggle{0}, held{0};
 cursor::OverlayRegistration registration;
 bool pending = false, resolving = false;
@@ -62,6 +62,11 @@ class Overlay;
 // Published once by the creator (UI job thread) and never freed while the process runs.
 std::atomic<Overlay*> overlay{nullptr};
 RE::GPtr<RE::IMenu>& overlayOwner = *new RE::GPtr<RE::IMenu>; // process lifetime; set once by create()
+struct InputMenuKeys {
+    RE::BSFixedString own{menuName}, hud{"HUD Menu"}, fader{"Fader Menu"}, mist{"Mist Menu"};
+    RE::BSFixedString dialogue{"Dialogue Menu"}, console{"Console"}, loading{"Loading Menu"};
+};
+std::atomic<const InputMenuKeys*> inputMenuKeys{nullptr};
 Overlay* current() { return overlay.load(std::memory_order_acquire); }
 bool mainThread() {
     const auto main = RE::Main::GetSingleton();
@@ -280,6 +285,34 @@ bool nativeMenu() {
     }
     return false;
 }
+bool inputNativeMenu() {
+    const auto keys = inputMenuKeys.load(std::memory_order_acquire);
+    if (!keys) return true;
+    const auto ui = RE::UI::GetSingleton();
+    if (!ui) return true;
+    const UITryLock lock; // one ordered attempt; never wait on the input thread
+    if (!lock) return true;
+    if (ui->GameIsPaused() || ui->IsApplicationMenuOpen() || ui->IsModalMenuOpen()) return true;
+    // Borrow under both locks: no temporary strings, GPtr copies or engine calls.
+    const auto get = [&](const RE::BSFixedString& key) -> RE::IMenu* {
+        const auto it = ui->menuMap.find(key);
+        return it != ui->menuMap.end() ? it->second.menu.get() : nullptr;
+    };
+    for (const auto key : {&keys->dialogue,&keys->console,&keys->loading}) {
+        if (const auto menu = get(*key); menu && menu->OnStack()) return true;
+    }
+    const auto own = get(keys->own), hud = get(keys->hud), fader = get(keys->fader), mist = get(keys->mist);
+    const auto instance = current();
+    const auto required = flags | static_cast<std::uint32_t>(RE::UI_MENU_FLAGS::kOnStack);
+    for (const auto& entry : ui->menuStack) {
+        const auto menu = entry.get();
+        if (!menu) return true;
+        if (cursor::inputOwnMenu(ui->menuSystemVisible,menu == instance,menu == own,menu->menuFlags.underlying(),required)) continue;
+        if (menu->menuFlags.any(RE::UI_MENU_FLAGS::kUsesCursor,RE::UI_MENU_FLAGS::kUsesMenuContext,RE::UI_MENU_FLAGS::kModal)) return true;
+        if (menu != hud && menu != fader && menu != mist) return true;
+    }
+    return false;
+}
 bool apiLive() { return selection && selectionModule; } // process-lifetime DLL; no live unload contract
 Exit captureExit() {
     if (const auto reason = stop.exchange(0)) return static_cast<Exit>(reason);
@@ -492,6 +525,9 @@ void pick(const api::CursorFrame& frame, bool fresh) {
         std::chrono::steady_clock::now()-start).count());
 }
 cursor::Registration registerOverlay() {
+    // Only data-ready registration / main-service fallback can intern these.
+    // Retain for process lifetime; publication also prewarms the UI/lock relocations.
+    static const auto keys = new const InputMenuKeys;
     const auto ui = RE::UI::GetSingleton();
     if (!ui) {
         static bool deferred = false;
@@ -502,6 +538,7 @@ cursor::Registration registerOverlay() {
     // later inside ProcessMessages (normally the UI job thread).
     const UITryLock lock;
     if (!lock) return cursor::Registration::deferred;
+    inputMenuKeys.store(keys,std::memory_order_release);
     if (ui->menuMap.find(std::string_view(menuName)) != ui->menuMap.end()) { overlaySite.store(21); refuse(Exit::overlay); return cursor::Registration::failed; }
     ui->Register(menuName,Overlay::create);
     return cursor::Registration::ready;
@@ -531,7 +568,7 @@ void traceFrame() {
 void service() {
     if (!cursorSettings.enabled || !mainThread() || !dataReady.load()) return;
     // Logging allocates/does file IO; keep it and refusalBits on the main service.
-    if (menuToggleDropped.exchange(false)) refuse(Exit::menu);
+    if (menuToggleDropped.exchange(0)) refuse(Exit::menu);
     if (registration.state != cursor::Registration::ready &&
         !registration.prepare(true,registrationFallbackSafe(),session.active,pending,registerOverlay)) return;
     if (const auto reason = stop.exchange(0)) { leave(static_cast<Exit>(reason)); return; }
@@ -643,9 +680,9 @@ void input(RE::InputEvent* events) {
         const unsigned mask = pad ? 2u : 1u;
         const unsigned old = button->IsPressed() ? held.fetch_or(mask) : held.fetch_and(~mask);
         if (button->IsDown() && !(old & mask) && button->QUserEvent().empty()) {
-            const auto request = cursor::togglePress(pad,nativeMenu());
+            const auto request = cursor::togglePress(pad,inputNativeMenu());
             if (request) toggle.fetch_or(request);
-            else menuToggleDropped.store(true);
+            else menuToggleDropped.fetch_add(1);
         }
     }
 }

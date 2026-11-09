@@ -37,6 +37,56 @@ void menuTogglePress() {
         queued.fetch_or(togglePress(pad,false));
         if (queued.exchange(0)) assert(!session.toggle(ready,1920,1080));
         assert(!session.active);
+
+        // Model the native input snapshot and service's main-thread guard.
+        // The owned overlay is exempt on either input thread; only service
+        // touches Session. Native focus and contention still win over it.
+        constexpr std::uint32_t required = (1u<<6) | (1u<<8) | (1u<<11);
+        struct Focus {
+            bool mainThread = true, acquired = true, visible = true;
+            bool instance = true, registered = true, native = false;
+            std::uint32_t flags = required;
+        } focus;
+        unsigned dropped = 0;
+        const auto press = [&] {
+            const bool own = focus.acquired && inputOwnMenu(focus.visible,focus.instance,focus.registered,focus.flags,required);
+            const auto request = togglePress(pad,!own || focus.native);
+            if (request) queued.fetch_or(request);
+            else ++dropped;
+        };
+        const auto service = [&] {
+            if (focus.mainThread && queued.exchange(0)) static_cast<void>(session.toggle(ready,1920,1080));
+        };
+        for (bool main : {false,true}) {
+            focus = {}; focus.mainThread = main;
+            assert(session.toggle(ready,1920,1080));
+            press();
+            assert(queued.load() == (pad ? 2u : 1u));
+            service();
+            assert(session.active == !main);
+            focus.mainThread = true; service();
+            assert(!session.active && queued.load() == 0 && dropped == 0);
+        }
+        assert(session.toggle(ready,1920,1080));
+        for (unsigned failure = 0; failure < 7; ++failure) {
+            focus = {}; focus.mainThread = false;
+            if (failure == 0) focus.acquired = false;
+            if (failure == 1) focus.visible = false;
+            if (failure == 2) focus.instance = false;
+            if (failure == 3) focus.registered = false;
+            if (failure == 4) focus.native = true;
+            if (failure == 5) focus.flags &= ~(1u<<6); // not on stack
+            if (failure == 6) focus.flags |= 1u<<2; // unexpected cursor flag
+            press();
+            assert(queued.load() == 0 && dropped == failure+1);
+            focus = {}; service(); // menu close / recovery never replays a drop
+            assert(session.active);
+        }
+        focus.mainThread = false; press(); // admitted gameplay press
+        focus.native = true; press(); // later rejected press cannot erase it
+        assert(queued.load() == (pad ? 2u : 1u) && dropped == 8);
+        focus = {}; service();
+        assert(!session.active && queued.load() == 0);
     }
 }
 void menuContention() {

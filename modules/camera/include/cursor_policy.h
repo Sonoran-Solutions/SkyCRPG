@@ -41,6 +41,11 @@ inline constexpr std::array exitNames{"none","toggle","disabled","lifecycle","me
 static_assert(exitNames.size() == static_cast<unsigned>(Exit::busy)+1u);
 // Stamp focus at the input edge; a menu-owned press must not survive its close.
 constexpr unsigned togglePress(bool pad, bool menu) { return menu ? 0u : (pad ? 2u : 1u); }
+// Input may arrive off main. Identity and flags are read under both UI locks;
+// thread affinity belongs to session service, not this overlay exemption.
+constexpr bool inputOwnMenu(bool visible, bool instance, bool registered, std::uint32_t actual, std::uint32_t required) {
+    return visible && instance && registered && actual == required;
+}
 // Tolerate brief UI jobs, but bound capture without a focus check to about
 // one third of a second at 60 fps. This is a fixed policy, not an INI setting.
 inline constexpr unsigned menuBusyFrameLimit = 20;
