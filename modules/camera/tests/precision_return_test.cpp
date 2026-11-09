@@ -16,6 +16,9 @@ struct Route {
     LockInterrupt interrupt;
     PrecisionReturn intent;
     unsigned returns = 0;
+    std::uint32_t mountCount = 0;
+    bool mounted = false;
+    unsigned mountReads = 0;
     explicit Route(bool enabled = true) : lockEnabled(enabled) { c.enabled = c.prerequisites = c.world = true; }
     void entry() {
         assert(key.update(true,true));
@@ -49,11 +52,18 @@ struct Route {
         if (!c.world || !c.firstPerson) { intent.cancel(); return; }
         if (!PrecisionReturn::requested(intent.snapshot())) return;
         if (!menuLocks) return; // interrupt drain does not depend on menu lock
+        bool observedMount = false;
+        {
+            const PrecisionMountReadLock mountLock(mountCount);
+            if (!mountLock) return;
+            ++mountReads; observedMount = mounted;
+        }
         // The existing ineligible lock policy retries a refused acquisition.
         const auto decision = targetLockLease({true,false,true,true,true,haveLease,locked,false});
         if (decision.action == LockLeaseAction::acquire) haveLease = granted;
         assert(decision.action != LockLeaseAction::release); // first person holds
         auto observed = c;
+        observed.special = observed.special || observedMount;
         observed.prerequisites = c.prerequisites && targetLockPrerequisites(haveLease,locked,true,true,true);
         const auto sessionToken = intent.snapshot();
         intent.retain(observed,false,sessionToken);
@@ -63,6 +73,45 @@ struct Route {
     }
 };
 int main() {
+    // Engine-compatible reader accounting, including conservative rejection
+    // of writer recursion, reserved flags and count saturation.
+    for (const std::uint32_t initial : {0u,2u,0x0ffffffeu,0x0fffffffu,0x10000000u,0x80000001u}) {
+        std::uint32_t word = initial;
+        {
+            const PrecisionMountReadLock mountLock(word);
+            const bool allowed = initial < 0x0fffffffu;
+            assert(static_cast<bool>(mountLock) == allowed);
+            assert(std::atomic_ref<std::uint32_t>(word).load() == initial+(allowed ? 1u : 0u));
+        }
+        assert(word == initial);
+    }
+    // A real writer holds the modeled extra-data lock over the callback.
+    // No presence read or session mutation is allowed until it releases.
+    for (const bool mountAfterWrite : {false,true}) {
+        Route r; r.entry(); r.press();
+        const auto pending = r.intent.snapshot();
+        std::binary_semaphore held(0), release(0);
+        std::thread writer([&] {
+            std::atomic_ref<std::uint32_t> count(r.mountCount);
+            std::uint32_t empty = 0;
+            assert(count.compare_exchange_strong(empty,0x80000001u));
+            r.mounted = mountAfterWrite;
+            held.release(); release.acquire();
+            count.store(0);
+        });
+        held.acquire();
+        r.service(); r.service();
+        assert(r.intent.snapshot() == pending && r.returns == 0 && r.mountReads == 0);
+        assert(r.haveLease); // the independent interrupt drain still ran
+        release.release(); writer.join();
+        r.service();
+        assert(r.mountReads == 1 && r.mountCount == 0);
+        assert(r.returns == (mountAfterWrite ? 0u : 1u));
+        assert(!r.intent.owned() && !PrecisionReturn::requested(r.intent.snapshot()));
+        r.service(); assert(r.mountReads == 1); // consumed/cancelled exactly once
+    }
+    std::cout << "PASS mount contention: intent unchanged, no presence read; released lock evaluates mounted/unmounted\n";
+    std::cout << "PASS mount read lock: shared readers, writer/reserved flags, saturation and balanced release\n";
     // Configuration model: only the target-lock flag controls deferral. Native
     // hook wiring/feature independence is also inspected in plugin.cpp.
     struct Profile { const char* name; bool lock; };

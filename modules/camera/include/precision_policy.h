@@ -28,6 +28,24 @@ constexpr bool retainPrecisionOwnership(Context c, bool owned, bool hardSpecial)
     return owned && c.prerequisites && c.world &&
         (c.menu || (c.firstPerson && !hardSpecial && !c.special) || (c.tween && !hardSpecial));
 }
+// Pinned engine read-lock count word: low 28 bits count readers, bit 31
+// marks a writer. One CAS only; even a same-thread writer defers the query.
+class PrecisionMountReadLock {
+public:
+    explicit PrecisionMountReadLock(std::uint32_t& word) : count(word) {
+        auto observed = count.load();
+        acquired = observed < 0x0fffffffu && count.compare_exchange_strong(observed,observed+1);
+    }
+    ~PrecisionMountReadLock() { if (acquired) count.fetch_sub(1); }
+    explicit operator bool() const { return acquired; }
+    PrecisionMountReadLock(const PrecisionMountReadLock&) = delete;
+    PrecisionMountReadLock& operator=(const PrecisionMountReadLock&) = delete;
+private:
+    static_assert(std::atomic_ref<std::uint32_t>::is_always_lock_free);
+    static_assert(std::atomic_ref<std::uint32_t>::required_alignment <= alignof(std::uint32_t));
+    std::atomic_ref<std::uint32_t> count;
+    bool acquired = false;
+};
 // Ownership, intent and epoch share one CAS word. Capture it BEFORE reading
 // context; a claim, cancellation or consumption invalidates that observation.
 // Saturation permanently closes the session instead of wrapping into an ABA.

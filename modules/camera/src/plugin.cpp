@@ -581,7 +581,7 @@ bool providerChainReady() {
     }
     return module != nullptr;
 }
-void readCameraWorld(Context& c, bool* hardSpecial) {
+void readCameraWorld(Context& c, bool* hardSpecial, std::optional<bool> mounted = std::nullopt) {
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto camera = RE::PlayerCamera::GetSingleton();
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
@@ -590,7 +590,7 @@ void readCameraWorld(Context& c, bool* hardSpecial) {
     c.tween = camera->currentState->id == RE::CameraState::kTween;
     const bool stateSpecial = !c.firstPerson && camera->currentState->id != RE::CameraState::kThirdPerson;
     const auto actorState = player->AsActorState();
-    Hazards hazards{player->IsOnMount(), player->IsInKillMove(), actorState->IsSwimming(),
+    Hazards hazards{mounted ? *mounted : player->IsOnMount(), player->IsInKillMove(), actorState->IsSwimming(),
         actorState->GetSitSleepState() != RE::SIT_SLEEP_STATE::kNormal, actorState->IsBleedingOut(),
         false, false};
     const auto controls = RE::PlayerControls::GetSingleton();
@@ -678,15 +678,30 @@ bool prepareDeferredCameraWork() {
 
 using CameraCall = void(*)(RE::PlayerCamera*);
 CameraCall previousCameraCall = nullptr;
+std::optional<bool> callbackMount(RE::PlayerCharacter& player) {
+    // 1.7.104 / CommonLib 7.2.0: presence +0x10, RW lock +0x18.
+    // AL 68233/68239 (CE3250/CE3510): owner +0, count +4; read unlock
+    // is one atomic decrement. Never enter the native read-lock Sleep loop.
+    static_assert(sizeof(RE::ExtraDataList) == 0x20);
+    static_assert(sizeof(RE::BSReadWriteLock) == 8);
+    const auto extra = reinterpret_cast<std::byte*>(&player.extraList);
+    const PrecisionMountReadLock mountLock(*reinterpret_cast<std::uint32_t*>(extra+0x1c));
+    if (!mountLock) return std::nullopt;
+    const RE::BaseExtraList::PresenceBitfield* presence = nullptr;
+    std::memcpy(&presence,extra+0x10,sizeof(presence));
+    constexpr auto interaction = static_cast<std::uint32_t>(RE::ExtraDataType::kInteraction);
+    static_assert(interaction == 0xa9);
+    return !player.IsAMount() && presence && (presence->bits[interaction >> 3] & (1u << (interaction % 8))) != 0;
+}
 // This reader never advances lock policy, refreshes configuration or diagnoses
 // failures. UI keys/relocations are prepared at DataLoaded; menu objects are borrowed.
-Context returnContext(bool& hardSpecial) {
+Context returnContext(bool& hardSpecial, bool mounted) {
     Context c;
     c.enabled = settings.enabled;
     c.prerequisites = compatibleSettings && ready && lockHooksReady &&
         publishedLockMovementConfigSafe.load() && publishedReturnChainReady.load() && movement && provider &&
         provider->IsCameraEnabled() && provider->GetCameraOwner() == SKSE::kInvalidPluginHandle;
-    readCameraWorld(c,&hardSpecial);
+    readCameraWorld(c,&hardSpecial,mounted);
     c.menu = cursorMode::callbackMenu(false);
     return c;
 }
@@ -718,8 +733,10 @@ void serviceFirstPersonReturn() {
     {
         const cursorMode::UITryLock menuLock; // one attempt, global then UI+0x158
         if (!menuLock) return;
+        const auto mounted = callbackMount(*player);
+        if (!mounted) return; // contention defers without retiring the intent
         bool hard = true;
-        const auto c = returnContext(hard);
+        const auto c = returnContext(hard,*mounted);
         precisionReturn.retain(c,hard,sessionToken);
         // Retry a refused acquisition without running configuration/indicator policy.
         if (c.prerequisites && !movementLease) static_cast<void>(acquireMovementLease(false));
