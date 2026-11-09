@@ -35,6 +35,7 @@
 #include <RE/B/BSShaderProperty.h>
 #include <RE/B/bhkWorld.h>
 #include <RE/H/hkpCollidable.h>
+#include <RE/H/hkpRigidBody.h>  // hkpWorld.h names hkpRigidBody without declaring it
 #include <RE/H/hkpWorld.h>
 #include <RE/H/hkpWorldRayCastInput.h>
 #include <RE/H/hkpWorldRayCastOutput.h>
@@ -1319,7 +1320,11 @@ void SampleView(const ViewJob& job, bool onMain)
 	float matrix[4][4]{};
 	std::memcpy(matrix, camera->GetRuntimeData().worldToCam, sizeof(matrix));
 	const auto& lens = camera->GetRuntimeData2();
-	const json::Port port{ lens.port.left, lens.port.right, lens.port.top, lens.port.bottom };
+	// NiRect keeps left, right, top, bottom (+0x174..+0x180) protected.
+	float portEdges[4]{};
+	static_assert(sizeof(lens.port) == sizeof(portEdges));
+	std::memcpy(portEdges, &lens.port, sizeof(portEdges));
+	const json::Port port{ portEdges[0], portEdges[1], portEdges[2], portEdges[3] };
 	const auto& eyePoint = camera->world.translate;
 	const json::Vec3 eye{ eyePoint.x, eyePoint.y, eyePoint.z };
 	const auto& rotation = camera->world.rotate.entry;
