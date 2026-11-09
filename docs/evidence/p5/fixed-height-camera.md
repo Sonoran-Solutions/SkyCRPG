@@ -168,7 +168,7 @@ Engineering decisions: retain a correctly chained all-state update for lifecycle
 
 Unverified: MSVC/link; live guard chain/TDM pitch retention; live shader ownership count; fade sorting/depth/alpha appearance; precise gap endpoint response through SmoothCam; Havok completeness; lifecycle timing; longer-session pool pressure; preparation burst cost; both optional features together; all route outcomes. OFF source equivalence and portable PASS do not establish visual/runtime equivalence.
 
-**Question for owner:** accept the native column pop and ceiling-limited height as expected, and amend the literal configured-height/no-pop criterion to “no additional beam-induced pull-in, subject to enclosure”? No answer was required to implement these safety-preserving fixes.
+**Question for owner** (answered 2026-11-08 at the Phase 5 gate, R4: yes — reworded, list kept at three beams)**:** accept the native column pop and ceiling-limited height as expected, and amend the literal configured-height/no-pop criterion to “no additional beam-induced pull-in, subject to enclosure”? No answer was required to implement these safety-preserving fixes.
 
 ## In-game runs fx1-2359 and fx2-0002 — 2026-11-02
 
@@ -185,7 +185,7 @@ Eleven routes on `50a3dd2` (Camera DLL `28de1800…`), camera-only, keyboard/mou
 | Load, cell and unload restores | **NOT_RUN as a distinct test** | Console runs first, so the beam is restored as menu; `restoresUnload` nonzero. |
 | Feature off | **PASS, bounded** | `p5-fixed-off` passes with no trace rows; this is the Phase 4 route set, not a byte-level comparison. |
 | Frame budget | **PASS at the frame cap** | Off against on at the same pose: p95 +1.04%, no frames over 33 ms; hook about 30 µs and tick about 64 µs per frame. Framing can differ; uncapped NOT_RUN. |
-| No pull-in or oscillation walking | **FAIL as written** | z varies from about 288 to 552 walking this room, with about two jumps per pass (up to 236 units) landing on real geometry: columns, ceiling corners and neighbouring pieces. Standing is steady. |
+| No pull-in or oscillation walking | **FAIL as written**; criterion reworded by the owner on 2026-11-08 (P5-06 R4) to "no additional beam-induced pull-in, subject to enclosure", under which the 2026-11-03 owner acceptance closes it | z varies from about 288 to 552 walking this room, with about two jumps per pass (up to 236 units) landing on real geometry: columns, ceiling corners and neighbouring pieces. Standing is steady. |
 | Target lock with this feature | **NOT_RUN** | |
 | Controller | **NOT_RUN** | |
 
