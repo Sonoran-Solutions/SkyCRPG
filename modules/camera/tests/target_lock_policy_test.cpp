@@ -42,6 +42,24 @@ int main() {
         assert(leaseWanted(enabled,requested,have) == ((enabled || requested) && !have));
     }
     assert(!leaseWanted(false,false,false)); // disabled startup does not request
+    for (unsigned bits = 0; bits < 32; ++bits) {
+        const bool enabled = bits&1, mainThread = bits&2, base = bits&4, lease = bits&8, reportable = bits&16;
+        const bool failure = lockFailureReportable(enabled,mainThread) && prerequisiteFailure(base,lease,reportable);
+        assert(failure == ((!enabled || mainThread) && !(base && lease) && reportable));
+    }
+    FailureDebounce failureDebounce;
+    for (double now : {10.0,11.0,12.0}) {
+        const bool failure = lockFailureReportable(true,false) && prerequisiteFailure(true,false,true);
+        assert(!failure && !failureDebounce.observe(failure,now)); // off-main first-person input cannot latch
+    }
+    assert(!failureDebounce.observe(lockFailureReportable(true,true) && prerequisiteFailure(true,false,true),13));
+    assert(failureDebounce.observe(lockFailureReportable(true,true) && prerequisiteFailure(true,false,true),14));
+    for (const auto name : {"HUD Menu","Cursor Menu","Fader Menu","Mist Menu"})
+        assert(!lockMenuInterrupt(name,true) && !lockMenuInterrupt(name,false));
+    for (const auto name : {"Dialogue Menu","Console","Loading Menu"})
+        assert(lockMenuInterrupt(name,true) && lockMenuInterrupt(name,false));
+    for (const auto name : {"InventoryMenu","Custom Menu","TDM_BossBar"})
+        assert(!lockMenuInterrupt(name,true) && !lockMenuInterrupt(name,false)); // main-thread focused() handles these
     static_assert(static_cast<unsigned>(State::targeting) == 6);
     static_assert(static_cast<unsigned>(State::obstruction) == 7);
     static_assert(static_cast<unsigned>(State::normal) == 8);
@@ -78,9 +96,6 @@ int main() {
     indicator.reset(); assert(!indicator.effect && !indicator.waiting(5.1) && !indicator.isNew(12));
     indicator.begin({10,11,12},6.0); // retarget/retry excludes previous sources
     assert(!indicator.isNew(12) && indicator.isNew(13));
-    const float savedAge = 123.5f;
-    const float savedLifetime = savedAge+LockIndicatorAttempt::duration;
-    assert(savedLifetime-savedAge == 2.0f); // save/load retains both audited fields
     LockRetargetWindow retarget;
     assert(retarget.awaiting(true,10.0));
     assert(retarget.awaiting(true,10.99));
@@ -100,7 +115,11 @@ int main() {
     LockInterrupt interrupt;
     unsigned releases = 0;
     auto release = [&] { ++releases; };
-    std::thread callback([&] { interrupt.request(); });
+    std::thread callback([&] {
+        // A listed blocking menu queues the barrier from the event thread.
+        if (lockMenuInterrupt("Console",true)) interrupt.request();
+        if (lockMenuInterrupt("Custom Menu",false)) interrupt.request(); // unlisted: no request
+    });
     callback.join();
     assert(!interrupt.releaseIfClear(release) && releases == 0);
     if (interrupt.consume()) input.activity(20);

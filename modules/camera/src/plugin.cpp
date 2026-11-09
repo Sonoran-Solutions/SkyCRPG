@@ -49,6 +49,8 @@ static_assert(offsetof(RE::ShaderReferenceEffect,effectID) == 0x28);
 static_assert(offsetof(RE::ShaderReferenceEffect,target) == 0x38);
 static_assert(offsetof(RE::ShaderReferenceEffect,finished) == 0x40);
 static_assert(offsetof(RE::ShaderReferenceEffect,effectData) == 0x108);
+static_assert(offsetof(RE::ProcessLists,magicEffects) == 0x108);
+static_assert(offsetof(RE::ProcessLists,magicEffectsLock) == 0x120);
 Settings settings;
 ObstructionSettings obstructionSettings;
 ObstructionPolicy obstructionPolicy;
@@ -430,15 +432,15 @@ void updateTargetLockMain(Context& c) {
     const auto decision = targetLockLease({targetLockEnabled,eligible,lockConfigSafe,indicatorReady(),
         movement != nullptr,movementLease,observedLock,lockInputIdle()});
     {
-        // One bounded line per change, so a refusal can never be silent.
+        // One bounded line per state change; idle input alone does not spend the budget.
         static std::uint32_t lastState = UINT32_MAX;
         const std::uint32_t state = (eligible?1u:0u)|(lockConfigSafe?2u:0u)|(indicatorReady()?4u:0u)|(observedLock?8u:0u)|
-            (observedLock.value_or(false)?16u:0u)|(movementLease?32u:0u)|(lockInputIdle()?64u:0u)|(static_cast<unsigned>(decision.action)<<8);
+            (observedLock.value_or(false)?16u:0u)|(movementLease?32u:0u)|(static_cast<unsigned>(decision.action)<<8);
         if (state != lastState && lockStateLogs < 256) {
             lastState = state; ++lockStateLogs;
             char line[192]{};
             std::snprintf(line,sizeof(line),"Target lock state eligible=%u config=%u indicator=%u observed=%u locked=%u lease=%u input_idle=%u action=%u",
-                state&1u,(state>>1)&1u,(state>>2)&1u,(state>>3)&1u,(state>>4)&1u,(state>>5)&1u,(state>>6)&1u,state>>8);
+                state&1u,(state>>1)&1u,(state>>2)&1u,(state>>3)&1u,(state>>4)&1u,(state>>5)&1u,static_cast<unsigned>(lockInputIdle()),state>>8);
             log(line);
         }
     }
@@ -551,7 +553,8 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
         c.targetLock = publishedTargetLock.load();
     }
     // An intentionally disabled SmoothCam (F8) is not a failure.
-    if (failure) *failure = prerequisiteFailure(baseReady,leaseReady,
+    // With lock enabled, off-main observations cannot diagnose lease failure.
+    if (failure) *failure = lockFailureReportable(targetLockEnabled,lockThread) && prerequisiteFailure(baseReady,leaseReady,
         !provider || providerEnabled || !ready || !compatibleSettings || !movementConfigSafe || !movement);
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto camera = RE::PlayerCamera::GetSingleton();
@@ -617,18 +620,10 @@ bool noActiveMenus() {
     return true;
 }
 bool lockBlockingMenu(const RE::MenuOpenCloseEvent* event) {
-    if (!event) return false;
-    const auto& name = event->menuName;
-    if (name == "HUD Menu" || name == "Cursor Menu" || name == "Fader Menu" || name == "Mist Menu") return false;
-    if (name == "Dialogue Menu" || name == "Console" || name == "Loading Menu") return true;
-    const auto ui = RE::UI::GetSingleton();
-    if (!ui) return true;
-    const auto menu = ui->GetMenu(name);
-    return menu && menu->menuFlags.any(RE::UI_MENU_FLAGS::kPausesGame,
-        RE::UI_MENU_FLAGS::kUsesCursor,RE::UI_MENU_FLAGS::kUsesMenuContext,RE::UI_MENU_FLAGS::kModal);
+    return event && lockMenuInterrupt(event->menuName.c_str(),event->opening);
 }
 void notifyLockRefusal(Context c) {
-    if (targetLockEnabled && !lockRefusalNotified && !lockConfigSafe &&
+    if (targetLockEnabled && ready && lockHooksReady && !lockRefusalNotified && (!lockConfigSafe || !indicatorReady()) &&
         c.world && !c.menu && !loading && noActiveMenus()) {
         RE::SendHUDMessage::ShowHUDMessage("SkyCRPG target lock unavailable: check the TDM overlay and Camera log");
         lockRefusalNotified = true;
@@ -868,8 +863,8 @@ public:
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
         // Queue before any context() can consider releasing the lease.
         if (targetLockEnabled) {
-            lockConfigRefresh.request();
             if (!lockBlockingMenu(event)) return RE::BSEventNotifyControl::kContinue;
+            lockConfigRefresh.request();
             interruptTargetLock();
         }
         bool hard = true;

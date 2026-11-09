@@ -4,6 +4,39 @@
 
 **Current result:** portable/offline checks **PASS**. The supplied candidate's Windows link is **FAIL** ([CI 41475236195](https://github.com/Sonoran-Solutions/SkyCRPG/actions/runs/41475236195), owner-supplied failure: BSKeyboardDevice/BSWin32KeyboardDevice/BSInputDevice symbols). The corrected Windows target is **NOT_RUN** here: no cmake/MSVC. Every in-game criterion and owner acceptance remains **NOT_RUN**. The earlier claim that the shader return ABI was validated was incorrect; the binary contradicts CommonLib's return declaration.
 
+## Pre-merge re-review fixes (2026-11-08)
+
+Base: `151a2c62e9b8d77c242f6a8f093cdc44fa6dbcbf`, branch `phase5/dyl-197-target-lock`. The owner sessions below ran `63e992e`; `151a2c6` has identical code. These fixes are **NOT_RUN** in game and do not extend that owner acceptance. Feature OFF paths are unchanged in source; no INI, external API, UI, packaging or transform-ownership change. SmoothCam remains the sole normal third-person transform writer.
+
+Verification job declared before execution: owner DYL-197 pre-merge worker; purpose regression-check all eight Camera portable tests, beginning with target-lock policy; command per test `g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I modules/camera/include modules/camera/tests/<name>.cpp -o /tmp/lock5-<name> && /tmp/lock5-<name>`, driven by `timeout --kill-after=5s 600s bash /tmp/lock5-tests.sh`; expected eight PASS lines and exit 0; deadline 10 minutes; completion process exit plus `/tmp/lock5-tests.log`; job PID recorded in `/tmp/lock5-tests.pid`. Timeout owns/cleans child compilers/tests; artifacts remain under `/tmp`. Native MSVC build and game launch are **NOT_RUN**.
+
+| Finding | Change | Verification |
+| --- | --- | --- |
+| 1: off-main false prerequisite failure | Gate failure reporting when lock is enabled on a main-thread observation; keep Phase 4 reporting when OFF. | **PASS** portable truth table, repeated off-main/first-person failure-debounce model and native source review. |
+| 2: passive-menu INI reads | Request refresh only after the event filter. Ignore HUD/Cursor/Fader/Mist on both edges; refresh on Dialogue/Console/Loading on either edge; other menus neither refresh nor interrupt from the event thread. | **PASS** portable menu-filter cases and source request/consume review. |
+| 3: event-thread menu lifetime race | Replace `UI::GetMenu`/flag reads in the event filter with name/opening-only policy. Every other menu is left to the main-thread `focused()`/`c.menu` path, whose eligibility drop releases the lease and requires fresh input (orchestrator narrowed the worker's close-interrupts variant, which would have ended a lock on any provider widget menu close). | **PASS** portable rapid-menu/threaded interruption, acknowledgement/idle/release-race cases and source ordering review. |
+| 4: misleading/missing refusal HUD | Require `ready && lockHooksReady`; report unsafe config or unavailable indicator. | **PASS** native source review; HUD behavior **NOT_RUN**. |
+| 5: idle-only state-log churn | Remove input-idle from change detection; retain its value in emitted diagnostic lines. Correct the absolute logging guarantee in the comment. | **PASS** diff review; 256-line cap retained. |
+| 6: process-list layout pins | Assert `magicEffects == 0x108` and `magicEffectsLock == 0x120`. | **PASS** source match to CommonLibSSE-NG 7.2.0 `ProcessLists.h`; supplied independent binary audit reused (1.7.104 `0x7888CB`/`0x7888F0`). Native assertion compilation **NOT_RUN**. |
+| 7: vacuous save/load test | Delete arithmetic-only assertion; no replacement save/load claim. | **PASS** diff review; actual save/load remains **NOT_RUN** for this patch. |
+
+Decision: use the menu filter instead of filesystem timestamps, keeping the fix small and retaining menu-close MCM refresh without new file state. Unknown menu closes conservatively interrupt; unknown openings rely on the existing main-thread focus path. No owner decision or dependency changed; no questions for the owner.
+
+Actual job result: **PASS**, 8/8, exit 0 (g++ Ubuntu 15.2.0-16ubuntu1); completed tool session `58739`, sandbox job PID `4`. No retry or timeout; the timeout-owned job and children exited. Per-test results from `/tmp/lock5-tests.log`:
+
+```text
+PASS target_lock_policy_test exit=0
+PASS lifecycle_policy_test exit=0
+PASS lock_frame_trace_test exit=0
+PASS obstruction_policy_test exit=0
+PASS obstruction_probe_test exit=0
+PASS policy_test exit=0
+PASS precision_policy_test exit=0
+PASS precision_trace_test exit=0
+```
+
+Source review **PASS**: lease ordering is unchanged. The diff preserves `targetLockLease`, interrupt consumption before eligibility/release, `c.menu` making the state ineligible, unlocked acknowledgement, idle-input barrier and mutex-protected `releaseIfClear`; portable tests cover the pending-interrupt race and the new unlisted rapid-menu close. Every changed native line was re-read for `/W4 /WX`: no new unused variables/parameters, signed/unsigned conversion or C4456/C4457/C4458 shadowing hazards found; the diagnostic `%u` argument is explicitly unsigned. CommonLib confirms the member names/offsets and non-null `BSFixedString::c_str()` contract. `git diff --check` **PASS**. This is source/portable evidence only: `plugin.cpp` compilation and all gameplay for these changes remain **NOT_RUN**. No commit, push, PR or game launch.
+
 ## Findings and implementation
 
 | Finding | Confirmation and change | Verification boundary |

@@ -15,6 +15,20 @@ namespace skycrpg::camera {
 constexpr bool phase4Prerequisites(bool baseReady, bool leaseReady, bool allowLeaseRequest, bool haveLease) {
     return baseReady && (leaseReady || (allowLeaseRequest && !haveLease));
 }
+constexpr bool lockFailureReportable(bool enabled, bool mainThread) {
+    return !enabled || mainThread;
+}
+constexpr bool lockMenuInterrupt(std::string_view name, bool opening) {
+    if (name == "HUD Menu" || name == "Cursor Menu" || name == "Fader Menu" || name == "Mist Menu") return false;
+    if (name == "Dialogue Menu" || name == "Console" || name == "Loading Menu") return true;
+    // Every other menu is judged by focused() on the main thread, whose
+    // eligibility drop releases the lease and demands fresh input. Reading
+    // UI::GetMenu here raced the main thread's release of the same menu, and
+    // interrupting on every unlisted close would end a lock for provider
+    // widget menus (TDM boss bars) that pause nothing.
+    static_cast<void>(opening);
+    return false;
+}
 // Callbacks only publish interrupts. The main-thread consumer resets freshness
 // and cleans up before release; the mutex closes the check/release race.
 class LockInterrupt {
