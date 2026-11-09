@@ -50,18 +50,12 @@ inline Bounds referenceBounds(Point position, Point angles, double scale, Point 
     b.available = finite(angles) && std::isfinite(scale) && scale > 0;
     return b;
 }
-// Hash-pinned base form types; portable so clutter rejection precedes the cap.
+// Native canPick's type rule; name/state checks still decide eligibility.
 constexpr bool interactiveType(std::uint32_t type, bool carryLight = false) {
     switch (type) {
-    case 0x18: case 0x19: // ACTI, TACT
-    case 0x1a: case 0x1b: case 0x1c: case 0x1d: case 0x1e: // items/container/door
-    case 0x20: case 0x21: // MISC, APPA
-    case 0x26: case 0x27: case 0x28: // TREE, FLOR, FURN
-    case 0x29: case 0x2a: case 0x2b: // WEAP, AMMO, NPC
-    case 0x2d: case 0x2e: case 0x30: case 0x34: // KEYM, ALCH, NOTE, SLGM
-        return true;
+    case 0x22: case 0x23: return false; // STAT, SCOL
     case 0x1f: return carryLight;
-    default: return false;
+    default: return true; // includes SCRL (0x17) and PROJ (0x32)
     }
 }
 // CAS returns the observed old word. Retry reader churn, never a writer; keep
@@ -241,7 +235,7 @@ public:
 private:
     std::atomic<std::uint32_t> pending_{0};
 };
-enum class Validation { valid, invalid, unknown };
+enum class Validation { valid, invalid, unknown, exhausted };
 struct LazyResult {
     std::vector<Candidate> accepted;
     std::vector<std::uint32_t> evaluated;
@@ -259,6 +253,9 @@ template<class Validate> LazyResult lazyValidate(std::span<const Candidate> cand
         result.evaluated.push_back(entry.id);
         const auto status = validateCandidate(*it);
         if (status == Validation::unknown) { result.unknown = true; break; }
+        if (status == Validation::exhausted) {
+            result.evaluated.pop_back(); result.exhausted = true; break;
+        }
         if (status == Validation::valid) result.accepted.push_back(*it);
     }
     return result;
