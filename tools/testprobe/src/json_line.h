@@ -83,6 +83,14 @@ public:
 	Object& Boolean(std::string_view key, bool value) { return Raw(key, value ? "true" : "false"); }
 	template <typename T> Object& Numeric(std::string_view key, T value) { return Raw(key, Number(value)); }
 	Object& Null(std::string_view key) { return Raw(key, "null"); }
+	// Appends another object's fields in order (view_sample header + body).
+	Object& Append(const Object& other)
+	{
+		if (other.fields_.empty()) return *this;
+		if (!fields_.empty()) fields_ += ',';
+		fields_ += other.fields_;
+		return *this;
+	}
 	std::string Json() const { return "{" + fields_ + "}"; }
 	const std::string& Fields() const { return fields_; }
 private:
