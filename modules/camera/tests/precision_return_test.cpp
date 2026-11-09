@@ -1,11 +1,17 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #include "precision_policy.h"
 #include "target_lock_policy.h"
+#include "cursor_policy.h"
 #include <cassert>
 #include <iostream>
 #include <thread>
 #include <semaphore>
 using namespace skycrpg::camera;
+
+// Policy-only setup; production uses the Main service and fresh engine reads.
+bool enterForTest(PrecisionReturn& intent, Context before, Context after, PrecisionReturn::Token token) {
+    return intent.requestEntry(before,token) && intent.enter(before,intent.snapshot(),[&] { return after; });
+}
 
 struct Route {
     Context c;
@@ -15,24 +21,41 @@ struct Route {
     FreshPress key;
     LockInterrupt interrupt;
     PrecisionReturn intent;
+    PrecisionCameraObservation cameraObservation;
+    cursor::Session cursorSession;
     unsigned returns = 0;
     std::uint32_t mountCount = 0;
     bool mounted = false;
     unsigned mountReads = 0;
     explicit Route(bool enabled = true) : lockEnabled(enabled) { c.enabled = c.prerequisites = c.world = true; }
-    void entry() {
+    void publishEntry(bool idleFrame = false) {
+        const auto sessionToken = intent.snapshot(); // production: before context/cursor exit
+        if (cursor::interruptKey(false,64,false) == cursor::Exit::f6) cursorSession.exit();
         assert(key.update(true,true));
         assert(toggleRequest(c,intent.owned()) == ToggleRequest::firstPerson);
         const auto before = c;
-        c.enabled = false; c.firstPerson = true;
-        interrupt.request(); // off-main: no provider calls, no later TP update
-        assert(intent.claim(before,c,intent.snapshot()));
+        if (idleFrame) service(); // all-state main callback overlaps the input's observation
+        assert(intent.requestEntry(before,sessionToken));
+        interrupt.request(); // off-main publishes only; no camera sample/claim
         assert(!key.update(false,false));
+    }
+    void serviceEntry() {
+        const auto sessionToken = intent.snapshot();
+        if (!PrecisionReturn::entryRequested(sessionToken)) return;
+        static_cast<void>(intent.enter(c,sessionToken,[&] {
+            c.enabled = false; c.firstPerson = true;
+            return c;
+        }));
+    }
+    void entry(bool idleFrame = false) {
+        publishEntry(idleFrame);
+        serviceEntry(); // Main's indivisible fresh-context/force/claim operation
+        assert(intent.owned());
     }
     void claim() {
         if (intent.owned()) return;
-        auto before = c; before.firstPerson = false;
-        assert(intent.claim(before,c,intent.snapshot()));
+        auto before = c; before.firstPerson = false; before.enabled = true;
+        assert(enterForTest(intent,before,c,intent.snapshot()));
     }
     void press(bool edge = true) {
         if (key.update(true,edge)) {
@@ -47,9 +70,13 @@ struct Route {
         }
     }
     void service(bool granted = true, bool menuLocks = true) {
-        if (!lockEnabled) return;
+        if (!lockEnabled) { serviceEntry(); return; }
         if (interrupt.consume() && !haveLease) haveLease = granted;
-        if (!c.world || !c.firstPerson) { intent.cancel(); return; }
+        const auto observationToken = intent.snapshot();
+        if (!c.world) { intent.invalidate(observationToken); return; }
+        if (cameraObservation.retire(c.firstPerson,observationToken)) { intent.invalidate(observationToken); return; }
+        serviceEntry();
+        if (!c.firstPerson) return;
         if (!PrecisionReturn::requested(intent.snapshot())) return;
         if (!menuLocks) return; // interrupt drain does not depend on menu lock
         bool observedMount = false;
@@ -64,15 +91,86 @@ struct Route {
         assert(decision.action != LockLeaseAction::release); // first person holds
         auto observed = c;
         observed.special = observed.special || observedMount;
-        observed.prerequisites = c.prerequisites && targetLockPrerequisites(haveLease,locked,true,true,true);
+        observed.prerequisites = c.prerequisites; // callback context separates lease readiness from ownership
         const auto sessionToken = intent.snapshot();
         intent.retain(observed,false,sessionToken);
         if (intent.take(observed,haveLease,locked,sessionToken)) {
             ++returns; intent.cancel(); c.firstPerson = false; c.enabled = true;
+            static_cast<void>(cameraObservation.retire(false,intent.snapshot()));
         }
     }
 };
 int main() {
+    // Candidate 3 deterministically lost entry if an idle camera callback ran
+    // between input's token/context capture and its synchronous FP claim.
+    {
+        Context third{}; third.enabled = third.prerequisites = third.world = true;
+        auto first = third; first.enabled = false; first.firstPerson = true;
+        PrecisionReturn legacy;
+        const auto captured = legacy.snapshot();
+        assert(legacy.invalidate(captured)); // former unconditional non-FP service
+        assert(!enterForTest(legacy,third,first,captured));
+        std::cout << "PASS candidate-3 reproduction: idle frame retires token and prevents entry claim\n";
+    }
+    for (const bool cursorActive : {true,false}) {
+        for (const bool released : {true,false}) {
+            Route r;
+            r.haveLease = !released;
+            r.cursorSession.active = cursorActive;
+            // The owned cursor overlay is not native menu focus; F6 exits it.
+            // No UI DLL or cursor service participates in precision ownership.
+            r.c.menu = false;
+            r.entry(true);
+            assert(!r.cursorSession.active);
+            r.service(); // observes FP with no return yet
+            r.haveLease = false; // also cover loss/release before the return press
+            r.press(); r.service(false);
+            assert(r.intent.owned() && r.returns == 0);
+            r.locked = true; r.service();
+            assert(r.haveLease && r.intent.owned() && r.returns == 0);
+            r.locked = false; r.service();
+            assert(r.returns == 1 && !r.intent.owned());
+            r.key.update(false,false);
+            r.entry(true); // a new deliberate entry may overlap the first idle frame after return
+            assert(r.intent.owned());
+            r.service(); assert(r.returns == 1);
+        }
+        std::cout << "PASS idle-frame overlap: " << (cursorActive ? "camera-only lock+fixed+cursor, cursor exits at F6" :
+            "combined all-on, no cursor") << "; released lease reacquired, unlock acknowledged\n";
+    }
+    // Preserve the prior stale-producer protection on an actual departure,
+    // including an unowned first-person interval and a newer ownership claim.
+    {
+        PrecisionReturn intent;
+        PrecisionCameraObservation observation;
+        const auto before = intent.snapshot();
+        assert(!observation.retire(false,before));
+        assert(!observation.retire(true,before));
+        assert(observation.retire(false,before));
+        assert(intent.invalidate(before));
+        Context third{}; third.enabled = third.prerequisites = third.world = true;
+        auto first = third; first.firstPerson = true;
+        assert(!enterForTest(intent,third,first,before));
+        assert(!observation.retire(false,intent.snapshot()));
+        assert(enterForTest(intent,third,first,intent.snapshot()));
+        assert(observation.retire(false,intent.snapshot())); // owned departure even before first FP sample
+        intent.invalidate(intent.snapshot());
+        assert(!intent.owned());
+        std::cout << "PASS actual departure: unowned epoch retired; owned/pending departure still cancels\n";
+    }
+    {
+        PrecisionDiagnostics diagnostics;
+        Context c{}; c.world = c.firstPerson = true;
+        std::thread input([&] { for (unsigned i = 0; i < 100; ++i) diagnostics.note(PrecisionReason::inputUnowned,c); });
+        input.join();
+        unsigned emitted = 0;
+        diagnostics.drain([&](unsigned reason, std::uint32_t sample) {
+            assert(reason == static_cast<unsigned>(PrecisionReason::inputUnowned) && sample == 13u); ++emitted;
+        });
+        diagnostics.note(PrecisionReason::inputUnowned,c);
+        assert(emitted == 1 && !diagnostics.requested());
+        std::cout << "PASS diagnostics: one preallocated sample per reason, deferred drain\n";
+    }
     // Engine-compatible reader accounting, including conservative rejection
     // of writer recursion, reserved flags and count saturation.
     for (const std::uint32_t initial : {0u,2u,0x0ffffffeu,0x0fffffffu,0x10000000u,0x80000001u}) {
@@ -112,14 +210,16 @@ int main() {
     }
     std::cout << "PASS mount contention: intent unchanged, no presence read; released lock evaluates mounted/unmounted\n";
     std::cout << "PASS mount read lock: shared readers, writer/reserved flags, saturation and balanced release\n";
-    // Configuration model: only the target-lock flag controls deferral. Native
+    // Configuration model: every entry uses Main; lock-on returns also defer. Native
     // hook wiring/feature independence is also inspected in plugin.cpp.
     struct Profile { const char* name; bool lock; };
     for (const auto profile : {Profile{"lock-only",true}, Profile{"all-on",true},
         Profile{"fixed-only",false}, Profile{"cursor-only",false}}) {
         for (const bool beforeService : {false,true}) {
             Route r(profile.lock);
-            std::thread entry([&] { r.entry(); }); entry.join();
+            std::thread entry([&] { r.publishEntry(); }); entry.join();
+            assert(!r.intent.owned() && !r.c.firstPerson);
+            r.serviceEntry();
             assert(!r.haveLease && r.intent.owned());
             if (!beforeService) r.service();
             assert(r.intent.owned() && r.returns == 0);
@@ -187,19 +287,20 @@ int main() {
         r.service(); assert(r.returns == 0);
         r.c.firstPerson = true; r.claim(); r.service(); assert(r.returns == 0);
     }
-    // Unknown lock observation fails closed and cancels invalid ownership.
+    // Unknown lock observation fails closed without erasing an otherwise valid
+    // intent; the actual return reader does not fold acknowledgement into context.
     {
         Route r; r.entry(); r.press(); r.locked.reset(); r.service();
-        assert(!r.intent.owned() && r.returns == 0);
-        r.locked = false; r.claim(); r.service(); assert(r.returns == 0);
+        assert(r.intent.owned() && r.returns == 0);
+        r.locked = false; r.service(); assert(r.returns == 1);
     }
     Context fp{}; fp.prerequisites = fp.world = fp.firstPerson = true;
-    auto tp = fp; tp.firstPerson = false;
+    auto tp = fp; tp.firstPerson = false; tp.enabled = true;
     // Review reproduction 1: the producer samples valid ownership/context while
     // a return is pending, then resumes only AFTER that return was consumed.
     {
         PrecisionReturn intent;
-        assert(intent.claim(tp,fp,intent.snapshot()));
+        assert(enterForTest(intent,tp,fp,intent.snapshot()));
         std::binary_semaphore sampled{0}, resume{0};
         bool accepted = true;
         std::thread input([&] {
@@ -214,7 +315,7 @@ int main() {
         resume.release(); input.join();
         assert(!accepted && !intent.owned());
         intent.cancel(); // unconditional third-person departure service
-        assert(intent.claim(tp,fp,intent.snapshot()));
+        assert(enterForTest(intent,tp,fp,intent.snapshot()));
         assert(!intent.take(fp,true,false,intent.snapshot()));
         std::cout << "PASS former race reproduction: stale producer rejected after take; no later-session replay\n";
     }
@@ -227,12 +328,12 @@ int main() {
             const auto oldSession = intent.snapshot();
             const bool valid = claimPrecisionOwnership(tp,fp);
             checked.release(); assign.acquire();
-            claimed = valid && intent.claim(tp,fp,oldSession);
+            claimed = valid && enterForTest(intent,tp,fp,oldSession);
         });
         checked.acquire(); intent.cancel();
         assign.release(); entry.join();
         assert(!claimed && !intent.owned());
-        std::cout << "PASS former race reproduction: claim CAS rejects completed cancellation\n";
+        std::cout << "PASS former race reproduction: stale entry publication rejects completed cancellation\n";
     }
     // A retention observer that saw false cannot erase a legitimate later claim.
     {
@@ -244,10 +345,10 @@ int main() {
             sampled.release(); resume.acquire();
             intent.retain(fp,false,oldSession);
         });
-        sampled.acquire(); assert(intent.claim(tp,fp,intent.snapshot()));
+        sampled.acquire(); assert(enterForTest(intent,tp,fp,intent.snapshot()));
         resume.release(); observer.join(); assert(intent.owned());
         const auto oldOwned = intent.snapshot();
-        intent.cancel(); assert(intent.claim(tp,fp,intent.snapshot()));
+        intent.cancel(); assert(enterForTest(intent,tp,fp,intent.snapshot()));
         intent.retain(Context{},true,oldOwned); // stale true observation cannot revoke new session
         assert(intent.owned());
         std::cout << "PASS claim/retention overlap: stale false and stale true observers preserve newer claim\n";
@@ -257,7 +358,7 @@ int main() {
     // pending-bit clear erasing it. Full cancellation revokes ownership too.
     {
         PrecisionReturn intent;
-        assert(intent.claim(tp,fp,intent.snapshot()));
+        assert(enterForTest(intent,tp,fp,intent.snapshot()));
         const auto before = intent.snapshot();
         assert(intent.request(fp,before));
         intent.cancel(false);
@@ -267,7 +368,7 @@ int main() {
         assert(intent.request(fp,after));
         assert(intent.take(fp,true,false,intent.snapshot()));
         assert(!intent.request(fp,before));
-        assert(intent.claim(tp,fp,intent.snapshot()));
+        assert(enterForTest(intent,tp,fp,intent.snapshot()));
         const auto claim = intent.snapshot();
         intent.cancel();
         assert(!intent.owned() && !intent.request(fp,claim));
@@ -278,7 +379,7 @@ int main() {
     // bounded invalidation must retire the newly pending bit in that same epoch.
     {
         PrecisionReturn intent;
-        assert(intent.claim(tp,fp,intent.snapshot()));
+        assert(enterForTest(intent,tp,fp,intent.snapshot()));
         const auto departure = intent.snapshot();
         std::binary_semaphore sampled{0}, queued{0};
         std::thread input([&] {
@@ -290,7 +391,7 @@ int main() {
         assert(intent.invalidate(departure));
         input.join();
         assert(!intent.owned() && !PrecisionReturn::requested(intent.snapshot()));
-        assert(intent.claim(tp,fp,intent.snapshot()));
+        assert(enterForTest(intent,tp,fp,intent.snapshot()));
         assert(!intent.take(fp,true,false,intent.snapshot()));
         assert(!intent.invalidate(departure)); // must not revoke a newer claim
         assert(intent.owned());
@@ -298,8 +399,8 @@ int main() {
     }
     // Exercise the terminal boundary directly, not billions of cancellations.
     {
-        PrecisionReturn intent{PrecisionReturn::epochLimit-8};
-        assert(intent.claim(tp,fp,intent.snapshot()));
+        PrecisionReturn intent{PrecisionReturn::epochLimit-12};
+        assert(enterForTest(intent,tp,fp,intent.snapshot()));
         const auto oldSession = intent.snapshot();
         assert(intent.request(fp,oldSession));
         assert(intent.take(fp,true,false,intent.snapshot()));
@@ -307,7 +408,7 @@ int main() {
         for (unsigned i = 0; i < 4; ++i) {
             intent.cancel(); intent.cancel(false);
             assert(intent.snapshot() == PrecisionReturn::epochLimit);
-            assert(!intent.claim(tp,fp,intent.snapshot()));
+            assert(!enterForTest(intent,tp,fp,intent.snapshot()));
             assert(!intent.request(fp,oldSession));
             assert(!intent.take(fp,true,false,intent.snapshot()));
         }
