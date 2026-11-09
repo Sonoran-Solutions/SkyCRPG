@@ -646,6 +646,7 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     return c;
 }
 #include "cursor_mode.h"
+void servicePrecisionEntry();
 
 // SKSE's task drain is outside camera/input callbacks. A process-lifetime
 // timer only bridges dirty flags into that existing drain; callbacks never
@@ -658,6 +659,9 @@ void serviceDeferredCameraWork() {
             publishedLockMovementConfigSafe.store(movementConfigSafe);
         }
         publishedReturnChainReady.store(providerChainReady());
+        // Lock-off profiles have no all-state lock hook; use this existing
+        // Main task for entry without changing the provider hook chain.
+        if (!targetLockEnabled) servicePrecisionEntry();
         if (deferredIndicatorStop.load()) stopIndicator();
         if (const auto snapshot = preferencesToSave.exchange(0)) savePreferences(snapshot);
         precisionDiagnostics.drain([](unsigned reason, std::uint32_t sample) {
@@ -675,7 +679,8 @@ void serviceDeferredCameraWork() {
 }
 void CALLBACK queueDeferredCameraWork(PVOID, BOOLEAN) {
     if (!preferencesToSave.load() && !lockConfigRefresh.requested() && !deferredIndicatorStop.load() &&
-        !precisionDiagnostics.requested()) return;
+        !precisionDiagnostics.requested() &&
+        (targetLockEnabled || !PrecisionReturn::entryRequested(precisionReturn.snapshot()))) return;
     if (deferredCameraQueued.exchange(true)) return;
     deferredCameraTasks->AddTask(serviceDeferredCameraWork);
 }
@@ -719,6 +724,45 @@ Context returnContext(bool& hardSpecial, bool mounted) {
     c.menu = cursorMode::callbackMenu(false);
     return c;
 }
+void servicePrecisionEntry() {
+    if (!ready || !cursorMode::mainThread()) return;
+    const auto sessionToken = precisionReturn.snapshot();
+    if (!PrecisionReturn::entryRequested(sessionToken)) return;
+    if (lockConfigRefresh.requested()) { precisionDiagnostics.note(PrecisionReason::refreshPending); return; }
+    // Two bounded reads, with no UI/mount lock held across the native setter.
+    // All context and camera observations used to claim belong to this Main call.
+    const auto readEntry = []() -> std::optional<Context> {
+        const cursorMode::UITryLock menuLock;
+        if (!menuLock) { precisionDiagnostics.note(PrecisionReason::menuBusy); return std::nullopt; }
+        const auto player = RE::PlayerCharacter::GetSingleton();
+        if (!player) return Context{};
+        const auto mounted = callbackMount(*player);
+        if (!mounted) { precisionDiagnostics.note(PrecisionReason::mountBusy); return std::nullopt; }
+        bool hard = true;
+        auto c = returnContext(hard,*mounted);
+        if (!targetLockEnabled) {
+            c.prerequisites = compatibleSettings && ready && publishedLockMovementConfigSafe.load() &&
+                publishedReturnChainReady.load() && movement && provider && provider->IsCameraEnabled() &&
+                provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && movementLease &&
+                !movement->GetTargetLockState();
+        }
+        return c;
+    };
+    const auto before = readEntry();
+    if (!before) return; // contention before consumption preserves the intent
+    Context after;
+    const bool claimed = precisionReturn.enter(*before,sessionToken,[&] {
+        settings.enabled = false; suspend();
+        static_cast<void>(RE::PlayerCamera::GetSingleton()->ForceFirstPerson());
+        // A refused transition or unavailable fresh context cannot own FP.
+        after = readEntry().value_or(Context{});
+        requestPreferences();
+        return after;
+    });
+    precisionDiagnostics.note(claimed ? PrecisionReason::entryClaimed :
+        claimPrecisionOwnership(*before,after) ? PrecisionReason::entryToken : PrecisionReason::entryContext,
+        after,sessionToken,!claimed && precisionReturn.snapshot() != sessionToken,true);
+}
 void serviceFirstPersonReturn() {
     if (!ready || !lockHooksReady) return;
     if (!cursorMode::mainThread()) { precisionDiagnostics.note(PrecisionReason::serviceOther); return; }
@@ -748,11 +792,12 @@ void serviceFirstPersonReturn() {
     }
     const bool firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
     if (precisionCameraObservation.retire(firstPerson,sessionToken)) {
-        // Actual departure retires even an unowned session, but idle third
-        // person must not invalidate a concurrently sampled F6 entry token.
+        // Only same-epoch FP history can retire an unowned session. A
+        // cancelled observation cannot invalidate a fresh entry intent.
         static_cast<void>(precisionReturn.invalidate(sessionToken));
         return;
     }
+    servicePrecisionEntry();
     if (!firstPerson || !PrecisionReturn::requested(sessionToken)) return;
     precisionDiagnostics.note(PrecisionReason::servicePending,{},sessionToken);
     if (lockConfigRefresh.requested()) { precisionDiagnostics.note(PrecisionReason::refreshPending); return; }
@@ -1168,7 +1213,9 @@ public:
         // Deliberate F6 can return from its OWN first-person request; native POV never auto-restores.
         const bool lifecycleSafe = c.prerequisites && c.world && !c.special && !c.menu;
         const bool safe = lifecycleSafe && !c.slide;
-        if (!safe || (c.firstPerson && !precisionReturn.owned())) static_cast<void>(precisionReturn.invalidate(returnSession,false));
+        // Safe unowned FP may be Main's in-flight entry. Only Main validates
+        // that transition; an input observation must not cancel its claim.
+        if (!safe) static_cast<void>(precisionReturn.invalidate(returnSession,false));
         if (!lifecycleSafe) suspend();
         for (auto event = *events; event; event = event->next) {
             auto button = event->AsButtonEvent();
@@ -1233,19 +1280,9 @@ public:
                     enableIntent.request(request);
                     tracePrecision(PrecisionTraceEvent::toggleDecision,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,true,true,static_cast<unsigned>(request));
                     if (request == ToggleRequest::firstPerson) {
-                        settings.enabled = false; interruptTargetLock(); suspend();
-                        static_cast<void>(camera->ForceFirstPerson());
-                        // Do not claim a late or unrelated first-person transition.
-                        bool afterHard = true;
-                        const auto after = context(&afterHard);
-                        const bool claimed = precisionReturn.claim(c,after,returnSession);
-                        if (targetLockEnabled) precisionDiagnostics.note(claimed ? PrecisionReason::entryClaimed :
-                            claimPrecisionOwnership(c,after) ? PrecisionReason::entryToken : PrecisionReason::entryContext,
-                            after,returnSession,!claimed && precisionReturn.snapshot() != returnSession,lockThread);
-                        if (precisionTraceEnabled) {
-                            tracePrecision(PrecisionTraceEvent::toggleClaim,before,traceState(after,afterHard,keyIndex),pad?2u:1u,true,true);
-                        }
-                        requestPreferences();
+                        // Publish only an epoch-bound intent, even on Main.
+                        // The service alone samples/forces/claims the FP interval.
+                        if (precisionReturn.requestEntry(c,returnSession)) lockInterrupt.request();
                     } else if (request == ToggleRequest::enableOnly) {
                         if (targetLockEnabled && !lockThread) {
                             if (!publishedMovementLease.load()) { interruptTargetLock(); continue; }

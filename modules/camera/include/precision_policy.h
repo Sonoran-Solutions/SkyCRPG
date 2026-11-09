@@ -47,7 +47,7 @@ private:
     std::atomic_ref<std::uint32_t> count;
     bool acquired = false;
 };
-// Ownership, intent and epoch share one CAS word. Capture it BEFORE reading
+// Ownership, entry/return intent and epoch share one CAS word. Capture it BEFORE reading
 // context; a claim, cancellation or consumption invalidates that observation.
 // Saturation permanently closes the session instead of wrapping into an ABA.
 class PrecisionReturn {
@@ -58,12 +58,34 @@ public:
     Token snapshot() const { return state.load(); }
     static bool owned(Token token) { return (token & ownership) != 0; }
     bool owned() const { return owned(snapshot()); }
-    static bool requested(Token token) { return (token & pending) != 0; }
-    bool claim(Context before, Context after, Token token) {
-        if (owned(token) || requested(token) || exhausted(token) || !claimPrecisionOwnership(before,after)) return false;
-        const auto next = retired(token,true);
-        const auto claimed = exhausted(next) ? next : next | ownership;
-        return state.compare_exchange_strong(token,claimed) && !exhausted(next);
+    static bool requested(Token token) { return (token & pending) != 0 && owned(token); }
+    static bool entryRequested(Token token) { return (token & pending) != 0 && !owned(token); }
+    bool requestEntry(Context c, Token token) {
+        if (exhausted(token) || owned(token) || entryRequested(token) ||
+            toggleRequest(c,false) != ToggleRequest::firstPerson) return false;
+        return state.compare_exchange_strong(token,token | pending);
+    }
+    // Main only: fresh validation, synchronous native transition and claim are
+    // one service operation. Input never carries an after-context or claims.
+    template<class Transition> bool enter(Context before, Token token, Transition transition) {
+        if (!entryRequested(token)) return false;
+        if (toggleRequest(before,false) != ToggleRequest::firstPerson) {
+            static_cast<void>(invalidate(token));
+            return false;
+        }
+        const auto nextEpoch = retired(token,true);
+        // Keep the pending bit during the synchronous transition so another
+        // input producer cannot enqueue into the in-flight entry's epoch.
+        const auto active = exhausted(nextEpoch) ? nextEpoch : nextEpoch | pending;
+        if (!state.compare_exchange_strong(token,active) || exhausted(active)) return false;
+        const auto after = transition();
+        auto expected = active;
+        const auto next = retired(active,true);
+        if (!claimPrecisionOwnership(before,after) || exhausted(next)) {
+            static_cast<void>(invalidate(active));
+            return false;
+        }
+        return state.compare_exchange_strong(expected,next | ownership);
     }
     bool request(Context c, Token token) {
         if (exhausted(token) || requested(token) || !c.firstPerson ||
@@ -107,16 +129,19 @@ private:
     }
     std::atomic<Token> state;
 };
-// Main-thread camera observations distinguish a departure from repeated idle
-// third-person frames. The latter must not retire an input's pre-context token.
+// Main-thread departure observations belong to one epoch. Cancellation or a
+// completed entry/return discards the previous epoch's unowned FP history.
 class PrecisionCameraObservation {
 public:
     bool retire(bool firstPerson, PrecisionReturn::Token token) {
-        const bool departure = wasFirstPerson && !firstPerson;
+        const auto epoch = token & PrecisionReturn::epochLimit;
+        const bool departure = epoch == observedEpoch && wasFirstPerson && !firstPerson;
+        observedEpoch = epoch;
         wasFirstPerson = firstPerson;
         return !firstPerson && (departure || PrecisionReturn::owned(token) || PrecisionReturn::requested(token));
     }
 private:
+    PrecisionReturn::Token observedEpoch = 0;
     bool wasFirstPerson = false;
 };
 // First occurrence per reason, preallocated and lock-free. Producers publish
