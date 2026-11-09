@@ -87,9 +87,9 @@ class ScopeTests(unittest.TestCase):
         self.assertIn("-DSKYCRPG_BUILD_SELECTION=ON", workflow)
         self.assertIn("-DSKYCRPG_BUILD_SELECTION=OFF", workflow)
         self.assertIn("name: skycrpg-selection-${{ env.SOURCE_SHA }}", workflow)
-        self.assertIn("Copy-Item modules/selection/config/SkyCRPG_Selection.ini", workflow)
         selection_job = workflow.split("  selection:\n", 1)[1].split("  selection-portable:\n", 1)[0]
-        self.assertNotIn("python tools/package.py", selection_job)
+        self.assertIn("python tools/package.py native --build-dir build/windows-x64-release --commit $env:SOURCE_SHA --module selection", selection_job)
+        self.assertIn("path: dist/", selection_job)
         self.assertIn("-DSKYCRPG_BUILD_CAMERA=OFF -DSKYCRPG_BUILD_UI=OFF", selection_job)
         self.assertIn("-DSKYCRPG_BUILD_TEST_PROBE=OFF", selection_job)
         for trigger in ("tools/ci_scope.py", "tools/tests/test_ci_scope.py", "tools/tests/test_package*.py",

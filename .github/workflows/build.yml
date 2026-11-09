@@ -191,7 +191,7 @@ jobs:
             echo "$name PASS"
           done
 
-  # Independent internal candidate; package.py has no Selection schema yet.
+  # Independent internal candidate with the same native package schema.
   # Owner: DYL-198; purpose: MSVC /W4 /WX build + checksummed DLL/INI/notices.
   # Completion: exit 0 and artifact upload; deadline/cleanup: 30 minutes, runner disposal.
   selection:
@@ -231,20 +231,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build --preset windows-x64-release --target SkyCRPG_Selection --parallel 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          New-Item -ItemType Directory -Force selection-artifact | Out-Null
-          Copy-Item build/windows-x64-release/modules/selection/Release/SkyCRPG_Selection.dll selection-artifact/
-          Copy-Item modules/selection/config/SkyCRPG_Selection.ini selection-artifact/
-          Copy-Item LICENSE selection-artifact/
-          Copy-Item LICENSES/CommonLibSSE-NG-COPYING, LICENSES/CommonLibSSE-NG-EXCEPTIONS.md, LICENSES/CommonLibSSE-legacy-MIT selection-artifact/
-          [IO.File]::WriteAllText("$pwd/selection-artifact/SOURCE_COMMIT", "$env:SOURCE_SHA`n", [Text.UTF8Encoding]::new($false))
-          $sums = Get-ChildItem selection-artifact -File | Sort-Object Name | ForEach-Object {
-            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
-          }
-          [IO.File]::WriteAllText("$pwd/selection-artifact/SHA256SUMS", ($sums -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+          python tools/package.py native --build-dir build/windows-x64-release --commit $env:SOURCE_SHA --module selection
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v5
         with:
           name: skycrpg-selection-${{ env.SOURCE_SHA }}
-          path: selection-artifact/
+          path: dist/
           if-no-files-found: error
 
   # Owner: DYL-198; purpose: portable rank/latch/passthrough/input regression.

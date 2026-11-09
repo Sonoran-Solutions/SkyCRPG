@@ -29,7 +29,43 @@ VCPKG_TRIPLET = "x64-windows-static"
 PACKAGES = {
     "SkyCRPG_Camera": "modules/camera",
     "SkyCRPG_UI": "modules/ui",
+    "SkyCRPG_Selection": "modules/selection",
 }
+
+OVERLAY_ROOT = "Docs/SkyCRPG_Camera/overlays/target-lock/"
+OVERLAY_FRAGMENT = OVERLAY_ROOT + "MCM/Config/TrueDirectionalMovement/settings.ini"
+OVERLAY_README = OVERLAY_ROOT + "README.md"
+OVERLAY_INSTRUCTIONS = b"""# Optional target-lock overlay
+
+This is a merge fragment, not a complete TDM configuration. With the game
+closed, back up your TDM settings and merge the listed values into
+Data/MCM/Config/TrueDirectionalMovement/settings.ini. Preserve all other keys.
+Also reconcile conflicting MCM/Settings/TrueDirectionalMovement.ini overrides:
+those take precedence. Never replace either complete settings file with this
+fragment. Alternatively, create a separate MO2 mod containing a complete,
+merged MCM/Config/TrueDirectionalMovement/settings.ini based on your own
+configuration; place it after TDM and Camera. Do not install this fragment as
+an entire settings file. Disable the separate mod or restore your backed-up
+values to remove the overlay; reconcile any edits made since the backup.
+
+The 19 guarded values are: uTargetLockMode=1 (relaxed mode);
+fTargetLockYawAdjustSpeed=0 and fTargetLockPitchAdjustSpeed=0 (orientation
+preservation hypothesis); bResetCameraWithTargetLock=0 and bResetCameraPitch=0
+(no reset); bTargetLockEnableLockBehindTarget=0 (no behind-target lock);
+uTargetLockArrowAimType=1 and uTargetLockMissileAimType=1 (prediction);
+bTargetLockUsePOVSwitchGamepad=1 and fTargetLockPOVHoldDuration=0.4 (owner
+decision D027: short R3 press locks, a 0.4 s hold is native POV); bTargetLockUseMouse=0,
+bTargetLockUseScrollWheel=0 and bTargetLockUseRightThumbstick=0 (avoid
+competing switching inputs); bTargetLockUsePOVSwitchKeyboard=0 (no keyboard
+POV lock); bEnableTargetLockReticle=0 (Camera indicator); uTargetLockKey=22
+(U, owner-approved default, 2026-11-08); uSwitchTargetLeftKey=-1,
+uSwitchTargetRightKey=-1 and uTargetLockBehindTargetKey=-1 (unbound).
+The R3 hold (D027) and U (2026-11-08) are owner-approved defaults; the
+combined-device conflict check is still NOT_RUN (Phase 5 gate R5). A held
+lease can swallow a short R3 press. Remove the overlay when disabling lock to restore
+feature-off settings. Camera emits one HUD notice per session if
+[TargetLock] bEnabled=1 and the required settings are absent or invalid.
+"""
 
 FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 
@@ -84,7 +120,7 @@ def package_files(name: str, module_dir: str, build_dir: Path) -> dict[str, Path
         notice = build_dir / "vcpkg_installed" / triplets[0].strip() / "share" / port / "copyright"
         require(notice.is_file(), f"missing vcpkg copyright notice for {port}: {notice}")
         notices[f"Docs/{name}/third-party/{port}-copyright"] = notice
-    return {
+    files = {
         f"SKSE/Plugins/{name}.dll": dll,
         f"SKSE/Plugins/{name}.ini": ROOT / module_dir / "config" / f"{name}.ini",
         f"Docs/{name}/CommonLibSSE-NG-COPYING": ROOT / "LICENSES/CommonLibSSE-NG-COPYING",
@@ -93,6 +129,9 @@ def package_files(name: str, module_dir: str, build_dir: Path) -> dict[str, Path
         f"Docs/{name}/build-inputs.md": ROOT / "cmake/README.md",
         **notices,
     }
+    if name == "SkyCRPG_Camera":
+        files[OVERLAY_FRAGMENT] = ROOT / "modules/camera/config/TrueDirectionalMovement-target-lock.fragment.ini"
+    return files
 
 
 def write_zip(path: Path, files: dict[str, bytes]) -> None:
@@ -172,15 +211,18 @@ def hashes(files):
 
 
 def native_paths(name):
-    return {f"SKSE/Plugins/{name}.dll", f"SKSE/Plugins/{name}.ini",
+    paths = {f"SKSE/Plugins/{name}.dll", f"SKSE/Plugins/{name}.ini",
             *[f"Docs/{name}/{p}" for p in ("CommonLibSSE-NG-COPYING", "CommonLibSSE-legacy-MIT", "CommonLibSSE-NG-EXCEPTIONS.md", "build-inputs.md")],
             *[f"Docs/{name}/third-party/{port}-copyright" for port in VCPKG_PORTS]}
+    if name == "SkyCRPG_Camera":
+        paths |= {OVERLAY_FRAGMENT, OVERLAY_README}
+    return paths
 
 
 def expected_paths(name, full=False):
     paths = native_paths(name)
     if full:
-        paths |= ({f"Interface/{p}" for p in SWF_PATHS} if name == "SkyCRPG_UI" else set(CAMERA_CONFIGS))
+        paths |= ({f"Interface/{p}" for p in SWF_PATHS} if name == "SkyCRPG_UI" else set(CAMERA_CONFIGS) if name == "SkyCRPG_Camera" else set())
         paths |= {f"Docs/{name}/{p}" for p in ("LICENSE", "LICENSING.md", "THIRD_PARTY.md")}
     return paths
 
@@ -405,7 +447,7 @@ def emit(out, name, commit, files, metadata, dry_run=False):
                 "runtime": RUNTIME, "requires": COMMON_REQUIREMENTS +
                 (CAMERA_REQUIREMENTS if name == "SkyCRPG_Camera" else []),
                 # Minimap providers are optional: without them the compass stays.
-                "optional": [] if name == "SkyCRPG_Camera" else UI_OPTIONAL,
+                "optional": UI_OPTIONAL if name == "SkyCRPG_UI" else [],
                 "requires_skycrpg_modules": [], "distribution": "internal-candidate",
                 "candidate_eligible": not dry_run, **metadata}
     manifest_path = out / f"{name}.manifest.json"
@@ -418,7 +460,7 @@ def emit(out, name, commit, files, metadata, dry_run=False):
 
 def assemble(args):
     commit = commit_sha(args.commit)
-    name = "SkyCRPG_Camera" if args.module == "camera" else "SkyCRPG_UI"
+    name = {"camera": "SkyCRPG_Camera", "ui": "SkyCRPG_UI", "selection": "SkyCRPG_Selection"}[args.module]
     mismatches = []
     files, native = read_native(args.native_zip, args.native_manifest, name, commit, mismatches, args.allow_mismatch_for_dry_run)
     inventory, provider_hash, locations = provider_inventory(args.providers)
@@ -427,7 +469,7 @@ def assemble(args):
         require(args.swf_dir is not None and args.swf_owner is not None, "UI requires --swf-dir and --swf-owner")
         swfs, proof = swf_files(args.swf_dir, commit, args.swf_owner, mismatches, args.allow_mismatch_for_dry_run)
         files.update(swfs)
-    else:
+    elif args.module == "camera":
         for destination, source in CAMERA_CONFIGS.items():
             data = git_bytes(commit, f"modules/camera/config/{source}")
             if destination.startswith("MCM/"):
@@ -477,11 +519,20 @@ def native(args):
     for name, module_dir in PACKAGES.items():
         if args.module and module_dir != f"modules/{args.module}":
             continue
+        if not args.module and name == "SkyCRPG_Selection" and not any(
+                args.build_dir.glob(f"{module_dir}/**/{name}.dll")):
+            print("Selection skipped: SkyCRPG_Selection.dll not found in build directory")
+            continue
         files = {arc: path.read_bytes() for arc, path in package_files(name, module_dir, args.build_dir).items()}
         # Use committed inputs, not potentially dirty configuration/notices.
         for arc, path in package_files(name, module_dir, args.build_dir).items():
             if path.is_relative_to(ROOT) and not arc.endswith(".dll") and "/third-party/" not in arc:
                 files[arc] = git_bytes(commit, path.relative_to(ROOT).as_posix())
+        if name == "SkyCRPG_Camera":
+            # Strip historical packaging-status comments, retaining the exact settings.
+            files[OVERLAY_FRAGMENT] = b"\n".join(line for line in files[OVERLAY_FRAGMENT].splitlines()
+                if b"deliberately does not package" not in line and b"Player distribution is an owner decision" not in line) + b"\n"
+            files[OVERLAY_README] = OVERLAY_INSTRUCTIONS
         require(dll_has_commit(files[f"SKSE/Plugins/{name}.dll"], commit), "DLL source commit differs from --commit")
         packages[name] = files
         check_independence(packages)
@@ -498,7 +549,7 @@ def main():
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--out", type=Path, default=ROOT / "dist")
     parser.add_argument("--commit", required=True)
-    parser.add_argument("--module", choices=("camera", "ui"))
+    parser.add_argument("--module", choices=("camera", "ui", "selection"))
     parser.add_argument("--native-zip", type=Path)
     parser.add_argument("--native-manifest", type=Path)
     parser.add_argument("--providers", type=Path, help="Pinned extracted provider archives (read-only)")
