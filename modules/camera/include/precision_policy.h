@@ -1,6 +1,8 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #pragma once
 #include "policy.h"
+#include <atomic>
+#include <optional>
 
 namespace skycrpg::camera {
 // All drawn weapons and spells, including crossbows and concentration spells,
@@ -24,4 +26,28 @@ constexpr bool retainPrecisionOwnership(Context c, bool owned, bool hardSpecial)
     return owned && c.prerequisites && c.world &&
         (c.menu || (c.firstPerson && !hardSpecial && !c.special) || (c.tween && !hardSpecial));
 }
+// One validated input intent, never a queued engine object or callback. Epochs
+// prevent an input already in flight from undoing a lifecycle cancellation.
+class PrecisionReturn {
+public:
+    unsigned generation() const { return state.load() & ~pending; }
+    bool request(Context c, bool owned, unsigned epoch) {
+        if (!c.firstPerson || toggleRequest(c,owned) != ToggleRequest::thirdPerson) return false;
+        return state.compare_exchange_strong(epoch,epoch | pending);
+    }
+    void cancel() { state.fetch_add(2); state.fetch_and(~pending); }
+    bool take(Context c, bool owned, bool haveLease, std::optional<bool> locked) {
+        auto expected = state.load();
+        if (!(expected & pending)) return false;
+        if (!c.firstPerson || toggleRequest(c,owned) != ToggleRequest::thirdPerson) {
+            cancel(); return false;
+        }
+        if (!haveLease || !locked || *locked) return false;
+        return state.compare_exchange_strong(expected,expected & ~pending);
+    }
+private:
+    static_assert(std::atomic<unsigned>::is_always_lock_free);
+    static constexpr unsigned pending = 1;
+    std::atomic<unsigned> state{0};
+};
 } // namespace skycrpg::camera

@@ -215,6 +215,16 @@ int main() {
     i.inputReleased = input.ready(21.3);
     assert(targetLockLease(i).action == LockLeaseAction::release);
     assert(interrupt.releaseIfClear(release) && releases == 1);
+    // Input posted during a provider release never waits for the provider.
+    // It linearizes after that release and survives for the next main service.
+    assert(interrupt.releaseIfClear([&] {
+        std::thread inputDuringRelease([&] { interrupt.request(); });
+        inputDuringRelease.join();
+        assert(!interrupt.releaseIfClear(release));
+    }));
+    assert(!interrupt.releaseIfClear(release));
+    assert(interrupt.consume() && !interrupt.consume());
+    assert(interrupt.releaseIfClear(release) && releases == 2);
     // A transient indicator refusal uses the same interruption/barrier. The
     // next fresh lock remains possible; there is no session failure latch.
     input.activity(22); i.haveLease = true; i.locked = true; i.inputReleased = false;

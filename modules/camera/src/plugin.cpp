@@ -68,7 +68,9 @@ RE::FormID obstructionCell = 0;
 bool adjustedZoomWritten = false;
 float lastAdjustedZoom = 0;
 std::atomic<bool> ready{false};
-bool loading = true, ownFirstPerson = false, recenter = false;
+bool loading = true, recenter = false;
+std::atomic<bool> ownFirstPerson{false};
+PrecisionReturn precisionReturn;
 SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
 bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
@@ -533,8 +535,7 @@ void updateTargetLockMain(Context& c) {
         }
     }
     // A held disable lease may still be awaiting TDM's unpaused update.
-    c.prerequisites = c.prerequisites && observedLock.has_value() &&
-        ((movementLease && (!*observedLock || c.firstPerson)) || (!movementLease && targetLockEnabled && safe));
+    c.prerequisites = c.prerequisites && targetLockPrerequisites(movementLease,observedLock,c.firstPerson,targetLockEnabled,safe);
 }
 void notifyFailure() {
     if (!failureNotified && enableIntent.failureEligible(prerequisiteFailed)) {
@@ -626,6 +627,59 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
 }
 #include "cursor_mode.h"
 
+using CameraCall = void(*)(RE::PlayerCamera*);
+CameraCall previousCameraCall = nullptr;
+void serviceFirstPersonReturn() {
+    if (!ready || !lockHooksReady || !onTargetLockThread()) return;
+    // Drain even if the UI job is busy. No menu traversal or lease release here.
+    consumeLockInterrupt();
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    if (loading || !player || !player->GetParentCell() || !player->Is3DLoaded() || player->IsDead()) {
+        precisionReturn.cancel(); ownFirstPerson = false;
+        return;
+    }
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    if (!camera || !camera->currentState || camera->currentState->id != RE::CameraState::kFirstPerson) {
+        if (ownFirstPerson) precisionReturn.cancel();
+        return; // third-person lock acquisition/release still belongs to context()
+    }
+    const cursorMode::UITryLock menuLock; // one attempt, global then UI+0x158
+    if (!menuLock) return;
+    bool hard = true;
+    const auto c = context(&hard);
+    if (!retainPrecisionOwnership(c,ownFirstPerson,hard)) ownFirstPerson = false;
+    if (!precisionReturn.take(c,ownFirstPerson,movementLease,observedLock)) return;
+    settings.enabled = true; ownFirstPerson = false; suspend(); applyZoom = true;
+    static_cast<void>(camera->ForceThirdPerson());
+    savePreferences();
+}
+void serviceCameraCall(RE::PlayerCamera* camera) {
+    serviceFirstPersonReturn();
+    previousCameraCall(camera); // exactly once, including TDM's pitch/update chain
+}
+bool installLockCameraService() {
+    if (!targetLockEnabled) return true;
+    // Reuse the already guarded all-state call when thin hooks are installed.
+    // The thin observer stays read-only; its previous provider target is retained.
+    if (thin::runtime && thin::runtime->installed) {
+        previousCameraCall = thin::runtime->update;
+        thin::runtime->update = serviceCameraCall;
+    } else {
+        const auto base = REL::Module::get().base();
+        const auto site = REL::ID(50784).address()+0x1A6;
+        if (site != base+0x8f8826 || !thin::cameraCallGuard(site,base+0x558e70) ||
+            std::memcmp(reinterpret_cast<const void*>(base+0x558e70),"\x40\x57\x48\x83\xec\x30",6) != 0) {
+            log("Target lock refused: all-state camera call guard failed; lease held.");
+            return false;
+        }
+        SKSE::AllocTrampoline(32);
+        previousCameraCall = reinterpret_cast<CameraCall>(SKSE::GetTrampoline().write_call<5>(site,serviceCameraCall));
+        FlushInstructionCache(GetCurrentProcess(),reinterpret_cast<void*>(site),5);
+    }
+    log("Target lock all-state interrupt/precision-return service installed.");
+    return true;
+}
+
 RE::NiPoint3 thinGoal() {
     RE::NiPoint3 goal{},local{};
     provider->GetGoalPosition(RE::PlayerCharacter::GetSingleton(),goal,local);
@@ -712,28 +766,31 @@ void lifecycleLog(const char* event, Context c, unsigned stateId) {
     if (!targetLockEnabled) {
         std::snprintf(line,sizeof(line),"Lifecycle event=%s hook=%s state=%u decision=%u owned=%u",event,
             std::strcmp(event,"observe") == 0 ? "update" : "event",stateId,
-            static_cast<unsigned>(select(c)),static_cast<unsigned>(ownFirstPerson));
+            static_cast<unsigned>(select(c)),static_cast<unsigned>(ownFirstPerson.load()));
     } else if (onTargetLockThread()) {
         std::snprintf(line,sizeof(line),"Lifecycle event=%s hook=%s state=%u decision=%u owned=%u lease=%u lock=%d target=%08X",event,
             std::strcmp(event,"observe") == 0 ? "update" : "event",stateId,
-            static_cast<unsigned>(select(c)),static_cast<unsigned>(ownFirstPerson),static_cast<unsigned>(movementLease),
+            static_cast<unsigned>(select(c)),static_cast<unsigned>(ownFirstPerson.load()),static_cast<unsigned>(movementLease),
             observedLock ? (*observedLock ? 1 : 0) : -1,observedTarget.native_handle());
     } else return;
     log(line);
 }
 void resetLifecycle(const char* event) {
+    precisionReturn.cancel();
+    ownFirstPerson = false;
     cursorMode::requestExit(std::strstr(event,"load") ? cursor::Exit::load : cursor::Exit::cell);
     thin::requestRestore(std::strstr(event,"load") ? thin::Exit::load : thin::Exit::cell);
     if (thin::enabled() && thin::onMain() && std::strcmp(event,"player-detach") == 0)
         thin::restoreAll(thin::Exit::cell);
     interruptTargetLock();
-    resetTransient(ownFirstPerson,recenter,applyZoom,keys);
+    bool owned = false;
+    resetTransient(owned,recenter,applyZoom,keys);
     resetObstruction();
     lifecycleTrace.resetCandidate();
     lifecycleLog(event,Context{},UINT32_MAX);
 }
 void observeLifecycle(Context c, bool hard) {
-    ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hard);
+    if (!retainPrecisionOwnership(c,ownFirstPerson,hard)) ownFirstPerson = false;
     const auto camera = RE::PlayerCamera::GetSingleton();
     const unsigned id = camera && camera->currentState ? static_cast<unsigned>(camera->currentState->id) : UINT32_MAX;
     if (lifecycleTraceEnabled && lifecycleTrace.observe(select(c),id)) lifecycleLog("observe",c,id);
@@ -913,6 +970,7 @@ public:
             if (!event) return RE::BSEventNotifyControl::kContinue;
             const std::string_view name{event->menuName.c_str()};
             if (lockMenuPublishesFocus(name,event->opening)) {
+                precisionReturn.cancel();
                 lockMenuOpenEpoch.fetch_add(1u);
                 publishedLockMenu.store(true);
             }
@@ -936,6 +994,7 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events,RE::BSTEventSource<RE::InputEvent*>*) override {
         if (!events) return RE::BSEventNotifyControl::kContinue;
+        const unsigned returnGeneration = precisionReturn.generation();
         cursorMode::input(*events);
         if (thin::enabled()) {
             for (auto event = *events; event; event = event->next) {
@@ -949,8 +1008,10 @@ public:
             pollLockInput(*events);
             for (auto event = *events; event; event = event->next) {
                 const auto button = event->AsButtonEvent();
-                if (button && button->IsDown() && event->GetDevice() == RE::INPUT_DEVICE::kKeyboard && button->GetIDCode() == 66)
+                if (button && button->IsDown() && event->GetDevice() == RE::INPUT_DEVICE::kKeyboard && button->GetIDCode() == 66) {
+                    precisionReturn.cancel();
                     interruptTargetLock();
+                }
             }
         }
         bool hardSpecial = true;
@@ -961,7 +1022,7 @@ public:
         observePrerequisiteFailure(c,failure);
         if (targetLockEnabled) lockRefusalRequested.store(true);
         const bool ownedBefore = ownFirstPerson;
-        ownFirstPerson = retainPrecisionOwnership(c,ownFirstPerson,hardSpecial);
+        if (!retainPrecisionOwnership(c,ownFirstPerson,hardSpecial)) ownFirstPerson = false;
         if (precisionTraceEnabled && ownedBefore != ownFirstPerson) {
             const auto after = traceState(c,hardSpecial,0);
             auto before = after; before.owned = ownedBefore;
@@ -970,11 +1031,13 @@ public:
         // Deliberate F6 can return from its OWN first-person request; native POV never auto-restores.
         const bool lifecycleSafe = c.prerequisites && c.world && !c.special && !c.menu;
         const bool safe = lifecycleSafe && !c.slide;
+        if (!safe || (c.firstPerson && !ownFirstPerson)) precisionReturn.cancel();
         if (!lifecycleSafe) suspend();
         for (auto event = *events; event; event = event->next) {
             auto button = event->AsButtonEvent();
             if (!button) continue;
             if (button->IsDown() && button->QUserEvent() == "Toggle POV") {
+                precisionReturn.cancel();
                 const auto before = traceState(c,hardSpecial,0);
                 ownFirstPerson = false;
                 tracePrecision(PrecisionTraceEvent::nativePov,before,traceState(c,hardSpecial,0),
@@ -1031,7 +1094,7 @@ public:
                         // Do not claim a late or unrelated first-person transition.
                         bool afterHard = true;
                         const auto after = context(&afterHard);
-                        ownFirstPerson = claimPrecisionOwnership(c,after);
+                        ownFirstPerson = precisionReturn.generation() == returnGeneration && claimPrecisionOwnership(c,after);
                         if (precisionTraceEnabled) {
                             tracePrecision(PrecisionTraceEvent::toggleClaim,before,traceState(after,afterHard,keyIndex),pad?2u:1u,true,true);
                         }
@@ -1045,12 +1108,14 @@ public:
                         }
                         settings.enabled = true; ownFirstPerson = false; applyZoom = true; suspend(); savePreferences();
                     } else if (request == ToggleRequest::thirdPerson) {
-                        if (targetLockEnabled && !lockThread) {
-                            if (!publishedMovementLease.load()) { interruptTargetLock(); continue; }
-                        } else {
-                            if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
-                            if (!enableAfterLease(movementLease)) continue;
+                        if (targetLockEnabled) {
+                            // Both threads post one intent. Main revalidates the
+                            // session/focus/provider and TDM's unlocked reply.
+                            if (precisionReturn.request(c,ownFirstPerson,returnGeneration)) lockInterrupt.request();
+                            continue;
                         }
+                        if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
+                        if (!enableAfterLease(movementLease)) continue;
                         settings.enabled = true; ownFirstPerson = false; suspend(); applyZoom = true; static_cast<void>(camera->ForceThirdPerson()); savePreferences();
                     }
                 } else if (heldFramingAllowed(c)) {
@@ -1139,6 +1204,7 @@ void messages(SKSE::MessagingInterface::Message* message) {
         previousUpdate = reinterpret_cast<Update>(table.write_vfunc(3,update));
         lockHooksReady = targetLockEnabled;
         thin::installHooks(ready);
+        if (!installLockCameraService()) lockHooksReady = false;
         if (const auto source = RE::ScriptEventSourceHolder::GetSingleton()) {
             source->AddEventSink<RE::TESLoadGameEvent>(&events);
             source->AddEventSink<RE::TESCellAttachDetachEvent>(&events);

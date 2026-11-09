@@ -1,11 +1,11 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #pragma once
 #include <array>
+#include <atomic>
 #include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
-#include <mutex>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -44,25 +44,23 @@ constexpr bool lockMenuInterrupt(std::string_view name, bool opening) {
     return !opening;
 }
 // Callbacks only publish interrupts. The main-thread consumer resets freshness
-// and cleans up before release; the mutex closes the check/release race.
+// and cleans up before release. The CAS linearizes release against requests;
+// a request after it stays pending for the next service, without blocking input.
 class LockInterrupt {
 public:
-    void request() { const std::lock_guard guard(mutex); pending = true; }
-    bool consume() {
-        const std::lock_guard guard(mutex);
-        const bool result = pending;
-        pending = false;
-        return result;
-    }
+    void request() { state.fetch_or(pending); }
+    bool consume() { return (state.fetch_and(~pending) & pending) != 0; }
     template<class F> bool releaseIfClear(F release) {
-        const std::lock_guard guard(mutex);
-        if (pending) return false;
+        unsigned clear = 0;
+        if (!state.compare_exchange_strong(clear,releasing)) return false;
         release();
+        state.fetch_and(~releasing);
         return true;
     }
 private:
-    std::mutex mutex;
-    bool pending = false;
+    static_assert(std::atomic<unsigned>::is_always_lock_free);
+    static constexpr unsigned pending = 1, releasing = 2;
+    std::atomic<unsigned> state{0};
 };
 struct LockFrameTraceBudget {
     static constexpr unsigned limit = 2048;
@@ -84,6 +82,11 @@ struct LockLeaseDecision {
     LockLeaseAction action = LockLeaseAction::keep;
     bool lockStateAllowed = false;
 };
+constexpr bool targetLockPrerequisites(bool haveLease, std::optional<bool> locked,
+    bool firstPerson, bool enabled, bool safe) {
+    return locked.has_value() &&
+        ((haveLease && (!*locked || firstPerson)) || (!haveLease && enabled && safe));
+}
 constexpr LockLeaseDecision targetLockLease(LockLeaseInput i) {
     const bool eligible = i.enabled && i.eligible && i.settingsSafe && i.indicatorReady &&
         i.interfaceAvailable && i.locked.has_value();
