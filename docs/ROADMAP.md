@@ -43,6 +43,8 @@ After acceptance, prioritize actual player feedback: additional runtimes/provide
 
 The post-MVP **Phase 5** work for the owner's targeting and camera requests (proximity activation and cycling, pointer/stick cursor mode, TDM-based lock-on, fixed-height camera with see-through overhead occluders) is planned in [Phase 5](phases/PHASE_5.md) with its [research and feasibility record](planning/phase5-targeting-camera-research.md). It started on 2026-11-02 after the owner accepted Phase 4 and is tracked as DYL-197 to DYL-202. Phase 5 feature branches have bounded in-game evidence: target lock owner sessions (2026-11-02), occlusion spike runs (2026-11-02), fixed-height routes and owner session (2026-11-03), and cursor routes and owner session (2026-11-08); the feature PRs and candidate 8 are merged, and the owner accepted the Phase 5 gate on 2026-11-09 (D041), with carried limitations recorded in the Phase 5 gate record (`docs/evidence/p5/gate.md`; D030 REVISE history retained). This work does not alter the four-phase MVP exit.
 
+A camera-only **Phase 5.5** is proposed in [Phase 5.5](phases/PHASE_5_5.md): a fixed isometric camera (locked pitch, height and distance with 90° snap turns) that stays playable in tight interiors, multi-storey buildings, dungeons and exteriors by making blocking geometry see-through. It is a proposal dated 2026-11-09 with the owner's scope answers recorded as D042–D045 and tracked as DYL-216 to DYL-222; it has no implementation, its first two tickets wait for the owner's go, and it does not alter the four-phase MVP exit.
+
 ## Ticket index
 
 The phase documents below include goals, scope, dependencies, acceptance, validation and evidence. Linear is the live execution tracker; update the source plan when scope changes.
