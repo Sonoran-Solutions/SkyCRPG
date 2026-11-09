@@ -58,12 +58,13 @@ std::chrono::steady_clock::time_point obstructionSampleTime{};
 RE::FormID obstructionCell = 0;
 bool adjustedZoomWritten = false;
 float lastAdjustedZoom = 0;
-bool ready = false, loading = true, ownFirstPerson = false, recenter = false;
+std::atomic<bool> ready{false};
+bool loading = true, ownFirstPerson = false, recenter = false;
 SmoothCamAPI::IVSmoothCam3* provider = nullptr;
 TDM_API::IVTDM5* movement = nullptr;
 bool movementLease = false, applyZoom = true, compatibleSettings = true, movementConfigSafe = false;
 bool targetLockEnabled = false, lockConfigSafe = false, lockConfigLogged = false;
-bool lockHooksReady = false;
+std::atomic<bool> lockHooksReady{false};
 bool lockFrameTraceEnabled = false;
 LockTraceWindow lockTraceWindow;
 LockFrameWriter lockFrameWriter;
@@ -85,6 +86,8 @@ std::atomic<bool> lockInputSeen{false};
 // Last main-thread decision, read when context() runs on another thread.
 std::atomic<bool> publishedLockPrerequisites{false}, publishedTargetLock{false};
 std::atomic<bool> publishedLockMenu{true}, publishedLockMovementConfigSafe{false};
+// Lease changes also occur at data load; opt-in off-main input reads only this copy.
+std::atomic<bool> publishedMovementLease{false};
 unsigned lockStateLogs = 0;
 std::optional<bool> observedLock;
 RE::ActorHandle observedTarget;
@@ -289,6 +292,7 @@ bool acquireMovementLease() {
     if (!movement) return false;
     const auto lease = movement->RequestDisableTargetLock(SKSE::GetPluginHandle());
     movementLease = lease == TDM_API::APIResult::OK || lease == TDM_API::APIResult::AlreadyGiven;
+    publishedMovementLease.store(movementLease);
     if (!movementLease) prerequisiteFailed = true;
     if (!targetLockEnabled) {
         if (!movementLease) log("TDM target-lock-disable lease refused; controller suspended.");
@@ -349,6 +353,7 @@ void observeTargetLock() {
     if (!ready || !movement || !onTargetLockThread()) return;
     const auto owner = movement->GetDisableTargetLockOwner();
     movementLease = owner == SKSE::GetPluginHandle();
+    publishedMovementLease.store(movementLease);
     if (!movementLease && owner != SKSE::kInvalidPluginHandle) return;
     const bool locked = movement->GetTargetLockState();
     observedTarget = movement->GetCurrentTarget();
@@ -433,6 +438,7 @@ void updateTargetLockMain(Context& c) {
         if (!lockInterrupt.releaseIfClear([&] {
             const auto result = movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle());
             movementLease = false;
+            publishedMovementLease.store(movementLease);
             lockLeaseLog.previous.reset();
             if (result == TDM_API::APIResult::OK)
                 log("TDM target-lock-disable lease released after unlocked acknowledgement and idle input.");
@@ -522,12 +528,13 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     c.enabled = settings.enabled;
     const bool providerEnabled = provider && provider->IsCameraEnabled();
     const bool lockThread = targetLockEnabled && onTargetLockThread();
+    const bool haveLease = targetLockEnabled && !lockThread ? publishedMovementLease.load() : movementLease;
     const bool configSafe = targetLockEnabled && !lockThread ? publishedLockMovementConfigSafe.load() : movementConfigSafe;
     const bool baseReady = compatibleSettings && configSafe && ready && movement && providerEnabled &&
         provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
-    const bool leaseReady = !targetLockEnabled ? movement && movementLease && !movement->GetTargetLockState() :
-        lockThread && movement && (movementLease ? !movement->GetTargetLockState() : lockConfigSafe && indicatorReady());
-    c.prerequisites = targetLockEnabled ? baseReady : phase4Prerequisites(baseReady,leaseReady,allowLeaseRequest,movementLease);
+    const bool leaseReady = !targetLockEnabled ? movement && haveLease && !movement->GetTargetLockState() :
+        lockThread && lockHooksReady && movement && (haveLease ? !movement->GetTargetLockState() : lockConfigSafe && indicatorReady());
+    c.prerequisites = targetLockEnabled ? baseReady : phase4Prerequisites(baseReady,leaseReady,allowLeaseRequest,haveLease);
     // An intentionally disabled SmoothCam (F8) is not a failure.
     // With lock enabled, off-main observations cannot diagnose lease failure.
     if (failure) *failure = lockFailureReportable(targetLockEnabled,lockThread) && prerequisiteFailure(baseReady,leaseReady,
@@ -818,6 +825,7 @@ public:
         if (targetLockEnabled) {
             if (!event) return RE::BSEventNotifyControl::kContinue;
             const std::string_view name{event->menuName.c_str()};
+            if (lockMenuPublishesFocus(name,event->opening)) publishedLockMenu.store(true);
             if (lockMenuRefresh(name,event->opening)) lockConfigRefresh.request();
             if (!lockMenuInterrupt(name,event->opening)) return RE::BSEventNotifyControl::kContinue;
             interruptTargetLock();
@@ -848,7 +856,9 @@ public:
         }
         bool hardSpecial = true;
         bool failure = false;
-        const auto c = context(&hardSpecial,!settings.enabled && !movementLease,&failure);
+        const bool lockThread = targetLockEnabled && onTargetLockThread();
+        const bool haveLease = targetLockEnabled && !lockThread ? publishedMovementLease.load() : movementLease;
+        const auto c = context(&hardSpecial,!settings.enabled && !haveLease,&failure);
         observePrerequisiteFailure(c,failure);
         if (targetLockEnabled) lockRefusalRequested.store(true);
         const bool ownedBefore = ownFirstPerson;
@@ -928,12 +938,20 @@ public:
                         }
                         savePreferences();
                     } else if (request == ToggleRequest::enableOnly) {
-                        if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
-                        if (!enableAfterLease(movementLease)) continue;
+                        if (targetLockEnabled && !lockThread) {
+                            if (!publishedMovementLease.load()) { interruptTargetLock(); continue; }
+                        } else {
+                            if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
+                            if (!enableAfterLease(movementLease)) continue;
+                        }
                         settings.enabled = true; ownFirstPerson = false; applyZoom = true; suspend(); savePreferences();
                     } else if (request == ToggleRequest::thirdPerson) {
-                        if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
-                        if (!enableAfterLease(movementLease)) continue;
+                        if (targetLockEnabled && !lockThread) {
+                            if (!publishedMovementLease.load()) { interruptTargetLock(); continue; }
+                        } else {
+                            if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;
+                            if (!enableAfterLease(movementLease)) continue;
+                        }
                         settings.enabled = true; ownFirstPerson = false; suspend(); applyZoom = true; static_cast<void>(camera->ForceThirdPerson()); savePreferences();
                     }
                 } else if (heldFramingAllowed(c)) {
@@ -998,6 +1016,7 @@ void messages(SKSE::MessagingInterface::Message* message) {
             } else {
                 if (movementLease) static_cast<void>(movement->ReleaseDisableTargetLock(SKSE::GetPluginHandle()));
                 movementLease = false;
+                publishedMovementLease.store(movementLease);
             }
             ready = false; prerequisiteFailed = true;
             log("Unexpected camera hook order/owner before SmoothCam deferred attach; policy left inert.");

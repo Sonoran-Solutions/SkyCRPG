@@ -22,12 +22,18 @@ constexpr bool lockMenuRefresh(std::string_view name, bool opening) {
     return name == "Dialogue Menu" || name == "Console" || name == "Loading Menu" ||
         (name == "Journal Menu" && !opening);
 }
+constexpr bool lockMenuPassive(std::string_view name) {
+    return name == "HUD Menu" || name == "Cursor Menu" || name == "Fader Menu" || name == "Mist Menu" ||
+        name == "LoadWaitSpinner";
+}
+constexpr bool lockMenuPublishesFocus(std::string_view name, bool opening) {
+    return opening && !lockMenuPassive(name);
+}
 constexpr bool lockMenuInterrupt(std::string_view name, bool opening) {
-    if (name == "HUD Menu" || name == "Cursor Menu" || name == "Fader Menu" || name == "Mist Menu" ||
-        name == "LoadWaitSpinner") return false;
+    if (lockMenuPassive(name)) return false;
     if (name == "Dialogue Menu" || name == "Console" || name == "Loading Menu") return true;
-    // Main-thread focused() handles unlisted openings. The close barrier also
-    // catches menus that open and close between two main-thread observations.
+    // Openings publish conservative focus until main-thread focused() runs.
+    // The close barrier catches menus between two main-thread observations.
     // Never read UI::GetMenu or menu flags on the event thread.
     return !opening;
 }

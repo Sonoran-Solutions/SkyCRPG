@@ -77,6 +77,64 @@ Source review **PASS**: ran `rg -n 'GetMenu|focused\(|noActiveMenus\(|lockConfig
 
 Every changed native line was re-read for `/W4 /WX`: no new unused locals/parameters, narrowing, signedness, format, declaration-order or C4456/C4457/C4458 shadowing hazards found. The removed helper has no remaining caller; `std::atomic<bool>` operations and `std::string_view` construction use existing headers/contracts. This is source inspection, **not** a `plugin.cpp` compile: MSVC/native compilation **NOT_RUN**. Portable checks do not establish menu-event delivery, provider callback ordering, live MCM reload/refusal, notification visibility or runtime OFF parity; all are **NOT_RUN** for round 2. `git diff --check` **PASS**. No commit, push, PR, game launch or shared-file edit.
 
+### Round 3 — senior-review fixes (2026-11-08)
+
+Base `7706128`, branch `phase5/dyl-197-target-lock`. Only the four assigned files change. This round's native build and all gameplay remain **NOT_RUN**; the historical owner sessions below are not acceptance of this patch.
+
+| Finding | Change | Verification |
+| --- | --- | --- |
+| Plain `movementLease` reached opt-in off-main input | Add `publishedMovementLease`, store after all four assignment sites, and select it in off-main `context()`/input. Off-main enable/third-person paths read the publication and request an interrupt if no lease exists, leaving acquisition and mutable lease diagnostics to main. Startup acquisition remains supported. | Source/read-site audit below; portable matrix recorded below. Native threading **NOT_RUN**. |
+| Unlisted opening left published focus false | Share the exact passive-name predicate; `lockMenuPublishesFocus` accepts every other opening. The event sink stores `publishedLockMenu=true` before either filter can return; close edges never clear it. Main `context()` retains real `focused()` publication. No event-side UI lookup. | Portable passive/both-edge/unknown/Journal/Tutorial cases, plus callback-thread Tutorial open/close publication checks. Runtime timing **NOT_RUN**. |
+| Other startup flags read from any-thread callbacks | Make `ready` and `lockHooksReady` atomic. Require hook readiness before `context()` can inspect lock config/indicator inputs; the startup hook-ready store publishes indicator initialization. | Source audit of every named read and `/W4 /WX` inspection; native compilation **NOT_RUN**. |
+
+Decision: use a published lease copy instead of converting `movementLease` itself. Its writers are not exclusively main-thread: data-load acquisition/failure cleanup and the preserved feature-OFF input path also write it. The publication keeps those baseline paths intact while opt-in off-main input avoids both the plain value and `lockLeaseLog` mutation. No INI/API/dependency/owner decision changes. SmoothCam remains the sole normal third-person transform writer. No owner questions.
+
+Verification job declared before execution: owner DYL-197 round-3 worker; purpose all eight Camera portable regressions, target-lock first; per-test command `g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I modules/camera/include modules/camera/tests/<name>.cpp -o /tmp/lock7-<name> && /tmp/lock7-<name>`. Driver `timeout --kill-after=5s 600s bash /tmp/lock7-tests.sh > /tmp/lock7-tests.log 2>&1`; expected eight PASS lines and exit 0; deadline 10 minutes; completion process exit plus log; timeout PID `/tmp/lock7-tests.pid`. Timeout owns child compilers/tests and cleans them on expiry; process inspection verifies completion. Binaries/logs stay under `/tmp`. No native build or game job.
+
+Actual round-3 result: **PASS**, 8/8 Camera test binaries, driver exit 0; g++ `(Ubuntu 15.2.0-16ubuntu1) 15.2.0`, host `dq-MEG-Z590-Trident-X-MS-B926`. Completed tool session `58262`, timeout PID `3` in its execution namespace. No retry or timeout; process inspection found no remaining round-3 driver, timeout, compiler or test. Full `/tmp/lock7-tests.log`:
+
+```text
+PASS target_lock_policy_test exit=0
+PASS lifecycle_policy_test exit=0
+PASS lock_frame_trace_test exit=0
+PASS obstruction policy: measurements, timing, noisy closed loop, priorities, invalid inputs, rates/preferences
+PASS obstruction_policy_test exit=0
+PASS obstruction_probe_test exit=0
+PASS policy_test exit=0
+PASS precision_policy_test exit=0
+PASS precision_trace_test exit=0
+```
+
+Read-site audit **PASS** (working-tree `plugin.cpp` line numbers). `main` means guarded by `onTargetLockThread()` directly or through the caller. Startup is the data-load callback, **not assumed main**. Feature OFF retains the original any-thread paths; this is not a plugin-wide threading redesign.
+
+| Every `movementLease` read | Thread / protection |
+| --- | --- |
+| 295, 296, 298, 301, 308 — acquisition publication/result/logging | Main for opt-in runtime; startup data-load callback also uses acquisition. Feature OFF may acquire from any-thread input. Opt-in off-main input no longer enters acquisition. |
+| 340 — interrupt consumption | Main, after readiness and thread gate. |
+| 356, 357, 365 — observation publication/ownership/dead acknowledgement | Main, via `updateTargetLockMain`. |
+| 392 — not-ready acquisition guard | Main, short-circuited by thread check. |
+| 419, 424, 434, 441, 451, 493 (twice) — lease decision/logging/acquisition/release publication/final prerequisites | Main, `updateTargetLockMain`. |
+| 531 — `context()` snapshot selection | Plain value only on opt-in main or feature OFF; opt-in off-main uses atomic `publishedMovementLease`. |
+| 646, 805 — lifecycle/frame trace | Main, explicit thread gates. |
+| 860 — input snapshot selection | Plain value only on opt-in main or feature OFF; opt-in off-main uses atomic publication. |
+| 944, 945, 952, 953 — enable/third-person branches | Plain value only in the main-or-feature-OFF branch. Opt-in off-main branches at 942/950 read the atomic publication and request an interrupt if absent. |
+| 994, 1015, 1017, 1019 — startup acquisition/cleanup/publication | Data-load callback, not assumed main. |
+
+All four assignment sites (294, 355, 440, 1018) immediately store the published copy (295, 356, 441, 1019). The feature-off cleanup also publishes, avoiding a missing-writer exception. Both copies initialize false.
+
+| Other named lock-state reads | Thread / protection |
+| --- | --- |
+| `lockConfigSafe`: 415, 418, 423, 536, 588 | Main: policy body; `context()` short-circuits behind `lockThread && lockHooksReady`; refusal notifier is called only from main update. Writes remain in main refresh/binding checks. |
+| `indicatorReady()`: calls 415, 418, 423, 536, 588; inputs at 349 | Main only; `indicatorShader` and `ProcessLists::GetSingleton()` are never read by opt-in off-main context/sink through this helper. Hook-ready atomic store publishes startup shader initialization before the context read. |
+| Other `indicatorShader` reads: 316, 465, 471, 475; startup 1007 | Main cleanup/effect work; startup validation on data-load callback. Pointer is initialized at 1006 before hook readiness at 1027. |
+| `observedLock`: 416, 419, 423, 424, 492, 493, 647, 805, 808 | Main policy and main-gated lifecycle/frame traces. Off-main context uses atomic `publishedTargetLock`/`publishedLockPrerequisites`; no optional/target handle read. |
+| `lockHooksReady`: 335, 390, 536, 588 | Now atomic everywhere. 390 is any-thread `updateTargetLock`; 335/536/588 are main through caller/short-circuit guards. Startup writes at 1027. |
+| `ready`: 335, 353, 390, 533, 541, 588, 988 | Now atomic everywhere. 390/533 are any-thread; 335/353/588 are main; 541 is main for opt-in failure reporting (feature OFF any-thread); 988 is startup. Stores: 984, 992, 995, 1021. |
+
+Every changed native line was re-read for `/W4 /WX`: no new unused locals/parameters, narrowing, format, signedness, copy-of-atomic, declaration-order or shadowing hazards found. Atomic boolean conditions use the standard bool conversion, not copies or variadic arguments. The publication helper uses the existing `string_view` contract and no UI API. The missing-lease off-main branch queues the existing mutex-protected interrupt and does not touch the mutable lease logger. Source checks and `git diff --check` **PASS**. Portable feature-OFF prerequisite/state truth tables pass; baseline lease/POV behavior remains selected when OFF, with the opt-in overlay removed as previously required.
+
+Unverified: `plugin.cpp`/MSVC compilation, runtime thread scheduling and callback order, menu timing, off-main missing-lease recovery, notification/indicator behavior, game regression and runtime feature-OFF parity are **NOT_RUN** for round 3. No new package, runtime hash or owner acceptance is claimed. No commit, push, PR, game launch, UI/shared-file edit, INI or API change.
+
 ## Findings and implementation
 
 Historical fourth-pass record; the pre-merge re-review and round-2 changes above supersede its menu filtering and notice-thread behavior.

@@ -3,6 +3,7 @@
 #include "lifecycle_policy.h"
 #include "obstruction_policy.h"
 #include <cassert>
+#include <atomic>
 #include <fstream>
 #include <map>
 #include <string>
@@ -55,19 +56,39 @@ int main() {
     assert(!failureDebounce.observe(lockFailureReportable(true,true) && prerequisiteFailure(true,false,true),13));
     assert(failureDebounce.observe(lockFailureReportable(true,true) && prerequisiteFailure(true,false,true),14));
     for (const auto name : {"HUD Menu","Cursor Menu","Fader Menu","Mist Menu","LoadWaitSpinner"}) {
+        assert(!lockMenuPublishesFocus(name,true) && !lockMenuPublishesFocus(name,false));
         assert(!lockMenuInterrupt(name,true) && !lockMenuInterrupt(name,false));
         assert(!lockMenuRefresh(name,true) && !lockMenuRefresh(name,false));
     }
     for (const auto name : {"Dialogue Menu","Console","Loading Menu"}) {
+        assert(lockMenuPublishesFocus(name,true) && !lockMenuPublishesFocus(name,false));
         assert(lockMenuInterrupt(name,true) && lockMenuInterrupt(name,false));
         assert(lockMenuRefresh(name,true) && lockMenuRefresh(name,false));
     }
     for (const auto name : {"InventoryMenu","Custom Menu","TDM_BossBar","Tutorial Menu","StatsMenuSkillRing"}) {
+        assert(lockMenuPublishesFocus(name,true) && !lockMenuPublishesFocus(name,false));
         assert(!lockMenuInterrupt(name,true) && lockMenuInterrupt(name,false));
         assert(!lockMenuRefresh(name,true) && !lockMenuRefresh(name,false));
     }
     assert(!lockMenuInterrupt("Journal Menu",true) && lockMenuInterrupt("Journal Menu",false));
     assert(!lockMenuRefresh("Journal Menu",true) && lockMenuRefresh("Journal Menu",false));
+    assert(lockMenuPublishesFocus("Journal Menu",true) && !lockMenuPublishesFocus("Journal Menu",false));
+    assert(lockMenuPublishesFocus("",true) && !lockMenuPublishesFocus("",false));
+    // Gameplay published no focus, then an unlisted pausing menu opens before
+    // the next main-thread observation. Closing must not clear that publication.
+    std::atomic<bool> publishedMenu{false};
+    std::thread menuOpening([&] {
+        if (lockMenuPublishesFocus("Tutorial Menu",true)) publishedMenu.store(true);
+    });
+    menuOpening.join();
+    assert(publishedMenu.load());
+    std::thread menuClosing([&] {
+        if (lockMenuPublishesFocus("Tutorial Menu",false)) publishedMenu.store(true);
+    });
+    menuClosing.join();
+    assert(publishedMenu.load());
+    publishedMenu.store(false); // only the next main-thread focused() result clears it
+    assert(!publishedMenu.load());
     static_assert(static_cast<unsigned>(State::targeting) == 6);
     static_assert(static_cast<unsigned>(State::obstruction) == 7);
     static_assert(static_cast<unsigned>(State::normal) == 8);
