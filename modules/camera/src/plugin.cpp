@@ -71,6 +71,8 @@ float lastAdjustedZoom = 0;
 std::atomic<bool> ready{false};
 bool loading = true, recenter = false;
 PrecisionReturn precisionReturn;
+PrecisionCameraObservation precisionCameraObservation;
+PrecisionDiagnostics precisionDiagnostics;
 std::atomic<std::uint64_t> preferencesToSave{0};
 std::atomic<bool> deferredIndicatorStop{false};
 std::atomic<bool> deferredCameraQueued{false};
@@ -377,6 +379,7 @@ void stopIndicator() {
         });
     }
     indicatorAttempt.reset(); indicatorTarget = {};
+    deferredIndicatorStop.store(false); // this main-thread cleanup also satisfies a deferred stop
 }
 double lockClock() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -655,13 +658,24 @@ void serviceDeferredCameraWork() {
             publishedLockMovementConfigSafe.store(movementConfigSafe);
         }
         publishedReturnChainReady.store(providerChainReady());
-        if (deferredIndicatorStop.exchange(false)) stopIndicator();
+        if (deferredIndicatorStop.load()) stopIndicator();
         if (const auto snapshot = preferencesToSave.exchange(0)) savePreferences(snapshot);
+        precisionDiagnostics.drain([](unsigned reason, std::uint32_t sample) {
+            constexpr std::array names{"service-main","service-other","entry-claimed","entry-context","entry-token",
+                "input-unsafe","input-unowned","input-mapped","input-no-edge","ownership-lost",
+                "request-accepted","request-rejected","service-pending","refresh-pending",
+                "menu-busy","mount-busy","invalid-context","lease-missing","unlock-pending","session-changed","returned","return-refused"};
+            static_assert(names.size() == static_cast<unsigned>(PrecisionReason::count));
+            char line[160]{};
+            std::snprintf(line,sizeof(line),"PrecisionReturn reason=%s context=0x%X",names[reason],sample);
+            log(line);
+        });
     }
     deferredCameraQueued.store(false);
 }
 void CALLBACK queueDeferredCameraWork(PVOID, BOOLEAN) {
-    if (!preferencesToSave.load() && !lockConfigRefresh.requested() && !deferredIndicatorStop.load()) return;
+    if (!preferencesToSave.load() && !lockConfigRefresh.requested() && !deferredIndicatorStop.load() &&
+        !precisionDiagnostics.requested()) return;
     if (deferredCameraQueued.exchange(true)) return;
     deferredCameraTasks->AddTask(serviceDeferredCameraWork);
 }
@@ -706,10 +720,12 @@ Context returnContext(bool& hardSpecial, bool mounted) {
     return c;
 }
 void serviceFirstPersonReturn() {
-    if (!ready || !lockHooksReady || !cursorMode::mainThread()) return;
+    if (!ready || !lockHooksReady) return;
+    if (!cursorMode::mainThread()) { precisionDiagnostics.note(PrecisionReason::serviceOther); return; }
+    precisionDiagnostics.note(PrecisionReason::serviceMain);
     movementLease = movement && movement->GetDisableTargetLockOwner() == SKSE::GetPluginHandle();
     publishedMovementLease.store(movementLease);
-    // No indicator traversal (engine lock), diagnostics or IO on this callback.
+    // No indicator traversal (engine lock), diagnostic formatting or IO here.
     // Acquisition is the TDM API's atomic lease request; cleanup stays deferred.
     if (lockInterrupt.consume()) {
         noteLockInputActivity();
@@ -720,21 +736,31 @@ void serviceFirstPersonReturn() {
     const auto sessionToken = precisionReturn.snapshot();
     const auto player = RE::PlayerCharacter::GetSingleton();
     if (loading || !player || !player->GetParentCell() || !player->Is3DLoaded() || player->IsDead()) {
+        static_cast<void>(precisionCameraObservation.retire(false,sessionToken));
         static_cast<void>(precisionReturn.invalidate(sessionToken));
         return;
     }
     const auto camera = RE::PlayerCamera::GetSingleton();
-    if (!camera || !camera->currentState || camera->currentState->id != RE::CameraState::kFirstPerson) {
-        // Retire even an unowned session: a producer may still hold its token.
+    if (!camera || !camera->currentState) {
+        static_cast<void>(precisionCameraObservation.retire(false,sessionToken));
         static_cast<void>(precisionReturn.invalidate(sessionToken));
         return;
     }
-    if (!PrecisionReturn::requested(sessionToken) || lockConfigRefresh.requested()) return;
+    const bool firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
+    if (precisionCameraObservation.retire(firstPerson,sessionToken)) {
+        // Actual departure retires even an unowned session, but idle third
+        // person must not invalidate a concurrently sampled F6 entry token.
+        static_cast<void>(precisionReturn.invalidate(sessionToken));
+        return;
+    }
+    if (!firstPerson || !PrecisionReturn::requested(sessionToken)) return;
+    precisionDiagnostics.note(PrecisionReason::servicePending,{},sessionToken);
+    if (lockConfigRefresh.requested()) { precisionDiagnostics.note(PrecisionReason::refreshPending); return; }
     {
         const cursorMode::UITryLock menuLock; // one attempt, global then UI+0x158
-        if (!menuLock) return;
+        if (!menuLock) { precisionDiagnostics.note(PrecisionReason::menuBusy); return; }
         const auto mounted = callbackMount(*player);
-        if (!mounted) return; // contention defers without retiring the intent
+        if (!mounted) { precisionDiagnostics.note(PrecisionReason::mountBusy); return; }
         bool hard = true;
         const auto c = returnContext(hard,*mounted);
         precisionReturn.retain(c,hard,sessionToken);
@@ -742,10 +768,22 @@ void serviceFirstPersonReturn() {
         if (c.prerequisites && !movementLease) static_cast<void>(acquireMovementLease(false));
         const bool haveLease = movement && movement->GetDisableTargetLockOwner() == SKSE::GetPluginHandle();
         const auto locked = movement ? std::optional<bool>{movement->GetTargetLockState()} : std::nullopt;
-        if (!precisionReturn.take(c,haveLease,locked,sessionToken)) return;
+        if (!precisionReturn.take(c,haveLease,locked,sessionToken)) {
+            const auto reason = !c.firstPerson || toggleRequest(c,PrecisionReturn::owned(sessionToken)) != ToggleRequest::thirdPerson ?
+                PrecisionReason::invalidContext : !haveLease ? PrecisionReason::leaseMissing :
+                !locked || *locked ? PrecisionReason::unlockPending : PrecisionReason::sessionChanged;
+            precisionDiagnostics.note(reason,c,sessionToken,precisionReturn.snapshot() != sessionToken);
+            return;
+        }
     }
     settings.enabled = true; suspend(); applyZoom = true;
     static_cast<void>(camera->ForceThirdPerson());
+    // take() already retired this transition; do not retire a fresh entry's
+    // token on the next idle frame after our own successful return.
+    static_cast<void>(precisionCameraObservation.retire(camera->currentState &&
+        camera->currentState->id == RE::CameraState::kFirstPerson,precisionReturn.snapshot()));
+    precisionDiagnostics.note(camera->currentState && camera->currentState->id == RE::CameraState::kThirdPerson ?
+        PrecisionReason::returned : PrecisionReason::returnRefused,{},sessionToken);
     requestPreferences(); // drained on the SKSE main task path, outside UI locks
 }
 void serviceCameraCall(RE::PlayerCamera* camera) {
@@ -759,6 +797,7 @@ bool installLockCameraService() {
     if (thin::runtime && thin::runtime->installed) {
         previousCameraCall = thin::runtime->update;
         thin::runtime->update = serviceCameraCall;
+        log("Target lock camera service path=thin-chain.");
     } else {
         const auto base = REL::Module::get().base();
         const auto site = REL::ID(50784).address()+0x1A6;
@@ -770,6 +809,7 @@ bool installLockCameraService() {
         SKSE::AllocTrampoline(32);
         previousCameraCall = reinterpret_cast<CameraCall>(SKSE::GetTrampoline().write_call<5>(site,serviceCameraCall));
         FlushInstructionCache(GetCurrentProcess(),reinterpret_cast<void*>(site),5);
+        log("Target lock camera service path=trampoline.");
     }
     log("Target lock all-state interrupt/precision-return service installed.");
     return true;
@@ -1118,6 +1158,8 @@ public:
         if (targetLockEnabled) lockRefusalRequested.store(true);
         const bool ownedBefore = precisionReturn.owned();
         precisionReturn.retain(c,hardSpecial,returnSession);
+        if (targetLockEnabled && ownedBefore && !precisionReturn.owned())
+            precisionDiagnostics.note(PrecisionReason::ownershipLost,c,returnSession,precisionReturn.snapshot() != returnSession,lockThread);
         if (precisionTraceEnabled && ownedBefore != precisionReturn.owned()) {
             const auto after = traceState(c,hardSpecial,0);
             auto before = after; before.owned = ownedBefore;
@@ -1150,6 +1192,8 @@ public:
                     tracePrecision(button->IsPressed() ? PrecisionTraceEvent::togglePress : PrecisionTraceEvent::toggleRelease,
                         before,before,pad?2u:1u,button->IsPressed(),button->IsDown());
                 if (!safe) {
+                    if (targetLockEnabled && i == 0 && button->IsDown())
+                        precisionDiagnostics.note(PrecisionReason::inputUnsafe,c,returnSession,precisionReturn.snapshot() != returnSession,lockThread);
                     // A refused opt-in policy must still allow the native F6
                     // escape. It cannot re-enable unsafe held framing.
                     if (targetLockEnabled && i == 0 && button->IsDown() && c.world &&
@@ -1170,16 +1214,22 @@ public:
                 auto map = RE::ControlMap::GetSingleton();
                 // Never dispatch custom action on a mapped native gameplay button.
                 if (!map || !map->GetUserEventName(button->GetIDCode(),device).empty() || !button->QUserEvent().empty()) {
+                    if (targetLockEnabled && i == 0 && button->IsDown())
+                        precisionDiagnostics.note(PrecisionReason::inputMapped,c,returnSession,false,lockThread);
                     if (i == 0 && button->IsDown()) tracePrecision(PrecisionTraceEvent::toggleMapped,before,before,pad?2u:1u,button->IsPressed(),button->IsDown());
                     continue;
                 }
                 if (!keys[keyIndex].update(button->IsPressed(),button->IsDown())) {
+                    if (targetLockEnabled && i == 0 && button->IsDown())
+                        precisionDiagnostics.note(PrecisionReason::inputNoEdge,c,returnSession,false,lockThread);
                     if (i == 0 && button->IsDown()) tracePrecision(PrecisionTraceEvent::toggleNoEdge,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,button->IsPressed(),button->IsDown());
                     continue;
                 }
                 if (i == 0) {
                     auto camera = RE::PlayerCamera::GetSingleton();
                     const auto request = toggleRequest(c,precisionReturn.owned());
+                    if (targetLockEnabled && request == ToggleRequest::none)
+                        precisionDiagnostics.note(PrecisionReason::inputUnowned,c,returnSession,precisionReturn.snapshot() != returnSession,lockThread);
                     enableIntent.request(request);
                     tracePrecision(PrecisionTraceEvent::toggleDecision,before,traceState(c,hardSpecial,keyIndex),pad?2u:1u,true,true,static_cast<unsigned>(request));
                     if (request == ToggleRequest::firstPerson) {
@@ -1188,7 +1238,10 @@ public:
                         // Do not claim a late or unrelated first-person transition.
                         bool afterHard = true;
                         const auto after = context(&afterHard);
-                        static_cast<void>(precisionReturn.claim(c,after,returnSession));
+                        const bool claimed = precisionReturn.claim(c,after,returnSession);
+                        if (targetLockEnabled) precisionDiagnostics.note(claimed ? PrecisionReason::entryClaimed :
+                            claimPrecisionOwnership(c,after) ? PrecisionReason::entryToken : PrecisionReason::entryContext,
+                            after,returnSession,!claimed && precisionReturn.snapshot() != returnSession,lockThread);
                         if (precisionTraceEnabled) {
                             tracePrecision(PrecisionTraceEvent::toggleClaim,before,traceState(after,afterHard,keyIndex),pad?2u:1u,true,true);
                         }
@@ -1205,7 +1258,10 @@ public:
                         if (targetLockEnabled) {
                             // Both threads post one intent. Main revalidates the
                             // session/focus/provider and TDM's unlocked reply.
-                            if (precisionReturn.request(c,returnSession)) lockInterrupt.request();
+                            const bool accepted = precisionReturn.request(c,returnSession);
+                            precisionDiagnostics.note(accepted ? PrecisionReason::requestAccepted : PrecisionReason::requestRejected,
+                                c,returnSession,!accepted && precisionReturn.snapshot() != returnSession,lockThread);
+                            if (accepted) lockInterrupt.request();
                             continue;
                         }
                         if (leaseWanted(false,true,movementLease) && !acquireMovementLease()) continue;

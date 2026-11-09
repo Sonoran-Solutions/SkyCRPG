@@ -1,6 +1,7 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #include "precision_policy.h"
 #include "target_lock_policy.h"
+#include "cursor_policy.h"
 #include <cassert>
 #include <iostream>
 #include <thread>
@@ -15,18 +16,23 @@ struct Route {
     FreshPress key;
     LockInterrupt interrupt;
     PrecisionReturn intent;
+    PrecisionCameraObservation cameraObservation;
+    cursor::Session cursorSession;
     unsigned returns = 0;
     std::uint32_t mountCount = 0;
     bool mounted = false;
     unsigned mountReads = 0;
     explicit Route(bool enabled = true) : lockEnabled(enabled) { c.enabled = c.prerequisites = c.world = true; }
-    void entry() {
+    void entry(bool idleFrame = false) {
+        const auto sessionToken = intent.snapshot(); // production: before context/cursor exit
+        if (cursor::interruptKey(false,64,false) == cursor::Exit::f6) cursorSession.exit();
         assert(key.update(true,true));
         assert(toggleRequest(c,intent.owned()) == ToggleRequest::firstPerson);
         const auto before = c;
+        if (idleFrame) service(); // all-state main callback overlaps the input's observation
         c.enabled = false; c.firstPerson = true;
         interrupt.request(); // off-main: no provider calls, no later TP update
-        assert(intent.claim(before,c,intent.snapshot()));
+        assert(intent.claim(before,c,sessionToken));
         assert(!key.update(false,false));
     }
     void claim() {
@@ -49,7 +55,10 @@ struct Route {
     void service(bool granted = true, bool menuLocks = true) {
         if (!lockEnabled) return;
         if (interrupt.consume() && !haveLease) haveLease = granted;
-        if (!c.world || !c.firstPerson) { intent.cancel(); return; }
+        const auto observationToken = intent.snapshot();
+        if (!c.world) { intent.invalidate(observationToken); return; }
+        if (cameraObservation.retire(c.firstPerson,observationToken)) { intent.invalidate(observationToken); return; }
+        if (!c.firstPerson) return;
         if (!PrecisionReturn::requested(intent.snapshot())) return;
         if (!menuLocks) return; // interrupt drain does not depend on menu lock
         bool observedMount = false;
@@ -64,15 +73,86 @@ struct Route {
         assert(decision.action != LockLeaseAction::release); // first person holds
         auto observed = c;
         observed.special = observed.special || observedMount;
-        observed.prerequisites = c.prerequisites && targetLockPrerequisites(haveLease,locked,true,true,true);
+        observed.prerequisites = c.prerequisites; // callback context separates lease readiness from ownership
         const auto sessionToken = intent.snapshot();
         intent.retain(observed,false,sessionToken);
         if (intent.take(observed,haveLease,locked,sessionToken)) {
             ++returns; intent.cancel(); c.firstPerson = false; c.enabled = true;
+            static_cast<void>(cameraObservation.retire(false,intent.snapshot()));
         }
     }
 };
 int main() {
+    // Candidate 3 deterministically lost entry if an idle camera callback ran
+    // between input's token/context capture and its synchronous FP claim.
+    {
+        Context third{}; third.enabled = third.prerequisites = third.world = true;
+        auto first = third; first.enabled = false; first.firstPerson = true;
+        PrecisionReturn legacy;
+        const auto captured = legacy.snapshot();
+        assert(legacy.invalidate(captured)); // former unconditional non-FP service
+        assert(!legacy.claim(third,first,captured));
+        std::cout << "PASS candidate-3 reproduction: idle frame retires token and prevents entry claim\n";
+    }
+    for (const bool cursorActive : {true,false}) {
+        for (const bool released : {true,false}) {
+            Route r;
+            r.haveLease = !released;
+            r.cursorSession.active = cursorActive;
+            // The owned cursor overlay is not native menu focus; F6 exits it.
+            // No UI DLL or cursor service participates in precision ownership.
+            r.c.menu = false;
+            r.entry(true);
+            assert(!r.cursorSession.active);
+            r.service(); // observes FP with no return yet
+            r.haveLease = false; // also cover loss/release before the return press
+            r.press(); r.service(false);
+            assert(r.intent.owned() && r.returns == 0);
+            r.locked = true; r.service();
+            assert(r.haveLease && r.intent.owned() && r.returns == 0);
+            r.locked = false; r.service();
+            assert(r.returns == 1 && !r.intent.owned());
+            r.key.update(false,false);
+            r.entry(true); // a new deliberate entry may overlap the first idle frame after return
+            assert(r.intent.owned());
+            r.service(); assert(r.returns == 1);
+        }
+        std::cout << "PASS idle-frame overlap: " << (cursorActive ? "camera-only lock+fixed+cursor, cursor exits at F6" :
+            "combined all-on, no cursor") << "; released lease reacquired, unlock acknowledged\n";
+    }
+    // Preserve the prior stale-producer protection on an actual departure,
+    // including an unowned first-person interval and a newer ownership claim.
+    {
+        PrecisionReturn intent;
+        PrecisionCameraObservation observation;
+        const auto before = intent.snapshot();
+        assert(!observation.retire(false,before));
+        assert(!observation.retire(true,before));
+        assert(observation.retire(false,before));
+        assert(intent.invalidate(before));
+        Context third{}; third.prerequisites = third.world = true;
+        auto first = third; first.firstPerson = true;
+        assert(!intent.claim(third,first,before));
+        assert(!observation.retire(false,intent.snapshot()));
+        assert(intent.claim(third,first,intent.snapshot()));
+        assert(observation.retire(false,intent.snapshot())); // owned departure even before first FP sample
+        intent.invalidate(intent.snapshot());
+        assert(!intent.owned());
+        std::cout << "PASS actual departure: unowned epoch retired; owned/pending departure still cancels\n";
+    }
+    {
+        PrecisionDiagnostics diagnostics;
+        Context c{}; c.world = c.firstPerson = true;
+        std::thread input([&] { for (unsigned i = 0; i < 100; ++i) diagnostics.note(PrecisionReason::inputUnowned,c); });
+        input.join();
+        unsigned emitted = 0;
+        diagnostics.drain([&](unsigned reason, std::uint32_t sample) {
+            assert(reason == static_cast<unsigned>(PrecisionReason::inputUnowned) && sample == 13u); ++emitted;
+        });
+        diagnostics.note(PrecisionReason::inputUnowned,c);
+        assert(emitted == 1 && !diagnostics.requested());
+        std::cout << "PASS diagnostics: one preallocated sample per reason, deferred drain\n";
+    }
     // Engine-compatible reader accounting, including conservative rejection
     // of writer recursion, reserved flags and count saturation.
     for (const std::uint32_t initial : {0u,2u,0x0ffffffeu,0x0fffffffu,0x10000000u,0x80000001u}) {
@@ -187,11 +267,12 @@ int main() {
         r.service(); assert(r.returns == 0);
         r.c.firstPerson = true; r.claim(); r.service(); assert(r.returns == 0);
     }
-    // Unknown lock observation fails closed and cancels invalid ownership.
+    // Unknown lock observation fails closed without erasing an otherwise valid
+    // intent; the actual return reader does not fold acknowledgement into context.
     {
         Route r; r.entry(); r.press(); r.locked.reset(); r.service();
-        assert(!r.intent.owned() && r.returns == 0);
-        r.locked = false; r.claim(); r.service(); assert(r.returns == 0);
+        assert(r.intent.owned() && r.returns == 0);
+        r.locked = false; r.service(); assert(r.returns == 1);
     }
     Context fp{}; fp.prerequisites = fp.world = fp.firstPerson = true;
     auto tp = fp; tp.firstPerson = false;

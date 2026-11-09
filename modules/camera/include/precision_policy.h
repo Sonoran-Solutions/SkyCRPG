@@ -1,6 +1,7 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #pragma once
 #include "policy.h"
+#include <array>
 #include <atomic>
 #include <optional>
 #include <cstdint>
@@ -105,5 +106,47 @@ private:
         return ((token & epochLimit)+4) | (revoke ? 0 : token & ownership);
     }
     std::atomic<Token> state;
+};
+// Main-thread camera observations distinguish a departure from repeated idle
+// third-person frames. The latter must not retire an input's pre-context token.
+class PrecisionCameraObservation {
+public:
+    bool retire(bool firstPerson, PrecisionReturn::Token token) {
+        const bool departure = wasFirstPerson && !firstPerson;
+        wasFirstPerson = firstPerson;
+        return !firstPerson && (departure || PrecisionReturn::owned(token) || PrecisionReturn::requested(token));
+    }
+private:
+    bool wasFirstPerson = false;
+};
+// First occurrence per reason, preallocated and lock-free. Producers publish
+// packed scalar context only; the non-camera task drains and formats it.
+enum class PrecisionReason : unsigned {
+    serviceMain, serviceOther, entryClaimed, entryContext, entryToken, inputUnsafe,
+    inputUnowned, inputMapped, inputNoEdge, ownershipLost, requestAccepted, requestRejected, servicePending, refreshPending,
+    menuBusy, mountBusy, invalidContext, leaseMissing, unlockPending, sessionChanged, returned, returnRefused, count
+};
+class PrecisionDiagnostics {
+public:
+    void note(PrecisionReason reason, Context c = {}, PrecisionReturn::Token token = 0, bool changed = false, bool mainThread = false) {
+        const auto index = static_cast<unsigned>(reason);
+        const std::uint32_t value = 1u | (c.prerequisites?2u:0u) | (c.world?4u:0u) |
+            (c.firstPerson?8u:0u) | (c.menu?16u:0u) | (c.special?32u:0u) | (c.slide?64u:0u) |
+            (PrecisionReturn::owned(token)?128u:0u) | (PrecisionReturn::requested(token)?256u:0u) |
+            (changed?512u:0u) | (c.enabled?1024u:0u) | (mainThread?2048u:0u);
+        std::uint32_t empty = 0;
+        if (samples[index].compare_exchange_strong(empty,value)) pending.fetch_or(1u << index);
+    }
+    bool requested() const { return pending.load() != 0; }
+    template<class Emit> void drain(Emit emit) {
+        const auto bits = pending.exchange(0);
+        for (unsigned i = 0; i < static_cast<unsigned>(PrecisionReason::count); ++i)
+            if (bits & (1u << i)) emit(i,samples[i].load());
+    }
+private:
+    static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
+    static_assert(static_cast<unsigned>(PrecisionReason::count) < 32);
+    std::array<std::atomic<std::uint32_t>,static_cast<unsigned>(PrecisionReason::count)> samples{};
+    std::atomic<std::uint32_t> pending{0};
 };
 } // namespace skycrpg::camera
