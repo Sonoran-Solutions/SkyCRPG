@@ -120,6 +120,21 @@ Implemented all eleven review fixes; no owner decision changed. Engineering deta
 
 Owner questions remain for the runtime gate: do reference-pose body/surface distances give the desired bench/shelf/actor choices, and is the eight-attempt cycle window adequate after cheap filtering? Which tested keyboard/controller cycle/cursor bindings should be approved alongside D5-2 R3 behavior? Earlier provisional drawn-weapon/combat/sneak handling and native Steal semantics still need owner disposition. No response or owner playtest acceptance is assumed; none blocks these authorized pre-run fixes.
 
+## Unattended routes, 2026-11-09
+
+R8 used camera-only `stage-p5-r6-cam-selection` in the Bannered Mare; no E was sent. `p5-r8-a` was **BLOCKED** because the loading fade remained open after `coc`; the setup was amended with a 20 s settle. `p5-r8-b` was runner **PASS 2/2**. Per-pose evidence (probe position, Selection log, and HUD prompt):
+
+| Pose | Observed selection and prompt | Result |
+| --- | --- | --- |
+| Bench | Chose `000C8FC6 NobleBench` at 174.8 then 77.0 units; prompt “E Sit Bench.” The prompt repeated on the second visit. | MEASURED |
+| Door | Chose `000C8FB8 WRDoor02` at 82.0 units; prompt “E Open Door.” | MEASURED |
+| Wardrobe pose | Nearest were a chair at 22.3 and `000C8FE8 GlazedJugLarge01` at 24.1 units; prompt “E Steal Jug.” Wardrobe `000C8FCD` was not isolated. | Wardrobe **NOT_RUN**; owned loose-item prompt OBSERVED. |
+| Tankard pose | Invalid: player reset to the cell entry marker. `target_validation` / `validation_limit` forwards were exercised without a crash. | **NOT_RUN** |
+| Hulda pose | `WoodenBarStool` was chosen; Hulda was never a candidate. | NPC **NOT_RUN** |
+| Behind-bar pose | No LOS rejection logged. | LOS-through-wall **NOT_RUN** |
+
+Diagnostics: radius 180, `capped=0`, pick cost 215–411 µs. The route reports and supporting provider logs/screenshots are under `/srv/storage/Projects/SkyCRPG/session-p4/autotest/runs/batch-p5-r8-{a,b}-00/`.
+
 ## In-game run j-p5 — 2026-11-02
 
 `p5-selection-main` on Selection DLL `eba23c2e…` from `1506e6d`, camera-only, keyboard/mouse, unattended; no crash, clean restore. `check_selection_log.py` **PASS**: 57 substitutions in 11,353 picks.

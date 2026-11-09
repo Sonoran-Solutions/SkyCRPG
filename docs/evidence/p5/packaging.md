@@ -32,3 +32,15 @@ Windows build and CI artifact upload: **NOT_RUN** (MSVC unavailable; orchestrato
 - RELEASE_CHECKLIST: verify all three native artifacts, full candidates and SHA256SUMS; exercise Camera-only, UI-only, Camera plus Selection and combined profiles, including MO2 overlay apply/removal and conflicting MCM settings.
 - STATUS: R2 packaging implemented pending Windows CI, archive hashes, isolated install routes and owner acceptance; portable tests alone do not prove gameplay.
 - DECISIONS / ticket: record the owner's 2026-11-08 R2 ruling: separate Selection archive, optional manually applied Camera target-lock overlay.
+
+## Unattended routes, 2026-11-09
+
+R2 candidate provenance: main `890a5da1354ba29130ac88596cb3cfd0b242e1b5`; GitHub Actions run `42557859729` (`module=all`) green. Artifacts `skycrpg-{camera,ui,selection}-890a5da…` were downloaded to `session-p5/artifacts/main-r2/`; SHA256SUMS verified. Candidate assembled at `session-p5/dist-p5-candidate/`:
+
+| Archive | SHA-256 |
+| --- | --- |
+| `SkyCRPG_Camera-0.1.0-rc.1-890a5da.zip` | `0bd64ec6772b92fe274b3720787a9085fc7421a3d33a2f97e3a4dc3f533605d7` |
+| `SkyCRPG_Selection-0.1.0-rc.1-890a5da.zip` | `6dc40a9733dec7500ca373a85be8ea51e86f3126ef1e7327c6dcf477fac99fa0` |
+| `SkyCRPG_UI-0.1.0-rc.1-6b4c0fc.zip` (Phase 4 rc1 reused) | `f508a0e1343e2f15ea825e284f57fafed1108f62eb38acbef4b72582d2d940cb` |
+
+The UI archive was reused because `git diff --stat 6b4c0fc 890a5da -- modules/ui shared` is empty; that provenance is recorded in `candidate.json`. Provider inventory SHA-256: `87712c09d79eb06b25d300162383fd86de675342afcdbd3e450a222ef513f922`. Combined SHA256SUMS verified. `routes/make_stages.py --candidate dist-p5-candidate --output session-p5/regression-stages` built 25 `stage-p5-r6-<variant>` / `dist-p5-r6-<variant>` pairs; manifest `regression-stages/regression-stage-manifest.json` status `BUILT_NOT_RUN`. Astra's audit verified all 4,586 stage output hashes against the candidate. The stage run labels and results are recorded in [the gate](gate.md#revise-progress), [target-lock evidence](target-lock.md#unattended-routes-2026-11-09) (`p5-r7-a` through `p5-r7-e`), and [proximity-activation evidence](proximity-activation.md#unattended-routes-2026-11-09) (`p5-r8-a`, `p5-r8-b`).
