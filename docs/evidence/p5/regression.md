@@ -30,7 +30,7 @@ Stages were built by `make_stages.py --candidate`. Runner: session-p4 autotest r
 | `p5-reg-combined-cam-disabled` | 2 | `p5-r6-s2` | PASS | 890a5da | combined disabled-camera checkpoints 4/4 | RUN |
 | `p5-reg-combined-ui-disabled` | 2 | `p5-r6-s2` | PASS | 890a5da | combined disabled-UI checkpoints 4/4 | RUN |
 | `p5-reg-smoke-cam-lock` | 4 | `p5-r6-s4` | PASS | 890a5da | lock engaged, 479 trace rows / 415 locked | RUN |
-| `p5-reg-smoke-cam-fixed` | 4 | `p5-r6-s4` | PASS | 890a5da | ThinOccluder engaged lines 604 | RUN |
+| `p5-reg-smoke-cam-fixed` | 4 | `p5-r6-s4` | PASS | 890a5da | 445 `engaged=1` rows out of 587 ThinOccluder frame rows | RUN |
 | `p5-reg-smoke-cam-selection` | 4 | `p5-r6-s4` | PASS | 890a5da | selection smoke checkpoints 3/3 | RUN |
 | `p5-reg-smoke-cam-cursor` | 4 | `p5-r6-s4` | PASS | 890a5da | cursor entered and exited for toggle/F6/F8/menu | RERUN PENDING (D036) |
 | `p5-reg-smoke-cam-all` | 4, rerun in 6 | `p5-r6-s4`, `p5-r6-s6` | PASS | 890a5da | initial run had bow-drawn refusal; sheathed rerun: lock 481/417 rows, cursor entered with 426 samples, F6 return remained first person | RERUN PENDING (D036) |
@@ -54,13 +54,13 @@ Stages were built by `make_stages.py --candidate`. Runner: session-p4 autotest r
 | `p5-reg-dense-selection` | 8 | `p5-r6-s89a` | PASS | 890a5da | 19 summaries; capped=0; max scan cost 212 µs | RUN |
 | `p5-reg-dense-cursor` | 8 | — | NOT_RUN | — | toggle defect affects route | RERUN PENDING (D036) |
 | `p5-reg-dense-all` | 8 | — | NOT_RUN | — | toggle defect affects route | RERUN PENDING (D036) |
-| `p5-reg-resource-baseline` | 9 | `p5-r6-s89a` | PASS | 890a5da | 10-min resource window, 920 samples | RUN |
+| `p5-reg-resource-baseline` | 9 | `p5-r6-s89a` | PASS | 890a5da | 10-min resource window, 601 `process_memory` samples | RUN |
 | `p5-reg-resource-off` | 9 | `p5-r6-s89a` | PASS | 890a5da | 10-min resource window; Camera/Selection present, features off | RUN |
 | `p5-reg-resource-all` | 9 | — | NOT_RUN | — | toggle defect affects route | RERUN PENDING (D036) |
 
 ## R6 and defect record
 
-The ledger records **25 of 41 routes run (24 PASS, on-main BLOCKED by the defect)**. Sixteen cursor-affected routes are scheduled for rerun on the rebuilt candidate under D036; route rows above retain the result on 890a5da where one exists. Stage 6 stopped after `on-main`, so `on-ui-disabled`, `controls-off`, `controls-all`, `lifecycle-off` and `lifecycle-all` were not run. The `on-cam-disabled` route later passed 4/4 in `p5-r6-s7a`.
+Across the batches, **31 distinct routes were attempted: 30 PASS, 1 BLOCKED (`on-main`); 10 NOT_RUN**. Gate disposition: **25 RUN (all PASS) + 16 RERUN PENDING** (the pending set holds 5 PASS, 1 BLOCKED and 10 NOT_RUN results on 890a5da). Sixteen cursor-affected routes are scheduled for rerun on the rebuilt candidate under D036; route rows above retain the result on 890a5da where one exists. Stage 6 stopped after `on-main`, so `on-ui-disabled`, `controls-off`, `controls-all`, `lifecycle-off` and `lifecycle-all` were not run. The `on-cam-disabled` route later passed 4/4 in `p5-r6-s7a`.
 
 **MAJOR — cursor toggle queued from a native menu.** In `p5-reg-on-main` (run `batch-p5-r6-s6-01`), runner console text `player.additem 00012EB7 1`, `0001CF2B`, and `save …_combined_prep` contains B/b, the cursor toggle (`[CursorMode] iToggleKey=48`). Probe events show Console closing at `05:13:18.463Z` and `SkyCRPGCameraWorldPointer` opening at `05:13:18.495Z`; the overlay remained open after setup and recovery refused to continue. The input sink queued the toggle, then service logic applied it after the menu closed.
 
@@ -88,11 +88,11 @@ Resource observations (p95s in milliseconds; over33 counts are standing/turn/inv
 
 | Row | Standing p95 | Turn p95 | Inventory p95 | Resource-window p95 | over33 counts | Inventory max | Resource max | Private commit |
 | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |
-| Baseline | 16.842 | 16.888 | 16.760 | 16.741 | 0/0/10/11 | 64.1 ms | 389.8 ms (cell transitions) | 1.47→2.13 GB |
-| Features off | 16.702 | 16.911 | 16.709 | 16.770 | 0/0/20/12 | 86.1 ms | 401.9 ms (cell transitions) | 1.46→2.09 GB |
+| Baseline | 16.842 | 16.888 | 16.760 | 16.741 | 0/0/10/11 | 64.1 ms | 389.8 ms (cell transitions) | resource window 1.681→2.127 GB (+0.446 GB); full run 1.47→2.13 GB |
+| Features off | 16.702 | 16.911 | 16.709 | 16.770 | 0/0/20/12 | 86.1 ms | 401.9 ms (cell transitions) | resource window 1.689→2.138 GB (+0.449 GB); full run 1.46→2.09 GB |
 | All | RERUN PENDING | RERUN PENDING | RERUN PENDING | RERUN PENDING | RERUN PENDING | RERUN PENDING | RERUN PENDING | RERUN PENDING |
 
-The ledger records baseline and off private commit growth as equivalent, both about +0.63 GB over the matched window. Off versus baseline deltas: standing -0.83%, turn +0.14%, inventory -0.30%, resource +0.17%. `resource-all` awaits the post-fix rerun. Dense Selection reported 19 summaries, capped=0, maximum `cost_us` 212; its private commit was 1.47→1.53 GB (max 1.58 GB). Cursor and combined dense rows await rerun. These resource measurements do not change D024 or the Phase 5 gate ruling.
+Private commit growth inside the matched resource window is equivalent: +0.446 GB (baseline) and +0.449 GB (features off) over 601 samples each. Off versus baseline deltas: standing -0.83%, turn +0.14%, inventory -0.30%, resource +0.17%. `resource-all` awaits the post-fix rerun. Dense Selection reported 19 summaries, capped=0, maximum `cost_us` 212; its private commit was 1.47→1.53 GB (max 1.58 GB). Cursor and combined dense rows await rerun. These resource measurements do not change D024 or the Phase 5 gate ruling.
 
 ## Gate state
 
