@@ -1,6 +1,6 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 // Included in plugin.cpp after context(). Session state is main-thread only; the
-// overlay menu is created and messaged on the UI job thread (see UILock).
+// overlay menu is created and messaged on the UI job thread (see UITryLock).
 namespace cursorMode {
 namespace api = skycrpg::selection::api;
 using Exit = cursor::Exit;
@@ -19,6 +19,7 @@ constexpr auto flags = static_cast<std::uint32_t>(RE::UI_MENU_FLAGS::kRequiresUp
 const api::Interface* selection = nullptr;
 HMODULE selectionModule = nullptr;
 cursor::Session session;
+cursor::MenuContention menuContention;
 std::atomic<bool> dataReady{false}, worldLoaded{false}, padInput{false};
 std::atomic<unsigned> stop{0}, toggle{0}, held{0};
 cursor::OverlayRegistration registration;
@@ -48,7 +49,7 @@ std::uint64_t refresh = 0, cycles = 0, projections = 0, pushes = 0;
 std::uint32_t sentTarget = 0;
 RE::FormID cell = 0;
 unsigned traceLines = 0;
-std::uint64_t framePickMicros = 0, busyTicks = 0;
+std::uint64_t framePickMicros = 0, busyTicks = 0, busyExits = 0;
 std::uint32_t nearId = 0; float nearPixels = -1; // trace: nearest projected box
 // Diagnostics for reason=overlay: last exit site, first failing construct/paint/
 // ownership step, Mouse.removeListener outcome and the flags ownMenu saw.
@@ -68,58 +69,77 @@ bool mainThread() {
 // 1.7.104: in unpaused frames UI::ProcessMessages (AL 82082, which also runs
 // menu creators) and UI::AdvanceMenus (AL 82083) run as the job-system "UI"
 // job (AL 39042), off main, holding UI+0x158. PostDisplay runs on main from the
-// UI draw (AL 82084) after that job signals. Main-side movie and menu-stack
-// access takes the same reentrant lock.
-class UILock {
-public:
-    UILock() : ui(RE::UI::GetSingleton()) { if (ui) ui->processMessagesLock.Lock(); }
-    ~UILock() { if (ui) ui->processMessagesLock.Unlock(); }
-    UILock(const UILock&) = delete;
-    UILock& operator=(const UILock&) = delete;
-private:
-    RE::UI* ui;
-};
-// The camera hooks run on main while the UI job may hold UI+0x158; they wait at
-// most `budget` for it. Same acquire as the engine's (0x140199fa0), bounded:
-// owner thread id at +0, count at +4 (pinned 1.7.104 / CommonLib BSSpinLock).
-// PostDisplay keeps the blocking UILock: main has already waited for the UI job.
+// UI draw (AL 82084) after that job signals. ProcessMessages sorts menuStack
+// at RVA 1169E5D/1169E60 BEFORE taking UI+0x158 at 1169E82, under the global
+// lock AL 412033 (RVA 333B050). Main must take global THEN UI+0x158, even for
+// a read. Both are reentrant BSSpinLocks (owner DWORD+0, count DWORD+4).
 static_assert(sizeof(RE::BSSpinLock) == 8);
 class UITryLock {
 public:
     explicit UITryLock(std::chrono::microseconds budget = {}) {
         const auto ui = RE::UI::GetSingleton();
         if (!ui) return;
-        const auto words = reinterpret_cast<volatile LONG*>(&ui->processMessagesLock);
+        static REL::Relocation<RE::BSSpinLock*> global{REL::ID(412033)};
+        const auto outer = global.get();
+        const auto inner = &ui->processMessagesLock;
         const auto thread = static_cast<LONG>(GetCurrentThreadId());
-        if (words[0] == thread) { InterlockedIncrement(&words[1]); held = ui; return; }
+        // An engine callback holding only inner must not reverse the order.
+        _mm_lfence();
+        const bool innerOnly = *reinterpret_cast<volatile LONG*>(inner) == thread &&
+            *reinterpret_cast<volatile LONG*>(outer) != thread;
+        if (innerOnly) return;
         const auto deadline = std::chrono::steady_clock::now()+budget;
         for (;;) {
-            if (InterlockedCompareExchange(&words[1],1,0) == 0) { words[0] = thread; held = ui; return; }
+            if (cursor::tryMenuLocks(innerOnly,[&] { return acquire(outer,thread); },
+                [&] { return acquire(inner,thread); },[&] { outer->Unlock(); })) {
+                held = ui; heldOuter = outer; return;
+            }
             if (std::chrono::steady_clock::now() >= deadline) return;
             _mm_pause();
         }
     }
-    ~UITryLock() { if (held) held->processMessagesLock.Unlock(); }
+    ~UITryLock() {
+        if (held) held->processMessagesLock.Unlock();
+        if (heldOuter) heldOuter->Unlock();
+    }
     UITryLock(const UITryLock&) = delete;
     UITryLock& operator=(const UITryLock&) = delete;
     explicit operator bool() const { return held != nullptr; }
 private:
+    static bool acquire(RE::BSSpinLock* lock, LONG thread) {
+        const auto words = reinterpret_cast<volatile LONG*>(lock);
+        _mm_lfence();
+        if (words[0] == thread) { InterlockedIncrement(&words[1]); return true; }
+        if (InterlockedCompareExchange(&words[1],1,0) != 0) return false;
+        words[0] = thread;
+        _mm_sfence();
+        return true;
+    }
     RE::UI* held = nullptr;
+    RE::BSSpinLock* heldOuter = nullptr;
 };
 void refuse(Exit reason) {
     const auto bit = std::uint64_t{1} << static_cast<unsigned>(reason);
     static unsigned overlayLines = 0; // overlay exits carry diagnostics: log a few
     if ((refusalBits & bit) && (reason != Exit::overlay || ++overlayLines > 8)) return;
     refusalBits |= bit;
-    char line[192]{};
-    constexpr std::array names{"none","toggle","disabled","lifecycle","menu","load","death","cell","first-person","special","precision","lock","F6","F8","selection","overlay","thread","stale"};
-    std::snprintf(line,sizeof(line),"Cursor refused/exit reason=%s busy=%llu site=%u step=%u own=%u listener=%u flags=0x%X",
-        names[static_cast<unsigned>(reason)],static_cast<unsigned long long>(busyTicks),overlaySite.load(),overlayStep.load(),
+    char line[224]{};
+    std::snprintf(line,sizeof(line),"Cursor refused/exit reason=%s busy=%llu busyExits=%llu site=%u step=%u own=%u listener=%u flags=0x%X",
+        cursor::exitNames[static_cast<unsigned>(reason)],static_cast<unsigned long long>(busyTicks),static_cast<unsigned long long>(busyExits),overlaySite.load(),overlayStep.load(),
         ownStep.load(),listenerRemoved.load(),ownFlags.load());
     log(line);
 }
 void service();
 void leave(Exit reason);
+bool menuTick(bool acquired) {
+    if (!acquired) ++busyTicks;
+    if (!session.active) { menuContention = {}; return acquired; }
+    const auto graphics = RE::BSGraphics::State::GetSingleton();
+    const auto frameState = graphics ? graphics->GetFrameState1799() : nullptr;
+    if (!frameState) { leave(Exit::lifecycle); return false; }
+    if (menuContention.observe(acquired,frameState->gUpdateCounter) == cursor::MenuAccess::exit) leave(Exit::busy);
+    return acquired;
+}
 bool ownMenu(RE::IMenu* menu);
 bool nativeMenu();
 Exit captureExit();
@@ -173,7 +193,7 @@ public:
         return menu;
     }
     bool dimensions() {
-        const UILock lock;
+        // Caller owns UI+0x158: engine construction or a successful UITryLock.
         if (!uiMovie) return false;
         RE::GViewport viewport;
         uiMovie->GetViewport(&viewport);
@@ -184,11 +204,11 @@ public:
             bufferWidth >= left+width && bufferHeight >= top+height;
     }
     void hide() {
-        const UILock lock;
+        // Only construction/ProcessMessage call this, under the engine UI lock.
         if (uiMovie) static_cast<void>(uiMovie->SetVariable("_root._visible",RE::GFxValue(false)));
     }
     bool paint() {
-        const UILock lock;
+        // Main callers hold both locks through the movie access.
         if (!usable) { failStep(29); return false; }
         if (!dimensions()) { failStep(30); return false; }
         session.pointer.move({},cursorSettings.sensitivity,width,height);
@@ -220,6 +240,8 @@ public:
         // On main the draw holds 0x14333b050 and then takes UI+0x158, the same
         // order as ProcessMessages, after main has waited for the UI job.
         if (!mainThread()) return;
+        const UITryLock lock;
+        if (!menuTick(static_cast<bool>(lock))) return;
         if (std::exchange(retryService,false)) service(); // uncontended: the UI job has finished
         if (!session.active) return;
         if (const auto reason = captureExit(); reason != Exit::none) { leave(reason); return; }
@@ -230,7 +252,8 @@ public:
 };
 bool ownMenu(RE::IMenu* menu) {
     if (!cursorSettings.enabled || !mainThread() || !menu || menu != current()) return false;
-    const UILock lock;
+    const UITryLock lock;
+    if (!lock) return false; // includes focused() after service's budget expires
     const auto ui = RE::UI::GetSingleton();
     const auto own = ui ? ui->GetMenu(menuName) : RE::GPtr<RE::IMenu>{};
     const auto allowed = static_cast<std::uint32_t>(flags) | static_cast<std::uint32_t>(RE::UI_MENU_FLAGS::kOnStack);
@@ -245,7 +268,8 @@ bool ownMenu(RE::IMenu* menu) {
 bool nativeMenu() {
     const auto ui = RE::UI::GetSingleton();
     if (!ui) return true;
-    const UILock lock; // also covers focused()'s stack walk and map lookups
+    const UITryLock lock; // global protects the sort; inner protects map/messages
+    if (!lock) return true;
     if (focused()) return true;
     const auto hud = ui->GetMenu("HUD Menu"), fader = ui->GetMenu("Fader Menu"), mist = ui->GetMenu("Mist Menu");
     for (const auto& menu : ui->menuStack) {
@@ -287,6 +311,8 @@ void resolve() {
 }
 void leave(Exit reason) {
     const bool wasActive = session.active || pending;
+    if (session.active && reason == Exit::busy) ++busyExits;
+    menuContention = {};
     session.exit(); pending = false; waiting = false; projectedCount = 0; listedCount = 0;
     visibleDirty = true; visibleSentCount = 0;
     if (wasActive && apiLive()) { static_cast<void>(selection->setCursorMode(0)); }
@@ -473,7 +499,8 @@ cursor::Registration registerOverlay() {
     }
     // Register at DataLoaded before gameplay readers; the engine creates the menu
     // later inside ProcessMessages (normally the UI job thread).
-    const RE::BSSpinLockGuard lock(ui->processMessagesLock);
+    const UITryLock lock;
+    if (!lock) return cursor::Registration::deferred;
     if (ui->menuMap.find(std::string_view(menuName)) != ui->menuMap.end()) { overlaySite.store(21); refuse(Exit::overlay); return cursor::Registration::failed; }
     ui->Register(menuName,Overlay::create);
     return cursor::Registration::ready;
@@ -490,10 +517,10 @@ void traceFrame() {
     if (!mainThread()) return;
     if (session.active && traceLines < cursorSettings.trace) {
         ++traceLines;
-        char line[384]{};
-        std::snprintf(line,sizeof(line),"Cursor sample=%u refresh=%llu target=%08X latch=%08X x=%.2f y=%.2f projections=%llu pushes=%llu cost_us=%llu busy=%llu near=%08X d=%.1f viable=%u available=%u count=%u replies=%llu auth=%08X visible=%u/%llu",
+        char line[416]{};
+        std::snprintf(line,sizeof(line),"Cursor sample=%u refresh=%llu target=%08X latch=%08X x=%.2f y=%.2f projections=%llu pushes=%llu cost_us=%llu busy=%llu busyExits=%llu near=%08X d=%.1f viable=%u available=%u count=%u replies=%llu auth=%08X visible=%u/%llu",
             traceLines,static_cast<unsigned long long>(refresh),sentTarget,session.latch.id,session.pointer.point.x,session.pointer.point.y,
-            static_cast<unsigned long long>(projections),static_cast<unsigned long long>(pushes),static_cast<unsigned long long>(framePickMicros),static_cast<unsigned long long>(busyTicks),nearId,nearPixels,
+            static_cast<unsigned long long>(projections),static_cast<unsigned long long>(pushes),static_cast<unsigned long long>(framePickMicros),static_cast<unsigned long long>(busyTicks),static_cast<unsigned long long>(busyExits),nearId,nearPixels,
             cachedFrame.viable,cachedFrame.snapshot.available,cachedFrame.count,static_cast<unsigned long long>(cachedFrame.replies),cachedFrame.authorizedTarget,
             static_cast<unsigned>(visibleSentCount),static_cast<unsigned long long>(visibleWrites));
         log(line);
@@ -511,11 +538,11 @@ void service() {
     if (serviced && servicedFrame == frameState->gUpdateCounter) { clearAway(); return; }
     serviced = true; servicedFrame = frameState->gUpdateCounter;
     if (!toggle.load() && !session.active && !pending) return;
-    // Wait at most 1 ms for the UI job's UI+0x158, then skip; requests stay
+    // Wait at most 1 ms total for global then UI+0x158; requests stay
     // queued and a shown overlay's PostDisplay runs the tick instead.
     const UITryLock lock(std::chrono::microseconds(1000));
     retryService = !lock;
-    if (!lock) { ++busyTicks; serviced = false; return; }
+    if (!menuTick(static_cast<bool>(lock))) { serviced = false; return; }
     const unsigned request = toggle.exchange(0);
     if (request && (session.active || pending)) { leave(Exit::toggle); return; }
     if (!request && !session.active && !pending) return;
@@ -582,14 +609,9 @@ bool look(const RE::NiPoint2& input) {
     if (!session.active || !o) return false;
     if (toggle.exchange(0)) { leave(Exit::toggle); return false; }
     const UITryLock lock;
-    if (!lock) {
-        // UI job busy: keep the pointer math; PostDisplay checks and paints.
-        // Never wait here: look runs every frame while active.
-        ++busyTicks;
-        session.pointer.move({input.x,input.y},cursorSettings.sensitivity,o->width,o->height);
-        clearAway();
-        return true;
-    }
+    // Freeze the pointer and keep capture during a bounded busy window. The
+    // next acquired tick checks native focus before any movie access or move.
+    if (!menuTick(static_cast<bool>(lock))) return session.active;
     if (const auto reason = captureExit(); reason != Exit::none) { leave(reason); return false; }
     if (!ownMenu(o)) { overlaySite.store(17); leave(Exit::overlay); return false; }
     session.pointer.move({input.x,input.y},cursorSettings.sensitivity,o->width,o->height);

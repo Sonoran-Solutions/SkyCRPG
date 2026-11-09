@@ -7,6 +7,15 @@
 #include <cassert>
 
 namespace skycrpg::camera::cursor {
+// One ordered attempt. Never acquire outer while holding only inner; release
+// outer on a failed inner attempt so a caller can retry within its own budget.
+template<class TryOuter, class TryInner, class ReleaseOuter>
+bool tryMenuLocks(bool innerOnly, TryOuter outer, TryInner inner, ReleaseOuter release) {
+    if (innerOnly || !outer()) return false;
+    if (inner()) return true;
+    release();
+    return false;
+}
 struct Settings {
     bool enabled = false;
     int toggleKey = 48, toggleGamepad = -1; // B; proposal only
@@ -27,7 +36,27 @@ inline Settings validate(Settings s, const camera::Settings& camera) {
     s.trace = (std::min)(s.trace,512u);
     return s;
 }
-enum class Exit { none, toggle, disabled, lifecycle, menu, load, death, cell, firstPerson, special, precision, lock, f6, f8, selection, overlay, thread, stale };
+enum class Exit { none, toggle, disabled, lifecycle, menu, load, death, cell, firstPerson, special, precision, lock, f6, f8, selection, overlay, thread, stale, busy };
+inline constexpr std::array exitNames{"none","toggle","disabled","lifecycle","menu","load","death","cell","first-person","special","precision","lock","F6","F8","selection","overlay","thread","stale","busy"};
+static_assert(exitNames.size() == static_cast<unsigned>(Exit::busy)+1u);
+// Tolerate brief UI jobs, but bound capture without a focus check to about
+// one third of a second at 60 fps. This is a fixed policy, not an INI setting.
+inline constexpr unsigned menuBusyFrameLimit = 20;
+enum class MenuAccess { ready, skip, exit };
+struct MenuContention {
+    unsigned failures = 0;
+    std::uint32_t lastFrame = 0;
+    bool counted = false;
+    MenuAccess observe(bool acquired, std::uint32_t frame) {
+        if (acquired) { *this = {}; return MenuAccess::ready; }
+        // Service, look and PostDisplay can all fail in the same update.
+        if (!counted || lastFrame != frame) {
+            if (failures < menuBusyFrameLimit) ++failures;
+            lastFrame = frame; counted = true;
+        }
+        return failures < menuBusyFrameLimit ? MenuAccess::skip : MenuAccess::exit;
+    }
+};
 constexpr Exit interruptKey(bool pad, int id, bool nativePOV) {
     if (!pad && id == 64) return Exit::f6;
     if (!pad && id == 66) return Exit::f8;
