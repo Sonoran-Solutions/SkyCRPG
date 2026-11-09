@@ -519,6 +519,10 @@ def native(args):
     for name, module_dir in PACKAGES.items():
         if args.module and module_dir != f"modules/{args.module}":
             continue
+        if not args.module and name == "SkyCRPG_Selection" and not any(
+                args.build_dir.glob(f"{module_dir}/**/{name}.dll")):
+            print("Selection skipped: SkyCRPG_Selection.dll not found in build directory")
+            continue
         files = {arc: path.read_bytes() for arc, path in package_files(name, module_dir, args.build_dir).items()}
         # Use committed inputs, not potentially dirty configuration/notices.
         for arc, path in package_files(name, module_dir, args.build_dir).items():

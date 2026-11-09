@@ -2,6 +2,7 @@
 import argparse
 import copy
 import importlib.util
+import io
 import json
 from pathlib import Path
 import runpy
@@ -350,6 +351,47 @@ class PackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expected VCPKG_TARGET_TRIPLET=x64-windows-static"):
             pkg.native(args)
 
+    def test_default_native_selection_optional_and_explicit_selection_required(self):
+        build = self.root / "build"
+        vcpkg_fixture(build)
+        for name in ("SkyCRPG_Camera", "SkyCRPG_UI"):
+            dll = build / pkg.PACKAGES[name] / "Release" / f"{name}.dll"
+            dll.parent.mkdir(parents=True)
+            dll.write_bytes(pe())
+        selection = build / pkg.PACKAGES["SkyCRPG_Selection"] / "Release/SkyCRPG_Selection.dll"
+        original_git_bytes = pkg.git_bytes
+        def fixture_git_bytes(commit, path):
+            if path == "LICENSES/CommonLibSSE-legacy-MIT":
+                return (pkg.ROOT / path).read_bytes()
+            return original_git_bytes(commit, path)
+        for present in (False, True):
+            with self.subTest(selection_present=present):
+                if present:
+                    selection.parent.mkdir(parents=True)
+                    selection.write_bytes(pe())
+                out = self.root / f"native-{present}"
+                args = argparse.Namespace(build_dir=build, module=None, commit=COMMIT, out=out)
+                output = io.StringIO()
+                with patch.object(pkg, "git_bytes", side_effect=fixture_git_bytes), \
+                     patch("sys.stdout", output), \
+                     patch.object(pkg, "check_independence", wraps=pkg.check_independence) as independence:
+                    pkg.native(args)
+                names = list(pkg.PACKAGES) if present else ["SkyCRPG_Camera", "SkyCRPG_UI"]
+                self.assertTrue(any(set(call.args[0]) == set(names) and
+                                    all(isinstance(files, dict) for files in call.args[0].values())
+                                    for call in independence.call_args_list))
+                self.assertEqual("Selection skipped:" in output.getvalue(), not present)
+                sums = (out / "SHA256SUMS").read_text()
+                for name in pkg.PACKAGES:
+                    self.assertEqual((out / f"{name}.manifest.json").exists(), name in names)
+                    self.assertEqual(name in sums, name in names)
+        selection.unlink()
+        result = subprocess.run(["python3", "-B", "-I", str(pkg.ROOT / "tools/package.py"), "native",
+                                 "--build-dir", str(build), "--out", str(self.root / "explicit"),
+                                 "--commit", COMMIT, "--module", "selection"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("error: expected one SkyCRPG_Selection.dll", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
     def test_verify_repro_compares_all_output_bytes_and_cleans_temporary_dirs(self):
         args = self.args()
         self.assertEqual(pkg.verify_repro(args)["result"], "PASS")
