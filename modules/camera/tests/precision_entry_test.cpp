@@ -1,7 +1,9 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #include "precision_policy.h"
+#include "precision_trace.h"
 #include "target_lock_policy.h"
 #include <cassert>
+#include <cstring>
 #include <iostream>
 #include <semaphore>
 #include <thread>
@@ -11,10 +13,15 @@ struct EntryRoute {
     Context camera;
     PrecisionReturn intent;
     PrecisionCameraObservation observation;
+    PrecisionClaimTrace claimTrace;
+    PrecisionTraceRecord lastClaim{};
     const std::thread::id mainThread = std::this_thread::get_id();
-    unsigned forces = 0;
+    unsigned forces = 0, claims = 0;
     explicit EntryRoute() { camera.enabled = camera.prerequisites = camera.world = true; }
-    bool publish(Context sampled, PrecisionReturn::Token token) { return intent.requestEntry(sampled,token); }
+    bool publish(Context sampled, PrecisionReturn::Token token,
+        PrecisionClaimInput input = {1,true,true,{true,true}}) {
+        return claimTrace.publish(intent,sampled,token,input);
+    }
     bool service(bool contextAvailable = true, bool cancelDuringForce = false, bool refuseForce = false) {
         if (std::this_thread::get_id() != mainThread) return false;
         const auto token = intent.snapshot();
@@ -22,17 +29,72 @@ struct EntryRoute {
             static_cast<void>(intent.invalidate(token)); return false;
         }
         if (!contextAvailable) return false;
-        return intent.enter(camera,token,[&] {
+        const auto input = std::optional<PrecisionClaimInput>{claimTrace.read(token).value_or(PrecisionClaimInput{})};
+        const PrecisionTraceState before{camera,false,false,input->key.armed,input->key.down,9};
+        const bool claimed = intent.enter(camera,token,[&] {
             ++forces;
             camera.enabled = false;
             camera.firstPerson = !refuseForce;
             if (cancelDuringForce) intent.cancel();
             return camera; // immediate observation in the same Main operation
         });
+        if (claimed) {
+            auto key = input->key;
+            key.suspend();
+            const PrecisionTraceState after{camera,false,true,key.armed,key.down,0};
+            lastClaim = {PrecisionTraceEvent::toggleClaim,before,after,input->device,input->pressed,input->edge};
+            ++claims;
+        }
+        return claimed;
     }
 };
 
 int main() {
+    // Input metadata belongs to the accepted token, not to the latest button
+    // seen by Main. Rejected duplicates and stale producers cannot replace it.
+    for (const bool lockEnabled : {false,true}) {
+        for (const unsigned device : {1u,2u}) {
+            for (const bool pressed : {false,true}) {
+                for (const bool edge : {false,true}) {
+                    EntryRoute r;
+                    r.camera.targetLock = lockEnabled;
+                    const auto initial = r.intent.snapshot();
+                    std::thread producer([&] {
+                        assert(r.publish(r.camera,initial,{device,pressed,edge,{true,true}}));
+                    });
+                    producer.join();
+                    assert(!r.publish(r.camera,initial,{0,!pressed,!edge,{}}));
+                    assert(!r.service(false) && r.claims == 0); // UI/mount contention
+                    assert(r.service() && r.claims == 1);
+                    assert(!r.service() && r.claims == 1); // same token, no replay
+                    const auto& record = r.lastClaim;
+                    assert(record.event == PrecisionTraceEvent::toggleClaim);
+                    assert(record.device == device && record.pressed == pressed && record.edge == edge);
+                    assert(record.before.context.enabled && !record.before.context.firstPerson && !record.before.owned);
+                    assert(!record.after.context.enabled && record.after.context.firstPerson && record.after.owned);
+                    assert(record.before.armed && record.before.down && !record.after.armed && record.after.down);
+                    char line[192]{};
+                    assert(formatPrecisionTrace(line,sizeof(line),record));
+                    assert(std::strstr(line,"event=11 ") && std::strstr(line,"camera=9/0 "));
+                    // A cancelled epoch must not leak its metadata into a new entry.
+                    r.intent.cancel(); r.camera.firstPerson = false; r.camera.enabled = true;
+                    assert(r.publish(r.camera,r.intent.snapshot(),{3-device,true,true,{true,true}}));
+                    assert(!r.publish(r.camera,initial,{device,pressed,edge,{}}));
+                    assert(r.service() && r.claims == 2 && r.lastClaim.device == 3-device);
+                }
+            }
+        }
+    }
+    // The debug sample never gates entry: an intent published without one
+    // (or while the sample flag is busy) still claims once, tracing device 0.
+    for (const bool lockEnabled : {false,true}) {
+        EntryRoute r;
+        r.camera.targetLock = lockEnabled;
+        assert(r.intent.requestEntry(r.camera,r.intent.snapshot()));
+        assert(r.service() && r.claims == 1 && r.lastClaim.device == 0);
+        assert(!r.service() && r.claims == 1);
+    }
+    std::cout << "PASS claim trace: lock on/off; stored device/press/edge; event=11 camera=9/0; contention emits none; one per token; stale/duplicate publication preserves metadata\n";
     // Lock-off entry must progress from the camera frame even if every SKSE
     // ordinary task runs off Main. Configuration/optional hooks are not a gate.
     for (const bool menuContention : {false,true}) {
@@ -236,7 +298,7 @@ int main() {
         case 6: r.camera.enabled = false; break;
         default: r.intent.cancel(); break;
         }
-        assert(!r.service() && !r.intent.owned() && r.forces == 0);
+        assert(!r.service() && !r.intent.owned() && r.forces == 0 && r.claims == 0);
         r.camera = EntryRoute{}.camera;
         assert(!r.service() && r.forces == 0); // no replay after recovery
     }
@@ -257,7 +319,7 @@ int main() {
         assert(r.publish(r.camera,r.intent.snapshot()));
         assert(!r.service(true,cancelDuringForce,!cancelDuringForce));
         assert(!r.intent.owned() && !PrecisionReturn::entryRequested(r.intent.snapshot()));
-        assert(r.forces == 1 && !r.service());
+        assert(r.forces == 1 && !r.service() && r.claims == 0);
     }
     {
         EntryRoute r;

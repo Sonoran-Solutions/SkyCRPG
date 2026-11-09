@@ -123,6 +123,7 @@ EnableIntent enableIntent;
 unsigned lifecycleLogCount = 0;
 LifecycleTraceDebounce lifecycleTrace;
 PrecisionTraceBudget precisionTraceBudget;
+PrecisionClaimTrace precisionClaimTrace;
 FailureDebounce failureDebounce;
 std::array<FreshPress,4> keys;
 using Look = void(*)(RE::ThirdPersonState*, const RE::NiPoint2&);
@@ -690,8 +691,8 @@ void serviceDeferredCameraWork() {
         if (deferredIndicatorStop.load()) stopIndicator();
         if (const auto snapshot = preferencesToSave.exchange(0)) savePreferences(snapshot);
     }
-    // Native entry does no IO and must not wait for the task's outside-UI-lock
-    // gate. Lock-on keeps its interrupt/lease service ordering.
+    // Native entry is independent of the task's IO gate. Opt-in claim tracing
+    // checks inherited UI locks in its service. Lock-on keeps lease ordering.
     if (PrecisionReturn::entryRequested(precisionReturn.snapshot())) {
         if (!taskMain) precisionDiagnostics.note(PrecisionReason::serviceOther);
         else if (targetLockEnabled) serviceFirstPersonReturn();
@@ -806,23 +807,34 @@ Context returnContext(bool& hardSpecial, bool mounted) {
     c.menu = cursorMode::callbackMenu(false);
     return c;
 }
+PrecisionTraceState traceState(Context c, bool hard, FreshPress key, bool owned, std::optional<bool> mounted);
+void tracePrecision(PrecisionTraceEvent event, PrecisionTraceState before, PrecisionTraceState after,
+    unsigned device = 0, bool pressed = false, bool edge = false, unsigned decision = 0);
 void servicePrecisionEntry() {
     const auto sessionToken = precisionReturn.snapshot();
     if (!PrecisionReturn::entryRequested(sessionToken)) return;
     if (!cursorMode::mainThread()) { precisionDiagnostics.note(PrecisionReason::serviceOther); return; }
     precisionDiagnostics.note(PrecisionReason::serviceMain,{},sessionToken,false,true);
     if (!ready) { precisionDiagnostics.note(PrecisionReason::entryContext); return; }
+    // Debug-only synchronous logging is permitted after the native setter,
+    // but never under inherited UI locks (including a deferred Main task).
+    if (precisionTraceEnabled && !cursorMode::outsideMenuLocks()) {
+        precisionDiagnostics.note(PrecisionReason::menuBusy); return;
+    }
+    // The trace sample never gates entry; without it the claim line reads device 0.
+    const auto claimInput = precisionClaimTrace.read(sessionToken).value_or(PrecisionClaimInput{});
+    auto claimKey = claimInput.key;
     // A refresh gates held framing/lock release, not escape into native FP.
     // Keep the last validated prerequisites and all fresh world/focus checks;
     // leave refresh pending for timer IO/Main apply and the return-to-TP barrier.
     if (lockConfigRefresh.requested()) precisionDiagnostics.note(PrecisionReason::refreshPending);
     // Two bounded reads, with no UI/mount lock held across the native setter.
     // All context and camera observations used to claim belong to this Main call.
-    const auto readEntry = []() -> std::optional<Context> {
+    const auto readEntry = [&]() -> std::optional<PrecisionTraceState> {
         const cursorMode::UITryLock menuLock;
         if (!menuLock) { precisionDiagnostics.note(PrecisionReason::menuBusy); return std::nullopt; }
         const auto player = RE::PlayerCharacter::GetSingleton();
-        if (!player) return Context{};
+        if (!player) return PrecisionTraceState{};
         const auto mounted = callbackMount(*player);
         if (!mounted) { precisionDiagnostics.note(PrecisionReason::mountBusy); return std::nullopt; }
         bool hard = true;
@@ -833,23 +845,31 @@ void servicePrecisionEntry() {
                 provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && movementLease &&
                 !movement->GetTargetLockState();
         }
-        return c;
+        return traceState(c,hard,claimKey,false,*mounted);
     };
     const auto before = readEntry();
     if (!before) return; // contention before consumption preserves the intent
-    precisionDiagnostics.note(PrecisionReason::entryBefore,*before,sessionToken,false,true);
-    Context after;
-    const bool claimed = precisionReturn.enter(*before,sessionToken,[&] {
+    precisionDiagnostics.note(PrecisionReason::entryBefore,before->context,sessionToken,false,true);
+    PrecisionTraceState after;
+    const bool claimed = precisionReturn.enter(before->context,sessionToken,[&] {
         settings.enabled = false; suspend();
+        claimKey.suspend();
         static_cast<void>(RE::PlayerCamera::GetSingleton()->ForceFirstPerson());
         // A refused transition or unavailable fresh context cannot own FP.
-        after = readEntry().value_or(Context{});
+        after = readEntry().value_or(PrecisionTraceState{});
         requestPreferences();
-        return after;
+        return after.context;
     });
+    if (claimed) {
+        after.owned = true;
+        // Both readers released UI/mount locks; ForceFirstPerson has returned.
+        // tracePrecision alone gates formatting/IO by debug opt-in and budget.
+        tracePrecision(PrecisionTraceEvent::toggleClaim,*before,after,
+            claimInput.device,claimInput.pressed,claimInput.edge);
+    }
     precisionDiagnostics.note(claimed ? PrecisionReason::entryClaimed :
-        claimPrecisionOwnership(*before,after) ? PrecisionReason::entryToken : PrecisionReason::entryContext,
-        after,sessionToken,!claimed && precisionReturn.snapshot() != sessionToken,true);
+        claimPrecisionOwnership(before->context,after.context) ? PrecisionReason::entryToken : PrecisionReason::entryContext,
+        after.context,sessionToken,!claimed && precisionReturn.snapshot() != sessionToken,true);
 }
 void serviceFirstPersonReturn() {
     if (!ready || !lockHooksReady) return;
@@ -861,8 +881,9 @@ void serviceFirstPersonReturn() {
         publishedReturnChainReady.store(providerChainReady());
     movementLease = movement && movement->GetDisableTargetLockOwner() == SKSE::GetPluginHandle();
     publishedMovementLease.store(movementLease);
-    // No indicator traversal (engine lock), diagnostic formatting or IO here.
-    // Acquisition is the TDM API's atomic lease request; cleanup stays deferred.
+    // No indicator traversal (engine lock) or routine diagnostic IO here.
+    // Entry's opt-in bounded claim trace is the exception. Acquisition is the
+    // TDM API's atomic lease request; cleanup stays deferred.
     if (lockInterrupt.consume()) {
         noteLockInputActivity();
         lockRetargetWindow.started.reset();
@@ -1010,8 +1031,8 @@ void observePrerequisiteFailure(Context c, bool failure) {
         notifyFailure();
     }
 }
-PrecisionTraceState traceState(Context c, bool hard, std::size_t key) {
-    PrecisionTraceState result{c,hard,precisionReturn.owned(),keys[key].armed,keys[key].down};
+PrecisionTraceState traceState(Context c, bool hard, FreshPress key, bool owned, std::optional<bool> mounted) {
+    PrecisionTraceState result{c,hard,owned,key.armed,key.down};
     if (!precisionTraceEnabled) return result;
     if (!c.world) { result.hazardBits = UINT32_MAX; return result; }
     const auto player = RE::PlayerCharacter::GetSingleton();
@@ -1020,7 +1041,7 @@ PrecisionTraceState traceState(Context c, bool hard, std::size_t key) {
     const auto controlMap = RE::ControlMap::GetSingleton();
     if (camera && camera->currentState) result.cameraState = static_cast<std::uint32_t>(camera->currentState->id);
     if (player) {
-        result.hazardBits |= std::uint32_t(player->IsOnMount()) << 0;
+        result.hazardBits |= std::uint32_t(mounted ? *mounted : player->IsOnMount()) << 0;
         result.hazardBits |= std::uint32_t(player->IsInKillMove()) << 1;
         result.hazardBits |= std::uint32_t(player->AsActorState()->IsSwimming()) << 2;
     }
@@ -1035,8 +1056,11 @@ PrecisionTraceState traceState(Context c, bool hard, std::size_t key) {
         result.hazardBits |= std::uint32_t(static_cast<RE::ThirdPersonState*>(camera->currentState.get())->stateNotActive) << 8;
     return result;
 }
+PrecisionTraceState traceState(Context c, bool hard, std::size_t key) {
+    return traceState(c,hard,keys[key],precisionReturn.owned(),std::nullopt);
+}
 void tracePrecision(PrecisionTraceEvent event, PrecisionTraceState before, PrecisionTraceState after,
-    unsigned device = 0, bool pressed = false, bool edge = false, unsigned decision = 0) {
+    unsigned device, bool pressed, bool edge, unsigned decision) {
     if (!precisionTraceEnabled || !precisionTraceBudget.take()) return;
     char line[192]{};
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -1389,7 +1413,8 @@ public:
                     if (request == ToggleRequest::firstPerson) {
                         // Publish only an epoch-bound intent, even on Main.
                         // The service alone samples/forces/claims the FP interval.
-                        const bool entryAccepted = precisionReturn.requestEntry(c,returnSession);
+                        const bool entryAccepted = precisionClaimTrace.publish(precisionReturn,c,returnSession,
+                            {pad?2u:1u,button->IsPressed(),button->IsDown(),keys[keyIndex]});
                         precisionDiagnostics.note(entryAccepted ? PrecisionReason::entryAccepted : PrecisionReason::entryRejected,
                             c,returnSession,!entryAccepted && precisionReturn.snapshot() != returnSession,precisionInputMain);
                         if (entryAccepted) lockInterrupt.request();

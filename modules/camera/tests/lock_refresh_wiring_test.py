@@ -63,8 +63,29 @@ assert entry.index("const auto before = readEntry();") < entry.index("ForceFirst
 assert "if (!before) return;" in entry
 assert "PrecisionReason::serviceOther" in entry and "PrecisionReason::serviceMain" in entry
 entry_input = body("                    if (request == ToggleRequest::firstPerson) {", "                    } else if (request == ToggleRequest::enableOnly)")
-assert "requestEntry(c,returnSession)" in entry_input and "ForceFirstPerson" not in entry_input
+assert "precisionClaimTrace.publish(precisionReturn,c,returnSession," in entry_input and "ForceFirstPerson" not in entry_input
+assert "{pad?2u:1u,button->IsPressed(),button->IsDown(),keys[keyIndex]}" in entry_input
 assert "PrecisionReason::entryAccepted" in entry_input and "PrecisionReason::entryRejected" in entry_input
 assert "if (targetLockEnabled && i == 0 && button->IsDown())\n                        precisionDiagnostics.note" not in input_sink
 assert "if (targetLockEnabled && request == ToggleRequest::none)" not in input_sink
 print("PASS lock-off wiring: unconditional thin/trampoline installation; Main frame refreshes chain then services entry; one predecessor; input publishes only; diagnostics ungated")
+
+# Event 11 is emitted once, only after Main has successfully claimed the native
+# transition. The reader's local locks end before enter() and tracePrecision().
+assert source.count("tracePrecision(PrecisionTraceEvent::toggleClaim,") == 1
+assert "toggleClaim" not in input_sink
+assert "const auto claimInput = precisionClaimTrace.read(sessionToken).value_or(PrecisionClaimInput{});" in entry
+assert "if (!claimInput)" not in entry  # the debug sample must never gate F6 entry
+assert entry.index("precisionTraceEnabled && !cursorMode::outsideMenuLocks()") < entry.index("precisionReturn.enter(")
+assert entry.index("ForceFirstPerson()") < entry.index("after = readEntry()") < entry.index("if (claimed) {")
+assert "if (claimed) {\n        after.owned = true;" in entry
+assert "tracePrecision(PrecisionTraceEvent::toggleClaim,*before,after,\n            claimInput.device,claimInput.pressed,claimInput.edge);" in entry
+assert "return traceState(c,hard,claimKey,false,*mounted);" in entry
+assert "keys[" not in entry  # use the published input sample, not mutable sink keys
+reader = entry[entry.index("const auto readEntry ="):entry.index("const auto before = readEntry();")]
+assert "const cursorMode::UITryLock menuLock;" in reader and "callbackMount(*player)" in reader
+assert "ForceFirstPerson" not in reader and "tracePrecision(" not in reader
+trace = body("void tracePrecision(PrecisionTraceEvent event, PrecisionTraceState before, PrecisionTraceState after,\n    unsigned device,", "void lifecycleLog(")
+assert trace.index("if (!precisionTraceEnabled || !precisionTraceBudget.take()) return;") < trace.index("char line[")
+assert trace.index("precisionTraceBudget.take()") < trace.index("formatPrecisionTrace(") < trace.index("log(line)")
+print("PASS claim trace wiring: unique Main success emission after setter/read locks; stored input; inherited UI-lock guard; debug/budget before formatting and IO")
