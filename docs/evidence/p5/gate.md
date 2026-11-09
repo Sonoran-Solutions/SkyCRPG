@@ -1,6 +1,6 @@
 # DYL-202 / P5-06 — Phase 5 gate
 
-**Orchestrator recommendation: REVISE.** Written 2026-11-08 from the evidence notes and pull requests listed below. The owner has not yet recorded a Phase 5 ACCEPT, REVISE or HOLD; the [owner decision](#owner-decision) section is empty until they do. Nothing in this record turns a NOT_RUN or FAIL row into a pass, and no Phase 5 pull request is merged.
+**REVISE — owner decision 2026-11-08 ("REVISE, do R1–R11").** Written 2026-11-08 from the evidence notes and pull requests listed below as the orchestrator's recommendation, then ruled on by the owner; see [owner decision](#owner-decision). Nothing in this record turns a NOT_RUN or FAIL row into a pass, and no Phase 5 pull request is merged.
 
 What REVISE means here: each of the four features has in-game evidence and an owner hands-on acceptance of its feel on keyboard and mouse, the spike has its owner ruling (D028), and the owner decisions D5-2 through D5-6, D026, D027 and D028 are recorded. What Phase 5 does not yet have is a **combined candidate**: no build or package contains Camera, Selection and UI together, the Phase 4 regression and the MVP acceptance IDs C1–C5 have not been rerun on any Phase 5 build, nothing has run on a controller, the binding table is not written into `docs/CONTROLS.md`, and the Phase 4 ACCEPT record (#33) is still unmerged. Those are finite and listed in [REVISE items](#revise-items). A HOLD is not warranted: no feature is blocked by an unresolved engine or provider problem, and the one feature-level FAIL that remains ("no pull-in while walking", DYL-201) was accepted by the owner as felt.
 
@@ -150,4 +150,4 @@ Automatic merges and public release (D023), Stage 2 walls and ceilings, cursor-a
 
 ## Owner decision
 
-_Not yet recorded._ When the owner rules, their exact words go here with the date, the device(s) and the build they played, followed by ACCEPT, or REVISE with the subset of R1–R11 they require, or HOLD with the reason. Until then Phase 5 is **REVISE by orchestrator recommendation**, and DYL-202 stays open.
+**REVISE — owner decision 2026-11-08.** After reading this record the owner ruled, verbatim: "REVISE, do R1–R11". The ruling adopts the full list: all eleven items are required before the Phase 5 ACCEPT question is put again. It is a ruling on the record, not a play session; the owner's hands-on sessions remain the three per-feature ones above (keyboard/mouse; controller for R3 lock only). The owner choices embedded in R2, R3 and R4 are still to be made and will be recorded here and in `DECISIONS.md` once #33 is merged. DYL-202 stays In Progress; Phase 5 is not accepted, and nothing in R1 merges without the owner's explicit go on the merge order and the review state of each pull request.
