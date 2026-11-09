@@ -533,7 +533,8 @@ bool providerChainReady() {
     }
     return module != nullptr;
 }
-Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, bool* failure = nullptr) {
+Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, bool* failure = nullptr,
+    bool readOnlyLock = false) {
     Context c;
     if (hardSpecial) *hardSpecial = true;
     c.enabled = settings.enabled;
@@ -542,8 +543,13 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
         provider->GetCameraOwner() == SKSE::kInvalidPluginHandle && providerChainReady();
     const bool lockThread = targetLockEnabled && onTargetLockThread();
     const bool leaseReady = !targetLockEnabled ? movement && movementLease && !movement->GetTargetLockState() :
+        readOnlyLock ? publishedLockPrerequisites.load() :
         lockThread && movement && (movementLease ? !movement->GetTargetLockState() : lockConfigSafe && indicatorReady());
     c.prerequisites = targetLockEnabled ? baseReady : phase4Prerequisites(baseReady,leaseReady,allowLeaseRequest,movementLease);
+    if (targetLockEnabled && readOnlyLock) {
+        c.prerequisites = c.prerequisites && leaseReady;
+        c.targetLock = publishedTargetLock.load();
+    }
     // An intentionally disabled SmoothCam (F8) is not a failure.
     if (failure) *failure = prerequisiteFailure(baseReady,leaseReady,
         !provider || providerEnabled || !ready || !compatibleSettings || !movementConfigSafe || !movement);
@@ -551,7 +557,7 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     const auto camera = RE::PlayerCamera::GetSingleton();
     c.world = !loading && player && player->GetParentCell() && player->Is3DLoaded() && !player->IsDead() && camera && camera->currentState;
     if (!c.world) {
-        if (targetLockEnabled) updateTargetLock(c);
+        if (targetLockEnabled && !readOnlyLock) updateTargetLock(c);
         return c;
     }
     c.firstPerson = camera->currentState->id == RE::CameraState::kFirstPerson;
@@ -576,7 +582,7 @@ Context context(bool* hardSpecial = nullptr, bool allowLeaseRequest = false, boo
     c.menu = focused();
     // DYL-158 supplies precision/targeting intervention; select() reserves their priority.
     c.obstruction = obstructionFrame.obstructed;
-    if (targetLockEnabled) updateTargetLock(c);
+    if (targetLockEnabled && !readOnlyLock) updateTargetLock(c);
     return c;
 }
 RE::NiPoint3 thinGoal() {
@@ -590,7 +596,8 @@ RE::NiPoint3 thinFocus() {
     return {goal.x-local.x,goal.y-local.y,goal.z-local.z};
 }
 bool thinEligible() {
-    const auto c = context();
+    // The all-state thin tick observes lock decisions; it never advances them.
+    const auto c = context(nullptr,false,nullptr,true);
     const auto state = select(c);
     thin::runtime->ineligibleCause = state == State::disabled ? thin::Exit::disable :
         c.firstPerson ? thin::Exit::firstPerson : c.menu ? thin::Exit::menu : thin::Exit::special;
@@ -686,6 +693,8 @@ void lifecycleLog(const char* event, Context c, unsigned stateId) {
 }
 void resetLifecycle(const char* event) {
     thin::requestRestore(std::strstr(event,"load") ? thin::Exit::load : thin::Exit::cell);
+    if (thin::enabled() && thin::onMain() && std::strcmp(event,"player-detach") == 0)
+        thin::restoreAll(thin::Exit::cell);
     interruptTargetLock();
     resetTransient(ownFirstPerson,recenter,applyZoom,keys);
     resetObstruction();
@@ -708,7 +717,7 @@ void sampleObstruction(RE::ThirdPersonState* state) {
     // No combat-mode classification is assumed on this branch. Conservatively
     // release automatic framing for ALL drawn weapons/spells pending DYL-158.
     if (player && precisionSuppressesObstruction(player->IsWeaponDrawn())) c.precision = true;
-    if (!thin::keptNativeHit() || !obstructionSettings.enabled || !obstructionFramingAllowed(c) || !camera || !player ||
+    if (!obstructionSettings.enabled || !obstructionFramingAllowed(c) || !camera || !player ||
         camera->currentState.get() != state || !state->freeRotationEnabled || !camera->cameraRoot ||
         camera->cameraTarget.get().get() != player) {
         resetObstruction(); return;
@@ -734,8 +743,8 @@ void sampleObstruction(RE::ThirdPersonState* state) {
     const ObstructionPoint focus{static_cast<double>(goal.x)-local.x,
                                  static_cast<double>(goal.y)-local.y,
                                  static_cast<double>(goal.z)-local.z};
-    obstructionFrame = obstructionPolicy.step(c,cameraCompression(
-        {actual.x,actual.y,actual.z},{goal.x,goal.y,goal.z},focus),dt,obstructionSettings);
+    obstructionFrame = obstructionPolicy.step(c,thin::obstructionSample(cameraCompression(
+        {actual.x,actual.y,actual.z},{goal.x,goal.y,goal.z},focus)),dt,obstructionSettings);
 }
 void look(RE::ThirdPersonState* state, const RE::NiPoint2& input) {
     if (targetLockEnabled && lockFrameTraceEnabled && lockTraceWindow.budget.lines < LockFrameTraceBudget::limit && onTargetLockThread()) {
@@ -1016,14 +1025,23 @@ void messages(SKSE::MessagingInterface::Message* message) {
             hashMatches(L"SmoothCam.dll","b20bf8a276bf76fbe35277dd9b25c64c57d17bfdcc20daa74a5f941c90f563da") &&
             hashMatches(L"TrueDirectionalMovement.dll","5ba3abd82fe070e2a6e9af7f07eca82b9ddb1a53dcd47bc34af571efab01899f") &&
             hashMatches(L"MCMHelper.dll","d58f433bef7690614d42aaac69cc35f60d179a85429a385e21858a1f276aef38");
-        if (!ready) { prerequisiteFailed = true; log("Exact executable/provider prerequisite hash mismatch; controller disabled."); break; }
+        if (!ready) {
+            thin::refuseInstall("ThinOccluder: prerequisite hash mismatch; no thin hooks installed.");
+            prerequisiteFailed = true; log("Exact executable/provider prerequisite hash mismatch; controller disabled."); break;
+        }
         movementConfigSafe = checkMovementConfig();
         if (!movementConfigSafe) { prerequisiteFailed = true; log("TDM camera-yaw config absent/unsafe; custom policy suspended until corrected and a menu closes."); }
         movement = static_cast<TDM_API::IVTDM5*>(TDM_API::RequestPluginAPI());
-        if (!movement) { prerequisiteFailed = true; ready = false; log("TDM V5 API absent; controller suspended."); break; }
+        if (!movement) {
+            thin::refuseInstall("ThinOccluder: TDM V5 API absent; no thin hooks installed.");
+            prerequisiteFailed = true; ready = false; log("TDM V5 API absent; controller suspended."); break;
+        }
         if (!targetLockEnabled) {
             if (leaseWanted(settings.enabled,false,movementLease)) {
-                if (!acquireMovementLease()) { ready = false; break; }
+                if (!acquireMovementLease()) {
+                    thin::refuseInstall("ThinOccluder: movement lease unavailable; no thin hooks installed.");
+                    ready = false; break;
+                }
             } else if (!settings.enabled) log("TDM target-lock-disable lease not requested because Camera is disabled.");
         } else {
             // TDM's disable-request API permits startup acquisition without a
@@ -1054,6 +1072,7 @@ void messages(SKSE::MessagingInterface::Message* message) {
             }
             ready = false; prerequisiteFailed = true;
             log("Unexpected camera hook order/owner before SmoothCam deferred attach; policy left inert.");
+            thin::refuseInstall("ThinOccluder: camera slot owner guard failed; no thin hooks installed.");
             return;
         }
         previousLook = reinterpret_cast<Look>(table.write_vfunc(0xF,look));

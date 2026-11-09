@@ -29,8 +29,17 @@ int main() {
     assert(eligible(State::normal) && eligible(State::targetLock) && eligible(State::obstruction));
     for (const auto s : {State::disabled,State::invalidWorld,State::special,State::menu,
         State::firstPerson,State::precision,State::targeting}) assert(!eligible(s));
-    for (bool native : {false,true}) assert(compressionAllowed(false,native)); // Disabled equals branch base.
-    assert(!compressionAllowed(true,false) && compressionAllowed(true,true));
+    for (bool seen : {false,true}) for (bool native : {false,true}) {
+        assert(compressionAllowed(false,seen,native)); // Disabled equals branch base.
+        assert(compressionSample(false,seen,native,.75f) == .75f);
+        assert(!compressionSample(false,seen,native,std::nullopt));
+    }
+    assert(compressionAllowed(true,false,false)); // Unobserved caller retains native measurement.
+    assert(!compressionAllowed(true,true,false) && compressionAllowed(true,true,true));
+    assert(compressionSample(true,false,false,.75f) == .75f);
+    assert(compressionSample(true,true,true,.75f) == .75f);
+    assert(compressionSample(true,true,false,.75f) == 0.0f);
+    assert(!compressionSample(true,true,false,std::nullopt));
 
     const auto step = advance({0,0,0},{300,0,0},{-.047f,0,0},15,0);
     assert(step && step->x == 30); // Initial penetrating beam still makes hull-diameter progress.
@@ -97,7 +106,13 @@ int main() {
     assert(fade.step(.69,.05,.35f,true) && fade.admitted);
     assert(!fade.step(.70,.01,.35f,false) && fade.alpha == 1 && !fade.admitted);
     for (const auto exit : {Exit::disable,Exit::f8,Exit::menu,Exit::firstPerson,Exit::special,
-        Exit::load,Exit::cell,Exit::unload,Exit::shutdown,Exit::conflict}) assert(immediateRestore(exit));
+        Exit::load,Exit::cell,Exit::unload,Exit::shutdown,Exit::conflict,Exit::expired}) assert(immediateRestore(exit));
+    FadeState expiring; expiring.touch(0);
+    assert(expiring.step(.11,.05,.35f,true) && expiring.admitted && expiring.alpha < 1);
+    assert(expiring.step(.39,.05,.35f,true)); // Contact hold still active.
+    assert(expiring.step(.41,.05,.35f,true) && !expiring.admitted && expiring.alpha < 1);
+    for (unsigned i = 0;i < 4;++i) static_cast<void>(expiring.step(.46+i*.05,.05,.35f,true));
+    assert(!expiring.step(.7,.05,.35f,true) && expiring.alpha == 1); // Fade completion, no unload.
     for (unsigned mask = 0;mask < 32;++mask) {
         RestoreCheck state{(mask&1)!=0,(mask&2)!=0,(mask&4)!=0,(mask&8)!=0,(mask&16)!=0};
         assert(state.material() == ((mask&11) == 11));
@@ -108,10 +123,10 @@ int main() {
         assert(skipCharacter(layer,false,true) == actorLayer(layer));
         assert(!skipCharacter(layer,false,false)); // Door, furniture, clutter remain contacts.
     }
-    assert(!countsAsKept(true,true,true)); // Refused/filtered beam cannot latch compression.
-    assert(!countsAsKept(true,false,false)); // Zero-length probe.
-    assert(countsAsKept(true,false,true));
-    assert(!countsAsKept(false,false,true));
+    // Same classification applies when eligibility changes and the cast passes
+    // through unchanged: beams and zero-length probes cannot latch compression.
+    for (bool hit : {false,true}) for (bool listedContact : {false,true}) for (bool nonzero : {false,true})
+        assert(countsAsKept(hit,listedContact,nonzero) == (hit && !listedContact && nonzero));
     assert(intersectsBox({0,0,0},{0,0,500},{-11,-384,140},{11,384,256}));
     assert(!intersectsBox({30,0,0},{30,0,500},{-11,-384,140},{11,384,256}));
     assert(intersectsBox({0,-50,250},{0,50,250},{-119,-10,241},{120,11,255}));
@@ -129,11 +144,11 @@ int main() {
     assert(carriesAdmission(Exit::menu,true));
     assert(!carriesAdmission(Exit::menu,false)); // Prepared but opaque beams stay unadmitted.
     for (const auto exit : {Exit::disable,Exit::f8,Exit::firstPerson,Exit::special,
-        Exit::load,Exit::cell,Exit::unload,Exit::shutdown,Exit::conflict}) assert(!carriesAdmission(exit,true));
+        Exit::load,Exit::cell,Exit::unload,Exit::shutdown,Exit::conflict,Exit::expired}) assert(!carriesAdmission(exit,true));
     assert(keepsCarried(Exit::menu) && keepsCarried(Exit::special));
     assert(!carriesAdmission(Exit::special,true)); // Keeps an existing carry, never starts one.
     for (const auto exit : {Exit::disable,Exit::f8,Exit::firstPerson,
-        Exit::load,Exit::cell,Exit::unload,Exit::shutdown,Exit::conflict}) assert(!keepsCarried(exit));
+        Exit::load,Exit::cell,Exit::unload,Exit::shutdown,Exit::conflict,Exit::expired}) assert(!keepsCarried(exit));
     HeightWindow heights;
     heights.observe(552); heights.observe(347); heights.observe(552);
     assert(heights.minimum == 347 && heights.maximum == 552 && heights.maxDelta == 205);
