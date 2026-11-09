@@ -149,7 +149,7 @@ private:
 enum class PrecisionReason : unsigned {
     serviceMain, serviceOther, entryClaimed, entryContext, entryToken, inputUnsafe,
     inputUnowned, inputMapped, inputNoEdge, ownershipLost, requestAccepted, requestRejected, servicePending, refreshPending,
-    menuBusy, mountBusy, invalidContext, leaseMissing, unlockPending, sessionChanged, returned, returnRefused, count
+    menuBusy, mountBusy, invalidContext, leaseMissing, unlockPending, sessionChanged, returned, returnRefused, entryBefore, count
 };
 class PrecisionDiagnostics {
 public:
