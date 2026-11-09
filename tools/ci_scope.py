@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Select independent native targets (Camera, UI, test probe), widening shared build/package changes."""
+"""Select independent native targets (Camera, UI, Selection, test probe), widening shared build/package changes."""
 import json
 import os
 import subprocess
 from pathlib import Path
 
 MODULES = ("camera", "ui")  # production plugins, built by the windows-x64 matrix
-TARGETS = (*MODULES, "testprobe")  # plus the never-shipped probe (its own jobs)
-LEAF_PREFIXES = {"camera": "modules/camera/", "ui": "modules/ui/", "testprobe": "tools/testprobe/"}
+TARGETS = (*MODULES, "selection", "testprobe")  # independent internal artifact jobs
+LEAF_PREFIXES = {"camera": "modules/camera/", "ui": "modules/ui/", "selection": "modules/selection/", "testprobe": "tools/testprobe/"}
 SHARED_FILES = frozenset({
     "CMakeLists.txt", "CMakePresets.json", "vcpkg.json", "vcpkg-configuration.json",
     "tools/package.py", "tools/ci_scope.py", "tools/tests/test_ci_scope.py",
@@ -18,7 +18,7 @@ SHARED_PREFIXES = ("shared/", "cmake/", "LICENSES/", ".github/actions/")
 
 
 def select_modules(paths, requested=""):
-    """Targets to build: any of camera, ui, testprobe, in that order."""
+    """Targets to build: any of camera, ui, selection, testprobe, in that order."""
     if requested:
         if requested not in (*TARGETS, "both", "all"):
             raise ValueError(f"Unknown module selection: {requested}")
@@ -43,6 +43,7 @@ def main():
     modules = [t for t in targets if t in MODULES]
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
         output.write("modules=" + json.dumps(modules) + "\n")
+        output.write("selection=" + ("true" if "selection" in targets else "false") + "\n")
         output.write("testprobe=" + ("true" if "testprobe" in targets else "false") + "\n")
     print("Selected native targets: " + ", ".join(targets))
 
