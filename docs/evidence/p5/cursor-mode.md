@@ -41,6 +41,25 @@ Limitations accepted with this change:
 
 The `Cursor cycling unrestricted` line is absent from both Camera logs: the member resolved and both sessions entered with mode 3.
 
+## Owner hands-on run owner-cursor-1 — 2026-11-08
+
+`4946c92`, Camera DLL `8ca54149…`, Selection DLL `6d8b12e2…`, camera-only profile, cursor mode and external targets enabled by `session-p5/routes/owner_cursor_overrides.py`, target lock left on. Keyboard and mouse. Sheet: `session-p5/briefs/owner-cursor-1.md` (steps A–G). The owner reported "Finished, everything passed" and, asked which steps, "All of A–G". Logs: `session-p5/logs/owner-cursor-1/` (Camera.log `2e312046…`, Selection.log `cff08795…`). Watchdog exit 0, no leftover processes; the watchdog does not restore after a normal quit, so the orchestrator ran the restore: PASS, 0 SkyCRPG files left.
+
+**Coverage caveat.** The game session lasted 4 minutes from deploy to quit, with Selection's last logged event at 2:40 of game time (its event log reached its budget there; its 5-second diagnostic line stops at about 2:15) and the Camera trace capped at 512 samples, about the first ten seconds of cursor time. Camera lifecycle events are not capped and show one load. The rows below therefore carry two results: the owner's word, and what the logs can confirm.
+
+| Step | Owner | Log corroboration |
+| --- | --- | --- |
+| A. Toggle, sensitivity 65 | **PASS, owner** | Cursor entered; `visible=6/1` (six boxes in view); exits by toggle and by Selection passthrough; no refusal. 65 stays. |
+| B. Hover, slack 48 px | **PASS, owner** | About 105 hover pushes over the bench, chairs, a tankard and the pot `0005D692` (on screen from the owner's viewpoint, so correct); 201 empty picks suppressed the native prompt. 48 stays. |
+| C. Activate (empty E, bench E) | **PASS, owner** | Not separable in the logs. |
+| D. On-screen-only cycling, 15 s hold, 12 px release | **PASS, owner** | One cycle event at 2:20 (`previous`, index 2 of 3, to `00060343`, which had a box); `cycle_refusals=0`. Repeated presses, the hold and the release fall after the log budget: owner-only. 12 stays. |
+| E. Latch while walking; latched object leaving the screen | **PASS, owner** (current behaviour accepted: the latch is kept) | Beyond log coverage: owner-only. |
+| F.1–F.5, F.7, F.8 Tab, console, F6, F8, dialogue, weapon draw, lock | **PASS, owner** | Beyond log coverage, except the one `reason=selection` exit, consistent with a menu or dialogue. Owner-only. |
+| F.6 Quickload while active | **Owner: pass; log: NOT_RUN** | Camera lifecycle shows exactly one `pre-load`/`load-game` pair (the initial load). A quickload would have logged a second pair. Treated as not run. |
+| G. Walking with the mode on | **PASS, owner** | Pick cost median 7 µs, p99 13 µs, max 20 µs, `busy=0` over the traced window. |
+
+**Reading.** The owner accepts cursor mode as felt, keeps B and the provisional tuning, and accepts that a cycled latch survives the object leaving the screen (step E.2). The logs confirm the first minutes only; F.6 is contradicted by the lifecycle log and stays NOT_RUN. These are owner-acceptance rows, not harness proof, and the gate record should say so. Controller, other resolutions and a controlled frame-cost sample remain NOT_RUN.
+
 ## Sixth pass — overlay callback threads, from the first in-game route (2026-11-04)
 
 **Route evidence on `503b27b`** (Camera DLL `fd5e9148…`, Selection DLL `3a12f12f…`, SkyrimSE.exe `846efccf…`):
