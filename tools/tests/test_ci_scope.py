@@ -16,15 +16,29 @@ class ScopeTests(unittest.TestCase):
                   "LICENSE", "docs/LICENSING.md", "docs/THIRD_PARTY.md", "docs/compatibility/dependency-lock.md",
                   "shared/include/skycrpg/skeleton.h", "LICENSES/CommonLibSSE-NG-COPYING",
                   "tools/ci_scope.py", "tools/tests/test_ci_scope.py", ".github/actions/build/action.yml"]
-        for changed_module in ("camera", "ui", "testprobe"):
+        for changed_module in ("camera", "ui", "testprobe", "occlusion-spike"):
             for path in shared:
                 with self.subTest(module=changed_module, shared=path):
-                    self.assertEqual(module.select_modules([{"testprobe": "tools/testprobe/src/plugin.cpp"}.get(changed_module, f"modules/{changed_module}/src/plugin.cpp"), path]), ["camera", "ui", "testprobe"])
+                    self.assertEqual(module.select_modules([{"testprobe": "tools/testprobe/src/plugin.cpp", "occlusion-spike": "tools/occlusion-spike/src/plugin.cpp"}.get(changed_module, f"modules/{changed_module}/src/plugin.cpp"), path]), ["camera", "ui", "testprobe", "occlusion-spike"])
 
     def test_leaf_changes_stay_focused(self):
         self.assertEqual(module.select_modules(["modules/camera/include/policy.h", "docs/CONTROLS.md"]), ["camera"])
         self.assertEqual(module.select_modules(["modules/ui/scaleform/hud-init.as.inc"]), ["ui"])
         self.assertEqual(module.select_modules(["tools/testprobe/src/plugin.cpp", "tools/testprobe/README.md"]), ["testprobe"])
+
+    def test_spike_is_independent_and_never_production(self):
+        self.assertEqual(module.select_modules(["tools/occlusion-spike/src/plugin.cpp"]), ["occlusion-spike"])
+        self.assertEqual(module.select_modules(["tools/occlusion-spike/tests/classifier_test.cpp", "modules/camera/src/plugin.cpp"]), ["camera", "occlusion-spike"])
+        self.assertEqual(module.select_modules(["tools/testprobe/src/perf_policy.h"]), ["testprobe", "occlusion-spike"])
+        self.assertEqual(module.select_modules(["tools/testprobe/src/json_line.h"]), ["testprobe", "occlusion-spike"])
+        self.assertEqual(module.select_modules(["modules/camera/include/third_party/SmoothCamAPI.h"]), ["camera", "occlusion-spike"])
+        workflow = (Path(__file__).parents[2] / ".github/workflows/build.yml").read_text()
+        self.assertIn("needs.scope.outputs.occlusion_spike == 'true'", workflow)
+        spike_job = workflow.split("  occlusion-spike:", 1)[1].split("  occlusion-spike-portable:", 1)[0]
+        self.assertNotIn("tools/package.py", spike_job)
+        self.assertIn("--target SkyCRPG_OcclusionSpike", spike_job)
+        self.assertIn("-DSKYCRPG_BUILD_OCCLUSION_SPIKE=ON", spike_job)
+        self.assertEqual(workflow.count('"tools/occlusion-spike/**"'), 2)
 
     def test_probe_and_module_changes_build_only_those(self):
         self.assertEqual(module.select_modules(["modules/ui/src/plugin.cpp", "tools/testprobe/src/plugin.cpp"]), ["ui", "testprobe"])
@@ -34,13 +48,13 @@ class ScopeTests(unittest.TestCase):
 
     def test_missing_or_unclassified_diff_is_conservative(self):
         for paths in ([], ["docs/STATUS.md"]):
-            self.assertEqual(module.select_modules(paths), ["camera", "ui", "testprobe"])
+            self.assertEqual(module.select_modules(paths), ["camera", "ui", "testprobe", "occlusion-spike"])
 
     def test_explicit_dispatch_remains_bounded(self):
-        for name in ("camera", "ui", "testprobe"):
+        for name in ("camera", "ui", "testprobe", "occlusion-spike"):
             self.assertEqual(module.select_modules([], name), [name])
         self.assertEqual(module.select_modules([], "both"), ["camera", "ui"])
-        self.assertEqual(module.select_modules([], "all"), ["camera", "ui", "testprobe"])
+        self.assertEqual(module.select_modules([], "all"), ["camera", "ui", "testprobe", "occlusion-spike"])
         with self.assertRaises(ValueError):
             module.select_modules([], "unknown")
 
