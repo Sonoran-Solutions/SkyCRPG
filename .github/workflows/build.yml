@@ -266,3 +266,23 @@ jobs:
             g++ -std=c++20 -pthread -Wall -Wextra -Wshadow -Werror -pedantic "$test" -o "$RUNNER_TEMP/$name"
             "$RUNNER_TEMP/$name"
           done
+
+  # Camera policies and lease/indicator/trace regressions use no engine headers.
+  camera-portable:
+    needs: scope
+    if: contains(fromJSON(needs.scope.outputs.modules), 'camera')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build and run portable Camera tests
+        run: |
+          set -euo pipefail
+          for test in modules/camera/tests/*_test.cpp; do
+            name=$(basename "$test" .cpp)
+            g++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -I modules/camera/include "$test" -o "$RUNNER_TEMP/$name"
+            "$RUNNER_TEMP/$name"
+            echo "$name PASS"
+          done
