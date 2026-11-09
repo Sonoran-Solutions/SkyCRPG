@@ -52,7 +52,7 @@ private:
 class PrecisionReturn {
 public:
     using Token = std::uint64_t;
-    static constexpr Token epochLimit = std::numeric_limits<Token>::max() & ~Token{3};
+    static constexpr Token epochLimit = (std::numeric_limits<Token>::max)() & ~Token{3};
     explicit PrecisionReturn(Token initialEpoch = 0) : state(initialEpoch & epochLimit) {}
     Token snapshot() const { return state.load(); }
     static bool owned(Token token) { return (token & ownership) != 0; }
