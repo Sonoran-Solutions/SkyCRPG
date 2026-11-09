@@ -153,7 +153,7 @@ The `Cursor cycling unrestricted` line is absent from both Camera logs: the memb
 
 ## Owner hands-on run owner-cursor-1 — 2026-11-08
 
-`4946c92`, Camera DLL `8ca54149…`, Selection DLL `6d8b12e2…`, camera-only profile, cursor mode and external targets enabled by `session-p5/routes/owner_cursor_overrides.py`, target lock left on. Keyboard and mouse. Sheet: `session-p5/briefs/owner-cursor-1.md` (steps A–G). The owner reported "Finished, everything passed" and, asked which steps, "All of A–G". Logs: `session-p5/logs/owner-cursor-1/` (Camera.log `2e312046…`, Selection.log `cff08795…`). Watchdog exit 0, no leftover processes; the watchdog does not restore after a normal quit, so the orchestrator ran the restore: PASS, 0 SkyCRPG files left.
+`4946c92`, Camera DLL `8ca54149…`, Selection DLL `6d8b12e2…`, camera-only profile, cursor mode and external targets enabled by `session-p5/routes/owner_cursor_overrides.py`; target lock and thin occluder were **off** (the staged INI kept the repository defaults — preserved configuration `session-p4/owner-cursor-1/after-owned-files/33`, SHA-256 `8600e14a…`: `[TargetLock] bEnabled=0`, `[ThinOccluder] bEnabled=0`, `[CursorMode] bEnabled=1`). The earlier wording "target lock left on" was wrong; corrected 2026-11-09 at the Phase 5 gate review. Keyboard and mouse. Sheet: `session-p5/briefs/owner-cursor-1.md` (steps A–G). The owner reported "Finished, everything passed" and, asked which steps, "All of A–G". Logs: `session-p5/logs/owner-cursor-1/` (Camera.log `2e312046…`, Selection.log `cff08795…`). Watchdog exit 0, no leftover processes; the watchdog does not restore after a normal quit, so the orchestrator ran the restore: PASS, 0 SkyCRPG files left.
 
 **Coverage caveat.** The game session lasted 4 minutes from deploy to quit, with Selection's last logged event at 2:40 of game time (its event log reached its budget there; its 5-second diagnostic line stops at about 2:15) and the Camera trace capped at 512 samples, about the first ten seconds of cursor time. Camera lifecycle events are not capped and show one load. The rows below therefore carry two results: the owner's word, and what the logs can confirm.
 
@@ -164,7 +164,8 @@ The `Cursor cycling unrestricted` line is absent from both Camera logs: the memb
 | C. Activate (empty E, bench E) | **PASS, owner** | Not separable in the logs. |
 | D. On-screen-only cycling, 15 s hold, 12 px release | **PASS, owner** | One cycle event at 2:20 (`previous`, index 2 of 3, to `00060343`, which had a box); `cycle_refusals=0`. Repeated presses, the hold and the release fall after the log budget: owner-only. 12 stays. |
 | E. Latch while walking; latched object leaving the screen | **PASS, owner** (current behaviour accepted: the latch is kept) | Beyond log coverage: owner-only. |
-| F.1–F.5, F.7, F.8 Tab, console, F6, F8, dialogue, weapon draw, lock | **PASS, owner** | Beyond log coverage, except the one `reason=selection` exit, consistent with a menu or dialogue. Owner-only. |
+| F.1–F.5, F.7 Tab, console, F6, F8, dialogue, weapon draw | **PASS, owner** | Beyond log coverage, except the one `reason=selection` exit, consistent with a menu or dialogue. Owner-only. |
+| F.8 Target lock key while active | **NOT_RUN** (as a lock interaction) | Target lock was disabled in this session's INI, so the key press exercised no lock; the lock-exits-cursor row needs a session with both features enabled (gate R5/R6). |
 | F.6 Quickload while active | **Owner: pass; log: NOT_RUN** | Camera lifecycle shows exactly one `pre-load`/`load-game` pair (the initial load). A quickload would have logged a second pair. Treated as not run. |
 | G. Walking with the mode on | **PASS, owner** | Pick cost median 7 µs, p99 13 µs, max 20 µs, `busy=0` over the traced window. |
 
