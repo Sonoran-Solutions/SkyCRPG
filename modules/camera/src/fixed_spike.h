@@ -788,7 +788,7 @@ inline void configure(const Config& requested,const light::Config& lightRequeste
     const bool lightTrace = light::lights && light::lights->config.trace;
     if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace || lightTrace) {
         const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines+roomPassTraceLines : 0u)+
-            (r.config.hideTrace ? hideTraceLines : 0u)+(lightTrace ? light::lightTraceLines : 0u);
+            (r.config.hideTrace ? hideTraceLines : 0u)+(lightTrace ? light::lightTraceLines+light::lightLevelTraceLines : 0u);
         r.traceReady = r.writer.start(tracePath,rows);
         if (!r.traceReady) refuse(Refusal::traceWriter,"trace writer did not start; traces off, behaviour unchanged");
     }

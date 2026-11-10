@@ -97,8 +97,8 @@ struct LightRuntime {
     Presence presence{Presence::absent};
     unsigned adds{},removes{};
     RE::FormID cell{};
-    double nextCheck{},nextTrace{},nextShadows{};
-    LineBudget lines{lightTraceLines};
+    double nextCheck{},nextTrace{},nextShadows{},nextLevel{};
+    LineBudget lines{lightTraceLines},levelLines{lightLevelTraceLines};
 };
 constexpr unsigned maxPlayerRooms = 8;
 inline LightRuntime* lights = nullptr;
@@ -395,9 +395,11 @@ inline void installLight(std::uintptr_t base) {
 // `duty` (fillDuty): hold leaves the fill light exactly as it was; keep lights it
 // at the player; off hides it. `loadExit`: a load restarts the drop budget.
 inline void frameLight(bool eligible,FillDuty duty,bool loadExit,RE::TESObjectCELL* parent,Vec feet,Vec at,Vec camera,const char* cause) {
-    if (!lights || duty == FillDuty::hold) return;
+    if (!lights) return;
     auto& l = *lights;
     const RE::FormID cellId = parent ? parent->GetFormID() : 0u;
+    duty = settledDuty(duty,cellId != l.cell);
+    if (duty == FillDuty::hold) return;
     if (cellId != l.cell || loadExit) { l.cell = cellId; l.track.newCell(); }
     const bool interior = parent && parent->IsInteriorCell();
     const auto node = scene();
@@ -414,14 +416,19 @@ inline void frameLight(bool eligible,FillDuty duty,bool loadExit,RE::TESObjectCE
     s.fill.created = l.fill != nullptr; s.fill.hidden = l.fillHidden; s.fill.presence = l.presence;
     s.fill.at = l.fill ? Vec{l.fill->world.translate.x,l.fill->world.translate.y,l.fill->world.translate.z} : Vec{};
     s.fill.adds = l.adds; s.fill.removes = l.removes; s.fill.drops = l.track.drops;
-    s.level.hooked = stealth.installed; s.level.neutral = stealth.installed && stealth.neutral;
-    s.level.with = stealth.with.load(std::memory_order_relaxed); s.level.without = stealth.without.load(std::memory_order_relaxed);
-    s.level.playerCalls = stealth.playerCalls.load(std::memory_order_relaxed);
-    s.level.npcCalls = stealth.npcCalls.load(std::memory_order_relaxed); s.level.npcAdjusted = stealth.npcAdjusted.load(std::memory_order_relaxed);
     char line[768]{};
     if (formatLight(line,sizeof(line),s)) emitLight(line);
-    if (runtime->now < l.nextShadows) return;
-    l.nextShadows = runtime->now+1.0;
-    if (formatShadows(line,sizeof(line),s.seconds,s.frame,shadows)) emitLight(line);
+    if (runtime->now >= l.nextShadows) {
+        l.nextShadows = runtime->now+1.0;
+        if (formatShadows(line,sizeof(line),s.seconds,s.frame,shadows)) emitLight(line);
+    }
+    if (l.config.fillMode == 0 || runtime->now < l.nextLevel) return;
+    l.nextLevel = runtime->now+1.0;
+    LevelReading level;
+    level.hooked = stealth.installed; level.neutral = stealth.installed && stealth.neutral;
+    level.with = stealth.with.load(std::memory_order_relaxed); level.without = stealth.without.load(std::memory_order_relaxed);
+    level.playerCalls = stealth.playerCalls.load(std::memory_order_relaxed);
+    level.npcCalls = stealth.npcCalls.load(std::memory_order_relaxed); level.npcAdjusted = stealth.npcAdjusted.load(std::memory_order_relaxed);
+    if (formatLightLevel(line,sizeof(line),s.seconds,s.frame,level)) emit(l.levelLines,line);
 }
 } // namespace skycrpg::camera::fixed::light

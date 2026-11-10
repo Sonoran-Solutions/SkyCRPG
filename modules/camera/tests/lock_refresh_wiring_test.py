@@ -237,7 +237,7 @@ assert configure.index("runtime = new Runtime;") < configure.index("light::confi
 assert "fixed::configure(f,l,settings," in loader
 for entry in ("inline void installLight(std::uintptr_t base) {\n    if (!lights) return;",
               "inline void frameLight(bool eligible,FillDuty duty,bool loadExit,RE::TESObjectCELL* parent,Vec feet,Vec at,Vec camera,const char* cause) {\n"
-              "    if (!lights || duty == FillDuty::hold) return;",
+              "    if (!lights) return;",
               "inline RE::ShadowSceneNode* scene() {\n    if (!lights || !lights->ready) return nullptr;"):
     assert entry in light, entry
 assert spike.count("light::installLight(base);") == 1 and spike.count("light::frameLight(") == 2
@@ -306,6 +306,12 @@ frame_light = light_body("inline void frameLight(", "} // namespace")
 assert frame_light.index("serviceFill(node,wanted,feet,cause);") < frame_light.index("if (!l.config.trace || !node || !eligible")
 assert "fillWanted(l.config.fillMode,duty == FillDuty::keep && finite(feet),interior,l.fillReady && node != nullptr)" in frame_light
 assert "if (cellId != l.cell || loadExit) { l.cell = cellId; l.track.newCell(); }" in frame_light
+# A hold never survives a cell change; it is settled before anything else uses the duty.
+assert frame_light.index("duty = settledDuty(duty,cellId != l.cell);") < frame_light.index("if (duty == FillDuty::hold) return;") < \
+    frame_light.index("if (cellId != l.cell || loadExit)")
+# Light level on its own line kind and budget; FixedLight carries none of it.
+assert "formatLightLevel(line,sizeof(line),s.seconds,s.frame,level)) emit(l.levelLines,line);" in frame_light
+assert "light::lightTraceLines+light::lightLevelTraceLines" in configure
 # Hook-silent frames inside wave 1's grace hold the fill light as it is.
 assert end_frame.index("const bool exiting = restoreNow(cause,r.silentFrames);") < end_frame.index("if (exiting) restoreAll(cause);") < \
     end_frame.index("light::frameLight(false,light::fillDuty(false,exiting,")

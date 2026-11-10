@@ -278,9 +278,9 @@ void rooms() {
     assert(std::string(line) == "FixedRoomPass t=2.500 frame=99 cameraPassCalls=44 lightPassCalls=16 lightPassNear=4 sample=second");
     char tiny[12]{};
     assert(!formatRoomPass(tiny,sizeof(tiny),pass));
-    RoomCounters near;
-    near.lightNear.fetch_add(2ull); near.gatedNear.fetch_add(1ull);
-    assert(near.lightNear.load() == 2 && near.gatedNear.load() == 1);
+    RoomCounters counted; // not "near": a Windows macro
+    counted.lightNear.fetch_add(2ull); counted.gatedNear.fetch_add(1ull);
+    assert(counted.lightNear.load() == 2 && counted.gatedNear.load() == 1);
     assert(roomPassTraceLines > 0 && roomPassTraceLines < roomTraceLines);
 }
 

@@ -42,6 +42,7 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
 // Nothing is allocated, read or installed for the light package unless this holds.
 constexpr bool configured(const Config& c) { return c.fillMode != 0 || c.trace; }
 constexpr unsigned lightTraceLines = 6000;
+constexpr unsigned lightLevelTraceLines = 1500; // FixedLightLevel, 1 Hz, iLightTrace=1 and iLightFillMode=1
 
 // ---- fill light --------------------------------------------------------------
 // Interior cells only: outdoors the sun lights the scene and a light that follows
@@ -68,6 +69,10 @@ constexpr FillDuty fillDuty(bool eligible,bool exiting,Exit cause,bool stateSeen
     return FillDuty::off;
 }
 constexpr const char* dutyName(FillDuty d) { return d == FillDuty::keep ? "keep" : d == FillDuty::hold ? "hold" : "off"; }
+// A hold never survives a cell change: the first serviced frame after a load
+// door can be a menu frame (wave 1, p55-e-door-C frames 2536 -> 2537), and the
+// light must not stay where it was in the previous cell.
+constexpr FillDuty settledDuty(FillDuty duty,bool cellChanged) { return duty == FillDuty::hold && cellChanged ? FillDuty::off : duty; }
 // Light level without the fill light: the engine's sum minus the fill light's
 // own ID 108292 terms, as the wrapped summer saw them; never below zero, and
 // untouched when the fill light contributed nothing or a value is not finite.
@@ -271,7 +276,6 @@ struct LightSample {
     Vec eye{},camera{};
     Census census{};
     FillReading fill{};
-    LevelReading level{};
 };
 inline bool formatLight(char* out,std::size_t size,const LightSample& s) {
     const auto& c = s.census;
@@ -281,8 +285,7 @@ inline bool formatLight(char* out,std::size_t size,const LightSample& s) {
         "rooms=%u playerRooms=%u point=%u pointCulled=%u pointDimmed=%u pointReach=%u pointLit=%u pointLitLive=%u pointNearest=%.1f "
         "shadow=%u shadowChannel=%u shadowReach=%u shadowLit=%u shadowLitChannel=%u shadowStarved=%u shadowNearest=%.1f "
         "fillWanted=%u fill=%s fillCreated=%u fillHidden=%u fillCull=%u fillDimmer=%.3f fillAt=%.1f,%.1f,%.1f "
-        "adds=%u removes=%u drops=%u levelHook=%u neutral=%u level=%.4f levelNoFill=%.4f levelCalls=%llu npcCalls=%llu npcAdjusted=%llu "
-        "sample=state",
+        "adds=%u removes=%u drops=%u sample=state",
         s.seconds,s.frame,s.cell,static_cast<unsigned>(s.interior),static_cast<unsigned>(s.eligible),
         static_cast<double>(s.eye.x),static_cast<double>(s.eye.y),static_cast<double>(s.eye.z),
         static_cast<double>(s.camera.x),static_cast<double>(s.camera.y),static_cast<double>(s.camera.z),
@@ -291,9 +294,17 @@ inline bool formatLight(char* out,std::size_t size,const LightSample& s) {
         c.shadow,c.shadowChannel,c.shadowReach,c.shadowLit,c.shadowLitChannel,c.starved(),static_cast<double>(c.shadowNearest),
         static_cast<unsigned>(s.wanted),presenceName(f.presence),static_cast<unsigned>(f.created),static_cast<unsigned>(f.hidden),
         f.found ? f.cull : 999u,static_cast<double>(f.found ? f.dimmer : std::numeric_limits<float>::quiet_NaN()),
-        static_cast<double>(f.at.x),static_cast<double>(f.at.y),static_cast<double>(f.at.z),f.adds,f.removes,f.drops,
-        static_cast<unsigned>(s.level.hooked),static_cast<unsigned>(s.level.neutral),static_cast<double>(s.level.with),
-        static_cast<double>(s.level.without),s.level.playerCalls,s.level.npcCalls,s.level.npcAdjusted);
+        static_cast<double>(f.at.x),static_cast<double>(f.at.y),static_cast<double>(f.at.z),f.adds,f.removes,f.drops);
+    return written > 0 && static_cast<std::size_t>(written) < size;
+}
+// The FixedLight field list is the a8639f3 one (the route checker parses an
+// exact list); the light-level reading rides on its own line kind, 1 Hz.
+inline bool formatLightLevel(char* out,std::size_t size,double seconds,unsigned long long frame,const LevelReading& l) {
+    const int written = std::snprintf(out,size,
+        "FixedLightLevel t=%.3f frame=%llu levelHook=%u neutral=%u level=%.4f levelNoFill=%.4f levelCalls=%llu npcCalls=%llu "
+        "npcAdjusted=%llu sample=second",
+        seconds,frame,static_cast<unsigned>(l.hooked),static_cast<unsigned>(l.neutral),static_cast<double>(l.with),
+        static_cast<double>(l.without),l.playerCalls,l.npcCalls,l.npcAdjusted);
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 // Fill transitions are traced as events, eligible or not, so a lifecycle exit

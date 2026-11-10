@@ -71,6 +71,11 @@ void duty() {
     // Off: first person, Camera off, F8, load, death, silent past the grace, cell, unload.
     for (const auto cause : {Exit::firstPerson,Exit::disable,Exit::f8,Exit::load,Exit::death,Exit::hookSilent,Exit::cell,Exit::unload})
         for (const auto state : allStates) assert(fillDuty(false,true,cause,true,state) == FillDuty::off);
+    // A hold never survives a cell change (a menu frame right after a load door).
+    for (const auto d : {FillDuty::off,FillDuty::keep,FillDuty::hold}) {
+        assert(settledDuty(d,false) == d);
+        assert(settledDuty(d,true) == (d == FillDuty::hold ? FillDuty::off : d));
+    }
     assert(std::string(dutyName(FillDuty::keep)) == "keep" && std::string(dutyName(FillDuty::hold)) == "hold" &&
         std::string(dutyName(FillDuty::off)) == "off");
     // Light level without the fill light's own term.
@@ -256,13 +261,33 @@ void lines() {
     for (const char* part : {"FixedLight t=12.500 frame=77 cell=000371DE interior=1 eligible=1 ","eye=2048.0,-9216.0,-2492.0 ",
         "rooms=1 playerRooms=1 point=1 pointCulled=0 pointDimmed=0 pointReach=1 pointLit=1 pointLitLive=1 ",
         "shadow=1 shadowChannel=0 shadowReach=0 shadowLit=0 shadowLitChannel=0 shadowStarved=0 ","fillWanted=1 fill=active fillCreated=1 fillHidden=0 fillCull=0 fillDimmer=1.000 ",
-        "fillAt=2048.0,-9216.0,-2364.0 adds=1 removes=0 drops=0 levelHook=0 neutral=0 level=nan levelNoFill=nan levelCalls=0 npcCalls=0 "
-        "npcAdjusted=0 sample=state"})
+        "fillAt=2048.0,-9216.0,-2364.0 adds=1 removes=0 drops=0 sample=state"})
         assert(has(text,part));
-    LightSample measured = s;
-    measured.level = {true,true,.7234f,.2234f,12,40,3};
-    assert(formatLight(line,sizeof(line),measured));
-    assert(has(line,"levelHook=1 neutral=1 level=0.7234 levelNoFill=0.2234 levelCalls=12 npcCalls=40 npcAdjusted=3 sample=state"));
+    // FixedLight keeps the a8639f3 field list exactly: the route checker parses
+    // an exact list (session-p55/routes/check_spike_log.py LIGHT_FIELDS).
+    {
+        std::string keys;
+        for (std::size_t at = text.find(' ');at != std::string::npos;at = text.find(' ',at+1)) {
+            const auto eq = text.find('=',at);
+            const auto next = text.find(' ',at+1);
+            if (eq != std::string::npos && (next == std::string::npos || eq < next)) keys += text.substr(at+1,eq-at-1)+",";
+        }
+        assert(text.rfind("FixedLight ",0) == 0);
+        assert(keys == "t,frame,cell,interior,eligible,eye,cam,rooms,playerRooms,point,pointCulled,pointDimmed,pointReach,pointLit,"
+            "pointLitLive,pointNearest,shadow,shadowChannel,shadowReach,shadowLit,shadowLitChannel,shadowStarved,shadowNearest,"
+            "fillWanted,fill,fillCreated,fillHidden,fillCull,fillDimmer,fillAt,adds,removes,drops,sample,");
+    }
+    // The light-level reading: its own line kind.
+    const LevelReading measured{true,true,.7234f,.2234f,12,40,3};
+    assert(formatLightLevel(line,sizeof(line),12.5,77,measured));
+    assert(std::string(line) == "FixedLightLevel t=12.500 frame=77 levelHook=1 neutral=1 level=0.7234 levelNoFill=0.2234 levelCalls=12 "
+        "npcCalls=40 npcAdjusted=3 sample=second");
+    assert(formatLightLevel(line,sizeof(line),1.0,2,LevelReading{}));
+    assert(std::string(line) == "FixedLightLevel t=1.000 frame=2 levelHook=0 neutral=0 level=nan levelNoFill=nan levelCalls=0 npcCalls=0 "
+        "npcAdjusted=0 sample=second");
+    const LevelReading huge{true,true,-99999.9999f,-99999.9999f,99999999999ull,99999999999ull,99999999999ull};
+    assert(formatLightLevel(line,std::tuple_size<TraceRow>::value,999999.999,99999999999ull,huge));
+    assert(lightLevelTraceLines > 0 && lightLevelTraceLines < lightTraceLines);
     LightSample none;
     assert(formatLight(line,sizeof(line),none));
     assert(has(line,"pointNearest=inf") && has(line,"fillCull=999 fillDimmer=nan") && has(line,"fill=absent"));
@@ -281,8 +306,6 @@ void lines() {
     wide.census.shadowReach = wide.census.shadowLit = wide.census.playerRooms = 99999; wide.census.shadowLitChannel = 0;
     wide.census.pointNearest = wide.census.shadowNearest = -99999.9f;
     wide.fill.presence = Presence::queuedRemove; wide.fill.adds = wide.fill.removes = wide.fill.drops = 99999;
-    wide.level.hooked = wide.level.neutral = true; wide.level.with = wide.level.without = -99999.9999f;
-    wide.level.playerCalls = wide.level.npcCalls = wide.level.npcAdjusted = 99999999999ull;
     assert(formatLight(line,std::tuple_size<TraceRow>::value,wide));
     // Shadow list line: reference IDs, ordered, and the full list fits one row.
     ShadowList list;
