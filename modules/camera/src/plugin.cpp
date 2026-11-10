@@ -337,6 +337,7 @@ void loadSettings() {
         f.roomTrace = flag("FixedCameraSpike","iRoomTrace",0);
         f.seeThroughMode = number("FixedCameraSpike","iSeeThroughMode",f.seeThroughMode);
         f.cutHeight = number("FixedCameraSpike","fCutHeight",f.cutHeight);
+        f.hideRadius = number("FixedCameraSpike","fHideRadius",f.hideRadius);
         f.hidePerFrame = number("FixedCameraSpike","iHideMaxPerFrame",f.hidePerFrame);
         f.hideTotal = number("FixedCameraSpike","iHideMaxTotal",f.hideTotal);
         f.hideTrace = flag("FixedCameraSpike","iHideTrace",0);

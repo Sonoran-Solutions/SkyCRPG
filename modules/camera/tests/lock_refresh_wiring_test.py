@@ -161,6 +161,11 @@ assert install_caster.index("if (thin::runtime && thin::runtime->installed) {") 
 assert "target != base+0x5574f0" in install_caster and "std::memcmp(reinterpret_cast<const void*>(target),prologue.data(),prologue.size()) != 0" in install_caster
 assert "AllocTrampoline" not in spike  # a second trampoline allocation could release the camera-call relay
 assert install_caster.index("r.caster = reinterpret_cast<thin::Caster>(gateway);") < install_caster.index("REL::safe_write(target,")
+# The gateway is written read-write, sealed execute-read, and only then flushed and used.
+assert "PAGE_EXECUTE_READWRITE" not in spike
+assert install_caster.index("PAGE_READWRITE)") < install_caster.index("std::memcpy(gateway+prologue.size()") < \
+    install_caster.index("VirtualProtect(gateway,64,PAGE_EXECUTE_READ,&previous)") < install_caster.index("Refusal::casterProtect") < \
+    install_caster.index("FlushInstructionCache(GetCurrentProcess(),gateway,") < install_caster.index("r.caster = reinterpret_cast<thin::Caster>(gateway);")
 suppress = spike_body("inline bool suppressCast(", "inline bool hookCaster(")
 assert suppress.index("castDecision(r.castReady,r.frameEligible,true,true) != Cast::suppress") < suppress.index("++r.suppressed;")
 assert "std::memcpy(end" not in suppress and "*end" not in suppress  # the requested end point is left as passed
@@ -175,19 +180,42 @@ assert spike.count("r.frameEligible = rigEligible(") == 1 and "r.frameEligible =
 room = spike_body("inline void installRoomHook(", "// kDataLoaded, after the look/update hooks")
 assert "table.address() != base+0x1a69ac8" in room and "slots[0x3f] != base+0xfce0c0" in room and "prologue.size()) != 0" in room
 assert room.index("r.originalRoom = reinterpret_cast<RoomTest>(slots[0x3f]);") < room.index("table.write_vfunc(0x3f,hookRoom)")
+# Claims are gated on the caller: the culling functions are guarded (address,
+# live unwind extent, call-site bytes) and published before the slot is written.
+assert room.index("cullingCallersGuard(base)") < room.index("Refusal::roomCallers") < room.index("r.callers = roomCallersAt(base,") < \
+    room.index("table.write_vfunc(0x3f,hookRoom)")
+guard = spike_body("inline unsigned cullingCallersGuard(", "inline void installRoomHook(")
+assert "REL::ID(cullingIds[i]).address() != base+cullingRvas[i].begin" in guard and "functionExtent(base,cullingRvas[i])" in guard
+assert "base+cullingReturnRvas[i]-call.size()" in guard and "0xff,0x90,0xf8,0x01,0x00,0x00" in guard
+assert "RtlLookupFunctionEntry(base+rva.begin,&image,nullptr)" in spike
 assert "if (r.config.roomSeedMode) installRoomHook(base);" in spike
 hook_room = spike_body("inline bool hookRoom(", "inline bool within(")
 assert hook_room.index("r.originalRoom(room,point)") < hook_room.index("r.roomActive.load(") < hook_room.index("viewerQuery(*view,asked)") < \
     hook_room.index("seedClaim(")
+assert hook_room.index("roomCaller(runtime->callers,reinterpret_cast<std::uintptr_t>(_ReturnAddress()))") < hook_room.index("r.originalRoom(room,point)")
+assert hook_room.index("if (caller != RoomCaller::culling) {") < hook_room.index("r.counters.viewerCalls") < hook_room.index("seedClaim(caller,*view,asked,")
+assert hook_room.count("return true;") == 1 and "vanillaTrue" in hook_room[:hook_room.index("return true;")]  # true only repeats a vanilla true
 for engine in ("RE::PlayerCharacter", "RE::PlayerCamera", "RE::TESObjectCELL", "GetAppCulled", "logger", "emit("):
     assert engine not in hook_room, engine  # culling thread: the published copy and atomics only
+# Hide is interior-only in this wave: an exterior cell reaches neither the scan nor its rays.
+assert end_frame.index("if (hideScanned(r.config.seeThroughMode,parent->IsInteriorCell())) { scanHide(player,parent);") < \
+    end_frame.index("noteExterior(cellId);")
+assert spike.count("scanHide(player,parent)") == 1 and spike.count("castRays(player,parent,") == 1
+assert "castRays(player,parent," in spike_body("inline void scanHide(", "// Exterior cell with hide configured")
+scan = spike_body("inline void scanHide(", "// Exterior cell with hide configured")
+assert scan.count("r.config.hideRadius") == 2 and "groundReach(feet," in scan  # both classify calls are radius-bounded
+assert scan.index("release(slot,Exit::underfoot)") < scan.index("nearestFirst(due,dueCount);") < scan.index("SetAppCulled(true)")
+assert "if (!r.budget.take()) break;" in scan
+claim = spike_body("inline Hidden* claimSlot(", "inline void noteSkip(")
+assert claim.index("farthestSlot(r.hidden,") < claim.index("evicts(reach,") < claim.index("release(r.hidden[static_cast<std::size_t>(farthest)],Exit::evicted);")
 assert spike.count("SetAppCulled(true)") == 1 and spike.count("SetAppCulled(false)") == 1
 assert "SetAppCulled(false)" in spike_body("inline void release(", "inline void restoreAll(")
 assert "slots[0x33] != REL::Module::get().base()+0x104be80" in spike
 for forbidden in ("BSFixedString", "GetMenu(", "IsMenuOpen(", "RequestCameraControl", "AddTask("):
     assert forbidden not in spike, forbidden
 codes = dict(re.findall(r"(\w+) = (\d+)", spike_body("enum class Refusal : unsigned {", "};")))
-assert len(codes) == 16 and len(set(codes.values())) == len(codes)
+assert len(codes) == 19 and len(set(codes.values())) == len(codes)
 for name in codes:
     assert (spike + source).count("Refusal::" + name) == 1, name  # one site per code
-print("PASS spike on wiring: frame-scoped suppression; shared caster detour; guarded room hook; hook-thread isolation; one site per refusal code")
+print("PASS spike on wiring: frame-scoped suppression; shared caster detour; sealed gateway; caller-gated room hook; hook-thread isolation; "
+      "interior-only radius-bounded nearest-first hide; one site per refusal code")

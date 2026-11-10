@@ -34,13 +34,14 @@ struct Config {
     float zoom{.65f};          // native requested zoom scalar
     int snapLeftKey{51};       // DIK_COMMA
     int snapRightKey{52};      // DIK_PERIOD
-    bool castProbe{true};      // also run the native cast and count what it would have hit
+    bool castProbe{true};      // also run the native cast and count what visible geometry it would have hit
     bool rigTrace{};
     unsigned roomSeedMode{};   // 0 vanilla, 1 player's room, 2 sightline, 3 radius
     float roomSeedRadius{1024.0f};
     bool roomTrace{};
     unsigned seeThroughMode{}; // 0 none, 1 hide
     float cutHeight{160.0f};
+    float hideRadius{384.0f};  // above-cut hides only within this ground-plane reach of the feet
     unsigned hidePerFrame{16};
     unsigned hideTotal{192};
     bool hideTrace{};
@@ -70,12 +71,13 @@ inline Config validate(Config c,const Settings& base,int cursorKey,bool* adjuste
     c.roomSeedRadius = bounded(c.roomSeedRadius,1024.0f,0.0f,8192.0f);
     if (c.seeThroughMode > 1) c.seeThroughMode = 0;
     c.cutHeight = bounded(c.cutHeight,160.0f,64.0f,1024.0f);
+    c.hideRadius = bounded(c.hideRadius,384.0f,128.0f,2048.0f);
     c.hidePerFrame = std::clamp(c.hidePerFrame,1u,64u);
     c.hideTotal = std::clamp(c.hideTotal,1u,maxHidden);
     if (adjusted) *adjusted = c.heading != in.heading || c.snapSeconds != in.snapSeconds || c.zoom != in.zoom ||
         c.snapLeftKey != in.snapLeftKey || c.snapRightKey != in.snapRightKey || c.roomSeedMode != in.roomSeedMode ||
         c.roomSeedRadius != in.roomSeedRadius || c.seeThroughMode != in.seeThroughMode || c.cutHeight != in.cutHeight ||
-        c.hidePerFrame != in.hidePerFrame || c.hideTotal != in.hideTotal;
+        c.hideRadius != in.hideRadius || c.hidePerFrame != in.hidePerFrame || c.hideTotal != in.hideTotal;
     return c;
 }
 // -1 left (counter-clockwise seen from above), +1 right, 0 not a snap key.
@@ -188,7 +190,7 @@ inline bool formatRig(char* out,std::size_t size,const RigSample& s) {
     const int written = std::snprintf(out,size,
         "FixedRig t=%.3f frame=%llu eligible=%u state=%u slide=%u cam=%.2f,%.2f,%.2f player=%.2f,%.2f,%.2f offset=%.2f,%.2f,%.2f "
         "prevCam=%.2f,%.2f,%.2f prevPre=%.2f,%.2f,%.2f goal=%.2f,%.2f,%.2f pair=%u pullIn=%.3f heading=%.3f target=%.3f headingError=%.3f index=%u turning=%u "
-        "pitch=%.3f zoom=%.4f heldZoom=%.4f suppressed=%u nativeWouldHit=%u passedNative=%u passedHit=%u "
+        "pitch=%.3f zoom=%.4f heldZoom=%.4f suppressed=%u visibleWouldHit=%u passedNative=%u passedHit=%u "
         "frames=%u pairs=%u pullInFrames=%u maxPullIn=%.3f maxHeadingError=%.3f sample=window",
         s.seconds,s.frame,static_cast<unsigned>(s.eligible),s.state,static_cast<unsigned>(s.slide),
         static_cast<double>(s.camera.x),static_cast<double>(s.camera.y),static_cast<double>(s.camera.z),
@@ -217,16 +219,50 @@ struct RoomView {
 };
 constexpr float eyeLift = 64.0f;        // Hypothesis for eye height, as in the DYL-199 spike
 constexpr float viewerTolerance = 96.0f; // near plane (15) plus one frame of camera travel
-// The culling passes ask about camera + near * forward (IDs 13408, 106400,
-// 106401). Reference-to-room attachment (ID 19163) asks about other points and
-// must keep the vanilla answer.
+// QPointWithin (RVA FCE0C0) is reachable only through vtable slot 0x3F, from
+// five functions. Three are the culling passes, which ask about camera + near
+// * forward. Reference-to-room attachment and the room-bounded water lookup
+// ask about arbitrary points and must always keep the vanilla answer, even for
+// a point next to the camera. Extents are the .pdata entries of 1.7.104.
+struct CodeRange {
+    std::uintptr_t begin{},end{};
+    constexpr bool holds(std::uintptr_t address) const { return address >= begin && address < end; }
+};
+enum class RoomCaller { culling, attach, water, other };
+constexpr std::array<CodeRange,3> cullingRvas{{{0x1a97b0,0x1a9de7},{0x1512540,0x151328c},{0x1513290,0x1513fbe}}}; // IDs 13408, 106400, 106401
+constexpr std::array<std::uint64_t,3> cullingIds{13408,106400,106401};
+// Return addresses of the six `call [rax+1F8]` sites inside those functions.
+constexpr std::array<std::uintptr_t,6> cullingReturnRvas{0x1a9981,0x1a9a0e,0x151293c,0x15129ee,0x15136a1,0x151375b};
+constexpr CodeRange attachRva{0x2c9b90,0x2ca195}; // ID 19163, call returns to 2C9E4E
+constexpr CodeRange waterRva{0x2bee50,0x2bf14f};  // ID 19002, call returns to 2BF079
+struct RoomCallers {
+    std::array<CodeRange,3> culling{};
+    CodeRange attach{},water{};
+};
+constexpr CodeRange rebased(CodeRange rva,std::uintptr_t base) { return {base+rva.begin,base+rva.end}; }
+constexpr RoomCallers roomCallersAt(std::uintptr_t base,bool attachKnown = true,bool waterKnown = true) {
+    RoomCallers callers;
+    for (std::size_t i = 0;i < callers.culling.size();++i) callers.culling[i] = rebased(cullingRvas[i],base);
+    if (attachKnown) callers.attach = rebased(attachRva,base);
+    if (waterKnown) callers.water = rebased(waterRva,base);
+    return callers;
+}
+constexpr RoomCaller roomCaller(const RoomCallers& callers,std::uintptr_t returnAddress) {
+    for (const auto range : callers.culling) if (range.holds(returnAddress)) return RoomCaller::culling;
+    if (callers.attach.holds(returnAddress)) return RoomCaller::attach;
+    if (callers.water.holds(returnAddress)) return RoomCaller::water;
+    return RoomCaller::other;
+}
+// Second condition: the query must also be made at the rendered camera, so the
+// culling of another camera (reflection, local map) keeps the vanilla answer.
 inline bool viewerQuery(const RoomView& view,Vec point) {
     return finite(point) && finite(view.viewer) && std::isfinite(view.tolerance) && span(point,view.viewer) <= view.tolerance;
 }
 // Called only when the vanilla answer was false. `contains` asks the same room
 // about another point through the original function.
 template<class Contains>
-bool seedClaim(const RoomView& view,Vec point,Vec roomCentre,float roomRadius,Contains contains) {
+bool seedClaim(RoomCaller caller,const RoomView& view,Vec point,Vec roomCentre,float roomRadius,Contains contains) {
+    if (caller != RoomCaller::culling) return false;
     if (view.mode == 0 || view.mode > 3 || !viewerQuery(view,point) || !finite(view.eye)) return false;
     if (view.mode == 1) return contains(view.eye);
     if (view.mode == 2) {
@@ -238,8 +274,16 @@ bool seedClaim(const RoomView& view,Vec point,Vec roomCentre,float roomRadius,Co
     if (!finite(roomCentre) || !std::isfinite(roomRadius) || roomRadius < 0 || !std::isfinite(view.radius) || view.radius < 0) return false;
     return span(roomCentre,view.eye) < view.radius+roomRadius;
 }
+// calls = every hook call, split by caller class. viewerCalls = culling calls
+// at the camera while seeding is active; gatedNear = non-culling calls at the
+// camera while seeding is active, i.e. what the caller gate kept vanilla.
 struct RoomCounters {
-    std::atomic<unsigned long long> calls{0},viewerCalls{0},vanillaTrue{0},claims{0};
+    std::atomic<unsigned long long> calls{0},culling{0},attach{0},water{0},other{0},viewerCalls{0},gatedNear{0},vanillaTrue{0},claims{0};
+    void count(RoomCaller caller) {
+        calls.fetch_add(1ull,std::memory_order_relaxed);
+        (caller == RoomCaller::culling ? culling : caller == RoomCaller::attach ? attach : caller == RoomCaller::water ? water : other)
+            .fetch_add(1ull,std::memory_order_relaxed);
+    }
 };
 struct RoomSample {
     double seconds{};
@@ -247,15 +291,16 @@ struct RoomSample {
     unsigned mode{},cell{},rooms{},eyeRooms{},cameraRooms{};
     bool hook{},active{},graph{},capped{};
     int playerRoom{-1},cameraRoom{-1}; // index of the first containing room, -1 none
-    unsigned long long calls{},viewerCalls{},vanillaTrue{},claims{};
+    unsigned long long calls{},culling{},attach{},water{},other{},viewerCalls{},gatedNear{},vanillaTrue{},claims{};
 };
 inline bool formatRoom(char* out,std::size_t size,const RoomSample& s) {
     const int written = std::snprintf(out,size,
         "FixedRoom t=%.3f frame=%llu mode=%u hook=%u active=%u cell=%08X graph=%u rooms=%u capped=%u playerRoom=%d cameraRoom=%d "
-        "eyeRooms=%u cameraRooms=%u calls=%llu viewerCalls=%llu vanillaTrue=%llu claims=%llu sample=window",
+        "eyeRooms=%u cameraRooms=%u calls=%llu cullCalls=%llu attachCalls=%llu waterCalls=%llu otherCalls=%llu viewerCalls=%llu "
+        "gatedNear=%llu vanillaTrue=%llu claims=%llu sample=window",
         s.seconds,s.frame,s.mode,static_cast<unsigned>(s.hook),static_cast<unsigned>(s.active),s.cell,
         static_cast<unsigned>(s.graph),s.rooms,static_cast<unsigned>(s.capped),s.playerRoom,s.cameraRoom,s.eyeRooms,s.cameraRooms,
-        s.calls,s.viewerCalls,s.vanillaTrue,s.claims);
+        s.calls,s.culling,s.attach,s.water,s.other,s.viewerCalls,s.gatedNear,s.vanillaTrue,s.claims);
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 
@@ -295,22 +340,43 @@ inline Extent sphereExtent(float centreZ,float radius) {
     return e;
 }
 constexpr float cutExitMargin = 24.0f; // a hidden reference stays hidden this far below the cut
+constexpr float radiusExitMargin = 64.0f; // and this far outside the hide radius
+// This wave's hide is an interior mechanism: an exterior cell is neither
+// scanned nor ray-cast (4096-unit cells, uneven ground; wave 2).
+constexpr bool hideScanned(unsigned seeThroughMode,bool interiorCell) { return seeThroughMode == 1 && interiorCell; }
+// Ground-plane distance from the feet to the nearest point a bound can reach.
+// Not finite means "not within any radius".
+inline float groundReach(Vec feet,Vec boundCentre,float boundRadius) {
+    const float distance = std::hypot(boundCentre.x-feet.x,boundCentre.y-feet.y);
+    if (!std::isfinite(distance) || !std::isfinite(boundRadius)) return std::numeric_limits<float>::infinity();
+    return (std::max)(0.0f,distance-(std::max)(0.0f,boundRadius));
+}
 constexpr float floorReach = 16.0f;    // "reaches the floor" = bottom within this of the player's feet or below
 constexpr float floorFootprint = 200.0f; // both horizontal spans at least this: a room or cave piece, not a wall
 struct Verdict { Reason reason{Reason::none}; Skip skip{Skip::none}; };
 // Above the cut: the WHOLE base box is at or above cutZ, so a piece that also
-// carries floor (a one-piece cave or room mesh) never qualifies. On a ray:
-// architecture only, never the piece the player stands on, and never a piece
-// that reaches the floor with a room-sized footprint.
-inline Verdict classify(Kind kind,const Extent& box,bool boxIsSphere,bool rayHit,bool floorContact,float cutZ,float feetZ,bool hiddenNow) {
+// carries floor (a one-piece cave or room mesh) never qualifies, AND its bound
+// reaches within `radius` of the feet in the ground plane, so a ceiling at the
+// far end of a hall is left alone. On a ray: architecture only, never the
+// piece the player stands on, and never a piece that reaches the floor with a
+// room-sized footprint; rays are bounded by the camera-player segment already.
+inline Verdict classify(Kind kind,const Extent& box,bool boxIsSphere,bool rayHit,bool floorContact,float cutZ,float feetZ,
+    float reach,float radius,bool hiddenNow) {
     if (kind == Kind::excluded) return {Reason::none,Skip::kind};
     const float threshold = hiddenNow ? cutZ-cutExitMargin : cutZ;
-    if (box.valid && !floorContact && box.minZ >= threshold) return {Reason::aboveCut,Skip::none};
+    const float within = hiddenNow ? radius+radiusExitMargin : radius;
+    if (box.valid && !floorContact && box.minZ >= threshold && reach <= within) return {Reason::aboveCut,Skip::none};
     if (!rayHit || kind != Kind::architecture) return {};
     if (floorContact) return {Reason::none,Skip::floorContact};
     if (!box.valid || boxIsSphere) return {Reason::none,Skip::noBounds};
     if (box.minZ <= feetZ+floorReach && (std::min)(box.spanX,box.spanY) >= floorFootprint) return {Reason::none,Skip::floorSpan};
     return {Reason::onRay,Skip::none};
+}
+// A hidden piece that the player now stands on, or whose bottom is at or below
+// the feet (after a climb, a teleport or a load), is restored at once: the exit
+// dwell must never leave the player on an island.
+inline bool restoreAtOnce(const Extent& box,bool floorContact,float feetZ) {
+    return floorContact || (box.valid && box.minZ <= feetZ);
 }
 constexpr double hideEnterSeconds = .2, hideExitSeconds = .6, hideScanSeconds = .1;
 constexpr double dwellSlack = 1e-6; // scan times are sums of doubles
@@ -324,6 +390,27 @@ struct Track {
     bool shouldRestore(double now) const { return hidden && now-last >= hideExitSeconds-dwellSlack; }
     bool expired(double now) const { return !hidden && now-last > hideExitSeconds; }
 };
+// Caps are nearest-first: hides are applied in order of ground reach, and a
+// full table gives its farthest entry up to a strictly nearer candidate.
+struct Near { float reach{}; unsigned slot{}; };
+template<std::size_t Size>
+void nearestFirst(std::array<Near,Size>& items,unsigned count) {
+    std::sort(items.begin(),items.begin()+(std::min)(static_cast<std::size_t>(count),Size),[](const Near& a,const Near& b) {
+        return a.reach < b.reach || (a.reach == b.reach && a.slot < b.slot);
+    });
+}
+// Index of the farthest tracked entry, -1 when nothing is tracked.
+template<class Slots,class Tracked,class Reach>
+int farthestSlot(const Slots& slots,Tracked tracked,Reach reach) {
+    int best = -1,index = 0;
+    float most = -1.0f;
+    for (const auto& slot : slots) {
+        if (tracked(slot) && reach(slot) > most) { most = reach(slot); best = index; }
+        ++index;
+    }
+    return best;
+}
+constexpr bool evicts(float candidateReach,float farthestReach) { return candidateReach < farthestReach; }
 struct HideBudget {
     unsigned perFrame{},total{},frameUsed{},hidden{},frameCap{},totalCap{};
     void frame() { frameUsed = 0; }
@@ -334,10 +421,13 @@ struct HideBudget {
     }
     void release() { if (hidden) --hidden; }
 };
-// Cut reference height. Follows the feet only after they have stayed outside
-// the band for `settle` seconds, so a jump or one stair step does not move it.
+// Cut reference height. Inside the band it does not move; between the band and
+// `snap` it follows the feet after they have stayed there for `settle` seconds,
+// so a jump (apex about 76 units) or one stair step does not move it; beyond
+// `snap`, up or down, it follows at once (a teleport, a fall, a fast climb).
 struct CutPlane {
     constexpr static float band = 24.0f;
+    constexpr static float snap = 96.0f;
     constexpr static double settle = .6;
     bool valid{};
     float base{};
@@ -347,6 +437,7 @@ struct CutPlane {
         if (!std::isfinite(feetZ)) return base;
         if (!valid) { valid = true; base = feetZ; outside = -1; return base; }
         if (std::abs(feetZ-base) <= band) { outside = -1; return base; }
+        if (std::abs(feetZ-base) > snap) { base = feetZ; outside = -1; return base; }
         if (outside < 0) outside = now;
         if (now-outside >= settle) { base = feetZ; outside = -1; }
         return base;
@@ -380,8 +471,9 @@ inline std::optional<Vec> rayContinue(Vec from,Vec to,float fraction) {
 }
 
 // ---- restore table ---------------------------------------------------------
-enum class Exit { disable, f8, firstPerson, menu, load, cell, unload, death, special, hookSilent, expired, count };
-constexpr std::array exitNames{"disable","f8","first-person","menu","load","cell","unload","death","special","hook-silent","expired"};
+enum class Exit { disable, f8, firstPerson, menu, load, cell, unload, death, special, hookSilent, expired, underfoot, evicted, count };
+constexpr std::array exitNames{"disable","f8","first-person","menu","load","cell","unload","death","special","hook-silent","expired",
+    "underfoot","evicted"};
 static_assert(exitNames.size() == static_cast<std::size_t>(Exit::count));
 constexpr unsigned exitBit(Exit e) { return 1u << static_cast<unsigned>(e); }
 // Lowest set request wins; the order above is the reporting priority.

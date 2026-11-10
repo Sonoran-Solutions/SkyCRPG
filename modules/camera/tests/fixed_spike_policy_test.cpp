@@ -18,12 +18,14 @@ void settings() {
     const Config defaults = validate(Config{},base,48,&adjusted);
     assert(!adjusted && !defaults.enabled && defaults.heading == 45.0f && defaults.snapSeconds == .25f && defaults.zoom == .65f);
     assert(defaults.snapLeftKey == 51 && defaults.snapRightKey == 52 && defaults.castProbe);
-    assert(defaults.roomSeedMode == 0 && defaults.seeThroughMode == 0 && defaults.cutHeight == 160.0f);
+    assert(defaults.roomSeedMode == 0 && defaults.seeThroughMode == 0 && defaults.cutHeight == 160.0f && defaults.hideRadius == 384.0f);
     assert(!defaults.rigTrace && !defaults.roomTrace && !defaults.hideTrace);
     Config c;
     c.heading = -90; c.snapSeconds = 0; c.zoom = 5; c.roomSeedMode = 9; c.seeThroughMode = 2; c.cutHeight = nan;
-    c.roomSeedRadius = -1; c.hidePerFrame = 0; c.hideTotal = 100000;
+    c.roomSeedRadius = -1; c.hidePerFrame = 0; c.hideTotal = 100000; c.hideRadius = 5;
     c = validate(c,base,48,&adjusted);
+    assert(c.hideRadius == 128.0f);
+    { Config wide; wide.hideRadius = 1e9f; assert(validate(wide,base,48).hideRadius == 2048.0f); wide.hideRadius = nan; assert(validate(wide,base,48).hideRadius == 384.0f); }
     assert(adjusted && c.heading == 270.0f && c.snapSeconds == .05f && c.zoom == 1.0f && c.roomSeedMode == 0);
     assert(c.seeThroughMode == 0 && c.cutHeight == 160.0f && c.roomSeedRadius == 0.0f && c.hidePerFrame == 1 && c.hideTotal == maxHidden);
     c = {}; c.heading = nan; assert(validate(c,base,48).heading == 45.0f);
@@ -147,7 +149,7 @@ void rigTrace() {
     for (const char* field : {"FixedRig t=12.500","frame=77","eligible=1","state=8","cam=106.00,208.00,300.00","player=96.00,188.00,40.00",
         "offset=10.00,20.00,260.00","prevCam=100.00,200.00,300.00","prevPre=100.00,200.00,300.00","pair=1","pullIn=0.000",
         "heading=44.990","target=45.000","headingError=-0.010","pitch=55.000",
-        "zoom=0.6500","suppressed=12","nativeWouldHit=5","passedNative=0","passedHit=0"})
+        "zoom=0.6500","suppressed=12","visibleWouldHit=5","passedNative=0","passedHit=0"})
         assert(text.find(field) != std::string::npos);
     // Pull-in pairs one frame's rendered position with that frame's
     // pre-collision position: the camera moving 10 units since then (cam) or
@@ -182,41 +184,73 @@ void rooms() {
     const auto inside = [](float low,float high) { return [=](Vec p) { return p.z >= low && p.z <= high; }; };
     const Vec asked{0,0,490}; // camera + near * forward
     // Mode 0 never claims; neither does an unknown mode.
-    for (const unsigned mode : {0u,4u,99u}) { view.mode = mode; assert(!seedClaim(view,asked,{},0,inside(-1e9f,1e9f))); }
+    for (const unsigned mode : {0u,4u,99u}) { view.mode = mode; assert(!seedClaim(RoomCaller::culling,view,asked,{},0,inside(-1e9f,1e9f))); }
     // Mode 1: only the room that holds the player.
     view.mode = 1;
-    assert(seedClaim(view,asked,{},0,inside(0,128)) && !seedClaim(view,asked,{},0,inside(200,300)));
+    assert(seedClaim(RoomCaller::culling,view,asked,{},0,inside(0,128)) && !seedClaim(RoomCaller::culling,view,asked,{},0,inside(200,300)));
     // Mode 2: any room crossed by the sightline samples (eye, .75, .5, .25).
     view.mode = 2;
-    assert(seedClaim(view,asked,{},0,inside(0,128)));     // player end
-    assert(seedClaim(view,asked,{},0,inside(250,300)));   // midpoint 277
-    assert(seedClaim(view,asked,{},0,inside(380,390)));   // quarter point 383.5
-    assert(!seedClaim(view,asked,{},0,inside(400,480)));  // between samples and the camera
+    assert(seedClaim(RoomCaller::culling,view,asked,{},0,inside(0,128)));     // player end
+    assert(seedClaim(RoomCaller::culling,view,asked,{},0,inside(250,300)));   // midpoint 277
+    assert(seedClaim(RoomCaller::culling,view,asked,{},0,inside(380,390)));   // quarter point 383.5
+    assert(!seedClaim(RoomCaller::culling,view,asked,{},0,inside(400,480)));  // between samples and the camera
     std::vector<float> order;
-    assert(!seedClaim(view,asked,{},0,[&](Vec p) { order.push_back(p.z); return false; }));
+    assert(!seedClaim(RoomCaller::culling,view,asked,{},0,[&](Vec p) { order.push_back(p.z); return false; }));
     assert(order.size() == 4 && near(order[0],64) && order[1] < order[2] && order[2] < order[3] && near(order[3],383.5f));
     // Mode 3: rooms whose bound reaches within the radius of the player.
     view.mode = 3;
     const auto never = [](Vec) { return false; };
-    assert(seedClaim(view,asked,{0,350,64},100,never) && !seedClaim(view,asked,{0,450,64},100,never));
-    assert(!seedClaim(view,asked,{nan,0,0},100,never) && !seedClaim(view,asked,{0,0,0},nan,never));
+    assert(seedClaim(RoomCaller::culling,view,asked,{0,350,64},100,never) && !seedClaim(RoomCaller::culling,view,asked,{0,450,64},100,never));
+    assert(!seedClaim(RoomCaller::culling,view,asked,{nan,0,0},100,never) && !seedClaim(RoomCaller::culling,view,asked,{0,0,0},nan,never));
     // Queries that are not the main view (reference-to-room attach, other
     // cameras) keep the vanilla answer in every mode.
     for (const unsigned mode : {1u,2u,3u}) {
         view.mode = mode;
-        assert(!seedClaim(view,{0,0,64},{0,0,64},1e6f,inside(-1e9f,1e9f)));
-        assert(!seedClaim(view,{nan,0,0},{0,0,64},1e6f,inside(-1e9f,1e9f)));
+        assert(!seedClaim(RoomCaller::culling,view,{0,0,64},{0,0,64},1e6f,inside(-1e9f,1e9f)));
+        assert(!seedClaim(RoomCaller::culling,view,{nan,0,0},{0,0,64},1e6f,inside(-1e9f,1e9f)));
     }
     assert(viewerQuery(view,{0,0,500+viewerTolerance}) && !viewerQuery(view,{0,0,500+viewerTolerance+1}));
+    // The caller gate: only the three culling passes may ever be claimed for,
+    // even when the queried point is exactly the camera (an NPC, a dropped
+    // item or a water lookup next to the camera).
+    for (const unsigned mode : {1u,2u,3u}) {
+        view.mode = mode;
+        for (const auto caller : {RoomCaller::attach,RoomCaller::water,RoomCaller::other})
+            assert(!seedClaim(caller,view,view.viewer,{0,0,64},1e6f,inside(-1e9f,1e9f)));
+        assert(seedClaim(RoomCaller::culling,view,view.viewer,{0,0,64},1e6f,inside(-1e9f,1e9f)));
+    }
+    const std::uintptr_t image = 0x140000000ull;
+    const RoomCallers callers = roomCallersAt(image);
+    // The six audited return addresses are inside the .pdata extents.
+    for (const auto site : cullingReturnRvas) assert(roomCaller(callers,image+site) == RoomCaller::culling);
+    assert(roomCaller(callers,image+0x2c9e4e) == RoomCaller::attach && roomCaller(callers,image+0x2bf079) == RoomCaller::water);
+    // Extents are half-open, and anything else is "other".
+    assert(roomCaller(callers,image+0x1a97b0) == RoomCaller::culling && roomCaller(callers,image+0x1a9de6) == RoomCaller::culling);
+    assert(roomCaller(callers,image+0x1a9de7) == RoomCaller::other && roomCaller(callers,image+0x1a97af) == RoomCaller::other);
+    assert(roomCaller(callers,image+0x151328c) == RoomCaller::other && roomCaller(callers,image+0x1513290) == RoomCaller::culling);
+    assert(roomCaller(callers,image+0x1513fbe) == RoomCaller::other && roomCaller(callers,0) == RoomCaller::other);
+    assert(roomCaller(callers,0x1a9981) == RoomCaller::other); // an RVA is not an address
+    // A hook wrapped by someone else returns into their module: never culling.
+    assert(roomCaller(callers,0x7ff812340000ull) == RoomCaller::other);
+    // An unverified attach or water extent only loses its name.
+    const RoomCallers partial = roomCallersAt(image,false,false);
+    assert(roomCaller(partial,image+0x2c9e4e) == RoomCaller::other && roomCaller(partial,image+0x2bf079) == RoomCaller::other);
+    assert(roomCaller(partial,image+0x151293c) == RoomCaller::culling);
+    assert(roomCaller(RoomCallers{},image+0x151293c) == RoomCaller::other); // nothing installed, nothing claimed
+    RoomCounters counters;
+    for (const auto caller : {RoomCaller::culling,RoomCaller::culling,RoomCaller::attach,RoomCaller::water,RoomCaller::other}) counters.count(caller);
+    assert(counters.calls == 5 && counters.culling == 2 && counters.attach == 1 && counters.water == 1 && counters.other == 1);
     view.mode = 1; view.eye = {nan,0,0};
-    assert(!seedClaim(view,asked,{},0,inside(-1e9f,1e9f)));
+    assert(!seedClaim(RoomCaller::culling,view,asked,{},0,inside(-1e9f,1e9f)));
     RoomSample s;
     s.mode = 2; s.hook = s.active = s.graph = true; s.rooms = 14; s.playerRoom = 3; s.cell = 0x1605E; s.claims = 9; s.viewerCalls = 28;
+    s.calls = 40; s.culling = 30; s.attach = 6; s.water = 3; s.other = 1; s.gatedNear = 2;
     char line[640]{};
     assert(formatRoom(line,sizeof(line),s));
     const std::string text = line;
     for (const char* field : {"mode=2","hook=1","active=1","cell=0001605E","graph=1","rooms=14","playerRoom=3","cameraRoom=-1",
-        "viewerCalls=28","claims=9"}) assert(text.find(field) != std::string::npos);
+        "calls=40","cullCalls=30","attachCalls=6","waterCalls=3","otherCalls=1","viewerCalls=28","gatedNear=2","claims=9"})
+        assert(text.find(field) != std::string::npos);
 }
 
 void hide() {
@@ -225,57 +259,57 @@ void hide() {
     // A ceiling tile: thin, wide, wholly above the cut.
     const Extent ceiling = worldExtent({-256,-256,0},{256,256,16},upright,1,300);
     assert(ceiling.valid && ceiling.minZ == 300 && ceiling.maxZ == 316 && ceiling.spanX == 512 && ceiling.spanY == 512);
-    assert(classify(Kind::architecture,ceiling,false,false,false,cut,feet,false).reason == Reason::aboveCut);
-    assert(classify(Kind::object,ceiling,false,false,false,cut,feet,false).reason == Reason::aboveCut); // upper-floor clutter too
+    assert(classify(Kind::architecture,ceiling,false,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::aboveCut);
+    assert(classify(Kind::object,ceiling,false,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::aboveCut); // upper-floor clutter too
     // Never an actor, the player or any other excluded kind, wherever it is.
     for (const bool ray : {false,true}) {
-        const auto v = classify(Kind::excluded,ceiling,false,ray,false,cut,feet,false);
+        const auto v = classify(Kind::excluded,ceiling,false,ray,false,cut,feet,0.0f,384.0f,false);
         assert(v.reason == Reason::none && v.skip == Skip::kind);
     }
     // A wall from the floor up: below the cut, so only a ray can hide it.
     const Extent wall = worldExtent({-128,-8,0},{128,8,320},upright,1,feet);
     assert(wall.minZ == 100 && wall.maxZ == 420);
-    assert(classify(Kind::architecture,wall,false,false,false,cut,feet,false).reason == Reason::none);
-    assert(classify(Kind::architecture,wall,false,true,false,cut,feet,false).reason == Reason::onRay);
-    assert(classify(Kind::object,wall,false,true,false,cut,feet,false).reason == Reason::none); // rays hide architecture only
+    assert(classify(Kind::architecture,wall,false,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::none);
+    assert(classify(Kind::architecture,wall,false,true,false,cut,feet,0.0f,384.0f,false).reason == Reason::onRay);
+    assert(classify(Kind::object,wall,false,true,false,cut,feet,0.0f,384.0f,false).reason == Reason::none); // rays hide architecture only
     // Anything below the cut that no ray hits is left alone.
     const Extent table = worldExtent({-40,-40,0},{40,40,60},upright,1,feet);
-    assert(classify(Kind::architecture,table,false,false,false,cut,feet,false).reason == Reason::none);
+    assert(classify(Kind::architecture,table,false,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::none);
     // The cut is tested on the whole box: just below stays, at the cut hides.
     const Extent justBelow = worldExtent({-10,-10,0},{10,10,50},upright,1,cut-.5f);
     const Extent atCut = worldExtent({-10,-10,0},{10,10,50},upright,1,cut);
-    assert(classify(Kind::architecture,justBelow,false,false,false,cut,feet,false).reason == Reason::none);
-    assert(classify(Kind::architecture,atCut,false,false,false,cut,feet,false).reason == Reason::aboveCut);
+    assert(classify(Kind::architecture,justBelow,false,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::none);
+    assert(classify(Kind::architecture,atCut,false,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::aboveCut);
     // Hysteresis in height: once hidden it stays hidden a margin below the cut.
-    assert(classify(Kind::architecture,justBelow,false,false,false,cut,feet,true).reason == Reason::aboveCut);
+    assert(classify(Kind::architecture,justBelow,false,false,false,cut,feet,0.0f,384.0f,true).reason == Reason::aboveCut);
     const Extent wellBelow = worldExtent({-10,-10,0},{10,10,50},upright,1,cut-cutExitMargin-1);
-    assert(classify(Kind::architecture,wellBelow,false,false,false,cut,feet,true).reason == Reason::none);
+    assert(classify(Kind::architecture,wellBelow,false,false,false,cut,feet,0.0f,384.0f,true).reason == Reason::none);
     // The floor the player stands on is never hidden, even on a ray.
     const Extent floorTile = worldExtent({-256,-256,-16},{256,256,0},upright,1,feet);
-    auto v = classify(Kind::architecture,floorTile,false,true,true,cut,feet,false);
+    auto v = classify(Kind::architecture,floorTile,false,true,true,cut,feet,0.0f,384.0f,false);
     assert(v.reason == Reason::none && v.skip == Skip::floorContact);
     // One-piece cave or room mesh: floor and ceiling in one box. Its bottom is
     // below the cut, so "above the cut" never applies, and a ray hit is
     // refused because hiding it would remove floor.
     const Extent cave = worldExtent({-600,-500,-40},{600,500,700},upright,1,feet);
-    assert(classify(Kind::architecture,cave,false,false,false,cut,feet,false).reason == Reason::none);
-    v = classify(Kind::architecture,cave,false,true,false,cut,feet,false);
+    assert(classify(Kind::architecture,cave,false,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::none);
+    v = classify(Kind::architecture,cave,false,true,false,cut,feet,0.0f,384.0f,false);
     assert(v.reason == Reason::none && v.skip == Skip::floorSpan);
     // A column reaches the floor but has no room-sized footprint: it may go.
     const Extent column = worldExtent({-40,-40,0},{40,40,400},upright,1,feet);
-    assert(classify(Kind::architecture,column,false,true,false,cut,feet,false).reason == Reason::onRay);
+    assert(classify(Kind::architecture,column,false,true,false,cut,feet,0.0f,384.0f,false).reason == Reason::onRay);
     // A big piece that starts above the floor (an arch, a balcony) may go.
     const Extent balcony = worldExtent({-300,-300,0},{300,300,40},upright,1,feet+floorReach+1);
-    assert(classify(Kind::architecture,balcony,false,true,false,cut,feet,false).reason == Reason::onRay);
+    assert(classify(Kind::architecture,balcony,false,true,false,cut,feet,0.0f,384.0f,false).reason == Reason::onRay);
     // No OBND: the sphere can prove "wholly above" but never clears a ray hit.
     assert(!worldExtent({0,0,0},{0,0,0},upright,1,0).valid && !worldExtent({1,0,0},{0,1,1},upright,1,0).valid);
     assert(!worldExtent({0,0,0},{1,1,1},upright,0,0).valid && !worldExtent({0,0,0},{1,1,nan},upright,1,0).valid);
     const Extent high = sphereExtent(600,100),low = sphereExtent(300,100);
     assert(high.valid && high.minZ == 500 && !sphereExtent(0,0).valid && !sphereExtent(nan,1).valid);
-    assert(classify(Kind::architecture,high,true,false,false,cut,feet,false).reason == Reason::aboveCut);
-    v = classify(Kind::architecture,low,true,true,false,cut,feet,false);
+    assert(classify(Kind::architecture,high,true,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::aboveCut);
+    v = classify(Kind::architecture,low,true,true,false,cut,feet,0.0f,384.0f,false);
     assert(v.reason == Reason::none && v.skip == Skip::noBounds);
-    v = classify(Kind::architecture,Extent{},false,true,false,cut,feet,false);
+    v = classify(Kind::architecture,Extent{},false,true,false,cut,feet,0.0f,384.0f,false);
     assert(v.reason == Reason::none && v.skip == Skip::noBounds);
     // Rotated and scaled boxes: z range follows the world rotation's third row.
     const Extent tipped = worldExtent({0,0,0},{100,10,10},{1,0,0},2,50); // local x points up
@@ -283,6 +317,34 @@ void hide() {
     const Extent flipped = worldExtent({0,0,0},{10,10,100},{0,0,-1},1,50); // upside down
     assert(flipped.minZ == -50 && flipped.maxZ == 50);
     assert(std::string(reasonName(Reason::aboveCut)) == "above-cut" && std::string(reasonName(Reason::onRay)) == "on-ray");
+    // Interior only: an exterior cell is never scanned, whatever the mode.
+    assert(hideScanned(1,true) && !hideScanned(1,false) && !hideScanned(0,true) && !hideScanned(0,false) && !hideScanned(2,true));
+    // Above the cut needs the bound to reach within the radius in the ground
+    // plane: a ceiling at the far end of a hall is left alone.
+    assert(groundReach({0,0,100},{300,400,900},100) == 400.0f);   // height never counts
+    assert(groundReach({0,0,0},{30,40,0},100) == 0.0f);           // the bound covers the feet
+    assert(groundReach({0,0,0},{300,400,0},-5) == 500.0f);        // a bad radius adds nothing
+    assert(std::isinf(groundReach({0,0,0},{nan,0,0},1)) && std::isinf(groundReach({0,0,0},{1,0,0},nan)));
+    const auto above = [&](float reach,bool hidden) { return classify(Kind::architecture,ceiling,false,false,false,cut,feet,reach,384.0f,hidden).reason; };
+    assert(above(0,false) == Reason::aboveCut && above(384,false) == Reason::aboveCut && above(384.5f,false) == Reason::none);
+    assert(above(std::numeric_limits<float>::infinity(),false) == Reason::none && above(nan,false) == Reason::none);
+    // Walking away: a hidden piece stays hidden a margin beyond the radius,
+    // then stops qualifying and is restored by the ordinary exit dwell.
+    assert(above(384+radiusExitMargin,true) == Reason::aboveCut && above(384+radiusExitMargin+1,true) == Reason::none);
+    // The radius does not limit ray hides: the ray is the camera-player segment.
+    assert(classify(Kind::architecture,wall,false,true,false,cut,feet,5000.0f,384.0f,false).reason == Reason::onRay);
+    // After a climb or teleport: what is now underfoot comes back at once.
+    const float loftFeet = 324;
+    const Extent loftTile = worldExtent({-128,-128,246},{128,128,255},upright,1,64);   // WRIntLoftMid01, bottom 310
+    const Extent loftWall = worldExtent({-8,-128,0},{8,106,249},upright,1,320);        // WRIntLoftWallRoof01, bottom 320
+    const Extent roofTile = worldExtent({-128,-128,491},{128,128,513},upright,1,64);   // WRIntCeilMid01, bottom 555
+    assert(classify(Kind::architecture,loftTile,false,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::aboveCut); // from the ground floor
+    assert(restoreAtOnce(loftTile,false,loftFeet) && restoreAtOnce(loftWall,false,loftFeet) && !restoreAtOnce(roofTile,false,loftFeet));
+    assert(restoreAtOnce(roofTile,true,loftFeet));          // a floor probe hit it: the player stands on it
+    assert(!restoreAtOnce(Extent{},false,loftFeet));        // no box: only a probe can say
+    assert(!restoreAtOnce(loftTile,false,feet));            // still overhead from the ground floor
+    // And the other direction: dropping back down, the loft is above the cut again.
+    assert(classify(Kind::architecture,loftTile,false,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::aboveCut);
     assert(std::string(skipName(Skip::floorSpan)) == "floor-span" && std::string(skipName(Skip::floorContact)) == "floor-contact");
 }
 
@@ -313,6 +375,28 @@ void dwellAndCaps() {
     for (unsigned i = 0;i < 5;++i) b.release();
     assert(b.hidden == 0);
 
+    // Nearest-first caps. Per-scan: hides are applied in order of ground reach.
+    std::array<Near,6> ready{{{300,0},{20,1},{150,2},{20,3},{0,4},{999,5}}};
+    nearestFirst(ready,5); // the sixth entry is not part of this scan
+    assert(ready[0].slot == 4 && ready[1].slot == 1 && ready[2].slot == 3 && ready[3].slot == 2 && ready[4].slot == 0 && ready[5].slot == 5);
+    nearestFirst(ready,99); // a count beyond the array is clamped
+    assert(ready[5].slot == 5 && ready[0].slot == 4);
+    HideBudget perScan;
+    perScan.perFrame = 2; perScan.total = 10;
+    unsigned applied = 0;
+    for (const auto& item : ready) { if (!perScan.take()) break; applied |= 1u << item.slot; }
+    assert(applied == ((1u << 4)|(1u << 1))); // the two nearest, not the first two found
+    // Total: a full table gives up its farthest entry to a strictly nearer one.
+    struct Slot { bool used; float reach; };
+    const std::array<Slot,5> table{{{true,100},{true,700},{false,9999},{true,350},{true,700}}};
+    const auto tracked = [](const Slot& slot) { return slot.used; };
+    const auto reachOf = [](const Slot& slot) { return slot.reach; };
+    assert(farthestSlot(table,tracked,reachOf) == 1); // unused slots do not count; ties keep the first
+    assert(evicts(50,table[1].reach) && evicts(699.9f,table[1].reach) && !evicts(700,table[1].reach) && !evicts(900,table[1].reach));
+    assert(!evicts(nan,700)); // a candidate with no usable reach never displaces anything
+    const std::array<Slot,2> empty{{{false,1},{false,2}}};
+    assert(farthestSlot(empty,tracked,reachOf) == -1);
+
     CutPlane cut;
     assert(cut.update(100,0) == 100 && cut.valid);
     assert(cut.update(100+CutPlane::band,1) == 100); // inside the band
@@ -321,9 +405,17 @@ void dwellAndCaps() {
     assert(cut.update(170,3.0) == 100 && cut.update(170,3.5) == 100); // the timer restarted after landing
     // Stairs: it follows once the feet have settled elsewhere, up or down.
     assert(cut.update(180,3.61) == 180);
-    assert(cut.update(60,5.0) == 180 && cut.update(40,5.7) == 40);
-    assert(cut.update(nan,6) == 40);
-    cut.reset(); assert(!cut.valid && cut.update(-500,7) == -500);
+    assert(cut.update(100,5.0) == 180 && cut.update(90,5.7) == 90);
+    // A teleport, a fast climb or a fall beyond `snap`: at once, both directions.
+    assert(cut.update(90+CutPlane::snap,6.0) == 90);             // exactly at the threshold still waits
+    assert(cut.update(90+CutPlane::snap+1,6.01) == 90+CutPlane::snap+1); // up: no settle time
+    assert(cut.update(68,6.02) == 68);                           // down: no settle time
+    assert(cut.update(324,6.03) == 324 && cut.outside < 0);      // setpos to the loft
+    // A jump from there (apex 76) still does not move it.
+    assert(cut.update(324+76,6.1) == 324 && cut.update(324+40,6.4) == 324 && cut.update(324,6.6) == 324);
+    cut.update(40,7.0);
+    assert(cut.update(nan,7.5) == 40);
+    cut.reset(); assert(!cut.valid && cut.update(-500,8) == -500);
 
     const auto targets = rayTargets({10,20,30});
     assert(targets.size() == maxRayTargets);
@@ -345,7 +437,10 @@ void restores() {
     assert(exitNames.size() == static_cast<std::size_t>(Exit::count));
     // Every lifecycle exit in the brief has its own cause and is immediate.
     for (const auto cause : {Exit::disable,Exit::f8,Exit::firstPerson,Exit::menu,Exit::load,Exit::cell,Exit::unload,
-        Exit::death,Exit::special,Exit::expired}) assert(restoreNow(cause,0));
+        Exit::death,Exit::special,Exit::expired,Exit::underfoot,Exit::evicted}) assert(restoreNow(cause,0));
+    assert(std::string(exitNames[static_cast<std::size_t>(Exit::underfoot)]) == "underfoot");
+    assert(std::string(exitNames[static_cast<std::size_t>(Exit::evicted)]) == "evicted");
+    assert(static_cast<unsigned>(Exit::count) == 13);
     assert(std::string(exitNames[static_cast<std::size_t>(Exit::f8)]) == "f8");
     assert(std::string(exitNames[static_cast<std::size_t>(Exit::firstPerson)]) == "first-person");
     assert(std::string(exitNames[static_cast<std::size_t>(Exit::death)]) == "death");

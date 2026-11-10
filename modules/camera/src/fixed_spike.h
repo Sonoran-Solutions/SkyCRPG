@@ -11,9 +11,9 @@ using RoomTest = bool(*)(RE::BSMultiBoundRoom*,const RE::NiPoint3&);
 // One code per refusal site, logged once: FixedCameraSpike refused code=FCS-NN.
 enum class Refusal : unsigned {
     settings = 1, prerequisites = 2, service = 3,
-    casterModule = 10, casterAddress = 11, casterPrologue = 12, casterMemory = 13,
-    roomTable = 20, roomSlot = 21, roomPrologue = 22,
-    pickSlot = 30,
+    casterModule = 10, casterAddress = 11, casterPrologue = 12, casterMemory = 13, casterProtect = 14,
+    roomTable = 20, roomSlot = 21, roomPrologue = 22, roomCallers = 23,
+    pickSlot = 30, hideExterior = 31,
     snapMapped = 40, snapUnbound = 41,
     traceWriter = 50,
     restoreConflict = 60, offMain = 61
@@ -24,6 +24,7 @@ struct Hidden {
     Track track;
     RE::FormID ref{},base{};
     Reason reason{Reason::none};
+    float reach{}; // ground-plane reach from the feet at the last scan that saw it
     bool used{};
 };
 struct Runtime {
@@ -56,6 +57,7 @@ struct Runtime {
     std::atomic<std::shared_ptr<const RoomView>> view;
     std::atomic_bool roomActive{};
     RoomCounters counters;
+    RoomCallers callers;
     RoomTest originalRoom{};
     // Hide.
     std::array<Hidden,maxHidden> hidden;
@@ -67,6 +69,7 @@ struct Runtime {
     unsigned skipNext{};
     float lastCut{},lastFeet{};
     double nextScan{},nextSummary{};
+    bool exteriorNoted{};
     // Lifecycle.
     std::atomic_uint requests{};
     RE::FormID cell{};
@@ -194,12 +197,19 @@ inline Hidden* findSlot(RE::FormID ref,const RE::NiAVObject* root) {
     for (auto& slot : runtime->hidden) if (slot.used && slot.ref == ref && slot.root.get() == root) return &slot;
     return nullptr;
 }
-inline Hidden* claimSlot(RE::TESObjectREFR* ref,RE::NiAVObject* root,const RE::TESBoundObject* base) {
-    if (runtime->tracked >= runtime->config.hideTotal) { ++runtime->budget.totalCap; return nullptr; }
-    for (auto& slot : runtime->hidden) if (!slot.used) {
+// A full table gives up its farthest entry (restored at once) to a strictly
+// nearer candidate, so far pieces can never hold the cap against near ones.
+inline Hidden* claimSlot(RE::TESObjectREFR* ref,RE::NiAVObject* root,const RE::TESBoundObject* base,float reach) {
+    auto& r = *runtime;
+    if (r.tracked >= r.config.hideTotal) {
+        const int farthest = farthestSlot(r.hidden,[](const Hidden& slot) { return slot.used; },[](const Hidden& slot) { return slot.reach; });
+        if (farthest < 0 || !evicts(reach,r.hidden[static_cast<std::size_t>(farthest)].reach)) { ++r.budget.totalCap; return nullptr; }
+        release(r.hidden[static_cast<std::size_t>(farthest)],Exit::evicted);
+    }
+    for (auto& slot : r.hidden) if (!slot.used) {
         slot.used = true; slot.handle = ref->GetHandle(); slot.root.reset(root);
-        slot.ref = ref->GetFormID(); slot.base = base->GetFormID();
-        ++runtime->tracked;
+        slot.ref = ref->GetFormID(); slot.base = base->GetFormID(); slot.reach = reach;
+        ++r.tracked;
         return &slot;
     }
     return nullptr;
@@ -295,12 +305,12 @@ inline void traceSummary() {
         "FixedHide t=%.3f frame=%llu event=summary hidden=%u tracked=%u scans=%llu visited=%llu rays=%llu rayHits=%llu hides=%llu restores=%llu "
         "frameCap=%u totalCap=%u visitCap=%llu rayCap=%llu rayFailed=%llu skipNoBounds=%llu skipFloorContact=%llu skipFloorSpan=%llu conflicts=%llu foreign=%llu "
         "cutZ=%.2f feetZ=%.2f exitDisable=%llu exitF8=%llu exitFirstPerson=%llu exitMenu=%llu exitLoad=%llu exitCell=%llu exitUnload=%llu "
-        "exitDeath=%llu exitSpecial=%llu exitHookSilent=%llu exitExpired=%llu sample=cumulative",
+        "exitDeath=%llu exitSpecial=%llu exitHookSilent=%llu exitExpired=%llu exitUnderfoot=%llu exitEvicted=%llu sample=cumulative",
         r.now,static_cast<unsigned long long>(r.frame),r.budget.hidden,r.tracked,t.scans,t.visited,t.rays,t.rayHits,t.hides,t.restores,
         r.budget.frameCap,r.budget.totalCap,t.visitCap,t.rayCap,t.rayFailed,t.skips[static_cast<std::size_t>(Skip::noBounds)],
         t.skips[static_cast<std::size_t>(Skip::floorContact)],t.skips[static_cast<std::size_t>(Skip::floorSpan)],t.conflicts,t.foreign,
         static_cast<double>(r.lastCut),static_cast<double>(r.lastFeet),t.exits[0],t.exits[1],t.exits[2],t.exits[3],t.exits[4],t.exits[5],
-        t.exits[6],t.exits[7],t.exits[8],t.exits[9],t.exits[10]);
+        t.exits[6],t.exits[7],t.exits[8],t.exits[9],t.exits[10],t.exits[11],t.exits[12]);
     emit(r.hideLines,line);
 }
 inline void scanHide(RE::PlayerCharacter* player,RE::TESObjectCELL* parent) {
@@ -331,48 +341,86 @@ inline void scanHide(RE::PlayerCharacter* player,RE::TESObjectCELL* parent) {
         bool sphere = false;
         const Extent box = extentOf(root,base,sphere);
         const bool onRay = listed(rayRefs,rayCount,ref),onFloor = listed(floorRefs,floorCount,ref);
-        // The looser exit threshold first; most references fail it without a table lookup.
-        Verdict verdict = classify(kind,box,sphere,onRay,onFloor,cutZ,feet.z,true);
+        const auto& bound = root->worldBound;
+        const float reach = groundReach(feet,{bound.center.x,bound.center.y,bound.center.z},bound.radius);
+        // The looser exit thresholds first; most references fail them without a table lookup.
+        Verdict verdict = classify(kind,box,sphere,onRay,onFloor,cutZ,feet.z,reach,r.config.hideRadius,true);
         Hidden* slot = verdict.reason != Reason::none ? findSlot(ref->GetFormID(),root) : nullptr;
-        if (verdict.reason != Reason::none && (!slot || !slot->track.hidden)) verdict = classify(kind,box,sphere,onRay,onFloor,cutZ,feet.z,false);
+        if (verdict.reason != Reason::none && (!slot || !slot->track.hidden))
+            verdict = classify(kind,box,sphere,onRay,onFloor,cutZ,feet.z,reach,r.config.hideRadius,false);
         if (verdict.reason == Reason::none) {
             if (verdict.skip != Skip::none) noteSkip(ref,base,verdict.skip,box);
             return RE::BSContainer::ForEachResult::kContinue;
         }
-        if (!slot) slot = claimSlot(ref,root,base);
-        if (slot) { slot->reason = verdict.reason; slot->track.seen(r.now); }
+        if (!slot) slot = claimSlot(ref,root,base,reach);
+        if (slot) { slot->reason = verdict.reason; slot->reach = reach; slot->track.seen(r.now); }
         return RE::BSContainer::ForEachResult::kContinue;
     });
     r.totals.visited += visited;
+    std::array<Near,maxHidden> due{};
+    unsigned dueCount{},index{};
     for (auto& slot : r.hidden) {
+        const unsigned at = index++;
         if (!slot.used) continue;
         const auto live = slot.handle.get();
         if (!live || live->Get3D() != slot.root.get()) { release(slot,Exit::unload); continue; }
-        if (slot.track.shouldHide(r.now)) {
-            // A root that is already hidden belongs to the engine or another mod.
-            if (slot.root->GetAppCulled()) { ++r.totals.foreign; release(slot,Exit::expired); continue; }
-            if (!r.budget.take()) continue;
-            slot.root->SetAppCulled(true);
-            slot.track.hidden = true;
-            ++r.totals.hides;
-            traceHide("hide",slot,"-",modelOf(live->GetBaseObject()));
-        } else if (slot.track.shouldRestore(r.now) || slot.track.expired(r.now)) release(slot,Exit::expired);
+        if (slot.track.hidden && slot.track.last != r.now) {
+            // No longer qualifies. If the player now stands on it, or it lies at
+            // or below the feet, it comes back in this scan, not after the dwell.
+            bool sphere = false;
+            const auto liveBase = live->GetBaseObject();
+            if (liveBase && restoreAtOnce(extentOf(slot.root.get(),liveBase,sphere),listed(floorRefs,floorCount,live.get()),feet.z)) {
+                release(slot,Exit::underfoot); continue;
+            }
+        }
+        if (slot.track.shouldHide(r.now)) due[dueCount++] = {slot.reach,at};
+        else if (slot.track.shouldRestore(r.now) || slot.track.expired(r.now)) release(slot,Exit::expired);
     }
+    // Nearest first, so the per-scan cap spends itself on what is over the player.
+    nearestFirst(due,dueCount);
+    for (unsigned i = 0;i < dueCount;++i) {
+        auto& slot = r.hidden[due[i].slot];
+        // A root that is already hidden belongs to the engine or another mod.
+        if (slot.root->GetAppCulled()) { ++r.totals.foreign; release(slot,Exit::expired); continue; }
+        if (!r.budget.take()) break;
+        slot.root->SetAppCulled(true);
+        slot.track.hidden = true;
+        ++r.totals.hides;
+        const auto live = slot.handle.get();
+        traceHide("hide",slot,"-",live ? modelOf(live->GetBaseObject()) : "");
+    }
+}
+// Exterior cell with hide configured: say so once per entry and do nothing.
+inline void noteExterior(RE::FormID cellId) {
+    auto& r = *runtime;
+    if (r.exteriorNoted) return;
+    r.exteriorNoted = true;
+    refuse(Refusal::hideExterior,"exterior cell: this wave's hide is interior-only; no scan, no hide rays, nothing hidden outdoors");
+    if (!r.config.hideTrace) return;
+    char line[256]{};
+    std::snprintf(line,sizeof(line),"FixedHide t=%.3f frame=%llu event=inactive cause=exterior code=FCS-31 cell=%08X hidden=%u",
+        r.now,static_cast<unsigned long long>(r.frame),cellId,r.budget.hidden);
+    emit(r.hideLines,line);
 }
 
 // ---- rooms ------------------------------------------------------------------
+// A claim needs both: the caller is one of the three culling passes, and the
+// queried point is at the rendered camera. Attachment and water queries, and
+// any caller this build does not know, always get the vanilla answer.
 inline bool hookRoom(RE::BSMultiBoundRoom* room,const RE::NiPoint3& point) {
+    const auto caller = roomCaller(runtime->callers,reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
     auto& r = *runtime;
     const bool vanilla = r.originalRoom(room,point);
-    r.counters.calls.fetch_add(1ull,std::memory_order_relaxed);
+    r.counters.count(caller);
     if (!r.roomActive.load(std::memory_order_acquire)) return vanilla;
     const auto view = r.view.load(std::memory_order_acquire);
     const Vec asked{point.x,point.y,point.z};
     if (!view || !viewerQuery(*view,asked)) return vanilla;
+    if (caller != RoomCaller::culling) { r.counters.gatedNear.fetch_add(1ull,std::memory_order_relaxed); return vanilla; }
     r.counters.viewerCalls.fetch_add(1ull,std::memory_order_relaxed);
     if (vanilla) { r.counters.vanillaTrue.fetch_add(1ull,std::memory_order_relaxed); return true; }
     const auto& bound = room->worldBound;
-    const bool claim = seedClaim(*view,asked,{bound.center.x,bound.center.y,bound.center.z},bound.radius,[&](Vec other) {
+    const bool claim = seedClaim(caller,*view,asked,{bound.center.x,bound.center.y,bound.center.z},bound.radius,[&](Vec other) {
         const RE::NiPoint3 native{other.x,other.y,other.z};
         return r.originalRoom(room,native);
     });
@@ -419,7 +467,12 @@ inline void traceRoom(RE::TESObjectCELL* parent,Vec viewer,Vec eye) {
         }
     }
     s.calls = r.counters.calls.exchange(0ull,std::memory_order_relaxed);
+    s.culling = r.counters.culling.exchange(0ull,std::memory_order_relaxed);
+    s.attach = r.counters.attach.exchange(0ull,std::memory_order_relaxed);
+    s.water = r.counters.water.exchange(0ull,std::memory_order_relaxed);
+    s.other = r.counters.other.exchange(0ull,std::memory_order_relaxed);
     s.viewerCalls = r.counters.viewerCalls.exchange(0ull,std::memory_order_relaxed);
+    s.gatedNear = r.counters.gatedNear.exchange(0ull,std::memory_order_relaxed);
     s.vanillaTrue = r.counters.vanillaTrue.exchange(0ull,std::memory_order_relaxed);
     s.claims = r.counters.claims.exchange(0ull,std::memory_order_relaxed);
     char line[640]{};
@@ -447,7 +500,9 @@ inline bool suppressCast(void* physics,RE::bhkWorld* world,float* start,float* e
     ++r.suppressed;
     if (r.config.castProbe) {
         // The native sweep still runs on private copies, as on the branch base;
-        // its answer is only counted.
+        // its answer is only counted. It skips app-culled owners (5577E1-5577F4),
+        // so this is "visible geometry would have hit": with the hide on it does
+        // not count contacts the hide has removed.
         alignas(16) std::array<float,4> from{},to{};
         std::memcpy(from.data(),start,16); std::memcpy(to.data(),end,16);
         RE::hkpRootCdPoint ignored{}; RE::TESObjectREFR* actor{};
@@ -562,7 +617,7 @@ inline void endFrame() {
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto parent = player ? player->GetParentCell() : nullptr;
     const RE::FormID cellId = parent ? parent->GetFormID() : 0u;
-    if (cellId != r.cell) { restoreAll(Exit::cell); r.cell = cellId; r.cut.reset(); }
+    if (cellId != r.cell) { restoreAll(Exit::cell); r.cell = cellId; r.cut.reset(); r.exteriorNoted = false; }
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (!eligible || !player || !parent || !camera || !camera->cameraRoot) {
         const Exit cause = static_cast<Exit>(r.causeNow(r.frameSeen ? static_cast<int>(r.frameState) : -1));
@@ -579,7 +634,8 @@ inline void endFrame() {
     const auto position = player->GetPosition();
     const Vec viewer{rendered.x,rendered.y,rendered.z},eye{position.x,position.y,position.z+eyeLift};
     publishView(viewer,eye);
-    if (r.config.seeThroughMode == 1) { scanHide(player,parent); traceSummary(); }
+    if (hideScanned(r.config.seeThroughMode,parent->IsInteriorCell())) { scanHide(player,parent); traceSummary(); }
+    else if (r.config.seeThroughMode == 1) { restoreAll(Exit::cell); noteExterior(cellId); }
     if (r.config.rigTrace) measureRig(camera->cameraRoot->world);
     traceRig(true);
     r.previousCamera = viewer; r.previousFrame = r.frame; r.previousEligible = true;
@@ -605,18 +661,42 @@ inline void installCaster(std::uintptr_t base) {
         refuse(Refusal::casterPrologue,"caster prologue differs (another patch owns it); casts stay native (pull-in retained)"); return;
     }
     // 14 bytes of whole instructions with no RIP-relative operand, then an
-    // absolute jump back: the gateway needs no trampoline and is never freed.
-    const auto gateway = static_cast<std::uint8_t*>(VirtualAlloc(nullptr,64,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE));
+    // absolute jump back: the gateway needs no trampoline and is never freed
+    // once in use. Written while read-write, executable only after it is sealed.
+    const auto gateway = static_cast<std::uint8_t*>(VirtualAlloc(nullptr,64,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
     if (!gateway) { refuse(Refusal::casterMemory,"gateway allocation failed; casts stay native (pull-in retained)"); return; }
     std::memcpy(gateway,prologue.data(),prologue.size());
     const auto back = thin::jump(target+prologue.size());
     std::memcpy(gateway+prologue.size(),back.data(),back.size());
+    DWORD previous{};
+    if (!VirtualProtect(gateway,64,PAGE_EXECUTE_READ,&previous)) {
+        VirtualFree(gateway,0,MEM_RELEASE);
+        refuse(Refusal::casterProtect,"gateway could not be made execute-read; casts stay native (pull-in retained)"); return;
+    }
     FlushInstructionCache(GetCurrentProcess(),gateway,prologue.size()+back.size());
     r.caster = reinterpret_cast<thin::Caster>(gateway);
     const auto detour = thin::jump(reinterpret_cast<std::uintptr_t>(&hookCaster));
     REL::safe_write(target,detour.data(),detour.size());
     FlushInstructionCache(GetCurrentProcess(),reinterpret_cast<void*>(target),detour.size());
     r.castReady = true;
+}
+// The live unwind table must describe the function exactly as the audited file does.
+inline bool functionExtent(std::uintptr_t base,CodeRange rva) {
+    DWORD64 image{};
+    const auto entry = RtlLookupFunctionEntry(base+rva.begin,&image,nullptr);
+    return entry && image == base && entry->BeginAddress == rva.begin && entry->EndAddress == rva.end;
+}
+// 0 = all three culling functions are where the audit found them. Otherwise
+// which check failed: 1x address of function x, 2x its extent, 3x call site x.
+inline unsigned cullingCallersGuard(std::uintptr_t base) {
+    constexpr std::array<std::uint8_t,6> call{0xff,0x90,0xf8,0x01,0x00,0x00}; // call [rax+1F8]
+    for (unsigned i = 0;i < cullingRvas.size();++i) {
+        if (REL::ID(cullingIds[i]).address() != base+cullingRvas[i].begin) return 10u+i;
+        if (!functionExtent(base,cullingRvas[i])) return 20u+i;
+    }
+    for (unsigned i = 0;i < cullingReturnRvas.size();++i)
+        if (std::memcmp(reinterpret_cast<const void*>(base+cullingReturnRvas[i]-call.size()),call.data(),call.size()) != 0) return 30u+i;
+    return 0;
 }
 inline void installRoomHook(std::uintptr_t base) {
     auto& r = *runtime;
@@ -628,6 +708,15 @@ inline void installRoomHook(std::uintptr_t base) {
     if (std::memcmp(reinterpret_cast<const void*>(slots[0x3f]),prologue.data(),prologue.size()) != 0) {
         refuse(Refusal::roomPrologue,"QPointWithin prologue differs; room seeding off, vanilla culling"); return;
     }
+    if (const unsigned failed = cullingCallersGuard(base)) {
+        char text[192]{};
+        std::snprintf(text,sizeof(text),"culling callers (IDs 13408, 106400, 106401) differ in address, extent or call site (check %u); room seeding off, vanilla culling",failed);
+        refuse(Refusal::roomCallers,text); return;
+    }
+    // Attachment (ID 19163) and water (ID 19002) are only named in the trace;
+    // if they do not match they are counted as "other" and stay vanilla anyway.
+    r.callers = roomCallersAt(base,REL::ID(19163).address() == base+attachRva.begin && functionExtent(base,attachRva),
+        REL::ID(19002).address() == base+waterRva.begin && functionExtent(base,waterRva));
     // Published before the slot changes: a culling thread may enter at once.
     r.originalRoom = reinterpret_cast<RoomTest>(slots[0x3f]);
     static_cast<void>(table.write_vfunc(0x3f,hookRoom));
