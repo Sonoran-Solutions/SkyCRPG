@@ -25,14 +25,14 @@ struct ExtConfig {
     unsigned mode{};          // 0 off (wave 1: nothing hidden outdoors), 1 structures over or just ahead of the player, 2 also trees
     float maxSpan{1024.0f};   // a structure this wide in either local horizontal span is one large structure: skipped
     unsigned maxHidden{16};   // exterior references hidden at once, nearest kept
-    float coverFootprint{200.0f}; // cover never takes a piece reaching the feet's level with both spans at least this
+    float coverFootprint{256.0f}; // cover never takes a piece reaching the feet's level with both spans at least this (owner, 2026-11-10)
 };
 inline ExtConfig validateExterior(ExtConfig c,bool* adjusted = nullptr) {
     const ExtConfig in = c;
     if (c.mode > 2) c.mode = 0;
     c.maxSpan = bounded(c.maxSpan,1024.0f,512.0f,2048.0f);
     c.maxHidden = std::clamp(c.maxHidden,1u,extMaxHiddenLimit);
-    c.coverFootprint = bounded(c.coverFootprint,200.0f,128.0f,1024.0f);
+    c.coverFootprint = bounded(c.coverFootprint,256.0f,128.0f,1024.0f);
     if (adjusted) *adjusted = c.mode != in.mode || c.maxSpan != in.maxSpan || c.maxHidden != in.maxHidden ||
         c.coverFootprint != in.coverFootprint;
     return c;

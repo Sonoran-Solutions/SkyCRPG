@@ -73,11 +73,11 @@ void settings() {
     assert(std::string(reasonName(Reason::extCanopy)) == "ext-canopy" && std::string(reasonName(Reason::onRay)) == "on-ray");
     assert(extRefusalBit(ExtRefusal::settings) == 4u && extRefusalBit(ExtRefusal::pickSlot) == 16u && extRefusalBit(ExtRefusal::world) == 32u);
     static_assert(static_cast<unsigned>(ExtRefusal::settings) >= 62 && static_cast<unsigned>(ExtRefusal::world) <= 69);
-    // The cover footprint (review M1): default 200, bounded, reported when adjusted.
-    assert(defaults.coverFootprint == 200.0f);
+    // The cover footprint (review M1): default 256 (owner decision 2026-11-10), bounded, reported when adjusted.
+    assert(defaults.coverFootprint == 256.0f);
     c = {}; c.coverFootprint = 5; assert(validateExterior(c,&adjusted).coverFootprint == 128.0f && adjusted);
-    c = {}; c.coverFootprint = nan; assert(validateExterior(c).coverFootprint == 200.0f);
-    c = {}; c.coverFootprint = 256; assert(validateExterior(c,&adjusted).coverFootprint == 256.0f && !adjusted);
+    c = {}; c.coverFootprint = nan; assert(validateExterior(c).coverFootprint == 256.0f);
+    c = {}; c.coverFootprint = 200; assert(validateExterior(c,&adjusted).coverFootprint == 200.0f && !adjusted);
     // Cell changes (review m4): only exterior to exterior with the rule on keeps hides.
     assert(keepAcrossCells(1,true,true) && keepAcrossCells(2,true,true));
     assert(!keepAcrossCells(0,true,true) && !keepAcrossCells(1,false,true) && !keepAcrossCells(1,true,false) && !keepAcrossCells(1,false,false));
@@ -169,12 +169,21 @@ void groundPieces() {
     // Raising the footprint past a piece's narrow span lets it through: the key is the owner's trade-off.
     c.coverFootprint = 600;
     assert(classifyExterior(c,wall,lean,lean.z+683.8f,false).reason == Reason::extCover);
-    // The stable segment over the player still passes at the default (196 < 200), and only with the pick.
-    c.coverFootprint = 200;
+    // The stable segment over the player still passes at the default (196 < 256), and only with the pick.
+    c.coverFootprint = ExtConfig{}.coverFootprint;
     ExtCandidate s3; s3.kind = ExtKind::structure; s3.rayHit = true; s3.box = box(stable,e3,rotZ(stableAngle));
     assert(classifyExterior(c,s3,feet,eye.z,false).skip == ExtSkip::beside);
     s3.overhead = true;
     assert(classifyExterior(c,s3,feet,eye.z,false).reason == Reason::extCover);
+    // What the 256 default admits and refuses (narrow spans as placed, Source: masters via /tmp/rev-ext):
+    // ImperialTentSmall 218 and SFarmPorch03 241 pass; NorTentSmall 268, StockadeLeanTo01 267,
+    // NorTentLarge 457 and every review counterexample (shack 477, wall curve 538) stay ground.
+    const auto ground = [&](float narrow,float wide) {
+        Extent e; e.valid = true; e.minZ = feet.z-8; e.maxZ = feet.z+400; e.spanX = wide; e.spanY = narrow;
+        return groundStanding(e,feet.z,ExtConfig{}.coverFootprint);
+    };
+    assert(!ground(196,430) && !ground(218,328) && !ground(241,302) && !ground(248,567) && !ground(255,300));
+    assert(ground(256,300) && ground(268,269) && ground(267,270) && ground(457,585) && ground(477,734) && ground(538,987));
 }
 
 void large() {
