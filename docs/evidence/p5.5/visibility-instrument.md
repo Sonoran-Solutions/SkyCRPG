@@ -4,9 +4,73 @@
 
 **Status, 2026-11-09: code and portable tests only. Every in-game row is NOT_RUN.** Wave 1a was committed as `59613f2`; the orchestrator's `61610d9` (two MSVC fixes) built in CI run 42719928362 (success). Wave 2b (below, "Review fixes") answers the independent binary review of `59613f2` (CHANGES, 0 BLOCKER / 2 MAJOR / 8 MINOR) and was committed as `5cb2d16`; wave 2c answers the re-review of `5cb2d16` (CHANGES, 0 BLOCKER / 1 MAJOR / 5 MINOR). The experimental scope of D045 applies: the change lives only in the never-shipped test probe. Its output is **diagnostic** until the oracle-validation checkpoint below passes; geometric clearance never passes an acceptance measure by itself. The probe still installs no hooks, sends no input and changes no game state.
 
+**Update, wave 2 (2026-11-09, evening):** the probe (aeaccbd, reviewed PASS, CI 42725445914) ran in 22 game launches. Its view samples work (0.2-0.8 ms, off the main thread, no `guard_binary`). Its clearance rays disagree with the rendered frames where it matters. The rendered-visibility check (candidate b) is now built outside the game: see "Wave 2: rendered-visibility check" below. Its in-game validation is **NOT_RUN**. Clearance rays remain diagnostic only.
+
 Worktree `p55-instrument`, branch `phase5.5/p55-01-visibility-instrument`, base `da16672`. Pinned host: SkyrimSE.exe 1.7.104 SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`, Address Library 13 (`versionlib-1-7-104-0.bin`, format 5, SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842`), CommonLibSSE-NG 7.2.0 at `7a60f4de794095d7b0f8928d1b930a52e9a7da83`.
 
-## What was built
+## Wave 2: rendered-visibility check
+
+### Wave 1: rays against frames
+
+Probe ray status per player point (head, chest, feet, shoulder_l, shoulder_r) against the screenshot taken right after the same view sample. Frame readings are the orchestrator's from the ledger, except where marked "mine".
+
+| Run label | Frame (session-p4/autotest/runs/batch-LABEL-00/screenshots) | Rays | Frame | Agree? |
+| --- | --- | --- | --- | --- |
+| p55-a-open-1 | a-open-h0 (open ground, 45) | 5 clear | player visible | yes |
+| p55-a-open-1 | a-h0 (stable, 45) | 5 blocked | only the thatch roof | yes |
+| p55-a-open-1 | a-open-h2 (open ground, 225) | head clear, 4 blocked | head and shoulders above the thatch edge, legs under it (mine) | shoulders no |
+| p55-b-mare-A | b-hearth-h0 (hide off) | 5 blocked | player seen through the undrawn roof, rafters crossing | **no** |
+| p55-d-mare-A2 | d-bm-ground-h0 (hide on) | 5 clear | player clearly visible | yes |
+| p55-c-bfb-seed0-1 | c-bfb-h0 (seed 0) | 5 blocked | near-empty grey view, room not drawn | yes, for the wrong reason (the rays hit the ceiling collision; the frame is empty because the room is not drawn) |
+| p55-c-bfb-seed1-1 | c-bfb-h0 (seed 1) | 5 blocked | room drawn through its back-face-culled ceiling, dark, player near the centre | **no** |
+| p55-c-hall-seed0-A | c-hall-h2 (Dragonsreach, 225) | 5 clear | player fully visible | yes |
+| p55-d-cave-dwemer-A2 | d-cave-h0 (Embershard) | 5 blocked | dark rock, player not visible | yes |
+
+The rays fail exactly where the engine does not draw geometry that still has collision: roofs and ceilings seen from outside are back-face culled. They also cannot tell an undrawn room from a blocked view. This is why clearance stays diagnostic.
+
+### What was built (all offline; standard-library Python; no probe or native change)
+
+| Path | Purpose |
+| --- | --- |
+| `tools/visibility/png.py` | PNG reader/writer: 8-bit RGB/RGBA/greyscale, non-interlaced, all five filters, CRC checked; other formats refused |
+| `tools/visibility/rendered_visibility.py` | xwd window geometry, box mapping, A/B/A2 measure, calibration, verdicts, overlay; CLI |
+| `tools/visibility/README.md` | Procedure, `saa` binary check, geometry, thresholds and their source, limits |
+| `tools/tests/test_visibility.py` | 29 tests (synthetic scenes; wave 1 captures when present) |
+| `session-p55/oracle/` | `write_oracle_routes.py`, `gen/routes` + `gen/specs` (4 routes), `run_oracle_route.sh`, `evaluate_oracle.py`, `test_oracle.py` (14 tests), README |
+
+**Procedure:** at a settled pose the route takes frame A after a `player.saa 1` round trip, frame B after `player.saa 0`, and frame A2 after `player.saa 1`, each 2.5 s after its console command, with a view sample before A and after A2. Pixels that change A-B inside the projected box are player pixels on screen, through any mechanism. A-A2 is the noise floor and the restore proof. A calibration triple at the unobstructed open-ground pose gives the full-visibility signal; the fixed rig keeps the player's screen size constant. Verdicts per box and per point: visible / partly / not visible / indeterminate (thresholds and indeterminate rules: tools/visibility/README.md).
+
+**`player.saa` in the binary:** script command entry at .data 2084760 (`SetActorAlpha`, short `SAA`, params Float + optional Int), handler 35E010 (ID 22391). It needs an actor with a process, clamps to [0, 1], adds 2.0 when the optional int is absent, and stores through ID 39961 at `[[process+8]+2C8h]`, then calls actor virtual +700h. That it renders the player transparent within 2.5 s, what happens to the shadow, and that `saa 1` leaves no lasting difference are **Hypotheses** until run. Restoration is proven per triple (A2 differs from B as A does), repeated in a final `restore` section, and no save is written.
+
+**Offline validation done (wave 1 frames have no B frame):**
+
+- PNG reader on the runner's real captures (1926x1112 RGB) and on synthetic files for every filter, RGBA, grey and the refusals.
+- Window geometry: border 3 px, title 29 px, from report.json `resolution` and the pixels.
+- Box mapping checked by eye on zoomed crops:
+  - a-open-h0: head point at the helmet/neck, feet point 6 px above the rendered boots.
+  - c-hall-h2: head point on the face, boots 24 px below the feet point, so the box reaches 0.35 player heights below it.
+- Noise floor from wave 1 pairs at identical poses (wind in the exterior: frame 0.05-0.06; interiors <= 0.025; dark seeded room: box 0.15 at threshold 5). The limits are set above those.
+- Verdict logic on synthetic triples: visible, opaque occluder, lower-body occluder (per point), single fade visible and eight stacked 0.35 fades not visible, scene change, camera moved, not restored, missing frame, unconfirmed calibration, off screen, scale mismatch, wind noise, dark visible, and dark with no signal (indeterminate, never not visible).
+
+**In-game validation of the technique: NOT_RUN.**
+
+### Checkpoint as it stands
+
+Run with `session-p55/oracle/run_oracle_route.sh` (exact commands in session-p55/oracle/README.md). Expected answers are the orchestrator's reading of wave 1 frames, not owner judgments.
+
+| Mechanism | Fixture (route) | Expected | Status |
+| --- | --- | --- | --- |
+| plainly visible | open-h3 (ext), hall-h2 (seed0) | visible, all points visible | NOT_RUN |
+| partly occluded | open-h2 (ext) | partly; head visible, feet not visible | NOT_RUN |
+| plainly blocked | stable-h0 (ext) | not visible | NOT_RUN |
+| undrawn room | bfb0-h0 (seed0) | not visible | NOT_RUN |
+| drawn through a back-face-culled roof/ceiling | mare-off-h0 (seed0), bfb1-h0 (seed1, dark) | visible or partly | NOT_RUN |
+| hidden geometry | mare-on-h0 (hide) | visible | NOT_RUN |
+| one-piece mesh, camera inside rock | cave-h0 (hide) | not visible; likely indeterminate (dark, luminance 4) | NOT_RUN |
+| single fade, stacked fades | none: build 744609f has no fade mechanism | | NOT_RUN |
+| clipped geometry | none: wave 2 clip package not built | | NOT_RUN |
+
+## What was built (wave 1a)
 
 | File | Change |
 | --- | --- |
@@ -148,7 +212,7 @@ Recommendation per mechanism:
 
 Rule for using (a): a ray may count as visible only for mechanisms whose (b) validation passed, and in interiors only together with a (b) floor-present result at the same pose.
 
-## Oracle-validation checkpoint (to run with the Camera spike build)
+## Oracle-validation checkpoint (wave 1a design; superseded by "Checkpoint as it stands" above for the fixtures)
 
 Each test runs at a settled pose with one `@view` request, then screenshots per (b). It PASSes when every listed expectation holds; any other result is FAIL with the JSON line and images kept. All are NOT_RUN.
 
@@ -205,6 +269,8 @@ A `view_sample` is one moment in one frame (`frame`). It says nothing about the 
 
 ## Proposed shared-file changes
 
+- Wave 2: CI does not run `tools/tests/test_visibility.py` (the workflow runs only `test_ci_scope.py` and `test_package*.py`, and `tools/ci_scope.py` does not select on `tools/visibility/**`). Proposed: a Linux step `python -B -I -m unittest discover -s tools/tests -p "test_visibility*.py"` on changes to `tools/visibility/**` or `tools/tests/test_visibility*.py`. The wave 1 frame tests skip themselves when the captures are absent.
+
 - None required for CI: `.github/workflows/build.yml` already builds and runs `tools/testprobe/tests/*_test.cpp`, and `tools/testprobe/**` selects the MSVC probe job.
 - `docs/phases/PHASE_5_5.md`, "Where the camera stands today", Measurement row, after the first runtime pass: "The probe reports the rendered camera pose, the player's projected screen box and geometric-clearance rays (`view_sample`); rendered visibility is not yet measured."
 - `docs/DECISIONS.md` (proposed engineering note, not an owner decision): "View samples run in the probe's UI task drain off the main thread during play; `bViewMainThreadOnly` is the fallback if a crash is traced to them."
@@ -220,3 +286,7 @@ A `view_sample` is one moment in one frame (`frame`). It says nothing about the 
 | Mutation check: faded folded to clear; truncation ignored; behind-camera projected | each mutant aborts `view_policy_test` (exit 134) |
 | `g++ -std=c++20 -fsyntax-only -Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversion -pedantic` on the extracted adapter block with CommonLib stubs | no diagnostics (not a substitute for the MSVC build) |
 | Binary and ESM reads described above | as recorded; no game launch |
+| Wave 2: `python3 -B -I -m unittest discover -s tools/tests -p "test_visibility*.py" -v` | 29 tests OK (synthetic scenes plus wave 1 captures on this host) |
+| Wave 2: `cd session-p55/oracle && python3 -B test_oracle.py` | 14 tests OK |
+| Wave 2: `python3 -B write_oracle_routes.py --replace` | 4 routes `ready`, runner schema valid, tightest section margins 289/135/376/280 s |
+| Wave 2: `run_batch.py <4 oracle routes with sandbox paths> --simulate success` (output in /tmp) | executor runs setup and steps up to the first `request_view`, which the simulator's fake probe does not answer (BLOCKED there); control flow only, not evidence |
