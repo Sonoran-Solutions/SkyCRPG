@@ -3,10 +3,15 @@
 
 Final-image technique (visibility-instrument.md, candidate b). At one settled pose the route takes three
 frames of the Skyrim window: A with the player as is, B with the player made transparent
-(`player.saa 0`), A2 after restoring it (`player.saa 1`). Pixels that change between A and B inside the
-player's projected box are player pixels that reached the screen; A against A2 is the noise floor (TAA,
-idle animation, flicker) and the proof that the player was restored. A calibration triple taken the same
-way at an unobstructed pose with the same rig gives the signal a fully visible player produces.
+(`player.saa 0`), A2 after restoring it (`player.saa 1`). The player mask is the set of pixels where B
+differs from BOTH A and A2: player pixels that reached the screen. A and A2 are not compared with each
+other inside the box: the first in-game run (p55-oracle-ext-1) showed the restored player in the same
+silhouette but with idle animation, so A-A2 differs over 25-37 % of the box and cannot be a noise floor.
+The noise floor is the same mask test in the ring around the box, where nothing changes but the scene.
+A2 is the restore proof: it must differ from B the way A does. A calibration triple taken the same way at
+an unobstructed pose with the same rig gives the signal a fully visible player produces. The player verdict
+comes from the five point windows on the body (acceptance asks for 4 of 5 points); the box ratio is
+reported beside it and includes the player's shadow.
 
 Geometric clearance (the probe's rays) is diagnostic only; this is the rendered measure. Every in-game use
 is NOT_RUN until the oracle checkpoint (session-p55/oracle) has been run and read.
@@ -30,12 +35,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import png  # noqa: E402
 
 POINTS = ("head", "chest", "feet", "shoulder_l", "shoulder_r")
-VERSION = 1
+VERSION = 2
 
-# Thresholds. Noise limits are set from wave 1 frame pairs taken at the same pose seconds apart (exterior
-# wind: box 0.07-0.08, ring 0.08-0.10, frame 0.05-0.06; interiors: ring <= 0.01, frame <= 0.025; dark
-# seeded room at threshold 5: box 0.15); see visibility-instrument.md. Signal limits are design starting
-# points, not measured with the marker (NOT_RUN); D55-6 belongs to the owner.
+# Thresholds. Scene-noise limits come from wave 1 frame pairs at the same pose (exterior wind: ring
+# 0.08-0.10, frame 0.05-0.06; interiors: ring <= 0.01, frame <= 0.025) and from p55-oracle-ext-1 (ring
+# A-B 0.02-0.04, A-A2 0.02-0.04; frame <= 0.06). Mask and ratio limits are checked against p55-oracle-ext-1
+# (calibration point masks 0.92-1.00, box 0.51; player under a roof: points <= 0.03, box 0.017); they are
+# starting points, D55-6 belongs to the owner.
 PARAMS = {
     "client": (1920, 1080),        # Skyrim.INI iSize W/H the runner deploys (report.json "resolution")
     "change_threshold": 12,        # per-pixel max channel |A-B| counted as changed (8-bit)
@@ -50,14 +56,14 @@ PARAMS = {
     "control_max": 0.20,           # changed fraction allowed in the control ring between A and A2
     "control_max_ab": 0.30,        # between A and B (looser: the player's own shadow may leave the ring)
     "global_max": 0.12,            # changed fraction allowed over the client outside the ring (A-B and A-A2)
-    "noise_max_box": 0.25,         # A-A2 changed fraction allowed in the box (else noisy)
-    "noise_max_point": 0.40,
+    "noise_max": 0.10,             # mask false-positive rate allowed in the ring (else the scene is too busy)
     "restore_min_signal": 0.05,    # A-B box signal needed before A2 can prove the player came back
     "restore_ratio": 0.5,          # A2 must differ from B at least this much relative to A
-    "cal_min_box": 0.08,           # calibration signal (s - n) needed to confirm the marker, box
+    "cal_min_box": 0.08,           # calibration mask share (s - n) of the box needed to confirm the marker
     "cal_min_point": 0.40,         # and per point
     "cal_min_points": 3,           # points that must confirm in calibration
     "scale_tolerance": 0.25,       # relative player height difference allowed vs calibration
+    "points_needed": 4,            # visible points for a "visible" player (acceptance: 4 of 5)
     "visible": 0.60,               # ratio to calibration for "visible"
     "partly": 0.15,                # ratio to calibration for "partly"; below is "not_visible"
     "pose_tolerance": 2.0,         # view before/after: camera position (units) and yaw/pitch (degrees)
@@ -210,6 +216,41 @@ def load_frames(paths):
     return frames
 
 
+@dataclass
+class MaskStats:
+    """Counts over one region of a triple: A-B, A2-B, A-A2 changes and the player mask (A-B and A2-B)."""
+    pixels: int = 0
+    ab: int = 0
+    a2b: int = 0
+    aa2: int = 0
+    mask: int = 0
+
+    def share(self, field_name: str) -> float:
+        return getattr(self, field_name) / self.pixels if self.pixels else 0.0
+
+
+def mask_stats(a: png.Image, b: png.Image, a2: png.Image, rect, threshold: int, exclude=None, step: int = 1) -> MaskStats:
+    x0, y0, x1, y1 = rect
+    x0, y0, x1, y1 = max(0, x0), max(0, y0), min(a.width, x1), min(a.height, y1)
+    out = MaskStats()
+    w = a.width
+    for y in range(y0, y1, step):
+        lo, hi = (y * w + x0) * 3, (y * w + x1) * 3
+        ra, rb, ra2 = a.rgb[lo:hi], b.rgb[lo:hi], a2.rgb[lo:hi]
+        d_ab, d_a2b, d_aa2 = _diff_row(ra, rb), _diff_row(ra2, rb), _diff_row(ra, ra2)
+        for k in range(0, x1 - x0, step):
+            x = x0 + k
+            if exclude and exclude[0] <= x < exclude[2] and exclude[1] <= y < exclude[3]:
+                continue
+            out.pixels += 1
+            ab, a2b = d_ab[k] >= threshold, d_a2b[k] >= threshold
+            out.ab += ab
+            out.a2b += a2b
+            out.aa2 += d_aa2[k] >= threshold
+            out.mask += ab and a2b
+    return out
+
+
 def pose_change(before: dict, after: dict, params=PARAMS):
     """None when the two view samples show the same camera pose, else a reason."""
     if not after:
@@ -225,43 +266,6 @@ def pose_change(before: dict, after: dict, params=PARAMS):
     return None
 
 
-def analyse(frames, view: dict, view_after=None, params=PARAMS) -> dict:
-    """Signal and noise statistics for one A/B/A2 triple; raises Indeterminate for unusable input."""
-    a, b, a2 = frames
-    geometry = Geometry(client_origin(a.width, a.height, *params["client"]), params["client"])
-    moved = pose_change(view, view_after, params) if view_after is not None else None
-    if moved:
-        raise Indeterminate(moved)
-    lay = layout(view, geometry, params)
-    luminance = region_stats(a, b, lay.box, 256).luminance
-    dark = luminance < params["dark_luminance"]
-    t = change_threshold(luminance, params)
-    box_ab, box_aa = region_stats(a, b, lay.box, t), region_stats(a, a2, lay.box, t)
-    box_a2b = region_stats(a2, b, lay.box, t)
-    ring_ab, ring_aa = region_stats(a, b, lay.ring, t, exclude=lay.box), region_stats(a, a2, lay.ring, t, exclude=lay.box)
-    client = (geometry.origin[0], geometry.origin[1], geometry.origin[0] + geometry.client[0], geometry.origin[1] + geometry.client[1])
-    glob_ab = region_stats(a, b, client, params["change_threshold"], exclude=lay.ring, step=4)
-    glob_aa = region_stats(a, a2, client, params["change_threshold"], exclude=lay.ring, step=4)
-    points = {}
-    for name in POINTS:
-        rect = lay.windows.get(name)
-        if rect is None:
-            points[name] = None
-            continue
-        s, n = region_stats(a, b, rect, t), region_stats(a, a2, rect, t)
-        points[name] = {"signal": s.fraction, "noise": n.fraction, "contrast": s.mean_diff - n.mean_diff, "rect": rect}
-    return {
-        "geometry": {"origin": geometry.origin, "client": geometry.client},
-        "box": lay.box, "ring": lay.ring, "height_px": lay.height, "off_screen": lay.off_screen,
-        "luminance": luminance, "dark": dark, "threshold": t,
-        "signal": box_ab.fraction, "noise": box_aa.fraction, "a2_vs_b": box_a2b.fraction,
-        "contrast": box_ab.mean_diff - box_aa.mean_diff,
-        "control": {"ring_ab": ring_ab.fraction, "ring_aa2": ring_aa.fraction,
-                    "global_ab": glob_ab.fraction, "global_aa2": glob_aa.fraction},
-        "points": points,
-    }
-
-
 def change_threshold(luminance: float, params=PARAMS) -> int:
     """Per-pixel change threshold: fixed in a lit box, scaled down with luminance in a dark one.
 
@@ -274,21 +278,61 @@ def change_threshold(luminance: float, params=PARAMS) -> int:
     return max(params["min_threshold"], int(round(params["change_threshold"] * luminance / params["dark_luminance"])))
 
 
+def analyse(frames, view: dict, view_after=None, params=PARAMS) -> dict:
+    """Mask and scene statistics for one A/B/A2 triple; raises Indeterminate for unusable input."""
+    a, b, a2 = frames
+    geometry = Geometry(client_origin(a.width, a.height, *params["client"]), params["client"])
+    moved = pose_change(view, view_after, params) if view_after is not None else None
+    if moved:
+        raise Indeterminate(moved)
+    lay = layout(view, geometry, params)
+    luminance = region_stats(a, b, lay.box, 256).luminance
+    dark = luminance < params["dark_luminance"]
+    t = change_threshold(luminance, params)
+    box = mask_stats(a, b, a2, lay.box, t)
+    ring = mask_stats(a, b, a2, lay.ring, t, exclude=lay.box)
+    client = (geometry.origin[0], geometry.origin[1], geometry.origin[0] + geometry.client[0], geometry.origin[1] + geometry.client[1])
+    glob = mask_stats(a, b, a2, client, params["change_threshold"], exclude=lay.ring, step=4)
+    noise = ring.share("mask")
+    points = {}
+    for name in POINTS:
+        rect = lay.windows.get(name)
+        if rect is None:
+            points[name] = None
+            continue
+        w = mask_stats(a, b, a2, rect, t)
+        points[name] = {"signal": w.share("mask"), "ab": w.share("ab"), "aa2": w.share("aa2"), "rect": rect}
+    return {
+        "geometry": {"origin": geometry.origin, "client": geometry.client},
+        "box": lay.box, "ring": lay.ring, "height_px": lay.height, "off_screen": lay.off_screen,
+        "luminance": luminance, "dark": dark, "threshold": t,
+        "box_pixels": box.pixels, "mask_px": box.mask, "signal": box.share("mask"), "noise": noise,
+        "ab": box.share("ab"), "a2b": box.share("a2b"),
+        "player_change": box.share("aa2"),  # A-A2 inside the box: idle animation; reported, not used
+        "control": {"ring_ab": ring.share("ab"), "ring_aa2": ring.share("aa2"),
+                    "global_ab": glob.share("ab"), "global_aa2": glob.share("aa2")},
+        "points": points,
+    }
+
+
 def stability_problem(stats: dict, params=PARAMS):
     c = stats["control"]
     if c["global_ab"] > params["global_max"] or c["global_aa2"] > params["global_max"]:
         return "scene_changed: %.3f / %.3f of the frame changed outside the ring" % (c["global_ab"], c["global_aa2"])
     if c["ring_ab"] > params["control_max_ab"] or c["ring_aa2"] > params["control_max"]:
         return "scene_changed: %.3f / %.3f of the ring around the player changed" % (c["ring_ab"], c["ring_aa2"])
+    if stats["noise"] > params["noise_max"]:
+        return "scene_busy: %.3f of the ring passes the player-mask test" % stats["noise"]
     return None
 
 
 def restore_state(stats: dict, params=PARAMS):
-    """True when frame A2 (after `player.saa 1`) shows the player again, False when it still looks like B,
-    None when the player made no difference to begin with (hidden player: restore not provable from frames)."""
-    if stats["signal"] < params["restore_min_signal"]:
+    """True when frame A2 (after `player.saa 1`) shows the player again (A2 differs from B as A does),
+    False when it still looks like B, None when the player made no difference to begin with (hidden player:
+    restore not provable from these frames)."""
+    if stats["ab"] < params["restore_min_signal"]:
         return None
-    return stats["a2_vs_b"] >= params["restore_ratio"] * stats["signal"]
+    return stats["a2b"] >= params["restore_ratio"] * stats["ab"]
 
 
 def calibrate(frames, view: dict, view_after=None, params=PARAMS) -> dict:
@@ -303,23 +347,21 @@ def calibrate(frames, view: dict, view_after=None, params=PARAMS) -> dict:
         problems.append(unstable)
     if restore_state(stats, params) is False:
         problems.append("not_restored: A2 looks like B in the box")
-    elif stats["noise"] > params["noise_max_box"]:
-        problems.append("noisy: A-A2 changed %.3f of the box" % stats["noise"])
     if stats["dark"]:
         problems.append("dark: calibration box luminance %.1f" % stats["luminance"])
     box_signal = stats["signal"] - stats["noise"]
     if box_signal < params["cal_min_box"]:
-        problems.append("marker_not_confirmed: box signal %.3f < %.2f" % (box_signal, params["cal_min_box"]))
+        problems.append("marker_not_confirmed: box mask %.3f < %.2f" % (box_signal, params["cal_min_box"]))
     point_signal = {}
     for name, p in stats["points"].items():
-        point_signal[name] = None if p is None else p["signal"] - p["noise"]
+        point_signal[name] = None if p is None else p["signal"] - stats["noise"]
     confirmed_points = [n for n, v in point_signal.items() if v is not None and v >= params["cal_min_point"]]
     if len(confirmed_points) < params["cal_min_points"]:
         problems.append("marker_not_confirmed: %d of 5 points (need %d)" % (len(confirmed_points), params["cal_min_points"]))
     return {"version": VERSION, "confirmed": not problems, "reason": "; ".join(problems) or None,
-            "box_signal": box_signal, "box_contrast": stats["contrast"], "point_signal": point_signal,
-            "confirmed_points": confirmed_points, "height_px": stats["height_px"], "luminance": stats["luminance"],
-            "stats": stats}
+            "box_signal": box_signal, "box_mask_px": stats["mask_px"] - stats["noise"] * stats["box_pixels"],
+            "point_signal": point_signal, "confirmed_points": confirmed_points, "height_px": stats["height_px"],
+            "luminance": stats["luminance"], "stats": stats}
 
 
 def _verdict(ratio, dark, params):
@@ -331,23 +373,42 @@ def _verdict(ratio, dark, params):
     return "indeterminate" if dark else "not_visible"
 
 
+def player_verdict(points: dict, params=PARAMS):
+    """Player verdict from the five point verdicts (acceptance: 4 of 5 points visible)."""
+    counts = {}
+    for p in points.values():
+        v = "not_visible" if p["verdict"] == "off_screen" else p["verdict"]
+        counts[v] = counts.get(v, 0) + 1
+    measured = len(points) - counts.get("indeterminate", 0)
+    if measured < params["points_needed"]:
+        return "indeterminate", "%d of 5 points measurable" % measured
+    if counts.get("visible", 0) >= params["points_needed"]:
+        return "visible", None
+    if counts.get("visible", 0) + counts.get("partly", 0) == 0:
+        return "not_visible", None
+    return "partly", None
+
+
 def measure(frames, view: dict, calibration: dict, view_after=None, params=PARAMS) -> dict:
-    """Verdict for the player box and each point. Never raises; unusable input gives indeterminate."""
+    """Player verdict from the points, a box ratio beside it. Never raises; unusable input gives indeterminate."""
     result = {"version": VERSION, "tag": (view or {}).get("tag"), "verdict": "indeterminate", "reason": None,
-              "ratio": None, "restored": None,
+              "ratio": None, "box_verdict": "indeterminate", "restored": None,
               "points": {n: {"verdict": "indeterminate", "reason": None} for n in POINTS}}
-    if not calibration or not calibration.get("confirmed"):
-        result["reason"] = "calibration_unconfirmed: %s" % ((calibration or {}).get("reason") or "no calibration")
+
+    def refuse(reason):
+        result["reason"] = reason
         for p in result["points"].values():
-            p["reason"] = result["reason"]
+            p["reason"] = reason
         return result
+
+    if not calibration or not calibration.get("confirmed"):
+        return refuse("calibration_unconfirmed: %s" % ((calibration or {}).get("reason") or "no calibration"))
+    if calibration.get("version") != VERSION:
+        return refuse("calibration_version: record is version %s, measure is version %s" % (calibration.get("version"), VERSION))
     try:
         stats = analyse(frames, view, view_after, params)
     except Indeterminate as exc:
-        result["reason"] = str(exc)
-        for p in result["points"].values():
-            p["reason"] = str(exc)
-        return result
+        return refuse(str(exc))
     result["stats"] = stats
     result["restored"] = restore_state(stats, params)
     scale = abs(stats["height_px"] - calibration["height_px"]) / calibration["height_px"]
@@ -355,18 +416,13 @@ def measure(frames, view: dict, calibration: dict, view_after=None, params=PARAM
     if not problem and scale > params["scale_tolerance"]:
         problem = "scale_mismatch: player height %.1f px vs %.1f px in calibration" % (stats["height_px"], calibration["height_px"])
     if not problem and result["restored"] is False:
-        problem = "not_restored: A2 looks like B in the box (changed %.3f from B, A changed %.3f)" % (
-            stats["a2_vs_b"], stats["signal"])
-    if not problem and stats["noise"] > params["noise_max_box"]:
-        problem = "noisy: A-A2 changed %.3f of the box" % stats["noise"]
+        problem = "not_restored: A2 looks like B in the box (A2-B %.3f, A-B %.3f)" % (stats["a2b"], stats["ab"])
     if problem:
-        result["reason"] = problem
-        for p in result["points"].values():
-            p["reason"] = problem
-        return result
-    ratio = (stats["signal"] - stats["noise"]) / calibration["box_signal"]
-    result.update(ratio=max(0.0, ratio), verdict=_verdict(ratio, stats["dark"], params),
-                  reason="dark: box luminance %.1f" % stats["luminance"] if stats["dark"] else None)
+        return refuse(problem)
+    # Box ratio by pixel count (box sizes differ with the point spread; the player's size does not).
+    expected = calibration["box_mask_px"]
+    box_ratio = (stats["mask_px"] - stats["noise"] * stats["box_pixels"]) / expected if expected > 0 else 0.0
+    result.update(ratio=max(0.0, box_ratio), box_verdict=_verdict(box_ratio, stats["dark"], params))
     for name in POINTS:
         p, cal = stats["points"][name], calibration["point_signal"].get(name)
         out = result["points"][name]
@@ -376,12 +432,14 @@ def measure(frames, view: dict, calibration: dict, view_after=None, params=PARAM
             out["reason"] = "point_unavailable"
         elif cal is None or cal < params["cal_min_point"]:
             out["reason"] = "calibration_point_unconfirmed"
-        elif p["noise"] > params["noise_max_point"]:
-            out["reason"] = "noisy: A-A2 changed %.3f of the window" % p["noise"]
         else:
-            r = (p["signal"] - p["noise"]) / cal
+            r = (p["signal"] - stats["noise"]) / cal
             out.update(ratio=max(0.0, r), verdict=_verdict(r, stats["dark"], params),
                        reason="dark" if stats["dark"] else None)
+    verdict, why = player_verdict(result["points"], params)
+    result["verdict"] = verdict
+    dark = "dark: box luminance %.1f" % stats["luminance"] if stats["dark"] else None
+    result["reason"] = "; ".join(r for r in (dark, why) if r) or None
     return result
 
 
@@ -473,7 +531,8 @@ def main(argv=None) -> int:
             out = measure(frames, view, cal, after)
         else:
             out = {"version": VERSION, "tag": (view or {}).get("tag"), "verdict": "indeterminate", "reason": failure,
-                   "ratio": None, "points": {n: {"verdict": "indeterminate", "reason": failure} for n in POINTS}}
+                   "ratio": None, "box_verdict": "indeterminate", "restored": None,
+                   "points": {n: {"verdict": "indeterminate", "reason": failure} for n in POINTS}}
     print(json.dumps(out, indent=2, default=list))
     return 0
 

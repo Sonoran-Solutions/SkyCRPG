@@ -1,6 +1,7 @@
 """Rendered-visibility tool (tools/visibility): PNG reader, geometry, verdict rules on synthetic frames.
 
-No game, no third-party packages. Wave 1 frames are read only if they exist on this host (skipped otherwise).
+No game, no third-party packages. Wave 1 frames and the frames of the first in-game oracle run
+(p55-oracle-ext-1) are read only if they exist on this host (skipped otherwise).
 """
 import json
 from pathlib import Path
@@ -20,6 +21,8 @@ PARAMS = dict(rv.PARAMS, client=CLIENT)
 BORDER, TITLE = 3, 29
 WAVE1 = Path('/srv/storage/Projects/SkyCRPG/session-p4/autotest/runs')
 WAVE1_ROUTES = Path('/srv/storage/Projects/SkyCRPG/session-p55/routes/runs')
+ORACLE_EXT_1 = Path('/srv/storage/Projects/SkyCRPG/session-p55/oracle/runs/p55-oracle-ext-1/collected')
+ORACLE_EXT_1_SHOTS = WAVE1 / 'batch-p55-oracle-ext-1-00/screenshots'
 
 
 # ---- PNG fixtures ------------------------------------------------------------------------------
@@ -104,19 +107,28 @@ class Scene:
                 if y < TITLE or x < BORDER or x >= self.w - BORDER or y >= self.h - BORDER:
                     self.bg[y][x] = (50, 150, 250)
         self.player_colour = tuple(int(c * scale) for c in (220, 40, 40))
-        # Player figure in client pixels: a 16 px wide body from y 28 to 86 (head point 40, feet point 80).
+        self.idle_colour = tuple(int(c * scale) for c in (40, 200, 40))
+        self.scale = scale
+        # Player figure in client pixels: a 16 px wide body from y 28 to 86 (head point 40, feet point 80), and
+        # its shadow on the ground to the lower right (B loses both, as in p55-oracle-ext-1).
         self.figure = (92, 28, 108, 86)
+        self.shadow = (108, 76, 118, 86)
 
-    def frame(self, player=True, occluders=(), shift=0):
-        """occluders: (rect in client px, colour, alpha) drawn over everything, in order."""
+    def frame(self, player=True, occluders=(), shift=0, pose=0):
+        """occluders: (rect in client px, colour, alpha) drawn over everything, in order. pose 1 is the same
+        player one idle-animation step later: half its pixels change colour and it is 1 px wider, so A-A2
+        differs over most of the figure while the silhouette stays (what the first in-game run showed)."""
         rows = []
         for y in range(self.h):
             row = bytearray()
             for x in range(self.w):
                 px = self.bg[y][(x + shift) % self.w] if TITLE <= y < self.h - BORDER and BORDER <= x < self.w - BORDER else self.bg[y][x]
                 cx, cy = x - BORDER, y - TITLE
-                if player and self.figure[0] <= cx < self.figure[2] and self.figure[1] <= cy < self.figure[3]:
-                    px = self.player_colour
+                fx1 = self.figure[2] + (1 if pose else 0)
+                if player and self.figure[0] <= cx < fx1 and self.figure[1] <= cy < self.figure[3]:
+                    px = self.idle_colour if pose and (cx + cy) % 2 == 0 else self.player_colour
+                elif player and self.shadow[0] <= cx < self.shadow[2] and self.shadow[1] <= cy < self.shadow[3]:
+                    px = tuple(c // 2 for c in px)
                 for (x0, y0, x1, y1), colour, alpha in occluders:
                     if x0 <= cx < x1 and y0 <= cy < y1:
                         px = tuple(int(round(alpha * c + (1 - alpha) * p)) for c, p in zip(colour, px))
@@ -141,9 +153,11 @@ def view(points=None, tag='t', camera=None, available=True):
             'camera': camera or {'pos': {'x': 0, 'y': 0, 'z': 0}, 'yaw_deg': 45.0, 'pitch_deg': 55.0}, 'points': entries}
 
 
-def triple(scene, occluders=(), restored=True, shift_b=0):
+def triple(scene, occluders=(), restored=True, shift_b=0, idle=True):
+    """A, B, A2. By default A2 shows the player one idle-animation step on (pose 1), as real frames do."""
     a = scene.frame(True, occluders)
-    return [a, scene.frame(False, occluders, shift=shift_b), a if restored else scene.frame(False, occluders)]
+    a2 = scene.frame(True, occluders, pose=1 if idle else 0)
+    return [a, scene.frame(False, occluders, shift=shift_b), a2 if restored else scene.frame(False, occluders)]
 
 
 def calibration(scene=None):
@@ -212,11 +226,64 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(r['verdict'], 'not_visible')
         self.assertEqual({p['verdict'] for p in r['points'].values()}, {'not_visible'})
 
-    def test_lower_body_occluded_is_partly_with_per_point_answers(self):
+    def test_legs_occluded_is_visible_by_four_of_five_with_per_point_answers(self):
         r = self.measure(triple(self.scene, [((80, 60, 120, 95), (90, 90, 90), 1.0)]))
-        self.assertEqual(r['verdict'], 'partly')
+        self.assertEqual(r['verdict'], 'visible')  # acceptance: 4 of 5 points
         self.assertEqual(r['points']['head']['verdict'], 'visible')
         self.assertEqual(r['points']['feet']['verdict'], 'not_visible')
+        self.assertEqual(r['box_verdict'], 'partly')  # the box ratio is a diagnostic beside the points
+
+    def test_lower_body_occluded_is_partly(self):
+        r = self.measure(triple(self.scene, [((80, 52, 120, 95), (90, 90, 90), 1.0)]))
+        self.assertEqual(r['verdict'], 'partly')
+        self.assertEqual([n for n, p in r['points'].items() if p['verdict'] == 'visible'], ['head', 'shoulder_l', 'shoulder_r'])
+        self.assertEqual(r['points']['chest']['verdict'], 'not_visible')
+
+    def test_idle_animation_between_a_and_a2_is_not_noise(self):
+        """p55-oracle-ext-1: the restored player stands in the same silhouette but has moved (A-A2 0.25-0.37 of
+        the box). The version 1 rule took A-A2 as the noise floor and refused the calibration."""
+        r = self.measure(triple(self.scene))
+        self.assertGreater(r['stats']['player_change'], 0.15)  # half the figure: about 0.18 of the box
+        self.assertEqual(r['verdict'], 'visible')
+        self.assertLess(r['stats']['noise'], 0.01)
+        still = self.measure(triple(self.scene, idle=False))
+        self.assertEqual(still['verdict'], 'visible')
+        self.assertEqual(still['stats']['player_change'], 0.0)
+
+    def test_mask_needs_b_to_differ_from_both_a_and_a2(self):
+        a, b, a2 = triple(self.scene)
+        g = rv.Geometry((3, 29), CLIENT)
+        lay = rv.layout(view(), g, PARAMS)
+        only_a = rv.mask_stats(a, b, b, lay.box, 12)  # A2 identical to B: nothing passes the mask
+        self.assertGreater(only_a.ab, 0)
+        self.assertEqual(only_a.mask, 0)
+        full = rv.mask_stats(a, b, a2, lay.box, 12)
+        self.assertGreaterEqual(full.mask, 16 * 58)  # the whole figure and its shadow inside the box
+        self.assertEqual(full.mask, min(full.ab, full.a2b))
+
+    def test_busy_ring_is_indeterminate(self):
+        """Something in the ring that is only there in B passes the mask test: no trustworthy noise floor."""
+        a, b, a2 = triple(self.scene)
+        lay = rv.layout(view(), rv.Geometry((3, 29), CLIENT), PARAMS)
+        rgb = bytearray(b.rgb)
+        x0, y0, x1, y1 = lay.ring
+        for y in range(y0, y1):
+            for x in range(x0, x0 + 12):
+                i = (y * b.width + x) * 3
+                rgb[i] = (rgb[i] + 60) % 256
+        r = self.measure([a, png.Image(b.width, b.height, bytes(rgb)), a2])
+        self.assertEqual(r['verdict'], 'indeterminate')
+        self.assertIn('scene_busy', r['reason'])
+
+    def test_player_verdict_from_points(self):
+        def pts(*verdicts):
+            return {n: {'verdict': v} for n, v in zip(rv.POINTS, verdicts)}
+        self.assertEqual(rv.player_verdict(pts('visible', 'visible', 'visible', 'visible', 'not_visible'), PARAMS)[0], 'visible')
+        self.assertEqual(rv.player_verdict(pts('visible', 'visible', 'visible', 'off_screen', 'partly'), PARAMS)[0], 'partly')
+        self.assertEqual(rv.player_verdict(pts('not_visible', 'off_screen', 'not_visible', 'not_visible', 'indeterminate'), PARAMS)[0], 'not_visible')
+        verdict, why = rv.player_verdict(pts('visible', 'visible', 'visible', 'indeterminate', 'indeterminate'), PARAMS)
+        self.assertEqual(verdict, 'indeterminate')
+        self.assertIn('3 of 5', why)
 
     def test_single_fade_shows_and_eight_stacked_fades_do_not(self):
         fade = ((80, 20, 120, 95), (110, 110, 110), 0.35)
@@ -234,11 +301,12 @@ class VerdictTests(unittest.TestCase):
                         i = (y * image.width + x) * 3
                         rgb[i] = (rgb[i] + 40) % 256
             return png.Image(image.width, image.height, bytes(rgb))
-        a, b, _ = triple(self.scene)
-        windy = [jitter(a, 0.06, 1), jitter(b, 0.06, 2), jitter(a, 0.06, 3)]  # wave 1 exterior pairs: 0.05-0.06
+        a, b, a2 = triple(self.scene)
+        windy = [jitter(a, 0.06, 1), jitter(b, 0.06, 2), jitter(a2, 0.06, 3)]  # wave 1 exterior pairs: 0.05-0.06
         r = self.measure(windy)
         self.assertEqual(r['verdict'], 'visible', r['reason'])
-        storm = [jitter(a, 0.25, 1), jitter(b, 0.25, 2), jitter(a, 0.25, 3)]
+        self.assertLess(r['stats']['noise'], PARAMS['noise_max'])
+        storm = [jitter(a, 0.25, 1), jitter(b, 0.25, 2), jitter(a2, 0.25, 3)]
         self.assertIn('scene_changed', self.measure(storm)['reason'])
 
     def test_restore_is_unprovable_for_a_hidden_player(self):
@@ -272,6 +340,8 @@ class VerdictTests(unittest.TestCase):
         self.assertFalse(blind['confirmed'])
         self.assertIn('marker_not_confirmed', blind['reason'])
         self.assertEqual(self.measure(triple(self.scene), cal=blind)['verdict'], 'indeterminate')
+        old = dict(self.cal, version=1)  # a version 1 record measured the noise differently
+        self.assertIn('calibration_version', self.measure(triple(self.scene), cal=old)['reason'])
 
     def test_missing_frame_is_indeterminate(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -373,6 +443,47 @@ class Wave1FrameTests(unittest.TestCase):
         _, lay = self.mapped('p55-c-hall-seed0-A', 'c-hall-h2')
         self.assertEqual(tuple(round(v) for v in lay.points['head']), (965, 654))
         self.assertGreaterEqual(lay.box[3], 766)  # rendered boots at y ~766, 24 px below the feet point
+
+
+@unittest.skipUnless((ORACLE_EXT_1_SHOTS / 'cal-h0-a2.png').is_file() and ORACLE_EXT_1.is_dir(),
+                     'p55-oracle-ext-1 frames not on this host')
+class OracleExt1Tests(unittest.TestCase):
+    """First in-game marker frames (p55-oracle-ext-1, spike stage 744609f + probe aeaccbd). The expected answers
+    are the orchestrator's reading of the frames: open-h3 plainly visible, open-h2 head and shoulders above
+    the thatch with the feet under it, stable-h0 under the stable roof."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cal = cls.run_tag('cal-h0')
+        assert cls.cal['confirmed'], cls.cal['reason']
+
+    @staticmethod
+    def run_tag(tag, calibration=None):
+        frames = rv.load_frames([ORACLE_EXT_1_SHOTS / f'{tag}-{s}.png' for s in ('a', 'b', 'a2')])
+        slice_path = ORACLE_EXT_1 / 'probe-slice.jsonl'
+        v, after = rv.view_from_slice(slice_path, tag), rv.view_from_slice(slice_path, tag + '-post')
+        return rv.calibrate(frames, v, after) if calibration is None else rv.measure(frames, v, calibration, after)
+
+    def test_calibration_confirms_although_a_and_a2_differ(self):
+        self.assertEqual(len(self.cal['confirmed_points']), 5)
+        self.assertGreater(self.cal['stats']['player_change'], 0.3)  # idle animation: the version 1 refusal
+        self.assertLess(self.cal['stats']['noise'], 0.05)
+
+    def test_open_h3_visible(self):
+        r = self.run_tag('open-h3', self.cal)
+        self.assertEqual(r['verdict'], 'visible', r['reason'])
+        self.assertTrue(r['restored'])
+
+    def test_open_h2_head_visible_feet_not(self):
+        r = self.run_tag('open-h2', self.cal)
+        self.assertEqual(r['points']['head']['verdict'], 'visible')
+        self.assertEqual(r['points']['feet']['verdict'], 'not_visible')
+        self.assertEqual(r['verdict'], 'visible')  # 4 of 5 points
+
+    def test_stable_h0_not_visible(self):
+        r = self.run_tag('stable-h0', self.cal)
+        self.assertEqual(r['verdict'], 'not_visible', r['reason'])
+        self.assertIsNone(r['restored'])  # nothing to restore on screen: unprovable, not failed
 
 
 if __name__ == '__main__':
