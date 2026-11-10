@@ -2,7 +2,7 @@
 
 2026-11-09. Worktree `p55-spike`, branch `phase5.5/p55-02-fixed-camera-spike`, base `da16672`. **Disposable: this branch is never merged and nothing here enters the shipped Camera DLL.** Experimental scope only (D045): Skyrim.esm, Dawnguard, HearthFires, Dragonborn on Steam Skyrim SE 1.7.104, SKSE 2.3.1, SmoothCam 1.8.1, TDM 2.3.1.
 
-**Status.** Source, portable tests and offline binary audit are complete. Wave 1 was committed unchanged as `1de4b28` and compiled under MSVC `/W4 /WX` on the first attempt (CI run 42720286058, reported by the orchestrator). This document now also covers **wave 1b**, the fixes from the independent binary review of `1de4b28` (section "Review fixes" below); **the wave 1b changes have not been compiled on Windows (NOT_RUN)**. **Every in-game row is NOT_RUN.** No commit, push, branch change, game or harness launch, download or external post was made. Compilation and portable tests prove no in-game behaviour.
+**Status.** Source, portable tests and offline binary audit are complete. Wave 1 was committed unchanged as `1de4b28` and compiled under MSVC `/W4 /WX` on the first attempt (CI run 42720286058, reported by the orchestrator). Wave 1b fixes from the independent binary review are also included below. **Dated 2026-11-09: wave 1 game rows were recorded on 2026-11-09; wave 1b fixes are in source `744609f9fb459aa1e50688b3ab590bb6cbbac05a`.** The disposable build and test probe ran on the experimental scope only; this is not evidence for the shipped Camera DLL or a release. See [wave 1 run record](spike-wave1-runs.md) for build identity, individual run records and reconciliation notes. Compilation and portable tests do not prove in-game behaviour.
 
 Each claim is marked **Source** (file:line, URL and revision, binary RVA, or a recorded game log) or **Hypothesis**. RVAs are relative to image base `0x140000000` of `SkyrimSE.exe` SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`. Provider sources read: SmoothCam `e0afd09aff26e5849dac461252e5bffbd5b69d62` (https://github.com/mwilsnd/SkyrimSE-SmoothCam), True Directional Movement `57b913a` "Version 2.3.1" (https://github.com/ersh1/TrueDirectionalMovement), both from the local audit checkouts under `session-20261026/targeting-audit/`; facts only, no code copied. CommonLibSSE-NG `7a60f4de794095d7b0f8928d1b930a52e9a7da83` (the pin in `cmake/CommonLib.cmake`).
 
@@ -328,29 +328,29 @@ python3 -B -I modules/camera/tests/lock_refresh_wiring_test.py
 
 `fixed_spike_policy_test` covers: settings bounds and key reservation; the four headings; snap easing (continuity, monotonic, lands bit-exactly, retarget, reversal, broken clock, home); the yaw request landing the heading sum on target; POV-slide cancellation; eligibility by every state; zoom hold; cast decision truth table; pull-in pairing and the per-frame window; rig and room line formats; seeding modes 0-3, the sample order, the position gate and the caller gate (the six audited return addresses, extent edges, unknown callers, per-class counters); cut-height, ray, floor-contact, floor-span, sphere-fallback and rotated-box classification; height, radius and time hysteresis; the interior-only rule; ground reach; at-once restore of what is underfoot; per-frame and total caps and their nearest-first order; the cut-plane tracker (band, settle, and at-once follow in both directions); ray targets, floor probes and marching progress; the restore table and write rule; line budgets and the trace writer; and "disabled equals base".
 
-## Game rows — all NOT_RUN
+## Game rows — wave 1 dispositions (2026-11-09)
 
 | # | Row | Decides | Result |
 | --- | --- | --- | --- |
-| G1 | Spike off: candidate-8 camera routes unchanged | off = base | NOT_RUN |
-| G2 | Install: no `FCS-` line; `installed rig=1 caster=own-detour` | guards on the live image | NOT_RUN |
-| G3 | Heading held at four headings; snaps land; F7 home | rig yaw | NOT_RUN |
-| G4 | Zoom held against wheel and POV slide | rig distance | NOT_RUN |
-| G5 | Zero pull-in in the open and in the Bannered Mare with `visibleWouldHit>0` (hide off) | D55-1 | NOT_RUN |
-| G6 | SmoothCam stable with no collision: load door, F6, F8, menu | D55-1 | NOT_RUN |
-| G7 | Camera outside every room, seed 0: is the player's room drawn? | phase feasibility indoors | NOT_RUN |
-| G8 | Seed modes 1, 2, 3: drawn rooms, `claims>0`, `cullCalls>0`; `gatedNear` recorded; no attach artifacts | room seeding | NOT_RUN |
-| G9 | Hide look: kit interior ground floor and loft | D043 kit interiors | NOT_RUN |
-| G10 | Hide look: cave, Dwemer chamber; skips traced | D043 one-piece meshes | NOT_RUN |
-| G11 | Restore on every exit, by trace | presentation only | NOT_RUN |
-| G12 | Frame cost per seed mode and with hide | Phase 4 budget | NOT_RUN |
-| G13 | Side effects with hidden ceilings: lights, shadows, fog, void | D043 | NOT_RUN |
-| G14 | Target lock with the rig | later wave | NOT_RUN (not planned) |
-| G15 | NPCs around hidden geometry behave as with the spike off: pathing, sitting, detection across a hidden wall | whether the app-culled bit reaches AI (unverified) | NOT_RUN |
-| G16 | A hidden door, container or activator: is it still activatable, and does a hidden animated static still collide? | whether the bit reaches activation and animated collision (unverified) | NOT_RUN |
-| G17 | Hide in an exterior cell: nothing hidden, one `inactive` line per entry | interior-only rule | NOT_RUN |
-| G18 | Loft island: after `setpos` to the loft the floor under the player is drawn within one scan | finding 2 | NOT_RUN |
-| G19 | Heading error while TDM turns the player (reversals, strafes, sprint) | TDM compensation, not re-read by the reviewer | NOT_RUN |
+| G1 | Spike off: candidate-8 camera routes unchanged | off = base | **PASS** — ledger comparison: 10 matched samples within yaw 2°, pitch 1°, distance 16. `p55-control-1` is retained as an input-contaminated FAIL; cause unestablished. The single-run checker output for `p55-control-2` says NOT_RUN because it has no base run; the comparison output is archived as `session-p55/routes/runs/g1-control-2-vs-control-base-1.md`. [Run reconciliation](spike-wave1-runs.md#record-disagreements) |
+| G2 | Install: no `FCS-` line; `installed rig=1 caster=own-detour` | guards on the live image | **PASS** — routes a, b, c and d; expected exterior `FCS-31` only where applicable. Does not certify other runtimes or binaries. |
+| G3 | Heading held at four headings; snaps land; F7 home | rig yaw | **PASS** — `p55-a-open-1`: headings 45/135/225/315; index sequence 1,2,3,0 and 3,2,1,0, then 0 after F7. |
+| G4 | Zoom held against wheel and POV slide | rig distance | **PASS** — `p55-a-open-1`; held zoom and heading assertions passed. |
+| G5 | Zero pull-in in the open and in the Bannered Mare with `visibleWouldHit>0` (hide off) | D55-1 | **PASS** — `p55-a-open-1`: 1,202 eligible lines, `pullInFrames=0`, 14/15 anchors tied, spread 0.099 s. `p55-b-mare-A`: 1,590 eligible, zero pull-in; loft poses invalid in that run. |
+| G6 | SmoothCam stable with no collision: load door, F6, F8, menu | D55-1 | **PASS** — `p55-e-lifecycle-B`; third-person view and rig assertions held after F6, F8, menu and door step. Load-door activation sub-row **NOT_RUN**: door was not offered from fixed view. |
+| G7 | Camera outside every room, seed 0: is the player's room drawn? | phase feasibility indoors | **OWNER** — `p55-c-bfb-seed0-1` screenshots. Camera was often in another room (player/camera room sample `(8,7)` 234 times; 22 rooms); owner judgment is the view. `p55-c-hall-seed0-A` is **NOT_RUN** for this criterion because camera stayed in the player's room. |
+| G8 | Seed modes 1, 2, 3: drawn rooms, `claims>0`, `cullCalls>0`; `gatedNear` recorded; no attach artifacts | room seeding | **OWNER** — `p55-c-bfb-seed1-1`, `-seed2-1`, `-seed3-1`; hook ran with 393,824 / 387,058 / 394,250 calls and 1,668 / 1,691 / 8,360 claims. Screenshot look remains owner judgment. `p55-c-hall-seed1-A2` checker FAIL was four transient `cameraRoom=-1` lines with no claim; Dragonsreach camera stayed in player's room and seeding was not applicable there. |
+| G9 | Hide look: kit interior ground floor and loft | D043 kit interiors | **OWNER** — valid ground-floor screenshots in `p55-d-mare-A2`; orchestrator reading, not an owner judgment: player and patrons visible, most rafters gone, large beams remain. Loft samples in that run are invalid (fixture defect); checker G9 FAIL remains recorded for its trace/model condition. |
+| G10 | Hide look: cave, Dwemer chamber; skips traced | D043 one-piece meshes | **OWNER** — `p55-d-cave-dwemer-A2` and `p55-c-both-seed1-hide-A2`; orchestrator reading, not an owner judgment: Embershard camera inside one-piece mesh with dark rock; Bleak Falls heading 225 remains rock/root geometry. Mzulft heading 45 shows player and Dwemer spider. |
+| G11 | Restore on every exit, by trace | presentation only | **PASS** — `p55-e-lifecycle-B`: 20 steps; `p55-d-mare-A2`: 20; `p55-c-both-seed1-hide-A2`: 6; `p55-d-activation-A2`: 4; all recorded restore assertions passed. |
+| G12 | Frame cost per seed mode and with hide | Phase 4 budget | **PASS**, only at Dragonsreach hall pose under 60 fps cap. Ledger comparison reports p95 within 1% of base in every mode; hide+seed1 +0.69%/+0.52%/+0.14% for standing/turn/turn-mouse; 3,714–3,715 frames/capture, median 16.42 ms. At this pose the camera stays in the player's room, so seeding does almost nothing; dungeon seeding cost is **NOT_RUN**. Per-run checker JSON marks G12 NOT_RUN because its expected baseline label was missing. See reconciliation. |
+| G13 | Side effects with hidden ceilings: lights, shadows, fog, void | D043 | **OWNER** — screenshots in `p55-d-mare-A2` and `p55-d-cave-dwemer-A2`; no owner look ruling is recorded. Loft screenshots are invalid where they use the bad teleport. |
+| G14 | Target lock with the rig | later wave | **NOT_RUN** (not planned) |
+| G15 | NPCs around hidden geometry behave as with the spike off: pathing, sitting, detection across a hidden wall | whether the app-culled bit reaches AI (unverified) | **OWNER** — comparison screenshots in `p55-d-mare-A2` and `p55-d-npc-off-A2`; only images were collected, no 60/30-second AI observation. Hidden-wall sub-step NOT_RUN (no deterministic pose). |
+| G16 | A hidden door, container or activator: is it still activatable, and does a hidden animated static still collide? | whether the bit reaches activation and animated collision (unverified) | **NOT_RUN** — `p55-d-activation-A2` explicitly requires hands-on interaction. |
+| G17 | Hide in an exterior cell: nothing hidden, one `inactive` line per entry | interior-only rule | **PASS** — `p55-e-lifecycle-B`: one inactive entry line per exterior cell, no outdoor hide/scan; hides resumed inside. |
+| G18 | Loft island: after `setpos` to the loft the floor under the player is drawn within one scan | finding 2 | **OWNER** — `p55-d-mare-A2` checker assigned OWNER to the screenshot question, but its loft pose is invalid: the three-step teleport left the inn and the player fell. No valid loft-floor conclusion. |
+| G19 | Heading error while TDM turns the player (reversals, strafes, sprint) | TDM compensation, not re-read by the reviewer | **PASS** — `p55-a-open-1`: maximum heading error ≤0.5° through reversals, strafes and sprint. |
 
 ## Route plan for the first game sessions
 
@@ -412,9 +412,9 @@ Every restore must appear as `event=restore` lines whose count equals the `hidde
 
 The Phase 4 capture (`docs/evidence/p4/performance.md`: 60 s standing and 60 s turning, anchor ratio in [0.9,1.1]) in Dragonsreach at the `p5-final-hall` pose `setpos -448 -128 -316` (**Source:** run `final2-2204-hall`; 9 rooms). INI: `bEnabled=1`, **all traces 0**, `iRoomSeedMode` 0, 1, 2, 3 in turn, see-through 0; then one run with the chosen mode and `iSeeThroughMode=1`. Because yaw input is discarded, "turning" is a `DOT` press every 1.5 s for 60 s. Baseline: the same captures with `bEnabled=0`. Report p95 standing and turning per mode and `(mode/baseline − 1)·100`; the Phase 4 budget applies. A separate 60 s run per mode with `iRoomTrace=1` confirms `claims>0` there; cost runs with a trace on are not comparable.
 
-## What could go wrong in the first game run
+## Wave 1 pre-run risk checklist (historical)
 
-1. **The wave 1b changes have not been compiled on Windows** (wave 1 compiled first time). New Windows surface: `VirtualProtect`, `VirtualFree`, `RtlLookupFunctionEntry`, `_ReturnAddress` in the room hook, `TESObjectCELL::IsInteriorCell`.
+1. **Windows build risk.** The wave 1b source at `744609f` passed Windows `/W4 /WX` and camera-portable in CI run 42726692261 (ledger). The final three-line review-prescribed delta was not separately re-reviewed; see the build/run record. New Windows surface included `VirtualProtect`, `VirtualFree`, `RtlLookupFunctionEntry`, `_ReturnAddress` in the room hook, and `TESObjectCELL::IsInteriorCell`.
 2. **`previousLook` skipped by SmoothCam's input lock** leaves the heading uncorrected for those frames; `maxHeadingError` shows it.
 3. **Heading snaps on first engage.** The first eligible frame moves the camera to the configured heading in one frame, wherever it was.
 4. **The position gate may not match** if the culling camera is not at the published position (for example a later scene-graph update); then `viewerCalls=0` and seeding does nothing. It fails toward vanilla.
@@ -431,7 +431,7 @@ The Phase 4 capture (`docs/evidence/p4/performance.md`: 60 s standing and 60 s t
 
 ## Proposed shared-file changes (not edited)
 
-- `docs/STATUS.md`: P5.5-02 wave 1 spike source complete on `phase5.5/p55-02-fixed-camera-spike`; portable tests PASS; Windows build and all game rows NOT_RUN; nothing merged.
+- `docs/STATUS.md`: proposed status should report wave 1 source at `744609f` with Windows build and portable checks PASS, the row dispositions recorded above, and the full matrix/sweep and owner look review still open; the disposable spike is not merged or a release.
 - `docs/phases/PHASE_5_5.md`, "Things the request did not list" item 1: add that the room test is also used for reference-to-room attachment (ID 19163), so any seeding must be limited to the main view's query; and that 246 of 590 Skyrim.esm interior cells carry room markers while small houses and the Bannered Mare carry none (scratch scan; the P5.5-01 census is authoritative).
 - `docs/phases/PHASE_5_5.md`, P5.5-02 "Retained states": the table above (bleedout not feasible under D55-1; swimming blocked on TDM's camera-pitch-driven swim pitch).
 - `docs/CONTROLS.md`: nothing until the owner rules on D55-2; the spike keys are test bindings.
