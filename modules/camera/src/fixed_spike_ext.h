@@ -26,8 +26,8 @@ inline void configureExterior(const ExtConfig& requested) {
     x.config = validateExterior(requested,&adjusted);
     if (adjusted) refuseExterior(ExtRefusal::settings,"one or more [FixedCameraSpike] exterior values were out of range; safe values applied");
     char line[256]{};
-    std::snprintf(line,sizeof(line),"exterior see-through mode=%u maxSpan=%.0f maxHidden=%u (0 = wave 1 behaviour outdoors)",
-        x.config.mode,static_cast<double>(x.config.maxSpan),x.config.maxHidden);
+    std::snprintf(line,sizeof(line),"exterior see-through mode=%u maxSpan=%.0f maxHidden=%u coverFootprint=%.0f (0 = wave 1 behaviour outdoors)",
+        x.config.mode,static_cast<double>(x.config.maxSpan),x.config.maxHidden,static_cast<double>(x.config.coverFootprint));
     note(line);
 }
 // Plain placed references only: statics and movable statics are structures,
@@ -120,37 +120,45 @@ inline unsigned exteriorCells(RE::TESObjectCELL* parent,Vec feet,Vec eye,std::ar
 }
 // What one scan's picks found. Reference pointers are only compared, never
 // dereferenced: the cell walk turns a pointer into a live reference.
+constexpr unsigned extOverheadHits = 4, extFloorHits = 2;
 struct ExtHits {
     std::array<const RE::TESObjectREFR*,extMaxHits> refs{};
     std::array<Vec,extMaxHits> top{};   // highest point where a sightline ray hit each
-    std::array<bool,extMaxHits> open{}; // its open-below probes found a clear one
+    std::array<bool,extMaxHits> open{}; // openBelow() for that point
     unsigned count{};
-    std::array<const RE::TESObjectREFR*,maxFloorProbes> floor{};
+    std::array<const RE::TESObjectREFR*,maxFloorProbes*extFloorHits> floor{};
     unsigned floorCount{};
+    bool floorFailed{};                 // a floor probe pick failed: nothing is claimed or hidden this scan
+    std::array<const RE::TESObjectREFR*,extOverheadHits> over{}; // hit by the upward pick over the feet
+    unsigned overCount{};
 };
 inline int hitIndex(const ExtHits& hits,const RE::TESObjectREFR* ref) {
     for (unsigned i = 0;i < hits.count;++i) if (hits.refs[i] == ref) return static_cast<int>(i);
     return -1;
 }
-// Sightline rays from the rendered camera to the exterior targets, each marched
-// past up to extRaySegments hits; open-below probes for the hits that could be
-// an overhang; the wave 1 floor probes. The one shared bhkWorld of all loaded
-// exterior cells (GetbhkWorld, 2BE9B0) returns hits in any of them.
+// In this order, under one world read lock: the floor probes (first, so a
+// failure stops the scan before anything is claimed; each marched past two
+// hits), the upward pick over the feet (cover), the sightline rays from the
+// rendered camera to the exterior targets (each marched past up to
+// extRaySegments hits), then the open-below corridor and down picks for hits
+// that could be an overhang. The one shared bhkWorld of all loaded exterior
+// cells (GetbhkWorld, 2BE9B0) returns hits in any of them. False: no picks.
 inline bool castExteriorRays(RE::PlayerCharacter* player,RE::TESObjectCELL* parent,Vec feet,Vec eye,
     const std::array<Vec,extRayTargets>& targets,ExtHits& hits) {
     auto& r = *runtime;
-    auto& c = r.ext.counters;
+    auto& x = r.ext;
+    auto& c = x.counters;
     const auto world = parent->GetbhkWorld();
     const auto controller = player->GetCharController();
     const float scale = RE::bhkWorld::GetWorldScale();
-    if (!world || !controller || !std::isfinite(scale) || scale <= 0) { ++c.noWorld; return false; }
-    if (!r.pickChecked && !r.pickRefused) {
-        // The audit castRays applies: CommonLib slot 0x33 must be the PickObject read in the file.
-        const auto slots = *reinterpret_cast<const std::uintptr_t* const*>(world);
-        if (slots[0x33] != REL::Module::get().base()+0x104be80) r.pickRefused = true;
-        else r.pickChecked = true;
+    if (!world || !controller || !std::isfinite(scale) || scale <= 0) {
+        ++c.noWorld;
+        if (++x.worldMisses >= gridRefuseScans)
+            refuseExterior(ExtRefusal::world,"no havok world or player character controller for 1 s outdoors; no exterior rays, hidden references expire");
+        return false;
     }
-    if (r.pickRefused) {
+    x.worldMisses = 0;
+    if (!pickAudited(world)) {
         refuseExterior(ExtRefusal::pickSlot,"bhkWorld slot 0x33 is not the audited PickObject; no exterior rays, nothing hidden outdoors");
         return false;
     }
@@ -158,7 +166,7 @@ inline bool castExteriorRays(RE::PlayerCharacter* player,RE::TESObjectCELL* pare
     controller->GetCollisionFilterInfo(filter);
     const std::uint32_t layer = (filter.filter & 0xffff0000u) | static_cast<std::uint32_t>(RE::COL_LAYER::kLOS);
     RE::BSReadLockGuard lock(world->worldLock);
-    // failed: the pick itself was refused (never read as clear).
+    // failed: the pick itself was refused (never read as clear or as "no floor").
     const auto pick = [&](Vec from,Vec to,float& fraction,bool& hit,bool& failed) -> const RE::TESObjectREFR* {
         RE::bhkPickData ray{};
         ray.rayInput.from = RE::hkVector4(from.x*scale,from.y*scale,from.z*scale,0.0f);
@@ -178,24 +186,45 @@ inline bool castExteriorRays(RE::PlayerCharacter* player,RE::TESObjectCELL* pare
         if (!ref) ++c.rayNoRef; // terrain and other collision without a reference
         return ref;
     };
-    const RE::TESObjectREFR* self = player;
-    for (const auto target : targets) {
-        Vec from = eye;
-        for (unsigned segment = 0;segment < extRaySegments;++segment) {
+    // Marches from->to past up to `hits` hits; each hit reference goes to `seen`.
+    // False when a pick failed.
+    const auto march = [&](Vec from,Vec to,unsigned limit,const auto& seen) {
+        for (unsigned segment = 0;segment < limit;++segment) {
             float fraction = 1.0f; bool hit = false,failed = false;
-            const auto ref = pick(from,target,fraction,hit,failed);
-            if (!hit) break;
-            const Vec point = mix(from,target,fraction);
-            if (ref && ref != self) {
-                const int at = hitIndex(hits,ref);
-                if (at >= 0) { if (point.z > hits.top[static_cast<std::size_t>(at)].z) hits.top[static_cast<std::size_t>(at)] = point; }
-                else if (hits.count == extMaxHits) { ++c.rayCap; break; }
-                else { hits.refs[hits.count] = ref; hits.top[hits.count] = point; ++hits.count; }
-            }
-            const auto next = rayContinue(from,target,fraction);
-            if (!next) break;
+            const auto ref = pick(from,to,fraction,hit,failed);
+            if (failed) return false;
+            if (!hit) return true;
+            if (!seen(ref,mix(from,to,fraction))) return true;
+            const auto next = rayContinue(from,to,fraction);
+            if (!next) return true;
             from = *next;
         }
+        return true;
+    };
+    const RE::TESObjectREFR* self = player;
+    for (const auto probe : floorProbes(feet)) {
+        const bool done = march({probe.x,probe.y,probe.z+48.0f},{probe.x,probe.y,probe.z-160.0f},extFloorHits,
+            [&](const RE::TESObjectREFR* ref,Vec) {
+                if (ref && ref != self && !listed(hits.floor,hits.floorCount,ref)) hits.floor[hits.floorCount++] = ref;
+                return true;
+            });
+        if (!done) { hits.floorFailed = true; return true; }
+    }
+    if (eye.z > feet.z+headClear)
+        static_cast<void>(march({feet.x,feet.y,feet.z+headClear},{feet.x,feet.y,eye.z},extOverheadHits,
+            [&](const RE::TESObjectREFR* ref,Vec) {
+                if (ref && ref != self && !listed(hits.over,hits.overCount,ref)) { hits.over[hits.overCount++] = ref; ++c.overhead; }
+                return true;
+            }));
+    for (const auto target : targets) {
+        static_cast<void>(march(eye,target,extRaySegments,[&](const RE::TESObjectREFR* ref,Vec point) {
+            if (!ref || ref == self) return true;
+            const int at = hitIndex(hits,ref);
+            if (at >= 0) { if (point.z > hits.top[static_cast<std::size_t>(at)].z) hits.top[static_cast<std::size_t>(at)] = point; return true; }
+            if (hits.count == extMaxHits) { ++c.rayCap; return false; }
+            hits.refs[hits.count] = ref; hits.top[hits.count] = point; ++hits.count;
+            return true;
+        }));
     }
     // Probed with the looser (hidden) thresholds; classify applies the right one.
     unsigned probed = 0;
@@ -209,15 +238,21 @@ inline bool castExteriorRays(RE::PlayerCharacter* player,RE::TESObjectCELL* pare
             if (!probes[k].valid) continue;
             float fraction = 1.0f; bool hit = false,failed = false;
             static_cast<void>(pick(probes[k].from,probes[k].to,fraction,hit,failed));
-            clear[k] = !hit && !failed;
+            clear[k] = !hit && !failed; // any collision in the corridor, the piece's own included, closes it
         }
-        hits.open[i] = openBelow(probes,clear);
+        const auto down = downProbe(feet,hits.top[i]);
+        bool downSame = false;
+        if (down.valid) {
+            const auto own = hits.refs[i];
+            const bool done = march(down.from,down.to,downProbeHits,[&](const RE::TESObjectREFR* ref,Vec) {
+                if (ref == own) { downSame = true; return false; }
+                return true;
+            });
+            if (!done) downSame = true; // a failed pick never opens anything
+            if (downSame) ++c.downSame;
+        }
+        hits.open[i] = openBelow(probes,clear,down.valid,downSame);
         if (hits.open[i]) ++c.open;
-    }
-    for (const auto probe : floorProbes(feet)) {
-        float fraction = 1.0f; bool hit = false,failed = false;
-        const auto ref = pick({probe.x,probe.y,probe.z+48.0f},{probe.x,probe.y,probe.z-160.0f},fraction,hit,failed);
-        if (ref && !listed(hits.floor,hits.floorCount,ref)) hits.floor[hits.floorCount++] = ref;
     }
     return true;
 }
@@ -246,16 +281,21 @@ inline void scanExterior(RE::PlayerCharacter* player,RE::TESObjectCELL* parent) 
     ExtHits hits;
     std::array<RE::TESObjectCELL*,extMaxCells> cells{};
     unsigned matched{},visited{};
+    bool claims = true;
     const unsigned cellCount = exteriorCells(parent,feet,eye,cells);
     x.gridMisses = cellCount ? 0u : x.gridMisses+1u;
     if (!cellCount) {
-        ++c.gridSkips;
+        ++c.gridSkips; claims = false;
         if (x.gridMisses >= gridRefuseScans)
             refuseExterior(ExtRefusal::grid,"loaded cell grid unreadable, not holding the player's cell at its slot, or the fan spans more than 3 x 3 cells for 1 s; those scans skipped (gridSkips), hidden references expire");
-    } else if (castExteriorRays(player,parent,feet,eye,targets,hits) && (hits.count || x.config.mode >= 2)) {
-        c.cells += cellCount;
+    } else if (!castExteriorRays(player,parent,feet,eye,targets,hits)) {
+        claims = false;
+    } else if (hits.floorFailed) {
+        ++c.floorFailed; claims = false; // the floor is unknown: claim and hide nothing this scan
+    } else if (hits.count || x.config.mode >= 2) {
         bool full = false;
         for (unsigned i = 0;i < cellCount && !full;++i) {
+            ++c.cells;
             cells[i]->ForEachReference([&](RE::TESObjectREFR* ref) {
                 // Mode 1 needs only the hit pointers: stop once every one is found.
                 if (x.config.mode < 2 && matched == hits.count) { full = true; return Each::kStop; }
@@ -282,6 +322,7 @@ inline void scanExterior(RE::PlayerCharacter* player,RE::TESObjectCELL* parent) 
                 if (kind != ExtKind::excluded) candidate.box = obbOf(root,base);
                 candidate.rayHit = onRay;
                 candidate.floorContact = listed(hits.floor,hits.floorCount,ref);
+                candidate.overhead = listed(hits.over,hits.overCount,ref);
                 if (onRay) { candidate.hit = hits.top[static_cast<std::size_t>(at)]; candidate.openBelow = hits.open[static_cast<std::size_t>(at)]; }
                 candidate.pierced = kind == ExtKind::tree && piercedByFan(candidate.box,eye,targets,feet.z);
                 const float reach = groundReach(feet,centre,bound.radius);
@@ -314,6 +355,7 @@ inline void scanExterior(RE::PlayerCharacter* player,RE::TESObjectCELL* parent) 
         if (slot.track.shouldHide(r.now)) due[dueCount++] = {slot.reach,at};
         else if (slot.track.shouldRestore(r.now) || slot.track.expired(r.now)) release(slot,Exit::expired);
     }
+    if (!claims) dueCount = 0; // nothing new is hidden in a scan that could not check the floor
     // Nearest first, so the per-scan cap spends itself on what is over the player.
     nearestFirst(due,dueCount);
     for (unsigned i = 0;i < dueCount;++i) {
@@ -338,6 +380,7 @@ inline void traceExteriorSummary(RE::FormID cellId) {
     s.feetZ = r.lastFeet; s.eyeZ = r.ext.lastEyeZ; s.restores = r.totals.restores;
     s.c = r.ext.counters; s.exits = r.totals.exits;
     char line[768]{};
-    if (formatExtSummary(line,sizeof(line),s)) emit(r.hideLines,line);
+    if (formatExtSummary(line,sizeof(line),s)) emit(r.ext.summaryLines,line);
+    if (formatExtExits(line,sizeof(line),s)) emit(r.ext.summaryLines,line);
 }
 } // namespace skycrpg::camera::fixed

@@ -36,7 +36,8 @@ struct Runtime {
     unsigned (*causeNow)(int){}; // Exit for an ineligible frame; -1 = the update hook did not run
     std::atomic_bool active{};   // look/update hold and the all-state frame bracket are usable
     std::atomic<std::uint64_t> refusals{};
-    bool castReady{},castChained{},roomHook{},pickChecked{},pickRefused{},traceReady{};
+    bool castReady{},castChained{},roomHook{},traceReady{};
+    const std::uintptr_t* pickTable{}; // bhkWorld vtable whose slot 0x33 passed the audit (pickAudited)
     // Frame bracket: written by the update hook, read by the caster, main thread only.
     bool frameEligible{},frameSeen{},frameSlide{};
     State frameState{State::disabled};
@@ -75,6 +76,7 @@ struct Runtime {
     // Lifecycle.
     std::atomic_uint requests{};
     RE::FormID cell{};
+    bool cellInterior{}; // of `cell`, for keepAcrossCells (wave 2 ext)
     // Trace.
     TraceWriter writer;
     LineBudget rigLines{rigTraceLines},roomLines{roomTraceLines},hideLines{hideTraceLines};
@@ -235,26 +237,29 @@ bool listed(const std::array<const RE::TESObjectREFR*,Size>& refs,unsigned count
     for (unsigned i = 0;i < count;++i) if (refs[i] == ref) return true;
     return false;
 }
+// CommonLib slot 0x33 is checked against the audited PickObject once per
+// vtable pointer (review of wave 2 ext, m3: a second world type is audited too).
+inline bool pickAudited(const RE::bhkWorld* world) {
+    auto& r = *runtime;
+    const auto slots = *reinterpret_cast<const std::uintptr_t* const*>(world);
+    if (slots == r.pickTable) return true;
+    if (slots[0x33] != REL::Module::get().base()+0x104be80) return false;
+    r.pickTable = slots;
+    return true;
+}
 // Sightline rays (camera to player, marching past each hit) and floor probes.
 // Reference pointers are compared, never dereferenced, by the scan that follows.
 inline void castRays(RE::PlayerCharacter* player,RE::TESObjectCELL* parent,Vec feet,Vec eye,
     std::array<const RE::TESObjectREFR*,maxRayHits>& rayRefs,unsigned& rayCount,
     std::array<const RE::TESObjectREFR*,maxFloorProbes>& floorRefs,unsigned& floorCount) {
     auto& r = *runtime;
-    if (r.pickRefused) return;
     const auto world = parent->GetbhkWorld();
     const auto controller = player->GetCharController();
     const float scale = RE::bhkWorld::GetWorldScale();
     if (!world || !controller || !std::isfinite(scale) || scale <= 0) return;
-    if (!r.pickChecked) {
-        // CommonLib slot 0x33 is checked against the audited PickObject once.
-        const auto slots = *reinterpret_cast<const std::uintptr_t* const*>(world);
-        if (slots[0x33] != REL::Module::get().base()+0x104be80) {
-            r.pickRefused = true;
-            refuse(Refusal::pickSlot,"bhkWorld slot 0x33 is not the audited PickObject; on-ray hide and floor protection disabled, above-cut only");
-            return;
-        }
-        r.pickChecked = true;
+    if (!pickAudited(world)) {
+        refuse(Refusal::pickSlot,"bhkWorld slot 0x33 is not the audited PickObject; on-ray hide and floor protection disabled, above-cut only");
+        return;
     }
     RE::CFilter filter{};
     controller->GetCollisionFilterInfo(filter);
@@ -623,7 +628,12 @@ inline void endFrame() {
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto parent = player ? player->GetParentCell() : nullptr;
     const RE::FormID cellId = parent ? parent->GetFormID() : 0u;
-    if (cellId != r.cell) { restoreAll(Exit::cell); r.cell = cellId; r.cut.reset(); r.exteriorNoted = false; }
+    if (cellId != r.cell) {
+        const bool interiorNow = parent && parent->IsInteriorCell();
+        // Wave 2 ext (m4): exterior to exterior keeps exterior hides; everything else restores as before.
+        if (!keepAcrossCells(r.ext.config.mode,r.cell != 0 && !r.cellInterior,parent && !interiorNow)) restoreAll(Exit::cell);
+        r.cell = cellId; r.cellInterior = interiorNow; r.cut.reset(); r.exteriorNoted = false;
+    }
     const auto camera = RE::PlayerCamera::GetSingleton();
     if (!eligible || !player || !parent || !camera || !camera->cameraRoot) {
         const Exit cause = static_cast<Exit>(r.causeNow(r.frameSeen ? static_cast<int>(r.frameState) : -1));
@@ -760,7 +770,7 @@ inline void configure(const Config& requested,const Settings& base,int cursorKey
     if (r.config.snapLeftKey < 0 || r.config.snapRightKey < 0) refuse(Refusal::snapUnbound,"a snap key is unbound or reserved; that turn direction is unavailable");
     if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace) {
         const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines : 0u)+
-            (r.config.hideTrace ? hideTraceLines : 0u);
+            (r.config.hideTrace ? hideTraceLines+extSummaryLines : 0u); // + wave 2 ext summaries, own budget
         r.traceReady = r.writer.start(tracePath,rows);
         if (!r.traceReady) refuse(Refusal::traceWriter,"trace writer did not start; traces off, behaviour unchanged");
     }

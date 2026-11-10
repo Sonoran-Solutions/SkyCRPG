@@ -348,6 +348,7 @@ void loadSettings() {
         e.mode = number("FixedCameraSpike","iExteriorSeeThrough",e.mode);
         e.maxSpan = number("FixedCameraSpike","fExteriorMaxSpan",e.maxSpan);
         e.maxHidden = number("FixedCameraSpike","iExteriorMaxHidden",e.maxHidden);
+        e.coverFootprint = number("FixedCameraSpike","fExteriorCoverFootprint",e.coverFootprint);
         fixed::configureExterior(e);
     }
     if (badSettings) log("Invalid Camera INI values: defaults or safe bounds applied; unsupported schema disables policy.");

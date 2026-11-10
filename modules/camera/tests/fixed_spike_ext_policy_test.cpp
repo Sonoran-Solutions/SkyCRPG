@@ -39,6 +39,9 @@ constexpr std::array<int,6> millRoof{-202,-237,136,508,278,422};      // MrkMill
 constexpr std::array<int,6> stallRoof{-67,-76,77,68,79,215};          // MrkMarketStallRoof01 04739F
 constexpr std::array<int,6> pine{-459,-490,-66,489,486,2498};         // TreePineForest01 01306D
 constexpr std::array<int,6> smallPine{-200,-216,-88,194,215,860};     // TreePineForest03 04B016
+constexpr std::array<int,6> shack{-336,-226,0,398,251,503};           // WRHouseShack01 (review M1)
+constexpr std::array<int,6> wallCurve{-512,-92,-777,475,446,244};     // WRWallCurve45 (review M1)
+constexpr std::array<int,6> stableEnd{-242,68,-9,242,108,451};        // WRStableStr01End (review m1)
 // Whiterun stable pose (session-p55 routes, run p55-a-open-1 probe sample a-h0):
 // feet and the rendered camera at heading 45.
 const Vec feet{18824.982f,-11005.162f,-4591.266f};
@@ -68,8 +71,16 @@ void settings() {
     }
     assert(std::string(reasonName(Reason::extCover)) == "ext-cover" && std::string(reasonName(Reason::extOverhang)) == "ext-overhang");
     assert(std::string(reasonName(Reason::extCanopy)) == "ext-canopy" && std::string(reasonName(Reason::onRay)) == "on-ray");
-    assert(extRefusalBit(ExtRefusal::settings) == 4u && extRefusalBit(ExtRefusal::pickSlot) == 16u);
-    static_assert(static_cast<unsigned>(ExtRefusal::settings) >= 62 && static_cast<unsigned>(ExtRefusal::pickSlot) <= 69);
+    assert(extRefusalBit(ExtRefusal::settings) == 4u && extRefusalBit(ExtRefusal::pickSlot) == 16u && extRefusalBit(ExtRefusal::world) == 32u);
+    static_assert(static_cast<unsigned>(ExtRefusal::settings) >= 62 && static_cast<unsigned>(ExtRefusal::world) <= 69);
+    // The cover footprint (review M1): default 200, bounded, reported when adjusted.
+    assert(defaults.coverFootprint == 200.0f);
+    c = {}; c.coverFootprint = 5; assert(validateExterior(c,&adjusted).coverFootprint == 128.0f && adjusted);
+    c = {}; c.coverFootprint = nan; assert(validateExterior(c).coverFootprint == 200.0f);
+    c = {}; c.coverFootprint = 256; assert(validateExterior(c,&adjusted).coverFootprint == 256.0f && !adjusted);
+    // Cell changes (review m4): only exterior to exterior with the rule on keeps hides.
+    assert(keepAcrossCells(1,true,true) && keepAcrossCells(2,true,true));
+    assert(!keepAcrossCells(0,true,true) && !keepAcrossCells(1,false,true) && !keepAcrossCells(1,true,false) && !keepAcrossCells(1,false,false));
 }
 
 void boxes() {
@@ -127,6 +138,43 @@ void cover() {
     assert(!covers(box(stallRoof,{feet.x,feet.y,eye.z+10}),feet,eye.z,false));
     assert(covers(box(stallRoof,{feet.x,feet.y,feet.z}),feet,eye.z,false)); // a stall roof 77..215 over the feet
     assert(!covers(s3,feet,feet.z+100,false) && !covers(s3,{nan,0,0},eye.z,false));
+    // Ground-standing (review M1): reaches the feet's level with both spans at the footprint or more.
+    const Extent e3x = obbExtent(s3);
+    assert(!groundStanding(e3x,feet.z,200) && groundStanding(e3x,feet.z,196)); // WRStableStr01 is 196 wide
+    assert(!groundStanding(obbExtent(box(stable,{e3.x,e3.y,feet.z+200},r)),feet.z,128)); // lifted: not on the ground
+    assert(!groundStanding(Extent{},feet.z,128));
+}
+// Review M1 counterexamples from the masters (refs, rotations and OBND from the
+// reviewer's parse, /tmp/rev-ext): the box column crosses a shell or a wall the
+// player stands beside, so the box alone would call it cover.
+void groundPieces() {
+    ExtConfig c; c.mode = 1;
+    // WRHouseShack01 0x021E84 (WhiterunWorld) at the door-exit arrival of 0001A6FE.
+    const Vec door{24757.9f,-9727.5f,-3363.3f},doorEye{door.x-237.3f,door.y-237.3f,door.z+683.8f};
+    ExtCandidate shell; shell.kind = ExtKind::structure; shell.rayHit = true;
+    shell.box = box(shack,{24864.0f,-9888.008f,-3376.0f},rotZ(2.4260077f));
+    assert(covers(shell.box,door,doorEye.z,false));                     // the box test alone says cover (the defect)
+    assert(!largeStructure(ExtKind::structure,obbExtent(shell.box),1024)); // and the size test passes it
+    shell.overhead = true;                                                // even if the upward pick hit its roof:
+    assert(classifyExterior(c,shell,door,doorEye.z,false).skip == ExtSkip::ground);
+    assert(classifyExterior(c,shell,door,doorEye.z,true).skip == ExtSkip::ground);
+    shell.overhead = false;                                               // the usual case: the pick goes up past the wall
+    assert(classifyExterior(c,shell,door,doorEye.z,false).skip == ExtSkip::beside);
+    // WRWallCurve45 0x089FD7 (Tamriel) / 0x089F6C (WhiterunWorld) at WallLeanMarker 000F7953.
+    const Vec lean{29996.8f,-4234.9f,-2730.6f};
+    ExtCandidate wall; wall.kind = ExtKind::structure; wall.rayHit = true; wall.overhead = true;
+    wall.box = box(wallCurve,{30096.0f,-4496.0f,-2720.0f},rotZ(5.4977875f));
+    assert(covers(wall.box,lean,lean.z+683.8f,false) && !largeStructure(ExtKind::structure,obbExtent(wall.box),1024));
+    assert(classifyExterior(c,wall,lean,lean.z+683.8f,false).skip == ExtSkip::ground);
+    // Raising the footprint past a piece's narrow span lets it through: the key is the owner's trade-off.
+    c.coverFootprint = 600;
+    assert(classifyExterior(c,wall,lean,lean.z+683.8f,false).reason == Reason::extCover);
+    // The stable segment over the player still passes at the default (196 < 200), and only with the pick.
+    c.coverFootprint = 200;
+    ExtCandidate s3; s3.kind = ExtKind::structure; s3.rayHit = true; s3.box = box(stable,e3,rotZ(stableAngle));
+    assert(classifyExterior(c,s3,feet,eye.z,false).skip == ExtSkip::beside);
+    s3.overhead = true;
+    assert(classifyExterior(c,s3,feet,eye.z,false).reason == Reason::extCover);
 }
 
 void large() {
@@ -162,28 +210,47 @@ void overhang() {
     assert(!overhangHit({feet.x+100,feet.y,feet.z+150},feet,false) && overhangHit({feet.x+100,feet.y,feet.z+170},feet,true));
     assert(!overhangHit({feet.x+400,feet.y,feet.z+300},feet,false) && overhangHit({feet.x+400,feet.y,feet.z+300},feet,true));
     assert(!overhangHit({feet.x+500,feet.y,feet.z+300},feet,true) && !overhangHit({nan,0,0},feet,true));
-    // Probes: three, at 144 over the feet, ending 48 short of the ground under the hit.
+    // Corridor: three probes at 144 over the feet, reaching 32 past the ground point under the hit.
     const auto probes = openProbes(feet,{feet.x+200,feet.y,feet.z+300});
     for (const auto& p : probes) {
         assert(p.valid && near(p.from.z,feet.z+probeHeight) && near(p.to.z,feet.z+probeHeight));
-        assert(near(p.to.x-p.from.x,200-probeAllowance));
+        assert(near(p.to.x-p.from.x,200+probeBeyond));
     }
     assert(near(probes[0].from.y,feet.y) && near(probes[1].from.y-feet.y,probeSpread,.01f) && near(probes[2].from.y-feet.y,-probeSpread,.01f));
-    // Open when any valid probe is clear; a hit over the player has no probe and is open.
-    assert(openBelow(probes,{false,true,false}) && !openBelow(probes,{false,false,false}));
+    // Down pick: from 16 below the hit to 160 over the feet; none when the hit is not above that.
+    const auto down = downProbe(feet,{feet.x+200,feet.y,feet.z+300});
+    assert(down.valid && near(down.from.z,feet.z+300-downStart) && near(down.to.z,feet.z+headClear) && near(down.from.x,down.to.x));
+    assert(!downProbe(feet,{feet.x,feet.y,feet.z+170}).valid && !downProbe(feet,{nan,0,0}).valid);
+    // Open only when every corridor probe is clear and the down pick did not meet the same reference.
+    assert(openBelow(probes,{true,true,true},true,false) && openBelow(probes,{true,true,true},false,false));
+    assert(!openBelow(probes,{false,true,true},true,false) && !openBelow(probes,{true,true,false},true,false));
+    assert(!openBelow(probes,{true,true,true},true,true));
+    // Straight over the player: no corridor, the down pick alone decides; neither valid: closed (fail closed).
     const auto over = openProbes(feet,{feet.x+10,feet.y,feet.z+300});
-    assert(!over[0].valid && openBelow(over,{false,false,false}));
+    assert(!over[0].valid && openBelow(over,{false,false,false},true,false) && !openBelow(over,{false,false,false},true,true));
+    assert(!openBelow(over,{true,true,true},false,false));
     assert(!openProbes(feet,{nan,0,0})[0].valid);
+    // Review m1: the stable's end wall WRStableStr01End (484 x 40 x 460) between camera and player.
+    // The old probes ended 48 short of the point under the hit and missed a 40-unit wall;
+    // the corridor now crosses it (box model), so it is not an open overhang.
+    const Vec standing{18858.568f-200.0f,-10622.623f,feet.z};      // 200 units west of end wall 000627F0
+    const Obb endWall = box(stableEnd,{18858.568f,-10622.623f,-4584.337f},rotZ(3.2288594f));
+    const Vec topHit{18858.568f-20.0f,-10622.623f-88.0f,-4584.337f+451.0f}; // on its top, camera side
+    const auto across = openProbes(standing,topHit);
+    float a2{},b2{};
+    std::array<bool,openProbeCount> clearOfWall{};
+    for (unsigned k = 0;k < openProbeCount;++k) clearOfWall[k] = !segmentBox(endWall,across[k].from,across[k].to,0,a2,b2);
+    assert(!clearOfWall[0] && !openBelow(across,clearOfWall,true,false));
 }
 
 void classify() {
     const auto r = rotZ(stableAngle);
     ExtConfig c; c.mode = 1;
-    ExtCandidate s3; s3.kind = ExtKind::structure; s3.box = box(stable,e3,r); s3.rayHit = true;
-    // Under the stable roof: cover.
+    ExtCandidate s3; s3.kind = ExtKind::structure; s3.box = box(stable,e3,r); s3.rayHit = true; s3.overhead = true;
+    // Under the stable roof, and the upward pick hit it: cover.
     assert(classifyExterior(c,s3,feet,eye.z,false).reason == Reason::extCover);
     // The neighbour segment the chest ray crosses: overhang only when open below.
-    ExtCandidate s4 = s3; s4.box = box(stable,e4,r);
+    ExtCandidate s4 = s3; s4.box = box(stable,e4,r); s4.overhead = false;
     float a{},b{};
     assert(segmentBox(s4.box,eye,{feet.x,feet.y,feet.z+80},0,a,b));
     s4.hit = mix(eye,{feet.x,feet.y,feet.z+80},a);
@@ -197,7 +264,7 @@ void classify() {
     // Floor first, then size, both traced.
     ExtCandidate floor = s3; floor.floorContact = true;
     assert(classifyExterior(c,floor,feet,eye.z,false).skip == ExtSkip::floorContact);
-    ExtCandidate shell = s3; shell.box = box(stableHouse,{feet.x,feet.y,feet.z});
+    ExtCandidate shell = s3; shell.box = box(stableHouse,{feet.x,feet.y,feet.z}); // a pick hit it too
     assert(classifyExterior(c,shell,feet,eye.z,false).skip == ExtSkip::large); // the player under a shell's box: still never hidden
     ExtCandidate bridge = s4; bridge.box = box(dragonBridge,{feet.x,feet.y,feet.z+800});
     assert(classifyExterior(c,bridge,feet,eye.z,false).skip == ExtSkip::large);
@@ -214,9 +281,12 @@ void classify() {
     door.rayHit = false; assert(classifyExterior(c,door,feet,eye.z,false).skip == ExtSkip::none);
     ExtCandidate tree; tree.kind = ExtKind::tree; tree.box = box(pine,{feet.x+100,feet.y,feet.z}); tree.rayHit = true;
     assert(classifyExterior(c,tree,feet,eye.z,false).skip == ExtSkip::treesOff);
-    // Mode 2: a tree over the player (canopy box over the column) or pierced above the head.
+    // Mode 2: a tree over the player only when the upward pick hit it (collision fact, review m6;
+    // with no canopy collision this never happens and canopy below decides), or pierced above the head.
     c.mode = 2;
-    assert(classifyExterior(c,tree,feet,eye.z,false).reason == Reason::extCover);
+    assert(classifyExterior(c,tree,feet,eye.z,false).skip == ExtSkip::beside);
+    tree.overhead = true;
+    assert(classifyExterior(c,tree,feet,eye.z,false).reason == Reason::extCover); // trees are never "ground"
     ExtCandidate aside; aside.kind = ExtKind::tree; aside.box = box(smallPine,{feet.x-250,feet.y-250,feet.z}); // round the camera, not over the feet
     assert(classifyExterior(c,aside,feet,eye.z,false).skip == ExtSkip::none); // not on a ray, not over, not pierced: silent
     aside.pierced = piercedByFan(aside.box,eye,exteriorTargets(feet),feet.z);
@@ -228,10 +298,12 @@ void classify() {
     assert(classifyExterior(c,trunk,feet,eye.z,false).skip == ExtSkip::beside);
     ExtCandidate giant = tree; giant.box = box(pine,{feet.x,feet.y,feet.z},identity,1.6f);
     assert(classifyExterior(c,giant,feet,eye.z,false).skip == ExtSkip::large);
-    // Exit hysteresis: a hidden cover stays while the player is within the exit grow.
+    // Exit hysteresis: a hidden cover's box test is 48 looser, but the pick must still hit it.
     const Vec edge{feet.x+(215+30)*std::cos(stableAngle),feet.y-(215+30)*std::sin(stableAngle),feet.z};
     c.mode = 1;
     assert(classifyExterior(c,s3,edge,eye.z,true).reason == Reason::extCover && classifyExterior(c,s3,edge,eye.z,false).skip == ExtSkip::beside);
+    ExtCandidate gone = s3; gone.overhead = false;
+    assert(classifyExterior(c,gone,edge,eye.z,true).skip == ExtSkip::beside); // then the 0.6 s exit dwell restores it
 }
 
 void fan() {
@@ -248,8 +320,9 @@ void fan() {
     assert(nearFan({feet.x+300,feet.y,0},200,feet,eye) && !nearFan({feet.x+800,feet.y+800,0},200,feet,eye));
     assert(!nearFan({nan,0,0},10,feet,eye) && !nearFan(feet,-1,feet,eye));
     // Bound by construction: pieces may only qualify through rays (structures) or
-    // the fan geometry (trees); a full camera-to-target pass is at most 19 x 4 picks.
-    static_assert(extRayTargets*extRaySegments+maxFloorProbes+maxOverhangProbed*openProbeCount <= 117);
+    // the fan geometry (trees). Picks per scan: floor 5 x 2, upward 4, sightline
+    // 19 x 4, and per probed overhang 3 corridor + 3 down, for at most 12.
+    static_assert(maxFloorProbes*2+4+extRayTargets*extRaySegments+maxOverhangProbed*(openProbeCount+downProbeHits) == 162);
 }
 
 void cells() {
@@ -275,14 +348,26 @@ void summary() {
     ExtSummary s;
     s.seconds = 123456.789; s.frame = 9999999999ull; s.cell = 0x0000961B; s.mode = 2; s.hidden = 32; s.tracked = 32; s.maxHidden = 32;
     s.feetZ = -12345.67f; s.eyeZ = -11661.83f; s.restores = 9999999999ull;
-    s.c.scans = s.c.cells = s.c.visited = s.c.rays = s.c.rayHits = s.c.rayNoRef = 9999999999ull;
+    auto& k = s.c;
+    for (auto* v : {&k.scans,&k.cells,&k.visited,&k.rays,&k.rayHits,&k.rayNoRef,&k.rayFailed,&k.rayCap,&k.matched,&k.unmatched,
+        &k.overhead,&k.probed,&k.open,&k.downSame,&k.probeCap,&k.trees,&k.treeTests,&k.hides,&k.gridSkips,&k.visitCap,&k.cap,
+        &k.noWorld,&k.floorFailed}) *v = 9999999999ull;
     for (auto& v : s.c.skips) v = 9999999999ull;
     for (auto& v : s.exits) v = 9999999999ull;
     char line[768]{};
     assert(formatExtSummary(line,sizeof(line),s)); // fits a trace row even with ten-digit counters
     const std::string text(line);
     assert(text.find("event=ext-summary cell=0000961B mode=2 hidden=32") != std::string::npos);
-    assert(text.find("skipBeside=9999999999 feetZ=-12345.67") != std::string::npos && text.find("sample=cumulative") != std::string::npos);
+    assert(text.find("skipBeside=9999999999 skipGround=9999999999 feetZ=-12345.67") != std::string::npos && text.find("sample=cumulative") != std::string::npos);
+    assert(text.find("overhead=9999999999 probed=") != std::string::npos && text.find("floorFailed=9999999999") != std::string::npos);
+    assert(text.size() < 768);
+    assert(extSummaryLines == 7200 && ExtState{}.summaryLines.limit == extSummaryLines);
+    char exits[768]{};
+    assert(formatExtExits(exits,sizeof(exits),s));
+    const std::string second(exits);
+    assert(second.find("event=ext-exits cell=0000961B hidden=32 restores=9999999999 exits=9999999999,") != std::string::npos);
+    char small[32]{};
+    assert(!formatExtExits(small,sizeof(small),s));
     char tiny[32]{};
     assert(!formatExtSummary(tiny,sizeof(tiny),s));
     assert(std::string(extSkipNames[static_cast<std::size_t>(ExtSkip::large)]) == "large");
@@ -292,6 +377,7 @@ int main() {
     settings();
     boxes();
     cover();
+    groundPieces();
     large();
     overhang();
     classify();

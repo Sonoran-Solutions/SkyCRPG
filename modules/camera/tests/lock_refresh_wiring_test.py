@@ -234,7 +234,7 @@ def ext_body(start, end):
 
 assert source.count("fixed::configureExterior(e);") == 1 and source.count("fixed::ExtConfig e;") == 1
 assert gate.index("fixed::configure(") < gate.index("fixed::ExtConfig e;") < gate.index("fixed::configureExterior(e);")
-for key in ("iExteriorSeeThrough", "fExteriorMaxSpan", "iExteriorMaxHidden"):
+for key in ("iExteriorSeeThrough", "fExteriorMaxSpan", "iExteriorMaxHidden", "fExteriorCoverFootprint"):
     assert gate.count('"' + key + '"') == 1, key
 assert "inline void configureExterior(const ExtConfig& requested) {\n    if (!runtime) return;" in ext
 assert spike.count('#include "fixed_spike_ext_policy.h"') == 1 and spike.rstrip().endswith('#include "fixed_spike_ext.h" // wave 2 package "ext": exterior see-through, iExteriorSeeThrough')
@@ -244,7 +244,11 @@ dispatch_hide = "if (hideScanned(r.config.seeThroughMode,parent->IsInteriorCell(
 dispatch_ext = "else if (exteriorScanned(r.ext.config.mode,parent->IsInteriorCell())) { scanExterior(player,parent); traceExteriorSummary(cellId); }"
 dispatch_old = "else if (r.config.seeThroughMode == 1) { restoreAll(Exit::cell); noteExterior(cellId); }"
 assert end_frame.index(dispatch_hide) < end_frame.index(dispatch_ext) < end_frame.index(dispatch_old)
-assert end_frame.index("if (cellId != r.cell) { restoreAll(Exit::cell);") < end_frame.index(dispatch_ext)  # leaving a cell restores first
+# Leaving a cell restores first, except exterior to exterior with the exterior rule on (review m4).
+cell_change = end_frame[end_frame.index("if (cellId != r.cell) {"):end_frame.index(dispatch_hide)]
+assert "if (!keepAcrossCells(r.ext.config.mode,r.cell != 0 && !r.cellInterior,parent && !interiorNow)) restoreAll(Exit::cell);" in cell_change
+assert cell_change.index("restoreAll(Exit::cell);") < cell_change.index("r.cell = cellId; r.cellInterior = interiorNow;")
+assert "constexpr bool keepAcrossCells(unsigned mode,bool wasExterior,bool isExterior) { return mode != 0 && wasExterior && isExterior; }" in ext_policy
 assert "constexpr bool exteriorScanned(unsigned mode,bool interiorCell) { return mode != 0 && !interiorCell; }" in ext_policy
 assert ext.count("scanExterior(player,parent)") == 0 and spike.count("scanExterior(player,parent)") == 1
 # Hides only through the shared table and budget; restores only through the shared release().
@@ -253,6 +257,18 @@ assert ext.count("SetAppCulled(true)") == 1 and "SetAppCulled(false)" not in ext
 assert scan_ext.index("release(slot,Exit::unload)") < scan_ext.index("release(slot,Exit::underfoot)") < \
     scan_ext.index("nearestFirst(due,dueCount);") < scan_ext.index("if (!r.budget.take()) break;") < scan_ext.index("SetAppCulled(true)")
 assert scan_ext.index("if (slot.root->GetAppCulled()) { ++r.totals.foreign;") < scan_ext.index("SetAppCulled(true)")
+# A scan that could not read the grid, the world or the floor claims and hides nothing (review m2).
+assert scan_ext.index("} else if (hits.floorFailed) {") < scan_ext.index("ForEachReference(") < \
+    scan_ext.index("if (!claims) dueCount = 0;") < scan_ext.index("nearestFirst(due,dueCount);")
+assert scan_ext.count("claims = false") == 3
+# Cover is a collision fact; ground-standing pieces never cover (review M1); the summary has its own budget (m5).
+assert "candidate.overhead = listed(hits.over,hits.overCount,ref);" in scan_ext
+assert "const bool cover = x.overhead && covers(x.box,feet,topZ,hiddenNow);" in ext_policy
+assert "if (cover && x.kind == ExtKind::structure && groundStanding(e,feet.z,c.coverFootprint)) return {Reason::none,ExtSkip::ground};" in ext_policy
+assert ext_policy.index("if (largeStructure(") < ext_policy.index("groundStanding(e,feet.z,c.coverFootprint)") < ext_policy.index("if (cover) return {Reason::extCover")
+summary_ext = ext_body("inline void traceExteriorSummary(", "} // namespace")
+assert summary_ext.count("emit(r.ext.summaryLines,line);") == 2 and "hideLines" not in summary_ext
+assert "(r.config.hideTrace ? hideTraceLines+extSummaryLines : 0u)" in spike
 claim_ext = ext_body("inline Hidden* claimExterior(", "inline unsigned exteriorCells(")
 assert claim_ext.index("if (r.tracked >= r.ext.config.maxHidden) {") < claim_ext.index("release(r.hidden[static_cast<std::size_t>(farthest)],Exit::evicted);") < \
     claim_ext.index("return claimSlot(ref,root,base,reach);")
@@ -271,8 +287,21 @@ assert "cell->IsAttached()" in cells_ext and "gridSlot(" in cells_ext and "GetCe
 assert "(TES::GetCell, ID 13322" in ext_policy and "ID 13319 (1A3A00)" in ext_policy
 # Rays: the audited pick slot, the read lock, pointers only compared until the walk.
 rays_ext = ext_body("inline bool castExteriorRays(", "// Every 0.1 s in eligible frames in an exterior cell")
-assert "slots[0x33] != REL::Module::get().base()+0x104be80" in rays_ext
-assert rays_ext.index("if (r.pickRefused) {") < rays_ext.index("RE::BSReadLockGuard lock(world->worldLock);") < rays_ext.index("world->PickObject(ray);")
+# One audit per bhkWorld vtable pointer, shared with the interior castRays, each refusing with its own code (m3).
+audit = spike_body("inline bool pickAudited(const RE::bhkWorld* world) {", "// Sightline rays (camera to player")
+assert "if (slots == r.pickTable) return true;" in audit and "slots[0x33] != REL::Module::get().base()+0x104be80" in audit
+assert audit.index("return false;") < audit.index("r.pickTable = slots;")
+assert spike.count("pickAudited(world)") == 1 and ext.count("pickAudited(world)") == 1 and "pickRefused" not in spike + ext
+interior_rays = spike_body("inline void castRays(", "inline void traceSummary()")
+assert interior_rays.index("if (!pickAudited(world)) {") < interior_rays.index("refuse(Refusal::pickSlot,") < interior_rays.index("RE::BSReadLockGuard")
+assert rays_ext.index("if (!pickAudited(world)) {") < rays_ext.index("ExtRefusal::pickSlot") < rays_ext.index("RE::BSReadLockGuard lock(world->worldLock);") < \
+    rays_ext.index("world->PickObject(ray);")
+assert rays_ext.index("ExtRefusal::world") < rays_ext.index("if (!pickAudited(world))")
+# Order of picks: floor first (a failure stops before anything else), upward, sightline, then probes.
+assert rays_ext.index("for (const auto probe : floorProbes(feet)) {") < rays_ext.index("if (!done) { hits.floorFailed = true; return true; }") < \
+    rays_ext.index("{feet.x,feet.y,feet.z+headClear},{feet.x,feet.y,eye.z},extOverheadHits") < rays_ext.index("for (const auto target : targets) {") < \
+    rays_ext.index("const auto probes = openProbes(feet,hits.top[i]);") < rays_ext.index("const auto down = downProbe(feet,hits.top[i]);")
+assert "if (!done) downSame = true;" in rays_ext and "hits.open[i] = openBelow(probes,clear,down.valid,downSame);" in rays_ext
 assert "->Get" not in rays_ext.replace("controller->GetCollisionFilterInfo", "").replace("parent->GetbhkWorld", "").replace("player->GetCharController", "")
 assert "clear[k] = !hit && !failed;" in rays_ext  # a refused probe is never read as open
 for forbidden in ("BSFixedString", "GetMenu(", "IsMenuOpen(", "RequestCameraControl", "AddTask(", "AllocTrampoline", "write_vfunc", "safe_write"):
@@ -285,4 +314,6 @@ assert not set(ext_codes.values()) & set(codes.values())
 for name in ext_codes:
     assert ext.count("ExtRefusal::" + name) == 1, name
 print("PASS ext wiring: off equals wave 1 (FCS-31 branch); in-gate INI; ray-hit structures and fan-bounded trees only; "
-      "shared table, caps and restores; grid trusted by the player's cell; own FCS-62..69 codes, one site each")
+      "cover needs the upward pick and never takes ground-standing pieces; floor first, no claims on a failed floor; "
+      "per-vtable pick audit; exterior-to-exterior keep; shared table, caps and restores; grid trusted by the player's cell; "
+      "own FCS-62..69 codes, one site each")
