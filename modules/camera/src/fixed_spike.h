@@ -4,6 +4,7 @@
 // spike adapter (DYL-217): nothing is allocated, installed or evaluated unless
 // [FixedCameraSpike] bEnabled=1. SmoothCam stays the only transform writer.
 #include "fixed_spike_policy.h"
+#include "fixed_spike_ext_policy.h" // wave 2 package "ext"
 #include <memory>
 
 namespace skycrpg::camera::fixed {
@@ -69,7 +70,8 @@ struct Runtime {
     unsigned skipNext{};
     float lastCut{},lastFeet{};
     double nextScan{},nextSummary{};
-    bool exteriorNoted{};
+    bool exteriorNoted{}; // one exterior notice per cell entry: FCS-31 (wave 1) or ext-active (wave 2 ext)
+    ExtState ext;         // wave 2 package "ext": fixed_spike_ext.h
     // Lifecycle.
     std::atomic_uint requests{};
     RE::FormID cell{};
@@ -577,6 +579,10 @@ inline void traceRig(bool eligible) {
     if (formatRig(line,sizeof(line),s)) emit(r.rigLines,line);
 }
 
+// ---- wave 2 package "ext": defined in fixed_spike_ext.h (included at the end) --
+inline void scanExterior(RE::PlayerCharacter* player,RE::TESObjectCELL* parent);
+inline void traceExteriorSummary(RE::FormID cellId);
+
 // ---- frame bracket ----------------------------------------------------------
 // serviceCameraCall, before the camera update: nothing is eligible until this
 // frame's ThirdPersonState update says so.
@@ -635,6 +641,7 @@ inline void endFrame() {
     const Vec viewer{rendered.x,rendered.y,rendered.z},eye{position.x,position.y,position.z+eyeLift};
     publishView(viewer,eye);
     if (hideScanned(r.config.seeThroughMode,parent->IsInteriorCell())) { scanHide(player,parent); traceSummary(); }
+    else if (exteriorScanned(r.ext.config.mode,parent->IsInteriorCell())) { scanExterior(player,parent); traceExteriorSummary(cellId); } // wave 2 ext
     else if (r.config.seeThroughMode == 1) { restoreAll(Exit::cell); noteExterior(cellId); }
     if (r.config.rigTrace) measureRig(camera->cameraRoot->world);
     traceRig(true);
@@ -760,3 +767,4 @@ inline void configure(const Config& requested,const Settings& base,int cursorKey
     note("enabled: disposable P5.5-02 wave 1 spike; hooks pending data load");
 }
 } // namespace skycrpg::camera::fixed
+#include "fixed_spike_ext.h" // wave 2 package "ext": exterior see-through, iExteriorSeeThrough

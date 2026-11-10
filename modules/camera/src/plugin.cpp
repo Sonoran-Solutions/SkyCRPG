@@ -343,6 +343,12 @@ void loadSettings() {
         f.hideTrace = flag("FixedCameraSpike","iHideTrace",0);
         fixed::configure(f,settings,cursorSettings.enabled ? cursorSettings.toggleKey : -1,
             std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera_FixedSpike.log",log,thinGoal,fixedPreCollision,fixedCause);
+        // Wave 2 package "ext": exterior see-through, default off (0 = wave 1 behaviour outdoors).
+        fixed::ExtConfig e;
+        e.mode = number("FixedCameraSpike","iExteriorSeeThrough",e.mode);
+        e.maxSpan = number("FixedCameraSpike","fExteriorMaxSpan",e.maxSpan);
+        e.maxHidden = number("FixedCameraSpike","iExteriorMaxHidden",e.maxHidden);
+        fixed::configureExterior(e);
     }
     if (badSettings) log("Invalid Camera INI values: defaults or safe bounds applied; unsupported schema disables policy.");
     if (!s.enabled) log("Camera disabled in INI; native camera controls remain available.");

@@ -116,7 +116,7 @@ for helper in ("inline bool engaged() { return runtime && ",
                "inline void install(bool prerequisites,bool service) {\n    if (!runtime) return;"):
     assert helper in spike, helper
 unguarded = ("fixed::engaged()", "fixed::dropSnaps()", "fixed::lifecycle(", "fixed::install(", "fixed::Exit::", "fixed::Config f;",
-             "fixed::configure(", "fixed::runtime")
+             "fixed::configure(", "fixed::runtime", "fixed::ExtConfig e;", "fixed::configureExterior(")
 guarded_blocks = (body("    if (rig) {", "    previousLook(state,filtered);"),
                   body("        if (fixed::engaged()) {", "        // Deliberate F6 can return from its OWN first-person request"))
 for line in source.splitlines():
@@ -219,3 +219,70 @@ for name in codes:
     assert (spike + source).count("Refusal::" + name) == 1, name  # one site per code
 print("PASS spike on wiring: frame-scoped suppression; shared caster detour; sealed gateway; caller-gated room hook; hook-thread isolation; "
       "interior-only radius-bounded nearest-first hide; one site per refusal code")
+
+# Wave 2 package "ext" (exterior see-through). With iExteriorSeeThrough 0 the
+# exterior branch is never taken and the wave 1 FCS-31 branch runs unchanged;
+# with it on, candidates come only from ray hits (and, mode 2, fan-crossed
+# trees), hides go through the shared table, caps and restore causes.
+ext = (Path(__file__).resolve().parents[1] / "src/fixed_spike_ext.h").read_text()
+ext_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_ext_policy.h").read_text()
+
+
+def ext_body(start, end):
+    return ext[ext.index(start):ext.index(end, ext.index(start))]
+
+
+assert source.count("fixed::configureExterior(e);") == 1 and source.count("fixed::ExtConfig e;") == 1
+assert gate.index("fixed::configure(") < gate.index("fixed::ExtConfig e;") < gate.index("fixed::configureExterior(e);")
+for key in ("iExteriorSeeThrough", "fExteriorMaxSpan", "iExteriorMaxHidden"):
+    assert gate.count('"' + key + '"') == 1, key
+assert "inline void configureExterior(const ExtConfig& requested) {\n    if (!runtime) return;" in ext
+assert spike.count('#include "fixed_spike_ext_policy.h"') == 1 and spike.rstrip().endswith('#include "fixed_spike_ext.h" // wave 2 package "ext": exterior see-through, iExteriorSeeThrough')
+assert "    ExtState ext;" in spike_body("struct Runtime {", "// Process lifetime, like the thin runtime")
+# Dispatch: interior hide first, the exterior scan only when configured, the wave 1 notice otherwise.
+dispatch_hide = "if (hideScanned(r.config.seeThroughMode,parent->IsInteriorCell())) { scanHide(player,parent); traceSummary(); }"
+dispatch_ext = "else if (exteriorScanned(r.ext.config.mode,parent->IsInteriorCell())) { scanExterior(player,parent); traceExteriorSummary(cellId); }"
+dispatch_old = "else if (r.config.seeThroughMode == 1) { restoreAll(Exit::cell); noteExterior(cellId); }"
+assert end_frame.index(dispatch_hide) < end_frame.index(dispatch_ext) < end_frame.index(dispatch_old)
+assert end_frame.index("if (cellId != r.cell) { restoreAll(Exit::cell);") < end_frame.index(dispatch_ext)  # leaving a cell restores first
+assert "constexpr bool exteriorScanned(unsigned mode,bool interiorCell) { return mode != 0 && !interiorCell; }" in ext_policy
+assert ext.count("scanExterior(player,parent)") == 0 and spike.count("scanExterior(player,parent)") == 1
+# Hides only through the shared table and budget; restores only through the shared release().
+scan_ext = ext_body("inline void scanExterior(", "inline void traceExteriorSummary(")
+assert ext.count("SetAppCulled(true)") == 1 and "SetAppCulled(false)" not in ext and "SetAppCulled(true)" in scan_ext
+assert scan_ext.index("release(slot,Exit::unload)") < scan_ext.index("release(slot,Exit::underfoot)") < \
+    scan_ext.index("nearestFirst(due,dueCount);") < scan_ext.index("if (!r.budget.take()) break;") < scan_ext.index("SetAppCulled(true)")
+assert scan_ext.index("if (slot.root->GetAppCulled()) { ++r.totals.foreign;") < scan_ext.index("SetAppCulled(true)")
+claim_ext = ext_body("inline Hidden* claimExterior(", "inline unsigned exteriorCells(")
+assert claim_ext.index("if (r.tracked >= r.ext.config.maxHidden) {") < claim_ext.index("release(r.hidden[static_cast<std::size_t>(farthest)],Exit::evicted);") < \
+    claim_ext.index("return claimSlot(ref,root,base,reach);")
+# Candidates: a structure must be a ray hit; only trees are taken from the walk, and only near the fan.
+assert scan_ext.index("const bool onRay = at >= 0;") < scan_ext.index("else if (x.config.mode < 2) return Each::kContinue;") < \
+    scan_ext.index("if (!onRay && kind != ExtKind::tree) return Each::kContinue;") < scan_ext.index("nearFan(centre,bound.radius,feet,eye)")
+assert "if (x.kind == ExtKind::structure && !x.rayHit) return {};" in ext_policy
+assert scan_ext.count("ForEachReference(") == 1 and ext.count("ForEachReference(") == 1
+assert "if (++visited > maxVisited) { ++c.visitCap; full = true; return Each::kStop; }" in scan_ext
+assert scan_ext.index("x.gridMisses = cellCount ? 0u : x.gridMisses+1u;") < scan_ext.index("if (x.gridMisses >= gridRefuseScans)") < \
+    scan_ext.index("ExtRefusal::grid")  # a one-scan border mismatch is counted, not refused
+# Cells: the loaded grid, trusted only when it holds the player's own cell at its computed slot.
+cells_ext = ext_body("inline unsigned exteriorCells(", "// What one scan's picks found.")
+assert cells_ext.index("tes->interiorCell") < cells_ext.index("!= parent) return 0;") < cells_ext.index("cells[count++] = parent;")
+assert "cell->IsAttached()" in cells_ext and "gridSlot(" in cells_ext and "GetCell(" in cells_ext
+assert "(TES::GetCell, ID 13322" in ext_policy and "ID 13319 (1A3A00)" in ext_policy
+# Rays: the audited pick slot, the read lock, pointers only compared until the walk.
+rays_ext = ext_body("inline bool castExteriorRays(", "// Every 0.1 s in eligible frames in an exterior cell")
+assert "slots[0x33] != REL::Module::get().base()+0x104be80" in rays_ext
+assert rays_ext.index("if (r.pickRefused) {") < rays_ext.index("RE::BSReadLockGuard lock(world->worldLock);") < rays_ext.index("world->PickObject(ray);")
+assert "->Get" not in rays_ext.replace("controller->GetCollisionFilterInfo", "").replace("parent->GetbhkWorld", "").replace("player->GetCharController", "")
+assert "clear[k] = !hit && !failed;" in rays_ext  # a refused probe is never read as open
+for forbidden in ("BSFixedString", "GetMenu(", "IsMenuOpen(", "RequestCameraControl", "AddTask(", "AllocTrampoline", "write_vfunc", "safe_write"):
+    assert forbidden not in ext, forbidden
+# Exterior refusal codes: own range above the base 60/61, own mask, one site each.
+ext_codes = dict(re.findall(r"(\w+) = (\d+)", ext_policy[ext_policy.index("enum class ExtRefusal : unsigned {"):]
+                            .split("};")[0]))
+assert ext_codes and all(62 <= int(v) <= 69 for v in ext_codes.values()) and len(set(ext_codes.values())) == len(ext_codes)
+assert not set(ext_codes.values()) & set(codes.values())
+for name in ext_codes:
+    assert ext.count("ExtRefusal::" + name) == 1, name
+print("PASS ext wiring: off equals wave 1 (FCS-31 branch); in-gate INI; ray-hit structures and fan-bounded trees only; "
+      "shared table, caps and restores; grid trusted by the player's cell; own FCS-62..69 codes, one site each")

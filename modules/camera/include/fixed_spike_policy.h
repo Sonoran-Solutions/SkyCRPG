@@ -306,9 +306,13 @@ inline bool formatRoom(char* out,std::size_t size,const RoomSample& s) {
 
 // ---- rule-based hide -------------------------------------------------------
 enum class Kind { excluded, architecture, object };
-enum class Reason { none, aboveCut, onRay };
+// extCover / extOverhang / extCanopy: wave 2 package "ext" (fixed_spike_ext_policy.h).
+enum class Reason { none, aboveCut, onRay, extCover, extOverhang, extCanopy };
 enum class Skip { none, kind, noBounds, floorContact, floorSpan };
-constexpr const char* reasonName(Reason r) { return r == Reason::aboveCut ? "above-cut" : r == Reason::onRay ? "on-ray" : "none"; }
+constexpr const char* reasonName(Reason r) {
+    return r == Reason::aboveCut ? "above-cut" : r == Reason::onRay ? "on-ray" : r == Reason::extCover ? "ext-cover" :
+        r == Reason::extOverhang ? "ext-overhang" : r == Reason::extCanopy ? "ext-canopy" : "none";
+}
 constexpr const char* skipName(Skip s) {
     return s == Skip::kind ? "kind" : s == Skip::noBounds ? "no-bounds" : s == Skip::floorContact ? "floor-contact" :
         s == Skip::floorSpan ? "floor-span" : "none";
