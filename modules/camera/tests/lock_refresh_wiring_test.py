@@ -234,7 +234,7 @@ def ext_body(start, end):
 
 assert source.count("fixed::configureExterior(e);") == 1 and source.count("fixed::ExtConfig e;") == 1
 assert gate.index("fixed::configure(") < gate.index("fixed::ExtConfig e;") < gate.index("fixed::configureExterior(e);")
-for key in ("iExteriorSeeThrough", "fExteriorMaxSpan", "iExteriorMaxHidden", "fExteriorCoverFootprint"):
+for key in ("iExteriorSeeThrough", "fExteriorMaxSpan", "iExteriorMaxHidden", "fExteriorCoverFootprint", "fExteriorDownStart"):
     assert gate.count('"' + key + '"') == 1, key
 assert "inline void configureExterior(const ExtConfig& requested) {\n    if (!runtime) return;" in ext
 assert spike.count('#include "fixed_spike_ext_policy.h"') == 1 and spike.rstrip().endswith('#include "fixed_spike_ext.h" // wave 2 package "ext": exterior see-through, iExteriorSeeThrough')
@@ -264,8 +264,16 @@ assert scan_ext.count("claims = false") == 3
 # Cover is a collision fact; ground-standing pieces never cover (review M1); the summary has its own budget (m5).
 assert "candidate.overhead = listed(hits.over,hits.overCount,ref);" in scan_ext
 assert "const bool cover = x.overhead && covers(x.box,feet,topZ,hiddenNow);" in ext_policy
-assert "if (cover && x.kind == ExtKind::structure && groundStanding(e,feet.z,c.coverFootprint)) return {Reason::none,ExtSkip::ground};" in ext_policy
-assert ext_policy.index("if (largeStructure(") < ext_policy.index("groundStanding(e,feet.z,c.coverFootprint)") < ext_policy.index("if (cover) return {Reason::extCover")
+# Both hide branches are guarded by the footprint and the kit rule (re-review M1), before either can return a hide.
+guard_fp = "if ((cover || overhang) && x.kind == ExtKind::structure && groundStanding(e,feet.z,c.coverFootprint))"
+guard_kit = "if ((cover || overhang) && x.kind == ExtKind::structure && x.kit && e.minZ <= feet.z+floorReach)"
+assert guard_fp in ext_policy and guard_kit in ext_policy
+assert ext_policy.index("if (largeStructure(") < ext_policy.index(guard_fp) < ext_policy.index(guard_kit) < \
+    ext_policy.index("if (cover) return {Reason::extCover") < ext_policy.index("if (overhang) return {Reason::extOverhang")
+assert "candidate.kit = kind == ExtKind::structure && kitModel(modelOf(base));" in scan_ext
+# The down pick start is the INI key (n1); floor contact band asserted with the pick order below (n2).
+assert "downProbe(feet,hits.top[i],x.config.downStart)" in ext
+assert '"fExteriorDownStart"' in gate
 summary_ext = ext_body("inline void traceExteriorSummary(", "} // namespace")
 assert summary_ext.count("emit(r.ext.summaryLines,line);") == 2 and "hideLines" not in summary_ext
 assert "(r.config.hideTrace ? hideTraceLines+extSummaryLines : 0u)" in spike
@@ -298,10 +306,12 @@ assert rays_ext.index("if (!pickAudited(world)) {") < rays_ext.index("ExtRefusal
     rays_ext.index("world->PickObject(ray);")
 assert rays_ext.index("ExtRefusal::world") < rays_ext.index("if (!pickAudited(world))")
 # Order of picks: floor first (a failure stops before anything else), upward, sightline, then probes.
-assert rays_ext.index("for (const auto probe : floorProbes(feet)) {") < rays_ext.index("if (!done) { hits.floorFailed = true; return true; }") < \
+assert rays_ext.index("const auto floorStarts = floorProbes(feet);") < rays_ext.index("if (!done) { hits.floorFailed = true; return true; }") < \
     rays_ext.index("{feet.x,feet.y,feet.z+headClear},{feet.x,feet.y,eye.z},extOverheadHits") < rays_ext.index("for (const auto target : targets) {") < \
-    rays_ext.index("const auto probes = openProbes(feet,hits.top[i]);") < rays_ext.index("const auto down = downProbe(feet,hits.top[i]);")
-assert "if (!done) downSame = true;" in rays_ext and "hits.open[i] = openBelow(probes,clear,down.valid,downSame);" in rays_ext
+    rays_ext.index("const auto probes = openProbes(feet,hits.top[i]);") < rays_ext.index("const auto down = downProbe(feet,hits.top[i],x.config.downStart);")
+assert "if (!done) downSame = true;" in rays_ext and "floorClaimHit(k)" in rays_ext and "floorNearHit(k,point.z,feet.z)" in rays_ext
+assert "candidate.floorContact = listed(hits.floor,hits.floorCount,ref);" in scan_ext  # claims: under the feet only
+assert "listed(hits.nearby,hits.nearbyCount,live.get())) { release(slot,Exit::underfoot);" in scan_ext  # at-once restore: near band and "hits.open[i] = openBelow(probes,clear,down.valid,downSame);" in rays_ext
 assert "->Get" not in rays_ext.replace("controller->GetCollisionFilterInfo", "").replace("parent->GetbhkWorld", "").replace("player->GetCharController", "")
 assert "clear[k] = !hit && !failed;" in rays_ext  # a refused probe is never read as open
 for forbidden in ("BSFixedString", "GetMenu(", "IsMenuOpen(", "RequestCameraControl", "AddTask(", "AllocTrampoline", "write_vfunc", "safe_write"):
@@ -314,6 +324,7 @@ assert not set(ext_codes.values()) & set(codes.values())
 for name in ext_codes:
     assert ext.count("ExtRefusal::" + name) == 1, name
 print("PASS ext wiring: off equals wave 1 (FCS-31 branch); in-gate INI; ray-hit structures and fan-bounded trees only; "
-      "cover needs the upward pick and never takes ground-standing pieces; floor first, no claims on a failed floor; "
+      "cover needs the upward pick; cover and overhang never take ground-standing or ground-level kit pieces; "
+      "floor first, no claims on a failed floor; "
       "per-vtable pick audit; exterior-to-exterior keep; shared table, caps and restores; grid trusted by the player's cell; "
       "own FCS-62..69 codes, one site each")

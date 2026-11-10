@@ -17,6 +17,8 @@
 // scan of a radius outdoors; large one-piece structures are skipped and traced.
 #include "fixed_spike_policy.h"
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 namespace skycrpg::camera::fixed {
 // ---- [FixedCameraSpike] exterior keys --------------------------------------
@@ -25,7 +27,8 @@ struct ExtConfig {
     unsigned mode{};          // 0 off (wave 1: nothing hidden outdoors), 1 structures over or just ahead of the player, 2 also trees
     float maxSpan{1024.0f};   // a structure this wide in either local horizontal span is one large structure: skipped
     unsigned maxHidden{16};   // exterior references hidden at once, nearest kept
-    float coverFootprint{256.0f}; // cover never takes a piece reaching the feet's level with both spans at least this (owner, 2026-11-10)
+    float coverFootprint{256.0f}; // cover or overhang never takes a piece reaching the feet's level with both spans at least this (owner, 2026-11-10)
+    float downStart{16.0f};   // the open-below down pick starts this far below the highest sightline hit
 };
 inline ExtConfig validateExterior(ExtConfig c,bool* adjusted = nullptr) {
     const ExtConfig in = c;
@@ -33,8 +36,9 @@ inline ExtConfig validateExterior(ExtConfig c,bool* adjusted = nullptr) {
     c.maxSpan = bounded(c.maxSpan,1024.0f,512.0f,2048.0f);
     c.maxHidden = std::clamp(c.maxHidden,1u,extMaxHiddenLimit);
     c.coverFootprint = bounded(c.coverFootprint,256.0f,128.0f,1024.0f);
+    c.downStart = bounded(c.downStart,16.0f,4.0f,128.0f);
     if (adjusted) *adjusted = c.mode != in.mode || c.maxSpan != in.maxSpan || c.maxHidden != in.maxHidden ||
-        c.coverFootprint != in.coverFootprint;
+        c.coverFootprint != in.coverFootprint || c.downStart != in.downStart;
     return c;
 }
 // Mode 0 never reaches the exterior scan: the wave 1 branch (FCS-31 notice) runs.
@@ -160,9 +164,9 @@ inline bool overhangHit(Vec hit,Vec feet,bool hiddenNow) {
 //    and shifted sideways by probeSpread), every one clear of any collision; a
 //    wall, a post line, a building's walls under a roof, a rock face or a hill
 //    in that corridor closes it;
-// 2. a pick down from downStart below the hit to headClear over the feet that
+// 2. a pick down from `start` (fExteriorDownStart) below the hit to headClear over the feet that
 //    does not meet the same reference (a wall or column continuing under the hit).
-constexpr float probeHeight = 144.0f, probeBeyond = 32.0f, probeSpread = 32.0f, probeMinLength = 16.0f, downStart = 16.0f;
+constexpr float probeHeight = 144.0f, probeBeyond = 32.0f, probeSpread = 32.0f, probeMinLength = 16.0f;
 constexpr unsigned openProbeCount = 3, maxOverhangProbed = 12, downProbeHits = 3;
 struct Probe { bool valid{}; Vec from{},to{}; };
 inline std::array<Probe,openProbeCount> openProbes(Vec feet,Vec hit) {
@@ -178,9 +182,12 @@ inline std::array<Probe,openProbeCount> openProbes(Vec feet,Vec hit) {
     }
     return out;
 }
-inline Probe downProbe(Vec feet,Vec hit) {
-    if (!finite(feet) || !finite(hit) || !(hit.z-downStart > feet.z+headClear)) return {};
-    return {true,{hit.x,hit.y,hit.z-downStart},{hit.x,hit.y,feet.z+headClear}};
+// `start` is fExteriorDownStart: re-review n1 predicts that at 16 the pick meets
+// the stable's own roof slab 17 to 25 units below the hit; the key lets one run
+// compare 16 and 48 without a rebuild (`downSame` against `probed` decides).
+inline Probe downProbe(Vec feet,Vec hit,float start) {
+    if (!finite(feet) || !finite(hit) || !std::isfinite(start) || !(hit.z-start > feet.z+headClear)) return {};
+    return {true,{hit.x,hit.y,hit.z-start},{hit.x,hit.y,feet.z+headClear}};
 }
 // clear[i]: corridor probe i reached its end without any hit (a failed pick is
 // not clear). downSame: the down pick met the same reference. Fail closed: with
@@ -196,8 +203,39 @@ inline bool openBelow(const std::array<Probe,openProbeCount>& probes,const std::
     }
     return any;
 }
-enum class ExtSkip { none, kind, treesOff, noBounds, floorContact, large, beside, ground, count };
-constexpr std::array extSkipNames{"none","kind","trees-off","no-bounds","floor-contact","large","beside","ground"};
+enum class ExtSkip { none, kind, treesOff, noBounds, floorContact, large, beside, ground, groundKit, count };
+constexpr std::array extSkipNames{"none","kind","trees-off","no-bounds","floor-contact","large","beside","ground","ground-kit"};
+// Dungeon and landscape kit (re-review M1, fix 2): a model path whose first
+// folder, after an optional "meshes\" and an optional "DLC0n\", is Dungeons or
+// Landscape. Halls, facades, cave walls and rocks: at the player's ground level
+// they are the enclosure, never a roof. Case and slash direction are ignored.
+inline bool kitModel(std::string_view path) {
+    const auto lower = [](char ch) { return ch >= 'A' && ch <= 'Z' ? static_cast<char>(ch-'A'+'a') : ch; };
+    const auto folder = [&](std::string_view& rest) {
+        std::string out;
+        std::size_t i = 0;
+        for (;i < rest.size() && rest[i] != '\\' && rest[i] != '/';++i) out.push_back(lower(rest[i]));
+        rest = i < rest.size() ? rest.substr(i+1) : std::string_view{};
+        return out;
+    };
+    std::string_view rest = path;
+    std::string first = folder(rest);
+    if (first == "meshes") first = folder(rest);
+    if (first.size() > 3 && first.compare(0,3,"dlc") == 0) first = folder(rest);
+    return first == "dungeons" || first == "landscape";
+}
+// Floor contact (re-review n2). Only the probe under the feet (probe 0)
+// refuses a claim: that is the piece the player stands on. The outer probes
+// (96 units out) met an ImperialTentSmall's own collision 4 and 8 units above
+// the feet in the reviewer's collision model, so with them a tent the player
+// stands inside could never open. An outer hit within floorBand of the feet's
+// height still restores an already hidden piece at once when it stops
+// qualifying (the player is about to step onto it).
+constexpr float floorBand = 24.0f;
+constexpr bool floorClaimHit(unsigned probe) { return probe == 0; }
+constexpr bool floorNearHit(unsigned probe,float hitZ,float feetZ) {
+    return probe == 0 || (hitZ-feetZ <= floorBand && feetZ-hitZ <= floorBand);
+}
 static_assert(extSkipNames.size() == static_cast<std::size_t>(ExtSkip::count));
 struct ExtCandidate {
     ExtKind kind{ExtKind::excluded};
@@ -208,6 +246,7 @@ struct ExtCandidate {
     bool overhead{};     // the upward pick from headClear over the feet to the camera height hit it
     Vec hit{std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::quiet_NaN()};
     bool openBelow{};    // openBelow() for `hit` (highest sightline hit) was true
+    bool kit{};          // kitModel() of the base's model path
 };
 struct ExtVerdict { Reason reason{Reason::none}; ExtSkip skip{ExtSkip::none}; };
 // Order: what is not a candidate at all returns {} (no trace); then floor and
@@ -229,7 +268,12 @@ inline ExtVerdict classifyExterior(const ExtConfig& c,const ExtCandidate& x,Vec 
     const Extent e = obbExtent(x.box);
     if (largeStructure(x.kind,e,c.maxSpan)) return {Reason::none,ExtSkip::large};
     // Trees are never shells: a pine's box always reaches the ground 950 wide.
-    if (cover && x.kind == ExtKind::structure && groundStanding(e,feet.z,c.coverFootprint)) return {Reason::none,ExtSkip::ground};
+    // Both hide branches are guarded (re-review M1: a doorway's opening let the
+    // overhang branch take whole facades and halls at their own doors).
+    if ((cover || overhang) && x.kind == ExtKind::structure && groundStanding(e,feet.z,c.coverFootprint))
+        return {Reason::none,ExtSkip::ground};
+    if ((cover || overhang) && x.kind == ExtKind::structure && x.kit && e.minZ <= feet.z+floorReach)
+        return {Reason::none,ExtSkip::groundKit};
     if (cover) return {Reason::extCover,ExtSkip::none};
     if (overhang) return {Reason::extOverhang,ExtSkip::none};
     if (canopy) return {Reason::extCanopy,ExtSkip::none};
@@ -345,35 +389,37 @@ struct ExtSummary {
     unsigned long long frame{};
     unsigned cell{},mode{},hidden{},tracked{},maxHidden{};
     float feetZ{},eyeZ{};
-    unsigned long long restores{};
+    unsigned long long restores{},conflicts{},foreign{};
     ExtCounters c{};
     std::array<unsigned long long,static_cast<std::size_t>(Exit::count)> exits{};
 };
-// ext-summary: the exterior counters; ext-exits (formatExtExits): restores and
-// the thirteen restore causes in Exit order (exitNames). Both cumulative.
+// ext-summary: the exterior counters; ext-exits (formatExtExits): the cap,
+// gridSkips, restores, conflicts, foreign roots and the thirteen restore causes
+// in Exit order (exitNames). Both cumulative; each fits one 768-byte trace row.
 inline bool formatExtSummary(char* out,std::size_t size,const ExtSummary& s) {
     const auto& c = s.c;
     const auto skip = [&](ExtSkip k) { return c.skips[static_cast<std::size_t>(k)]; };
     const int written = std::snprintf(out,size,
-        "FixedHide t=%.3f frame=%llu event=ext-summary cell=%08X mode=%u hidden=%u tracked=%u maxHidden=%u scans=%llu "
+        "FixedHide t=%.3f frame=%llu event=ext-summary cell=%08X mode=%u hidden=%u tracked=%u scans=%llu "
         "cells=%llu visited=%llu rays=%llu rayHits=%llu rayNoRef=%llu rayFailed=%llu rayCap=%llu matched=%llu unmatched=%llu "
         "overhead=%llu probed=%llu open=%llu downSame=%llu probeCap=%llu trees=%llu treeTests=%llu hides=%llu "
-        "extCap=%llu gridSkips=%llu visitCap=%llu noWorld=%llu floorFailed=%llu skipKind=%llu skipTreesOff=%llu skipNoBounds=%llu "
-        "skipFloorContact=%llu skipLarge=%llu skipBeside=%llu skipGround=%llu feetZ=%.2f eyeZ=%.2f sample=cumulative",
-        s.seconds,s.frame,s.cell,s.mode,s.hidden,s.tracked,s.maxHidden,c.scans,
+        "extCap=%llu visitCap=%llu noWorld=%llu floorFailed=%llu skipKind=%llu skipTreesOff=%llu skipNoBounds=%llu "
+        "skipFloorContact=%llu skipLarge=%llu skipBeside=%llu skipGround=%llu skipGroundKit=%llu feetZ=%.2f eyeZ=%.2f sample=cumulative",
+        s.seconds,s.frame,s.cell,s.mode,s.hidden,s.tracked,c.scans,
         c.cells,c.visited,c.rays,c.rayHits,c.rayNoRef,c.rayFailed,c.rayCap,c.matched,c.unmatched,
         c.overhead,c.probed,c.open,c.downSame,c.probeCap,c.trees,c.treeTests,c.hides,
-        c.cap,c.gridSkips,c.visitCap,c.noWorld,c.floorFailed,
+        c.cap,c.visitCap,c.noWorld,c.floorFailed,
         skip(ExtSkip::kind),skip(ExtSkip::treesOff),skip(ExtSkip::noBounds),skip(ExtSkip::floorContact),skip(ExtSkip::large),
-        skip(ExtSkip::beside),skip(ExtSkip::ground),static_cast<double>(s.feetZ),static_cast<double>(s.eyeZ));
+        skip(ExtSkip::beside),skip(ExtSkip::ground),skip(ExtSkip::groundKit),static_cast<double>(s.feetZ),static_cast<double>(s.eyeZ));
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
-// Second line of the same second: restores and the thirteen restore causes, cumulative.
+// Second line of the same second: restores, restore conflicts (FCS-60 cases),
+// foreign roots (already app-culled, never taken) and the thirteen restore causes, cumulative.
 inline bool formatExtExits(char* out,std::size_t size,const ExtSummary& s) {
     const int written = std::snprintf(out,size,
-        "FixedHide t=%.3f frame=%llu event=ext-exits cell=%08X hidden=%u restores=%llu "
+        "FixedHide t=%.3f frame=%llu event=ext-exits cell=%08X hidden=%u maxHidden=%u gridSkips=%llu restores=%llu conflicts=%llu foreign=%llu "
         "exits=%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu sample=cumulative",
-        s.seconds,s.frame,s.cell,s.hidden,s.restores,
+        s.seconds,s.frame,s.cell,s.hidden,s.maxHidden,s.c.gridSkips,s.restores,s.conflicts,s.foreign,
         s.exits[0],s.exits[1],s.exits[2],s.exits[3],s.exits[4],s.exits[5],s.exits[6],s.exits[7],s.exits[8],s.exits[9],s.exits[10],
         s.exits[11],s.exits[12]);
     return written > 0 && static_cast<std::size_t>(written) < size;

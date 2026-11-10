@@ -78,6 +78,12 @@ void settings() {
     c = {}; c.coverFootprint = 5; assert(validateExterior(c,&adjusted).coverFootprint == 128.0f && adjusted);
     c = {}; c.coverFootprint = nan; assert(validateExterior(c).coverFootprint == 256.0f);
     c = {}; c.coverFootprint = 200; assert(validateExterior(c,&adjusted).coverFootprint == 200.0f && !adjusted);
+    // fExteriorDownStart (re-review n1): default 16, 4..128.
+    assert(defaults.downStart == 16.0f);
+    c = {}; c.downStart = 1; assert(validateExterior(c,&adjusted).downStart == 4.0f && adjusted);
+    c = {}; c.downStart = 500; assert(validateExterior(c).downStart == 128.0f);
+    c = {}; c.downStart = nan; assert(validateExterior(c).downStart == 16.0f);
+    c = {}; c.downStart = 48; assert(validateExterior(c,&adjusted).downStart == 48.0f && !adjusted);
     // Cell changes (review m4): only exterior to exterior with the rule on keeps hides.
     assert(keepAcrossCells(1,true,true) && keepAcrossCells(2,true,true));
     assert(!keepAcrossCells(0,true,true) && !keepAcrossCells(1,false,true) && !keepAcrossCells(1,true,false) && !keepAcrossCells(1,false,false));
@@ -227,9 +233,13 @@ void overhang() {
     }
     assert(near(probes[0].from.y,feet.y) && near(probes[1].from.y-feet.y,probeSpread,.01f) && near(probes[2].from.y-feet.y,-probeSpread,.01f));
     // Down pick: from 16 below the hit to 160 over the feet; none when the hit is not above that.
-    const auto down = downProbe(feet,{feet.x+200,feet.y,feet.z+300});
-    assert(down.valid && near(down.from.z,feet.z+300-downStart) && near(down.to.z,feet.z+headClear) && near(down.from.x,down.to.x));
-    assert(!downProbe(feet,{feet.x,feet.y,feet.z+170}).valid && !downProbe(feet,{nan,0,0}).valid);
+    const auto down = downProbe(feet,{feet.x+200,feet.y,feet.z+300},ExtConfig{}.downStart);
+    assert(down.valid && near(down.from.z,feet.z+300-16) && near(down.to.z,feet.z+headClear) && near(down.from.x,down.to.x));
+    assert(!downProbe(feet,{feet.x,feet.y,feet.z+170},16).valid && !downProbe(feet,{nan,0,0},16).valid);
+    // fExteriorDownStart (re-review n1): a deeper start, e.g. 48, clears a roof slab 17-25 thick.
+    const auto deep = downProbe(feet,{feet.x+200,feet.y,feet.z+300},48);
+    assert(deep.valid && near(deep.from.z,feet.z+252) && !downProbe(feet,{feet.x,feet.y,feet.z+200},48).valid);
+    assert(!downProbe(feet,{feet.x,feet.y,feet.z+300},nan).valid);
     // Open only when every corridor probe is clear and the down pick did not meet the same reference.
     assert(openBelow(probes,{true,true,true},true,false) && openBelow(probes,{true,true,true},false,false));
     assert(!openBelow(probes,{false,true,true},true,false) && !openBelow(probes,{true,true,false},true,false));
@@ -250,6 +260,77 @@ void overhang() {
     std::array<bool,openProbeCount> clearOfWall{};
     for (unsigned k = 0;k < openProbeCount;++k) clearOfWall[k] = !segmentBox(endWall,across[k].from,across[k].to,0,a2,b2);
     assert(!clearOfWall[0] && !openBelow(across,clearOfWall,true,false));
+}
+
+// Re-review M1 (overhang branch) and fix 2 (kit model rule). Sizes as placed
+// from the reviewer's master parse; the boxes are placed relative to the feet.
+void kitAndOverhang() {
+    // Model-path rule.
+    for (const char* kit : {"Dungeons\\Dwemer\\Facades\\DweFacadeLiftDown01.nif","Dungeons\\Nordic\\SmHalls\\NorHallSm1wayExSm01.nif",
+             "DLC01\\Dungeons\\Castle\\CasSmHall1way01.nif","dlc02/landscape/rocks/x.nif","Landscape\\Rocks\\RockL04.nif",
+             "meshes\\Dungeons\\Caves\\Green\\SmallHall\\CaveGHallDeadEnd01.nif","DUNGEONS\\x.nif"})
+        assert(kitModel(kit));
+    for (const char* other : {"Architecture\\WhiteRun\\WRBuildings\\WRStableStr01.nif","Architecture\\Solitude\\Farms\\SFarmPorch03.nif",
+             "Clutter\\Stockade\\StockadeScaffoldBase0Sided02.nif","LandscapeX\\a.nif","DLC01\\Architecture\\a.nif","","dlc\\Dungeons\\a.nif","Dungeons"})
+        assert(kitModel(other) == (std::string(other) == "Dungeons"));
+    // Floor: only the probe under the feet refuses claims (n2: a small tent's own collision meets the
+    // outer probes 4-8 units above the feet); outer hits near the feet's height only restore at once.
+    for (unsigned k = 0;k < maxFloorProbes;++k) assert(floorClaimHit(k) == (k == 0));
+    assert(floorNearHit(0,feet.z+40,feet.z) && floorNearHit(0,feet.z-150,feet.z));
+    assert(floorNearHit(1,feet.z+7.8f,feet.z) && floorNearHit(2,feet.z+3.8f,feet.z) && floorNearHit(4,feet.z-24,feet.z));
+    assert(!floorNearHit(2,feet.z+30,feet.z) && !floorNearHit(3,feet.z-40,feet.z) && !floorNearHit(1,feet.z+120,feet.z));
+    // ImperialTentSmall 0x0D95CB (328x218x187), the player at its centre: the upward pick meets the canvas
+    // (+164..+172 in the reviewer's collision model), no centre-probe contact: cover at the 256 footprint.
+    ExtCandidate tent; tent.kind = ExtKind::structure; tent.rayHit = true; tent.overhead = true;
+    tent.box = box({-164,-109,-4,164,109,183},{feet.x,feet.y,feet.z});
+    assert(classifyExterior(ExtConfig{1},tent,feet,eye.z,false).reason == Reason::extCover);
+    tent.floorContact = true; // what the outer probes used to make it
+    assert(classifyExterior(ExtConfig{1},tent,feet,eye.z,false).skip == ExtSkip::floorContact);
+    ExtConfig c; c.mode = 1;
+    const auto piece = [&](float sx,float sy,float sz,float bottom,float ahead,bool kit) {
+        ExtCandidate x; x.kind = ExtKind::structure; x.rayHit = true; x.kit = kit; x.openBelow = true;
+        const float hx = sx/2,hy = sy/2;
+        x.box = box({static_cast<int>(-hx),static_cast<int>(-hy),0,static_cast<int>(hx),static_cast<int>(hy),static_cast<int>(sz)},
+            {feet.x+ahead,feet.y,feet.z+bottom});
+        x.hit = {feet.x+ahead-hx,feet.y,feet.z+bottom+sz}; // its top edge toward the player
+        return x;
+    };
+    // DweFacadeLiftDown01ice 000A2D70 512x512x960, bottom 112 below the feet, from its own door:
+    // the doorway let the overhang branch through in e71a03d; the footprint now guards overhang too.
+    auto lift = piece(512,512,960,-112,300,true);
+    lift.hit = {feet.x+150,feet.y,feet.z+300};
+    assert(overhangHit(lift.hit,feet,false) && !covers(lift.box,feet,feet.z+100,false));
+    assert(classifyExterior(c,lift,feet,eye.z,false).skip == ExtSkip::ground);
+    lift.kit = false;
+    assert(classifyExterior(c,lift,feet,eye.z,false).skip == ExtSkip::ground); // fix 1 alone suffices here
+    // DweFacadeHallSm1way01 (230x384x328 as placed) at its door: narrower than the footprint, so only the kit rule stops it.
+    auto hall = piece(230,384,328,0,250,true);
+    hall.hit = {feet.x+150,feet.y,feet.z+300};
+    assert(classifyExterior(c,hall,feet,eye.z,false).skip == ExtSkip::groundKit);
+    hall.overhead = true;
+    assert(classifyExterior(c,hall,feet,eye.z,false).skip == ExtSkip::groundKit); // cover is guarded the same way
+    // The same box from Architecture\ (a porch or stall) still opens.
+    auto porch = hall; porch.kit = false; porch.overhead = false;
+    assert(classifyExterior(c,porch,feet,eye.z,false).reason == Reason::extOverhang);
+    // A dungeon bridge or platform lifted over the player (bottom 250 above the feet) still opens.
+    auto bridge = piece(230,600,80,250,150,true);
+    bridge.hit = {feet.x+100,feet.y,feet.z+330};
+    assert(classifyExterior(c,bridge,feet,eye.z,false).reason == Reason::extOverhang);
+    // A Landscape rock over a cave mouth (bottom 200 above the feet) opens; the same rock on the ground does not.
+    auto rock = piece(244,321,330,200,120,true);
+    rock.hit = {feet.x+60,feet.y,feet.z+530};
+    assert(classifyExterior(c,rock,feet,eye.z,false).reason == Reason::extOverhang);
+    auto groundRock = piece(244,321,530,0,150,true);
+    groundRock.hit = {feet.x+60,feet.y,feet.z+530};
+    assert(classifyExterior(c,groundRock,feet,eye.z,false).skip == ExtSkip::groundKit);
+    // The stable is Architecture\: cover and overhang unchanged.
+    ExtCandidate s3; s3.kind = ExtKind::structure; s3.rayHit = true; s3.overhead = true; s3.box = box(stable,e3,rotZ(stableAngle));
+    assert(classifyExterior(c,s3,feet,eye.z,false).reason == Reason::extCover);
+    // Trees are never kit-guarded or ground (mode 2 tree cover with the pick).
+    c.mode = 2;
+    ExtCandidate tree; tree.kind = ExtKind::tree; tree.rayHit = true; tree.overhead = true; tree.kit = true;
+    tree.box = box(pine,{feet.x+100,feet.y,feet.z});
+    assert(classifyExterior(c,tree,feet,eye.z,false).reason == Reason::extCover);
 }
 
 void classify() {
@@ -367,16 +448,20 @@ void summary() {
     assert(formatExtSummary(line,sizeof(line),s)); // fits a trace row even with ten-digit counters
     const std::string text(line);
     assert(text.find("event=ext-summary cell=0000961B mode=2 hidden=32") != std::string::npos);
-    assert(text.find("skipBeside=9999999999 skipGround=9999999999 feetZ=-12345.67") != std::string::npos && text.find("sample=cumulative") != std::string::npos);
+    assert(text.find("skipBeside=9999999999 skipGround=9999999999 skipGroundKit=9999999999 feetZ=-12345.67") != std::string::npos && text.find("sample=cumulative") != std::string::npos);
     assert(text.find("overhead=9999999999 probed=") != std::string::npos && text.find("floorFailed=9999999999") != std::string::npos);
     assert(text.size() < 768);
     assert(extSummaryLines == 7200 && ExtState{}.summaryLines.limit == extSummaryLines);
     char exits[768]{};
     assert(formatExtExits(exits,sizeof(exits),s));
     const std::string second(exits);
-    assert(second.find("event=ext-exits cell=0000961B hidden=32 restores=9999999999 exits=9999999999,") != std::string::npos);
+    assert(second.find("event=ext-exits cell=0000961B hidden=32 maxHidden=32 gridSkips=9999999999 restores=9999999999 ") != std::string::npos);
     char small[32]{};
     assert(!formatExtExits(small,sizeof(small),s));
+    s.conflicts = 9999999999ull; s.foreign = 9999999999ull;
+    assert(formatExtExits(exits,sizeof(exits),s));
+    assert(std::string(exits).find("restores=9999999999 conflicts=9999999999 foreign=9999999999 exits=9999999999,") != std::string::npos);
+    assert(std::string(exits).size() < 768);
     char tiny[32]{};
     assert(!formatExtSummary(tiny,sizeof(tiny),s));
     assert(std::string(extSkipNames[static_cast<std::size_t>(ExtSkip::large)]) == "large");
@@ -387,6 +472,7 @@ int main() {
     boxes();
     cover();
     groundPieces();
+    kitAndOverhang();
     large();
     overhang();
     classify();
