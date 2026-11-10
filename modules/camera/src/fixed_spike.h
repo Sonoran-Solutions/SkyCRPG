@@ -369,7 +369,7 @@ inline void scanHide(RE::PlayerCharacter* player,RE::TESObjectCELL* parent) {
             // or below the feet, it comes back in this scan, not after the dwell.
             bool sphere = false;
             const auto liveBase = live->GetBaseObject();
-            if (liveBase && restoreAtOnce(extentOf(slot.root.get(),liveBase,sphere),listed(floorRefs,floorCount,live.get()),feet.z)) {
+            if (liveBase && restoreAtOnce(extentOf(slot.root.get(),liveBase,sphere),listed(floorRefs,floorCount,live.get()),feet.z,slot.reason == Reason::aboveCut)) {
                 release(slot,Exit::underfoot); continue;
             }
         }

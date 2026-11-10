@@ -140,7 +140,7 @@ Every 0.1 s in eligible frames in an interior cell, on the main thread (`scanHid
    - **Above the cut:** the reference's *whole* base bounds box is at or above `cutZ` (any candidate kind) **and** its 3D bound reaches within `fHideRadius` of the feet in the ground plane (`groundReach` = distance to the world-bound centre minus its radius, height ignored).
    - **On a ray:** architecture only, hit by a sightline ray; refused when it is a floor-probe hit (`floor-contact`), when it has no usable box (`no-bounds`), or when its box reaches within 16 units of the feet (or lower) and both horizontal spans are at least 200 units (`floor-span`).
 5. **Dwell and caps:** a reference must qualify for 0.2 s before it is hidden and fail for 0.6 s before it is restored; a hidden above-cut reference stays hidden until it is 24 units below the cut or 64 units outside the radius; at most `iHideMaxPerFrame` hides per scan and `iHideMaxTotal` tracked (hard maximum 256). **Both caps are nearest-first:** the references ready in a scan are hidden in order of ground reach, and when the table is full a candidate strictly nearer than the farthest tracked reference takes its slot (that one is restored at once, cause `evicted`). A root that is already app-culled is never taken.
-   - **Underfoot:** a hidden reference that stops qualifying and is now a floor-probe hit, or whose box bottom is at or below the feet, is restored in that same scan (cause `underfoot`), without the exit dwell.
+   - **Underfoot:** a hidden reference that stops qualifying and is now a floor-probe hit, or an above-cut hide whose box bottom is at or below the feet, is restored in that same scan (cause `underfoot`), without the exit dwell. On-ray hides keep the exit dwell unless a floor probe hits them (re-review of 29a1a1b: applying the box test to on-ray walls, which stand on the player's floor, made a wall missed by one scan at the edge of the ray fan flicker).
 6. **Hide** = `SetAppCulled(true)` on the reference's 3D root (**Source:** CommonLib `NiAVObject.cpp:162-165`, a write of flag bit 0 at `+F4`; the native caster tests the same bit at `5577EB`; the DYL-199 `app_culled` run hid a beam and restored it six times in game). The slot keeps a strong pointer to that root.
 
 ### Radius, walking away, climbing
@@ -178,7 +178,7 @@ Hidden state is undone at once by `restoreAll(cause)`, and only our own write is
 | `special` | any other handed-off policy state (mount, swim, killmove, furniture, bleedout, beast form, scripted camera) |
 | `hook-silent` | the `update` hook did not run and none of the above explains it; restored after 3 frames |
 | `expired` | the reference no longer qualifies (below the cut margin, outside the radius margin, off the rays) after the exit dwell |
-| `underfoot` | a hidden reference that no longer qualifies is under the player or at or below the feet: restored in that scan |
+| `underfoot` | a hidden reference that no longer qualifies is under the player, or is an above-cut hide now at or below the feet: restored in that scan |
 | `evicted` | the table was full and a strictly nearer candidate took the slot |
 
 Events on other threads only post a flag; the main-thread bracket acts on it. Nothing persists: the flag lives on runtime 3D, no reference flag, collision layer, navmesh or actor collision is touched, nothing is deleted.

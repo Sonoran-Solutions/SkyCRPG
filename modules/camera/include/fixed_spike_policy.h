@@ -372,11 +372,13 @@ inline Verdict classify(Kind kind,const Extent& box,bool boxIsSphere,bool rayHit
     if (box.minZ <= feetZ+floorReach && (std::min)(box.spanX,box.spanY) >= floorFootprint) return {Reason::none,Skip::floorSpan};
     return {Reason::onRay,Skip::none};
 }
-// A hidden piece that the player now stands on, or whose bottom is at or below
-// the feet (after a climb, a teleport or a load), is restored at once: the exit
-// dwell must never leave the player on an island.
-inline bool restoreAtOnce(const Extent& box,bool floorContact,float feetZ) {
-    return floorContact || (box.valid && box.minZ <= feetZ);
+// A hidden piece that the player now stands on, or an above-cut hide whose
+// bottom is at or below the feet (after a climb, a teleport or a load), is
+// restored at once: the exit dwell must never leave the player on an island.
+// On-ray hides stand on the player's floor, so only floor contact restores them
+// early; otherwise a wall missed by one scan at the fan's edge would flicker.
+inline bool restoreAtOnce(const Extent& box,bool floorContact,float feetZ,bool aboveCut) {
+    return floorContact || (aboveCut && box.valid && box.minZ <= feetZ);
 }
 constexpr double hideEnterSeconds = .2, hideExitSeconds = .6, hideScanSeconds = .1;
 constexpr double dwellSlack = 1e-6; // scan times are sums of doubles

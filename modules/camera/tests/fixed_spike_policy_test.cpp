@@ -339,10 +339,11 @@ void hide() {
     const Extent loftWall = worldExtent({-8,-128,0},{8,106,249},upright,1,320);        // WRIntLoftWallRoof01, bottom 320
     const Extent roofTile = worldExtent({-128,-128,491},{128,128,513},upright,1,64);   // WRIntCeilMid01, bottom 555
     assert(classify(Kind::architecture,loftTile,false,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::aboveCut); // from the ground floor
-    assert(restoreAtOnce(loftTile,false,loftFeet) && restoreAtOnce(loftWall,false,loftFeet) && !restoreAtOnce(roofTile,false,loftFeet));
-    assert(restoreAtOnce(roofTile,true,loftFeet));          // a floor probe hit it: the player stands on it
-    assert(!restoreAtOnce(Extent{},false,loftFeet));        // no box: only a probe can say
-    assert(!restoreAtOnce(loftTile,false,feet));            // still overhead from the ground floor
+    assert(restoreAtOnce(loftTile,false,loftFeet,true) && restoreAtOnce(loftWall,false,loftFeet,true) && !restoreAtOnce(roofTile,false,loftFeet,true));
+    assert(restoreAtOnce(roofTile,true,loftFeet,true) && restoreAtOnce(roofTile,true,loftFeet,false)); // a floor probe hit it: the player stands on it
+    assert(!restoreAtOnce(loftWall,false,loftFeet,false));  // an on-ray wall on the player's floor keeps its exit dwell
+    assert(!restoreAtOnce(Extent{},false,loftFeet,true));   // no box: only a probe can say
+    assert(!restoreAtOnce(loftTile,false,feet,true));       // still overhead from the ground floor
     // And the other direction: dropping back down, the loft is above the cut again.
     assert(classify(Kind::architecture,loftTile,false,false,false,cut,feet,0.0f,384.0f,false).reason == Reason::aboveCut);
     assert(std::string(skipName(Skip::floorSpan)) == "floor-span" && std::string(skipName(Skip::floorContact)) == "floor-contact");
