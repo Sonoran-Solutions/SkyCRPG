@@ -39,7 +39,7 @@ struct Config {
     unsigned roomSeedMode{};   // 0 vanilla, 1 player's room, 2 sightline, 3 radius
     float roomSeedRadius{1024.0f};
     bool roomTrace{};
-    unsigned seeThroughMode{}; // 0 none, 1 hide
+    unsigned seeThroughMode{}; // 0 none, 1 hide, 2 clip (wave 2: fixed_spike_clip_policy.h)
     float cutHeight{160.0f};
     float hideRadius{384.0f};  // above-cut hides only within this ground-plane reach of the feet
     unsigned hidePerFrame{16};
@@ -69,7 +69,7 @@ inline Config validate(Config c,const Settings& base,int cursorKey,bool* adjuste
     if (!snapKeyAllowed(c.snapRightKey,base,cursorKey) || (c.snapRightKey != -1 && c.snapRightKey == c.snapLeftKey)) c.snapRightKey = -1;
     if (c.roomSeedMode > 3) c.roomSeedMode = 0;
     c.roomSeedRadius = bounded(c.roomSeedRadius,1024.0f,0.0f,8192.0f);
-    if (c.seeThroughMode > 1) c.seeThroughMode = 0;
+    if (c.seeThroughMode > 2) c.seeThroughMode = 0;
     c.cutHeight = bounded(c.cutHeight,160.0f,64.0f,1024.0f);
     c.hideRadius = bounded(c.hideRadius,384.0f,128.0f,2048.0f);
     c.hidePerFrame = std::clamp(c.hidePerFrame,1u,64u);

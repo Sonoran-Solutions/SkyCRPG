@@ -116,7 +116,7 @@ for helper in ("inline bool engaged() { return runtime && ",
                "inline void install(bool prerequisites,bool service) {\n    if (!runtime) return;"):
     assert helper in spike, helper
 unguarded = ("fixed::engaged()", "fixed::dropSnaps()", "fixed::lifecycle(", "fixed::install(", "fixed::Exit::", "fixed::Config f;",
-             "fixed::configure(", "fixed::runtime")
+             "fixed::configure(", "fixed::runtime", "fixed::clip::Config k;")
 guarded_blocks = (body("    if (rig) {", "    previousLook(state,filtered);"),
                   body("        if (fixed::engaged()) {", "        // Deliberate F6 can return from its OWN first-person request"))
 for line in source.splitlines():
@@ -219,3 +219,147 @@ for name in codes:
     assert (spike + source).count("Refusal::" + name) == 1, name  # one site per code
 print("PASS spike on wiring: frame-scoped suppression; shared caster detour; sealed gateway; caller-gated room hook; hook-thread isolation; "
       "interior-only radius-bounded nearest-first hide; one site per refusal code")
+
+# Wave 2 clip (DYL-217): iSeeThroughMode=2. Off, or in any other mode, there is
+# no clip runtime and every entry point is a no-op; on, the plane is published
+# by the main thread, a pass is changed only between its own SetupGeometry and
+# RestoreGeometry, and every engine write is undone by the code that made it.
+clip = (Path(__file__).resolve().parents[1] / "src/fixed_spike_clip.h").read_text()
+clip_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_clip_policy.h").read_text()
+ini = (Path(__file__).resolve().parents[1] / "config/SkyCRPG_Camera.ini").read_text()
+
+
+def clip_body(start, end):
+    return clip[clip.index(start):clip.index(end, clip.index(start))]
+
+
+assert clip.count("runtime = new Runtime;") == 1 and "runtime = new Runtime;" in clip_body("inline void configure(", "} // namespace")
+assert spike.count("clip::configure(") == 1 and "clip::configure(" not in source and source.count("fixed::clip::") == 1
+configure_spike = spike_body("inline void configure(", "} // namespace")
+assert configure_spike.index("r.config = validate(requested,base,cursorKey,&adjusted);") < \
+    configure_spike.index("if (clip::clipMode(r.config.seeThroughMode))\n        clip::configure(clipRequested,logger,") < \
+    configure_spike.index("r.traceReady = r.writer.start(tracePath,rows);")
+assert "constexpr bool clipMode(unsigned seeThroughMode) { return seeThroughMode == 2; }" in clip_policy
+assert "if (c.seeThroughMode > 2) c.seeThroughMode = 0;" in (Path(__file__).resolve().parents[1] / "include/fixed_spike_policy.h").read_text()
+for helper in ("inline void install(std::uintptr_t base) {\n    if (!runtime) return;",
+               "inline void deactivate() {\n    if (runtime) ",
+               "inline void frameStart() {\n    if (!runtime) return;",
+               "inline void publish(Vec eye,Vec forward,Vec feet,bool interiorCell,unsigned long long frame,double now) {\n    if (!runtime) return;",
+               "inline void trace(double now) {\n    if (!runtime) return;",
+               "inline bool tracing() { return runtime && ",
+               "inline const char* status() { return !runtime ? "):
+    assert helper in clip, helper
+for key in ("fClipHeight", "fClipMargin", "fClipCorridor", "fClipFloorBand", "iClipMaxPerFrame", "iClipShaders", "iClipExterior", "iClipTrace"):
+    assert gate.count('"FixedCameraSpike","' + key + '"') == 1 and ("\n" + key + "=") in ini, key
+assert "\niSeeThroughMode=0\n" in ini and "\niClipExterior=0\n" in ini and "\niClipTrace=0\n" in ini
+# The spike's bracket drives it: any thread may only switch it off.
+assert "clip::deactivate(); // wave 2 clip" in spike_body("inline void lifecycle(Exit cause) {", "// Plain placed references only.")
+begin_frame = spike_body("inline void beginFrame() {", "inline void clearFrame() {")
+assert begin_frame.index("!thin::onMain()) return;") < begin_frame.index("clip::frameStart();")
+assert end_frame.index("clip::deactivate(); clip::trace(r.now);") < end_frame.index("r.previousEligible = false;") < \
+    end_frame.index("publishView(viewer,eye);") < end_frame.index("clip::publish(viewer,") < end_frame.index("clip::trace(r.now);\n}")
+assert spike.count("clip::publish(") == 1 and spike.count("clip::frameStart(") == 1 and spike.count("clip::install(") == 1
+install_spike = spike_body("inline void install(bool prerequisites,bool service) {", "// loadSettings, only when")
+assert install_spike.index("Refusal::service") < install_spike.index("clip::install(base);") < install_spike.index("r.active.store(true,")
+# kDataLoaded only asks; the guards and every write run in the main-thread frame service.
+assert "commit" not in clip_body("inline void install(std::uintptr_t base) {", "// Any thread.")
+assert clip.count("commit();") == 1 and "if (r.pending.exchange(false,std::memory_order_acq_rel)) commit();" in \
+    clip_body("inline void frameStart() {", "// Main thread, after the camera update")
+commit = clip_body("inline void commit() {", "// ---- called by the spike's frame bracket")
+assert commit.index("foreignRenderer()") < commit.index("addressGuard(base)") < commit.index("tableGuard(base,r.config.shaders)") < \
+    commit.index("buildGateway(target,base,gateway)") < commit.index("r.upload = gateway;") < commit.index("REL::safe_write(target,") < \
+    commit.index("hookClass<0>(); hookClass<1>(); hookClass<2>();") < commit.index("r.installed = true;")
+assert commit.count("return;") == 4 and clip.count("REL::safe_write(") == 1 and clip.count("write_vfunc(") == 2
+gateway = clip_body("inline unsigned buildGateway(", "template<std::size_t Index>\nvoid hookClass()")
+assert gateway.index("uploadPrologue.size()) != 0) return 1;") < gateway.index("RtlLookupFunctionEntry(target,&image,nullptr)") < \
+    gateway.index("PAGE_READWRITE)") < gateway.index("std::memcpy(gateway,uploadPrologue.data(),uploadCopied);") < \
+    gateway.index("VirtualProtect(gateway,64,PAGE_EXECUTE_READ,&previous)") < gateway.index("FlushInstructionCache(GetCurrentProcess(),gateway,") < \
+    gateway.index("out = reinterpret_cast<Upload>(gateway);")
+assert "PAGE_EXECUTE_READWRITE" not in clip and "AllocTrampoline" not in clip
+hook_class = clip_body("template<std::size_t Index>\nvoid hookClass()", "// Main thread, inside the camera frame service")
+assert hook_class.index("r.setup[Index] = ") < hook_class.index("r.restore[Index] = ") < hook_class.index("write_vfunc(restoreSlot,") < \
+    hook_class.index("write_vfunc(setupSlot,")
+guards = clip_body("inline unsigned addressGuard(", "inline unsigned buildGateway(")
+assert "REL::ID(data[i].id).address() != base+data[i].rva" in guards and "REL::ID(shaderClasses[i].table.id).address() != base+shaderClasses[i].table.rva" in guards
+assert "slots[setupSlot] != base+c.setupRva" in guards and "slots[restoreSlot] != base+c.restoreRva" in guards and guards.count("std::memcmp(") == 2
+# The audited numbers the guards compare against (binary audit in the evidence file).
+for fact in ("stateAddress{388819,0x20cfc00}", "uploadAddress{77258,0x100ae80}", "rendererAddress{411393,0x3331f40}",
+             "gateAddress{411490,0x3336400}", "biasAddress{411359,0x3330200}", "uploadExtent{0x100ae80,0x100b03c}",
+             '{"lighting",{255053,0x1b47420},0x1549550,0x154a900,', '{"utility",{255302,0x1b4ab58},0x15673f0,0x15689c0,',
+             '{"effect",{255194,0x1b48ab0},0x1557090,0x1557f50,', "setupSlot = 6, restoreSlot = 7", "dirtyViewport = 0x2",
+             "stateFlags = 0x0, viewportMinDepth = 0x80, viewportMaxDepth = 0x84, depthBiasMode = 0xa0, posAdjust = 0x35c, camera = 0x380",
+             "dirtyDepthBias = 0x40",
+             "passGeometry = 0x10", "objectParent = 0x30, objectBound = 0xe4, objectUser = 0xf8", "geometrySkin = 0x130",
+             "depthTarget = 0x38, currentVertexShader = 0x348", "shaderCodeSize = 0x10, shaderCode = 0x68",
+             "previousPosAdjust = 0x368", "uploadedFirst = 0x30, uploadedSecond = 0x130, uploadedSize = 0xc0"):
+    assert fact in clip_policy, fact
+# Hooks: the engine function always runs exactly once; a pass is considered only
+# after its own SetupGeometry and only while a snapshot is active.
+setup_hook = clip_body("std::uintptr_t hookSetup(", "template<std::size_t Index>\nstd::uintptr_t hookRestore(")
+assert setup_hook.count("r.setup[Index](shader,pass,flags,extra)") == 1 and setup_hook.index("fault(Fault::setup)") < \
+    setup_hook.index("r.setup[Index](shader,pass,flags,extra)") < setup_hook.index("r.active.load(std::memory_order_acquire)) consider(pass,Index);")
+restore_hook = clip_body("std::uintptr_t hookRestore(", "// Every engine upload of the per-frame buffer")
+assert restore_hook.count("r.restore[Index](shader,pass,flags,extra)") == 1 and \
+    restore_hook.index("r.restore[Index](shader,pass,flags,extra)") < restore_hook.index("if (thin::onMain()) finish();") < \
+    restore_hook.index("else offMainCall();")
+upload_hook = clip_body("inline std::uintptr_t hookUpload(", "// ---- install")
+assert upload_hook.count("r.upload(renderer,flags,third,fourth)") == 1 and upload_hook.index("fault(Fault::upload)") < \
+    upload_hook.index("r.upload(renderer,flags,third,fourth)") < upload_hook.index("if (r.active.load(std::memory_order_acquire)) offMainCall();") < \
+    upload_hook.index("else r.epochStale.store(true,std::memory_order_release);") < upload_hook.index("r.epochStale.store(false,") < \
+    upload_hook.index("e.known = *r.gate == 1;") < upload_hook.index("std::memcpy(e.camera.data(),")
+off_branch = upload_hook[upload_hook.index("if (!main) {"):upload_hook.index("r.epochStale.store(false,")]
+assert "return result;" in off_branch and not any(touch in off_branch for touch in ("r.epoch.", "auto& e", "peek", "poke", "r.window", "r.state", "logger"))
+# Off the main thread nothing but atomics is touched, and nothing is logged.
+off_main = clip_body("inline void offMainCall() {", "// A pass in a view the plan cannot be used for.")
+assert off_main.count(";") == 2 and "runtime->offMain.fetch_add(1ull,std::memory_order_relaxed);" in off_main and \
+    "runtime->epochStale.store(true,std::memory_order_release);" in off_main
+for engine in ("logger", "refuse(", "window", "latch", "state", "peek", "poke", "auto& r"):
+    assert engine not in off_main, engine
+consider = clip_body("inline void consider(void* pass,std::size_t shaderClass) {", "// ---- hooks")
+assert consider.index("r.latched.load(") < consider.index("if (!thin::onMain()) { offMainCall(); return; }") < consider.index("++r.window.passes;") < \
+    consider.index("if (r.opened.load(std::memory_order_relaxed)) return;") < consider.index("if (r.epochStale.exchange(false,std::memory_order_acq_rel)) e.known = false;") < consider.index("if (!e.known)") < consider.index("evaluate(cameraOf(e),*e.view,thin::seconds())") < \
+    consider.index("if (e.plan.reject != Reject::none)") < consider.index("peek<const std::uint8_t*>(pass,offset::passGeometry)") < \
+    consider.index("reach(e.plan,*e.view,bound,") < consider.index("ownerSkip(geometry,*e.view)") < consider.index("if (skip == Skip::none && !shaderReads()) skip = Skip::shader;") < \
+    consider.index("apply(e.plan,shaderClass);")
+owner = clip_body("inline Skip ownerSkip(", "// Whether the vertex shader bound for this pass")
+assert "hop < maxOwnerHops" in owner and "RE::FormType::ActorCharacter" in owner and "kindOf(ref,form)" in owner and "extentOf(" in owner
+# One clipped pass: every refusal is decided before the first engine write; the
+# state matrices are put back as soon as the upload returns; the depth range is
+# the only thing left changed while the pass draws.
+shader_reads = clip_body("inline bool shaderReads() {", "// A pass of a hooked shader class")
+assert "peek<const std::uint8_t*>(r.state,offset::currentVertexShader)" in shader_reads and \
+    "readsViewProjection(shader+offset::shaderCode,peek<std::uint32_t>(shader,offset::shaderCodeSize))" in shader_reads
+apply_clip = clip_body("inline void apply(const Plan& plan,std::size_t shaderClass) {", "// The reference that owns a geometry")
+first_write = apply_clip.index("poke(camera,zColumn(i,row),plan.columns[i][row]);")
+assert apply_clip.index("biasOf(peek<std::uint32_t>(r.state,offset::depthBiasMode),r.bias)") < \
+    apply_clip.index("if (*r.gate != 1) why = Reject::gate;") < apply_clip.index("else if (drifted()) why = Reject::drift;") < \
+    apply_clip.index("else if (!bias) why = Reject::bias;") < apply_clip.index("flushedRange(biasDirty,cameraMin,") < \
+    apply_clip.index("if (why != Reject::none) { rejectPass(why); return; }") < apply_clip.index("if (!r.budget.take())") < first_write < \
+    apply_clip.index("r.upload(r.renderer,r.epoch.flags,0,0);") < \
+    apply_clip.index("poke(camera,zColumn(i,row),peek<float>(r.epoch.camera.data(),zColumn(i,row)));") < \
+    apply_clip.index("r.applied = {cameraMin,biasDirty ? cameraMin : viewportMin,*minDepth};") < apply_clip.index("poke(camera,offset::depthRange,*minDepth);") < \
+    apply_clip.index("r.opened.store(true,")
+assert apply_clip.count("return;") == 2 and "poke(" not in apply_clip[:first_write]
+assert clip.count("poke(camera,zColumn(") == 2 and clip.count("r.upload(") == 3 and clip.count("r.opened.store(true,") == 1
+finish = clip_body("inline void finish() {", "inline void fault(Fault where) {")
+assert finish.index("r.upload(r.renderer,r.epoch.flags,0,0);") < finish.index("restoreDepth();") < finish.index("r.opened.store(false,")
+restore_depth = clip_body("inline void restoreDepth() {", "// RestoreGeometry of the clipped pass has run")
+assert restore_depth.count("ownWrite(") == 2 and "r.applied.depthMin" in restore_depth and "r.applied.viewportMin" in restore_depth and \
+    "|dirtyViewport" in restore_depth
+fault = clip_body("inline void fault(Fault where) {", "// The engine's last upload must still describe the state")
+assert fault.index("finish();") < fault.index("latch();") < fault.index("refuse(Refusal::bracket,text);")
+assert clip.count("fault(Fault::") == 3 and "fault(Fault::frame)" in clip_body("inline void frameStart() {", "// Main thread, after the camera update")
+publish = clip_body("inline void publish(", "inline void trace(double now) {")
+assert publish.index("r.installed && !r.latched.load(") < publish.index("cellAllowed(interiorCell,r.config.exterior)") < \
+    publish.index("makeView(r.config,eye,forward,feet,frame,now)") < publish.index("r.view.store(") < publish.index("r.budget.frame();") < \
+    publish.index("r.active.store(true,")
+assert clip.count("r.active.store(true,") == 1
+for forbidden in ("BSFixedString", "GetMenu(", "IsMenuOpen(", "RequestCameraControl", "AddTask(", "SetAppCulled", "PlayerCharacter", "PlayerCamera"):
+    assert forbidden not in clip, forbidden
+clip_codes = dict(re.findall(r"(\w+) = (\d+)", clip_policy[clip_policy.index("enum class Refusal : unsigned {"):clip_policy.index("};", clip_policy.index("enum class Refusal : unsigned {"))]))
+assert len(clip_codes) == 8 and sorted(int(value) for value in clip_codes.values()) == list(range(42, 50))
+assert not set(clip_codes.values()) & set(codes.values())  # FCS-40 and FCS-41 stay with the wave 1 snap keys
+for name in clip_codes:
+    assert clip.count("Refusal::" + name) == 1, name  # one site per code
+print("PASS clip wiring: no runtime outside mode 2; install deferred to the main-thread frame; guarded gateway and vtable slots; "
+      "pass-scoped clip with all refusals before the first write; own-write restore; off-thread calls touch only atomics; one site per FCS-42..49")

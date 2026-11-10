@@ -4,6 +4,7 @@
 // spike adapter (DYL-217): nothing is allocated, installed or evaluated unless
 // [FixedCameraSpike] bEnabled=1. SmoothCam stays the only transform writer.
 #include "fixed_spike_policy.h"
+#include "fixed_spike_clip.h" // wave 2 clip: iSeeThroughMode=2
 #include <memory>
 
 namespace skycrpg::camera::fixed {
@@ -76,6 +77,7 @@ struct Runtime {
     // Trace.
     TraceWriter writer;
     LineBudget rigLines{rigTraceLines},roomLines{roomTraceLines},hideLines{hideTraceLines};
+    LineBudget clipLines{clip::traceLines}; // wave 2 clip
     double nextRig{},nextRoom{};
 };
 // Process lifetime, like the thin runtime: hidden roots and the trace worker
@@ -148,6 +150,7 @@ inline void lifecycle(Exit cause) {
     if (!runtime) return;
     requestRestore(cause);
     runtime->roomActive.store(false,std::memory_order_release);
+    clip::deactivate(); // wave 2 clip
     if (runtime->active.load(std::memory_order_acquire) && thin::onMain()) restoreAll(cause);
 }
 // Plain placed references only. Light references are left out on purpose: the
@@ -585,6 +588,7 @@ inline void beginFrame() {
     if (!r.active.load(std::memory_order_acquire) || !thin::onMain()) return;
     r.frameEligible = r.frameSeen = false;
     ++r.frame;
+    clip::frameStart(); // wave 2 clip: pending install, a pass left open, an off-thread call
 }
 // ThirdPersonState update hook entry: a second, unbracketed camera update
 // (callers 746A79 and 9969F5) starts from "not eligible" too.
@@ -623,6 +627,7 @@ inline void endFrame() {
         const Exit cause = static_cast<Exit>(r.causeNow(r.frameSeen ? static_cast<int>(r.frameState) : -1));
         r.silentFrames = cause == Exit::hookSilent ? r.silentFrames+1u : 0u;
         r.roomActive.store(false,std::memory_order_release);
+        clip::deactivate(); clip::trace(r.now); // wave 2 clip
         dropSnaps();
         if (restoreNow(cause,r.silentFrames)) restoreAll(cause);
         traceRig(false);
@@ -640,6 +645,10 @@ inline void endFrame() {
     traceRig(true);
     r.previousCamera = viewer; r.previousFrame = r.frame; r.previousEligible = true;
     traceRoom(parent,viewer,eye);
+    // wave 2 clip: this frame's plane, from the transform SmoothCam has just written.
+    const auto& facing = camera->cameraRoot->world.rotate.entry;
+    clip::publish(viewer,{facing[0][1],facing[1][1],facing[2][1]},{position.x,position.y,position.z},parent->IsInteriorCell(),r.frame,r.now);
+    clip::trace(r.now);
 }
 
 // ---- install ----------------------------------------------------------------
@@ -731,18 +740,20 @@ inline void install(bool prerequisites,bool service) {
     const auto base = REL::Module::get().base();
     installCaster(base);
     if (r.config.roomSeedMode) installRoomHook(base);
+    clip::install(base); // wave 2 clip: a no-op unless iSeeThroughMode=2
     r.active.store(true,std::memory_order_release);
     char line[256]{};
-    std::snprintf(line,sizeof(line),"installed rig=1 caster=%s rooms=%s seeThrough=%u heading=%.3f zoom=%.3f snapKeys=%d,%d traces=%u,%u,%u",
+    std::snprintf(line,sizeof(line),"installed rig=1 caster=%s rooms=%s seeThrough=%u clip=%s heading=%.3f zoom=%.3f snapKeys=%d,%d traces=%u,%u,%u",
         !r.castReady ? "native" : r.castChained ? "thin-chain" : "own-detour",
-        !r.config.roomSeedMode ? "vanilla" : r.roomHook ? "hooked" : "refused",r.config.seeThroughMode,
+        !r.config.roomSeedMode ? "vanilla" : r.roomHook ? "hooked" : "refused",r.config.seeThroughMode,clip::status(),
         static_cast<double>(r.config.heading),static_cast<double>(r.config.zoom),r.config.snapLeftKey,r.config.snapRightKey,
         static_cast<unsigned>(r.config.rigTrace),static_cast<unsigned>(r.config.roomTrace),static_cast<unsigned>(r.config.hideTrace));
     note(line);
 }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1.
-inline void configure(const Config& requested,const Settings& base,int cursorKey,const std::filesystem::path& tracePath,
-    void (*logger)(const char*),RE::NiPoint3 (*goalNow)(),RE::NiPoint3 (*preCollisionNow)(),unsigned (*causeNow)(int)) {
+inline void configure(const Config& requested,const clip::Config& clipRequested,const Settings& base,int cursorKey,
+    const std::filesystem::path& tracePath,void (*logger)(const char*),RE::NiPoint3 (*goalNow)(),RE::NiPoint3 (*preCollisionNow)(),
+    unsigned (*causeNow)(int)) {
     runtime = new Runtime;
     auto& r = *runtime;
     r.logger = logger; r.goalNow = goalNow; r.preCollisionNow = preCollisionNow; r.causeNow = causeNow;
@@ -751,9 +762,12 @@ inline void configure(const Config& requested,const Settings& base,int cursorKey
     r.budget.perFrame = r.config.hidePerFrame; r.budget.total = r.config.hideTotal;
     if (adjusted) refuse(Refusal::settings,"one or more [FixedCameraSpike] values were out of range or reserved; safe values applied");
     if (r.config.snapLeftKey < 0 || r.config.snapRightKey < 0) refuse(Refusal::snapUnbound,"a snap key is unbound or reserved; that turn direction is unavailable");
-    if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace) {
+    // wave 2 clip: its runtime exists only in mode 2; its rows go through the same single-producer writer.
+    if (clip::clipMode(r.config.seeThroughMode))
+        clip::configure(clipRequested,logger,[](const char* text) { emit(runtime->clipLines,text); });
+    if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace || clip::tracing()) {
         const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines : 0u)+
-            (r.config.hideTrace ? hideTraceLines : 0u);
+            (r.config.hideTrace ? hideTraceLines : 0u)+(clip::tracing() ? clip::traceLines : 0u);
         r.traceReady = r.writer.start(tracePath,rows);
         if (!r.traceReady) refuse(Refusal::traceWriter,"trace writer did not start; traces off, behaviour unchanged");
     }

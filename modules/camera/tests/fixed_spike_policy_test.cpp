@@ -21,13 +21,14 @@ void settings() {
     assert(defaults.roomSeedMode == 0 && defaults.seeThroughMode == 0 && defaults.cutHeight == 160.0f && defaults.hideRadius == 384.0f);
     assert(!defaults.rigTrace && !defaults.roomTrace && !defaults.hideTrace);
     Config c;
-    c.heading = -90; c.snapSeconds = 0; c.zoom = 5; c.roomSeedMode = 9; c.seeThroughMode = 2; c.cutHeight = nan;
+    c.heading = -90; c.snapSeconds = 0; c.zoom = 5; c.roomSeedMode = 9; c.seeThroughMode = 3; c.cutHeight = nan;
     c.roomSeedRadius = -1; c.hidePerFrame = 0; c.hideTotal = 100000; c.hideRadius = 5;
     c = validate(c,base,48,&adjusted);
     assert(c.hideRadius == 128.0f);
     { Config wide; wide.hideRadius = 1e9f; assert(validate(wide,base,48).hideRadius == 2048.0f); wide.hideRadius = nan; assert(validate(wide,base,48).hideRadius == 384.0f); }
     assert(adjusted && c.heading == 270.0f && c.snapSeconds == .05f && c.zoom == 1.0f && c.roomSeedMode == 0);
     assert(c.seeThroughMode == 0 && c.cutHeight == 160.0f && c.roomSeedRadius == 0.0f && c.hidePerFrame == 1 && c.hideTotal == maxHidden);
+    c = {}; c.seeThroughMode = 2; assert(validate(c,base,48,&adjusted).seeThroughMode == 2 && !adjusted); // wave 2 clip
     c = {}; c.heading = nan; assert(validate(c,base,48).heading == 45.0f);
     c = {}; c.heading = 405; assert(validate(c,base,48).heading == 45.0f);
     // Reserved or owned keys are unbound, never silently remapped.
