@@ -16,6 +16,8 @@ enum class Refusal : unsigned {
     pickSlot = 30, hideExterior = 31,
     snapMapped = 40, snapUnbound = 41,
     traceWriter = 50,
+    // Wave 2 package "light" (FCS-51..59; 50 was already the trace writer).
+    lightSettings = 51, lightScene = 52, sceneReplaced = 53, fillFunctions = 54, fillCreate = 55, fillDropped = 56, fillStuck = 57,
     restoreConflict = 60, offMain = 61
 };
 struct Hidden {
@@ -109,6 +111,12 @@ inline void dropSnaps() {
     if (!runtime) return;
     runtime->snapLeft.store(0u,std::memory_order_relaxed); runtime->snapRight.store(0u,std::memory_order_relaxed);
 }
+} // namespace skycrpg::camera::fixed
+
+// ---- light (wave 2 package, DYL-217) -----------------------------------------
+#include "fixed_spike_light.h"
+
+namespace skycrpg::camera::fixed {
 
 // ---- hide -------------------------------------------------------------------
 inline const char* modelOf(RE::TESBoundObject* base) {
@@ -625,6 +633,7 @@ inline void endFrame() {
         r.roomActive.store(false,std::memory_order_release);
         dropSnaps();
         if (restoreNow(cause,r.silentFrames)) restoreAll(cause);
+        light::frameLight(false,parent,{},{},{},exitNames[static_cast<std::size_t>(cause)]);
         traceRig(false);
         r.previousEligible = false;
         return;
@@ -640,6 +649,7 @@ inline void endFrame() {
     traceRig(true);
     r.previousCamera = viewer; r.previousFrame = r.frame; r.previousEligible = true;
     traceRoom(parent,viewer,eye);
+    light::frameLight(true,parent,{position.x,position.y,position.z},eye,viewer,"eligible");
 }
 
 // ---- install ----------------------------------------------------------------
@@ -731,17 +741,22 @@ inline void install(bool prerequisites,bool service) {
     const auto base = REL::Module::get().base();
     installCaster(base);
     if (r.config.roomSeedMode) installRoomHook(base);
+    light::installLight(base);
     r.active.store(true,std::memory_order_release);
-    char line[256]{};
-    std::snprintf(line,sizeof(line),"installed rig=1 caster=%s rooms=%s seeThrough=%u heading=%.3f zoom=%.3f snapKeys=%d,%d traces=%u,%u,%u",
+    char line[320]{};
+    std::snprintf(line,sizeof(line),"installed rig=1 caster=%s rooms=%s seeThrough=%u heading=%.3f zoom=%.3f snapKeys=%d,%d traces=%u,%u,%u "
+        "light=%s fill=%s lightTrace=%u",
         !r.castReady ? "native" : r.castChained ? "thin-chain" : "own-detour",
         !r.config.roomSeedMode ? "vanilla" : r.roomHook ? "hooked" : "refused",r.config.seeThroughMode,
         static_cast<double>(r.config.heading),static_cast<double>(r.config.zoom),r.config.snapLeftKey,r.config.snapRightKey,
-        static_cast<unsigned>(r.config.rigTrace),static_cast<unsigned>(r.config.roomTrace),static_cast<unsigned>(r.config.hideTrace));
+        static_cast<unsigned>(r.config.rigTrace),static_cast<unsigned>(r.config.roomTrace),static_cast<unsigned>(r.config.hideTrace),
+        !light::lights ? "off" : light::lights->ready ? "ready" : "refused",
+        !light::lights || !light::lights->config.fillMode ? "off" : light::lights->fillReady ? "ready" : "refused",
+        static_cast<unsigned>(light::lights && light::lights->config.trace));
     note(line);
 }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1.
-inline void configure(const Config& requested,const Settings& base,int cursorKey,const std::filesystem::path& tracePath,
+inline void configure(const Config& requested,const light::Config& lightRequested,const Settings& base,int cursorKey,const std::filesystem::path& tracePath,
     void (*logger)(const char*),RE::NiPoint3 (*goalNow)(),RE::NiPoint3 (*preCollisionNow)(),unsigned (*causeNow)(int)) {
     runtime = new Runtime;
     auto& r = *runtime;
@@ -751,9 +766,11 @@ inline void configure(const Config& requested,const Settings& base,int cursorKey
     r.budget.perFrame = r.config.hidePerFrame; r.budget.total = r.config.hideTotal;
     if (adjusted) refuse(Refusal::settings,"one or more [FixedCameraSpike] values were out of range or reserved; safe values applied");
     if (r.config.snapLeftKey < 0 || r.config.snapRightKey < 0) refuse(Refusal::snapUnbound,"a snap key is unbound or reserved; that turn direction is unavailable");
-    if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace) {
+    light::configureLight(lightRequested);
+    const bool lightTrace = light::lights && light::lights->config.trace;
+    if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace || lightTrace) {
         const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines : 0u)+
-            (r.config.hideTrace ? hideTraceLines : 0u);
+            (r.config.hideTrace ? hideTraceLines : 0u)+(lightTrace ? light::lightTraceLines : 0u);
         r.traceReady = r.writer.start(tracePath,rows);
         if (!r.traceReady) refuse(Refusal::traceWriter,"trace writer did not start; traces off, behaviour unchanged");
     }

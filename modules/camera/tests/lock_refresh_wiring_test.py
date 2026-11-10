@@ -97,6 +97,7 @@ import re
 
 spike = (Path(__file__).resolve().parents[1] / "src/fixed_spike.h").read_text()
 thin = (Path(__file__).resolve().parents[1] / "src/thin_occluder.h").read_text()
+light = (Path(__file__).resolve().parents[1] / "src/fixed_spike_light.h").read_text()
 
 
 def spike_body(start, end):
@@ -116,7 +117,7 @@ for helper in ("inline bool engaged() { return runtime && ",
                "inline void install(bool prerequisites,bool service) {\n    if (!runtime) return;"):
     assert helper in spike, helper
 unguarded = ("fixed::engaged()", "fixed::dropSnaps()", "fixed::lifecycle(", "fixed::install(", "fixed::Exit::", "fixed::Config f;",
-             "fixed::configure(", "fixed::runtime")
+             "fixed::configure(", "fixed::runtime", "fixed::light::Config l;")
 guarded_blocks = (body("    if (rig) {", "    previousLook(state,filtered);"),
                   body("        if (fixed::engaged()) {", "        // Deliberate F6 can return from its OWN first-person request"))
 for line in source.splitlines():
@@ -214,8 +215,65 @@ assert "slots[0x33] != REL::Module::get().base()+0x104be80" in spike
 for forbidden in ("BSFixedString", "GetMenu(", "IsMenuOpen(", "RequestCameraControl", "AddTask("):
     assert forbidden not in spike, forbidden
 codes = dict(re.findall(r"(\w+) = (\d+)", spike_body("enum class Refusal : unsigned {", "};")))
-assert len(codes) == 19 and len(set(codes.values())) == len(codes)
+assert len(codes) == 26 and len(set(codes.values())) == len(codes)
 for name in codes:
-    assert (spike + source).count("Refusal::" + name) == 1, name  # one site per code
+    assert (spike + light + source).count("Refusal::" + name) == 1, name  # one site per code
 print("PASS spike on wiring: frame-scoped suppression; shared caster detour; sealed gateway; caller-gated room hook; hook-thread isolation; "
       "interior-only radius-bounded nearest-first hide; one site per refusal code")
+
+# Wave 2 package "light" (DYL-217). Off unless a light key is on; no hook at
+# all; engine light arrays read only under their lock; the fill light is a
+# plain AddLight/RemoveLight client, hidden at once on every ineligible frame.
+def light_body(start, end):
+    return light[light.index(start):light.index(end, light.index(start))]
+
+
+assert spike.count('#include "fixed_spike_light.h"') == 1
+assert light.count("lights = new LightRuntime;") == 1
+configure_light = light_body("inline void configureLight(", "inline void installLight(")
+assert configure_light.index("if (!configured(requested)) return;") < configure_light.index("lights = new LightRuntime;")
+configure = spike_body("inline void configure(", "} // namespace")
+assert configure.index("runtime = new Runtime;") < configure.index("light::configureLight(lightRequested);") < configure.index("r.writer.start(")
+assert "fixed::configure(f,l,settings," in loader
+for entry in ("inline void installLight(std::uintptr_t base) {\n    if (!lights) return;",
+              "inline void frameLight(bool eligible,RE::TESObjectCELL* parent,Vec feet,Vec at,Vec camera,const char* cause) {\n    if (!lights) return;",
+              "inline RE::ShadowSceneNode* scene() {\n    if (!lights || !lights->ready) return nullptr;"):
+    assert entry in light, entry
+assert spike.count("light::installLight(base);") == 1 and spike.count("light::frameLight(") == 2
+assert end_frame.index("light::frameLight(false,parent,{},{},{},") < end_frame.index("traceRig(false);") < \
+    end_frame.index("light::frameLight(true,parent,")
+assert end_frame.index("if (!thin::onMain())") < end_frame.index("light::frameLight(")  # main thread only
+for forbidden in ("write_vfunc", "safe_write", "write_call", "write_branch", "VirtualProtect", "_ReturnAddress", "BSFixedString",
+                  "GetMenu(", "IsMenuOpen(", "AddTask(", "RequestCameraControl"):
+    assert forbidden not in light, forbidden
+install_light = light_body("inline void installLight(", "// endFrame(), main thread")
+assert install_light.index("REL::ID(390951).address() != base+stateRva") < install_light.index("l.ready = true;") < \
+    install_light.index("REL::ID(106326).address() != base+addLightRva") < install_light.index("l.fillReady = true;")
+for check in ("REL::ID(70967).address() != base+pointCtorRva", "REL::ID(237259).address() != base+pointVtableRva",
+              "REL::ID(106331).address() != base+removeLightRva", "!sameBytes(base+pointCtorRva,pointCtorPrologue)",
+              "!sameBytes(base+addLightRva,addLightPrologue)", "!sameBytes(base+removeLightRva,removeLightPrologue)"):
+    assert install_light.index(check) < install_light.index("l.fillReady = true;"), check
+scene = light_body("inline RE::ShadowSceneNode* scene() {", "inline LightView view(")
+assert "base()+sceneVtableRva" in scene and "Refusal::sceneReplaced" in scene
+# Engine light arrays: read only under the light lock, with no engine call while held.
+for name, end in (("inline Presence presenceNow(", "inline void census("), ("inline void census(", "// ---- fill light")):
+    reader = light_body(name, end)
+    assert "RE::BSSpinLockGuard guard(data.lightQueueLock);" in reader
+    assert reader.index("RE::BSSpinLockGuard guard(data.lightQueueLock);") < reader.index("data.active")
+    assert not any(call in reader for call in ("AddLight(", "RemoveLight(", "SetAppCulled(", "emit", "refuse("))
+assert light.count("RE::BSSpinLockGuard") == 2
+assert light.count("->AddLight(") == 1 and "->AddLight(" in light_body("inline void addFill(", "// Main thread, every frame")
+assert light.count("->RemoveLight(") == 1 and "->RemoveLight(" in light_body("inline void serviceFill(", "// ---- entry points")
+add_fill = light_body("inline void addFill(", "// Main thread, every frame")
+for param in ("params.dynamic = true;", "params.shadowLight = false;", "params.portalStrict = false;", "params.neverFades = false;",
+              "params.restrictedNode = nullptr;"):
+    assert param in add_fill, param
+assert light.count("SetAppCulled(") == 2  # created hidden; show() is the only other writer
+service = light_body("inline void serviceFill(", "// ---- entry points")
+assert service.index("if (!l.fillReady) return;") < service.index("createFill()") < service.index("show(false,cause);") < \
+    service.index("presenceNow(node)") < service.index("fillStep(wanted,l.presence,l.track)")
+frame_light = light_body("inline void frameLight(", "} // namespace")
+assert frame_light.index("serviceFill(node,wanted,feet,cause);") < frame_light.index("if (!l.config.trace || !node || !eligible")
+assert "fillWanted(l.config.fillMode,eligible && finite(feet),interior,l.fillReady && node != nullptr)" in frame_light
+print("PASS light wiring: off unless configured; no hook; audited IDs and prologues before use; locked read-only census; "
+      "one AddLight/RemoveLight site; hidden on every ineligible frame; one site per refusal code")
