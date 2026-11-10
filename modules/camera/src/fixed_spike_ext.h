@@ -127,7 +127,7 @@ struct ExtHits {
     std::array<Vec,extMaxHits> top{};   // highest point where a sightline ray hit each
     std::array<bool,extMaxHits> open{}; // openBelow() for that point
     unsigned count{};
-    std::array<const RE::TESObjectREFR*,extFloorHits> floor{}; // under the feet (probe 0): never claimed
+    std::array<const RE::TESObjectREFR*,maxFloorProbes*extFloorHits> floor{}; // under the feet, or a walkable face beside them: never claimed
     unsigned floorCount{};
     std::array<const RE::TESObjectREFR*,maxFloorProbes*extFloorHits> nearby{}; // also outer hits near the feet's height: restore at once
     unsigned nearbyCount{};
@@ -170,6 +170,11 @@ inline bool castExteriorRays(RE::PlayerCharacter* player,RE::TESObjectCELL* pare
     const std::uint32_t layer = (filter.filter & 0xffff0000u) | static_cast<std::uint32_t>(RE::COL_LAYER::kLOS);
     RE::BSReadLockGuard lock(world->worldLock);
     // failed: the pick itself was refused (never read as clear or as "no floor").
+    // surface: the hit's normal, rayOutput.normal at bhkPickData +30. World frame:
+    // PickObject (104BE80) passes +30 straight to hkpWorld::castRay (ID 61399,
+    // B598C0, call at 104C11B), whose per-body callback (C04950) rotates the
+    // shape's local normal by the body rotation into the world (C04A8B-C04ABA).
+    Vec surface{};
     const auto pick = [&](Vec from,Vec to,float& fraction,bool& hit,bool& failed) -> const RE::TESObjectREFR* {
         RE::bhkPickData ray{};
         ray.rayInput.from = RE::hkVector4(from.x*scale,from.y*scale,from.z*scale,0.0f);
@@ -184,6 +189,9 @@ inline bool castExteriorRays(RE::PlayerCharacter* player,RE::TESObjectCELL* pare
         hit = !failed && ray.rayOutput.rootCollidable != nullptr;
         if (!hit) return nullptr;
         fraction = ray.rayOutput.hitFraction;
+        std::array<float,4> normal{};
+        std::memcpy(normal.data(),&ray.rayOutput.normal,sizeof(float)*4);
+        surface = {normal[0],normal[1],normal[2]};
         ++c.rayHits;
         const auto ref = RE::TESHavokUtilities::FindCollidableRef(*ray.rayOutput.rootCollidable);
         if (!ref) ++c.rayNoRef; // terrain and other collision without a reference
@@ -197,7 +205,7 @@ inline bool castExteriorRays(RE::PlayerCharacter* player,RE::TESObjectCELL* pare
             const auto ref = pick(from,to,fraction,hit,failed);
             if (failed) return false;
             if (!hit) return true;
-            if (!seen(ref,mix(from,to,fraction))) return true;
+            if (!seen(ref,mix(from,to,fraction),surface)) return true;
             const auto next = rayContinue(from,to,fraction);
             if (!next) return true;
             from = *next;
@@ -209,10 +217,11 @@ inline bool castExteriorRays(RE::PlayerCharacter* player,RE::TESObjectCELL* pare
     for (unsigned k = 0;k < floorStarts.size();++k) {
         const auto probe = floorStarts[k];
         const bool done = march({probe.x,probe.y,probe.z+48.0f},{probe.x,probe.y,probe.z-160.0f},extFloorHits,
-            [&](const RE::TESObjectREFR* ref,Vec point) {
+            [&](const RE::TESObjectREFR* ref,Vec point,Vec normal) {
                 if (!ref || ref == self) return true;
-                // Probe 0 is under the feet and refuses claims; outer hits near the feet only restore (n2).
-                if (floorClaimHit(k) && !listed(hits.floor,hits.floorCount,ref)) hits.floor[hits.floorCount++] = ref;
+                // Probe 0 under the feet refuses a claim on any hit; an outer probe only on a walkable
+                // face (third pass: a step or landing beside the player; a tent canvas is not walkable).
+                if (floorClaimHit(k,walkableFace(normal)) && !listed(hits.floor,hits.floorCount,ref)) hits.floor[hits.floorCount++] = ref;
                 if (floorNearHit(k,point.z,feet.z) && !listed(hits.nearby,hits.nearbyCount,ref)) hits.nearby[hits.nearbyCount++] = ref;
                 return true;
             });
@@ -220,12 +229,12 @@ inline bool castExteriorRays(RE::PlayerCharacter* player,RE::TESObjectCELL* pare
     }
     if (eye.z > feet.z+headClear)
         static_cast<void>(march({feet.x,feet.y,feet.z+headClear},{feet.x,feet.y,eye.z},extOverheadHits,
-            [&](const RE::TESObjectREFR* ref,Vec) {
+            [&](const RE::TESObjectREFR* ref,Vec,Vec) {
                 if (ref && ref != self && !listed(hits.over,hits.overCount,ref)) { hits.over[hits.overCount++] = ref; ++c.overhead; }
                 return true;
             }));
     for (const auto target : targets) {
-        static_cast<void>(march(eye,target,extRaySegments,[&](const RE::TESObjectREFR* ref,Vec point) {
+        static_cast<void>(march(eye,target,extRaySegments,[&](const RE::TESObjectREFR* ref,Vec point,Vec) {
             if (!ref || ref == self) return true;
             const int at = hitIndex(hits,ref);
             if (at >= 0) { if (point.z > hits.top[static_cast<std::size_t>(at)].z) hits.top[static_cast<std::size_t>(at)] = point; return true; }
@@ -252,7 +261,7 @@ inline bool castExteriorRays(RE::PlayerCharacter* player,RE::TESObjectCELL* pare
         bool downSame = false;
         if (down.valid) {
             const auto own = hits.refs[i];
-            const bool done = march(down.from,down.to,downProbeHits,[&](const RE::TESObjectREFR* ref,Vec) {
+            const bool done = march(down.from,down.to,downProbeHits,[&](const RE::TESObjectREFR* ref,Vec,Vec) {
                 if (ref == own) { downSame = true; return false; }
                 return true;
             });

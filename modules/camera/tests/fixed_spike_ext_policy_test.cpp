@@ -273,19 +273,50 @@ void kitAndOverhang() {
     for (const char* other : {"Architecture\\WhiteRun\\WRBuildings\\WRStableStr01.nif","Architecture\\Solitude\\Farms\\SFarmPorch03.nif",
              "Clutter\\Stockade\\StockadeScaffoldBase0Sided02.nif","LandscapeX\\a.nif","DLC01\\Architecture\\a.nif","","dlc\\Dungeons\\a.nif","Dungeons"})
         assert(kitModel(other) == (std::string(other) == "Dungeons"));
-    // Floor: only the probe under the feet refuses claims (n2: a small tent's own collision meets the
-    // outer probes 4-8 units above the feet); outer hits near the feet's height only restore at once.
-    for (unsigned k = 0;k < maxFloorProbes;++k) assert(floorClaimHit(k) == (k == 0));
+    // Floor (third re-review): probe 0 refuses a claim on any hit; an outer probe only on a walkable face.
+    const Vec up{0,0,1},downward{0,0,-1},canvas46{.8879f,0,.46f},canvas48{.8773f,0,.48f},slope70{.7141f,0,.7f};
+    assert(walkableFace(up) && walkableFace(downward) && walkableFace(slope70)); // the sign is not relied on
+    assert(!walkableFace(canvas46) && !walkableFace(canvas48) && !walkableFace({1,0,0}));
+    assert(walkableFace({nan,0,1}) && walkableFace({0,0,0}) && walkableFace({0,0,2.0f}) && walkableFace({.5f,0,0})); // fail closed
+    for (unsigned k = 0;k < maxFloorProbes;++k) {
+        assert(floorClaimHit(k,false) == (k == 0));
+        assert(floorClaimHit(k,true));
+    }
     assert(floorNearHit(0,feet.z+40,feet.z) && floorNearHit(0,feet.z-150,feet.z));
     assert(floorNearHit(1,feet.z+7.8f,feet.z) && floorNearHit(2,feet.z+3.8f,feet.z) && floorNearHit(4,feet.z-24,feet.z));
     assert(!floorNearHit(2,feet.z+30,feet.z) && !floorNearHit(3,feet.z-40,feet.z) && !floorNearHit(1,feet.z+120,feet.z));
     // ImperialTentSmall 0x0D95CB (328x218x187), the player at its centre: the upward pick meets the canvas
-    // (+164..+172 in the reviewer's collision model), no centre-probe contact: cover at the 256 footprint.
+    // (+164..+172 in the reviewer's collision model); the outer probes meet the canvas at normal z .46/.48,
+    // not walkable, so no floor contact: cover at the 256 footprint.
     ExtCandidate tent; tent.kind = ExtKind::structure; tent.rayHit = true; tent.overhead = true;
     tent.box = box({-164,-109,-4,164,109,183},{feet.x,feet.y,feet.z});
-    assert(classifyExterior(ExtConfig{1},tent,feet,eye.z,false).reason == Reason::extCover);
-    tent.floorContact = true; // what the outer probes used to make it
-    assert(classifyExterior(ExtConfig{1},tent,feet,eye.z,false).skip == ExtSkip::floorContact);
+    tent.floorContact = floorClaimHit(1,walkableFace(canvas46)) || floorClaimHit(2,walkableFace(canvas48));
+    assert(!tent.floorContact && classifyExterior(ExtConfig{1},tent,feet,eye.z,false).reason == Reason::extCover);
+    // Entrance pieces whose own step, landing or ledge is beside the player (outer probe, walkable face):
+    // each is cover over the player and, without the floor refusal, would be hidden (the f42a707 defect).
+    struct Entrance { const char* name; float sx,sy,sz,bottom,face; };
+    for (const Entrance& e : {Entrance{"MrkTempleDoorR01 067E80",237,520,713,-20,31},Entrance{"WRGuardTowerEntrance01 066352",231,363,469,-66,18},
+             Entrance{"MrkKeepDoorwayBalcony01 0B3993",231,455,481,-20,26},Entrance{"RifRmSmExSm01 057F08",155,277,195,-20,44},
+             Entrance{"RifRmSmExSm01 104BA2",155,277,195,-20,4},Entrance{"MrkWarrensCliffs04 0B3A29",751,795,469,17,20}}) {
+        ExtCandidate x; x.kind = ExtKind::structure; x.rayHit = true; x.overhead = true;
+        const int hx = static_cast<int>(e.sx/2),hy = static_cast<int>(e.sy/2);
+        x.box = box({-hx,-hy,0,hx,hy,static_cast<int>(e.sz)},{feet.x,feet.y,feet.z+e.bottom});
+        ExtConfig cfg; cfg.mode = 1;
+        assert(classifyExterior(cfg,x,feet,eye.z,false).reason == Reason::extCover); // f42a707: hidden
+        x.floorContact = floorClaimHit(1,walkableFace(up));                         // the step 96 units out, face e.face above the feet
+        assert(x.floorContact && e.face < 48.0f && classifyExterior(cfg,x,feet,eye.z,false).skip == ExtSkip::floorContact);
+    }
+    // WRHouseShack01 at the 0001A6FE door: an outer probe meets its floor (walkable): floor-contact; without it, ground.
+    ExtCandidate shackPiece; shackPiece.kind = ExtKind::structure; shackPiece.rayHit = true; shackPiece.overhead = true;
+    shackPiece.box = box(shack,{24864.0f,-9888.008f,-3376.0f},rotZ(2.4260077f));
+    const Vec doorFeet{24757.9f,-9727.5f,-3363.3f};
+    assert(classifyExterior(ExtConfig{1},shackPiece,doorFeet,doorFeet.z+683.8f,false).skip == ExtSkip::ground);
+    shackPiece.floorContact = floorClaimHit(4,walkableFace(up));
+    assert(classifyExterior(ExtConfig{1},shackPiece,doorFeet,doorFeet.z+683.8f,false).skip == ExtSkip::floorContact);
+    // The stable: no outer probe meets a stable segment, cover unchanged.
+    ExtCandidate s3c; s3c.kind = ExtKind::structure; s3c.rayHit = true; s3c.overhead = true; s3c.box = box(stable,e3,rotZ(stableAngle));
+    s3c.floorContact = floorClaimHit(1,false);
+    assert(classifyExterior(ExtConfig{1},s3c,feet,eye.z,false).reason == Reason::extCover);
     ExtConfig c; c.mode = 1;
     const auto piece = [&](float sx,float sy,float sz,float bottom,float ahead,bool kit) {
         ExtCandidate x; x.kind = ExtKind::structure; x.rayHit = true; x.kit = kit; x.openBelow = true;
@@ -456,8 +487,8 @@ void summary() {
     assert(formatExtExits(exits,sizeof(exits),s));
     const std::string second(exits);
     assert(second.find("event=ext-exits cell=0000961B hidden=32 maxHidden=32 gridSkips=9999999999 restores=9999999999 ") != std::string::npos);
-    char small[32]{};
-    assert(!formatExtExits(small,sizeof(small),s));
+    char tight[32]{};
+    assert(!formatExtExits(tight,sizeof(tight),s));
     s.conflicts = 9999999999ull; s.foreign = 9999999999ull;
     assert(formatExtExits(exits,sizeof(exits),s));
     assert(std::string(exits).find("restores=9999999999 conflicts=9999999999 foreign=9999999999 exits=9999999999,") != std::string::npos);

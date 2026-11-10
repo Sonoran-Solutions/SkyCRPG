@@ -224,15 +224,27 @@ inline bool kitModel(std::string_view path) {
     if (first.size() > 3 && first.compare(0,3,"dlc") == 0) first = folder(rest);
     return first == "dungeons" || first == "landscape";
 }
-// Floor contact (re-review n2). Only the probe under the feet (probe 0)
-// refuses a claim: that is the piece the player stands on. The outer probes
-// (96 units out) met an ImperialTentSmall's own collision 4 and 8 units above
-// the feet in the reviewer's collision model, so with them a tent the player
-// stands inside could never open. An outer hit within floorBand of the feet's
-// height still restores an already hidden piece at once when it stops
-// qualifying (the player is about to step onto it).
-constexpr float floorBand = 24.0f;
-constexpr bool floorClaimHit(unsigned probe) { return probe == 0; }
+// Floor contact. Probe 0 (under the feet) refuses a claim on any hit: that is
+// the piece the player stands on. An outer probe (96 units out) refuses a
+// claim only when it meets a WALKABLE face of the candidate (|normal z| at
+// least walkableNormal): the step, landing, ledge or porch floor beside the
+// player (second re-review: MrkTempleDoorR01, WRGuardTowerEntrance01,
+// MrkKeepDoorwayBalcony01, two RifRmSmExSm01, MrkWarrensCliffs04 were hidden
+// as cover once outer probes stopped counting). A small Imperial tent's canvas
+// is met by the outer probes at normal z 0.46 to 0.48 (reviewer's collision
+// model) and still opens. The sign of the normal is not relied on (which side
+// Havok reports is unverified), only its size; a normal that is not finite or
+// not about unit length counts as walkable (fail closed: the claim is refused).
+// An outer hit within floorBand of the feet's height also restores an already
+// hidden piece at once when it stops qualifying.
+constexpr float floorBand = 24.0f, walkableNormal = 0.7f;
+inline bool walkableFace(Vec normal) {
+    if (!finite(normal)) return true;
+    const float length = std::hypot(normal.x,normal.y,normal.z);
+    if (!(length > .9f && length < 1.1f)) return true;
+    return !(std::abs(normal.z) < walkableNormal*length);
+}
+constexpr bool floorClaimHit(unsigned probe,bool walkable) { return probe == 0 || walkable; }
 constexpr bool floorNearHit(unsigned probe,float hitZ,float feetZ) {
     return probe == 0 || (hitZ-feetZ <= floorBand && feetZ-hitZ <= floorBand);
 }

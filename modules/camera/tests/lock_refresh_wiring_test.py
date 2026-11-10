@@ -309,8 +309,11 @@ assert rays_ext.index("ExtRefusal::world") < rays_ext.index("if (!pickAudited(wo
 assert rays_ext.index("const auto floorStarts = floorProbes(feet);") < rays_ext.index("if (!done) { hits.floorFailed = true; return true; }") < \
     rays_ext.index("{feet.x,feet.y,feet.z+headClear},{feet.x,feet.y,eye.z},extOverheadHits") < rays_ext.index("for (const auto target : targets) {") < \
     rays_ext.index("const auto probes = openProbes(feet,hits.top[i]);") < rays_ext.index("const auto down = downProbe(feet,hits.top[i],x.config.downStart);")
-assert "if (!done) downSame = true;" in rays_ext and "floorClaimHit(k)" in rays_ext and "floorNearHit(k,point.z,feet.z)" in rays_ext
-assert "candidate.floorContact = listed(hits.floor,hits.floorCount,ref);" in scan_ext  # claims: under the feet only
+assert "if (!done) downSame = true;" in rays_ext and "floorClaimHit(k,walkableFace(normal))" in rays_ext and "floorNearHit(k,point.z,feet.z)" in rays_ext
+assert "candidate.floorContact = listed(hits.floor,hits.floorCount,ref);" in scan_ext  # claims: under the feet, or a walkable face beside them
+# The hit normal is read from the pick output and handed to every march callback (third re-review).
+assert "std::memcpy(normal.data(),&ray.rayOutput.normal,sizeof(float)*4);" in rays_ext and "if (!seen(ref,mix(from,to,fraction),surface)) return true;" in rays_ext
+assert "inline bool walkableFace(Vec normal) {" in ext_policy and "constexpr float floorBand = 24.0f, walkableNormal = 0.7f;" in ext_policy
 assert "listed(hits.nearby,hits.nearbyCount,live.get())) { release(slot,Exit::underfoot);" in scan_ext  # at-once restore: near band and "hits.open[i] = openBelow(probes,clear,down.valid,downSame);" in rays_ext
 assert "->Get" not in rays_ext.replace("controller->GetCollisionFilterInfo", "").replace("parent->GetbhkWorld", "").replace("player->GetCharController", "")
 assert "clear[k] = !hit && !failed;" in rays_ext  # a refused probe is never read as open
