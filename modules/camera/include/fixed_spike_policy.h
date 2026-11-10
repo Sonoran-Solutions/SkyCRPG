@@ -27,6 +27,7 @@ constexpr float degrees(float value) { return value * 180.0f / pi; }
 constexpr unsigned maxHidden = 256, maxRayTargets = 11, maxRaySegments = 6, maxRayHits = 48;
 constexpr unsigned maxFloorProbes = 5, maxVisited = 8192, maxRooms = 512;
 constexpr unsigned rigTraceLines = 12000, roomTraceLines = 12000, hideTraceLines = 8000;
+constexpr unsigned roomPassTraceLines = 1500; // FixedRoomPass, 1 Hz, only with iRoomTrace=1
 struct Config {
     bool enabled{};
     float heading{45.0f};      // compass degrees the camera looks toward: 0 north (+Y), 90 east (+X)
@@ -281,11 +282,14 @@ bool seedClaim(RoomCaller caller,const RoomView& view,Vec point,Vec roomCentre,f
     return span(roomCentre,view.eye) < view.radius+roomRadius;
 }
 // calls = every hook call, split by caller class. viewerCalls = camera-pass
-// calls at the camera while seeding is active; gatedNear = any other call at
-// the camera while seeding is active (light passes included), i.e. what the
-// caller gate kept vanilla.
+// calls at the camera while seeding is active; gatedNear = attachment, water
+// and unknown calls at the camera while seeding is active, i.e. what the caller
+// gate kept vanilla (the 744609f meaning); lightNear = light-pass calls at the
+// camera while seeding is active, which 744609f claimed for and this gate keeps
+// vanilla.
 struct RoomCounters {
-    std::atomic<unsigned long long> calls{0},cameraPass{0},lightPass{0},attach{0},water{0},other{0},viewerCalls{0},gatedNear{0},vanillaTrue{0},claims{0};
+    std::atomic<unsigned long long> calls{0},cameraPass{0},lightPass{0},attach{0},water{0},other{0},viewerCalls{0},gatedNear{0},vanillaTrue{0},claims{0},
+        lightNear{0};
     void count(RoomCaller caller) {
         calls.fetch_add(1ull,std::memory_order_relaxed);
         (caller == RoomCaller::camera ? cameraPass : caller == RoomCaller::light ? lightPass : caller == RoomCaller::attach ? attach :
@@ -303,12 +307,24 @@ struct RoomSample {
 inline bool formatRoom(char* out,std::size_t size,const RoomSample& s) {
     const int written = std::snprintf(out,size,
         "FixedRoom t=%.3f frame=%llu mode=%u hook=%u active=%u cell=%08X graph=%u rooms=%u capped=%u playerRoom=%d cameraRoom=%d "
-        "eyeRooms=%u cameraRooms=%u calls=%llu cullCalls=%llu cameraPassCalls=%llu lightPassCalls=%llu attachCalls=%llu waterCalls=%llu "
-        "otherCalls=%llu viewerCalls=%llu gatedNear=%llu vanillaTrue=%llu claims=%llu sample=window",
+        "eyeRooms=%u cameraRooms=%u calls=%llu cullCalls=%llu attachCalls=%llu waterCalls=%llu otherCalls=%llu viewerCalls=%llu "
+        "gatedNear=%llu vanillaTrue=%llu claims=%llu sample=window",
         s.seconds,s.frame,s.mode,static_cast<unsigned>(s.hook),static_cast<unsigned>(s.active),s.cell,
         static_cast<unsigned>(s.graph),s.rooms,static_cast<unsigned>(s.capped),s.playerRoom,s.cameraRoom,s.eyeRooms,s.cameraRooms,
-        // cullCalls keeps its wave 1 meaning (both pass kinds) for the route checker.
-        s.calls,s.cameraPass+s.lightPass,s.cameraPass,s.lightPass,s.attach,s.water,s.other,s.viewerCalls,s.gatedNear,s.vanillaTrue,s.claims);
+        // The FixedRoom field list is the 744609f one byte for byte (the route
+        // checker parses an exact list); cullCalls keeps its meaning: both passes.
+        s.calls,s.cameraPass+s.lightPass,s.attach,s.water,s.other,s.viewerCalls,s.gatedNear,s.vanillaTrue,s.claims);
+    return written > 0 && static_cast<std::size_t>(written) < size;
+}
+// Its own line kind, once a second: the split FixedRoom cannot carry.
+struct RoomPassSample {
+    double seconds{};
+    unsigned long long frame{},cameraPass{},lightPass{},lightNear{};
+    void add(const RoomSample& s,unsigned long long near) { cameraPass += s.cameraPass; lightPass += s.lightPass; lightNear += near; }
+};
+inline bool formatRoomPass(char* out,std::size_t size,const RoomPassSample& s) {
+    const int written = std::snprintf(out,size,"FixedRoomPass t=%.3f frame=%llu cameraPassCalls=%llu lightPassCalls=%llu lightPassNear=%llu sample=second",
+        s.seconds,s.frame,s.cameraPass,s.lightPass,s.lightNear);
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 

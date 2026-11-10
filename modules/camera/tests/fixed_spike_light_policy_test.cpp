@@ -18,6 +18,7 @@ void settings() {
     bool adjusted = true;
     const LightConfig defaults = validate(LightConfig{},&adjusted);
     assert(!adjusted && defaults.fillMode == 0 && !defaults.trace);
+    assert(defaults.stealthNeutral); // a camera aid does not change stealth unless asked to
     assert(defaults.fillHeight == 192.0f && defaults.fillRadius == 640.0f && defaults.fillFade == .6f);
     assert(defaults.fillRed == 1.0f && defaults.fillGreen == .86f && defaults.fillBlue == .70f);
     // Off by default: nothing is allocated, read or installed.
@@ -46,6 +47,36 @@ void wanted() {
                     assert(fillWanted(mode,eligible,interior,ready) == (mode == 1 && eligible && interior && ready));
     const Vec at = fillPoint({10,20,30},192);
     assert(at.x == 10 && at.y == 20 && at.z == 222);
+}
+
+void duty() {
+    const std::array allStates{State::disabled,State::invalidWorld,State::special,State::menu,State::firstPerson,
+        State::precision,State::targeting,State::obstruction,State::normal,State::targetLock};
+    // Eligible: always lit; a hook-silent frame inside the grace: as it was.
+    for (const auto cause : {Exit::menu,Exit::special,Exit::firstPerson,Exit::hookSilent})
+        for (const auto state : allStates) {
+            assert(fillDuty(true,true,cause,true,state) == FillDuty::keep);
+            assert(fillDuty(false,false,cause,true,state) == FillDuty::hold);
+        }
+    // A menu or the console: held for the whole menu (no hide, no timer).
+    for (const auto state : allStates) {
+        assert(fillDuty(false,true,Exit::menu,true,state) == FillDuty::hold);
+        assert(fillDuty(false,true,Exit::menu,false,state) == FillDuty::hold);
+    }
+    // Third-person states the rig hands off: still lit and following.
+    for (const auto state : {State::precision,State::targeting,State::obstruction,State::special})
+        assert(fillDuty(false,true,Exit::special,true,state) == FillDuty::keep);
+    assert(fillDuty(false,true,Exit::special,true,State::invalidWorld) == FillDuty::off);
+    assert(fillDuty(false,true,Exit::special,false,State::special) == FillDuty::off); // no state seen: not known third person
+    // Off: first person, Camera off, F8, load, death, silent past the grace, cell, unload.
+    for (const auto cause : {Exit::firstPerson,Exit::disable,Exit::f8,Exit::load,Exit::death,Exit::hookSilent,Exit::cell,Exit::unload})
+        for (const auto state : allStates) assert(fillDuty(false,true,cause,true,state) == FillDuty::off);
+    assert(std::string(dutyName(FillDuty::keep)) == "keep" && std::string(dutyName(FillDuty::hold)) == "hold" &&
+        std::string(dutyName(FillDuty::off)) == "off");
+    // Light level without the fill light's own term.
+    assert(near(withoutFill(.72f,.50f),.22f) && withoutFill(.4f,0.0f) == .4f && withoutFill(.4f,-1.0f) == .4f);
+    assert(withoutFill(.3f,.3000001f) == 0.0f);          // rounding never goes below zero
+    assert(withoutFill(.3f,nan) == .3f && std::isnan(withoutFill(nan,.2f)) && withoutFill(.3f,inf) == .3f);
 }
 
 void presence() {
@@ -179,7 +210,7 @@ void census() {
     assert(c.point == 7 && c.pointCulled == 1 && c.pointDimmed == 1 && c.pointReach == 6 && c.pointLit == 5 && c.pointLitLive == 3);
     assert(near(c.pointNearest,-226)); // the other-room light (-196) does not count, the shared one (-226) does
     c.addShadow({{0,0,10},512,1.0f,0u,false},2u,at);          // in reach, holds channel 2
-    c.addShadow({{0,0,20},512,1.0f,0u,false},noChannel,at);   // in reach, no channel: contributes nothing
+    c.addShadow({{0,0,20},512,1.0f,0u,false},noChannel,at);   // in reach, no channel: adds nothing to the picture
     c.addShadow({{2000,0,0},512,1.0f,0u,false},1u,at);        // far, holds a channel
     c.addShadow({{0,30,0},512,1.0f,0u,true},0u,at);           // hidden: a channel does not light it
     assert(near(c.addShadow({{0,0,1},2000,1.0f,0u,false,true,false},noChannel,at),-1999)); // other room: never starved
@@ -225,8 +256,13 @@ void lines() {
     for (const char* part : {"FixedLight t=12.500 frame=77 cell=000371DE interior=1 eligible=1 ","eye=2048.0,-9216.0,-2492.0 ",
         "rooms=1 playerRooms=1 point=1 pointCulled=0 pointDimmed=0 pointReach=1 pointLit=1 pointLitLive=1 ",
         "shadow=1 shadowChannel=0 shadowReach=0 shadowLit=0 shadowLitChannel=0 shadowStarved=0 ","fillWanted=1 fill=active fillCreated=1 fillHidden=0 fillCull=0 fillDimmer=1.000 ",
-        "fillAt=2048.0,-9216.0,-2364.0 adds=1 removes=0 drops=0 sample=state"})
+        "fillAt=2048.0,-9216.0,-2364.0 adds=1 removes=0 drops=0 levelHook=0 neutral=0 level=nan levelNoFill=nan levelCalls=0 npcCalls=0 "
+        "npcAdjusted=0 sample=state"})
         assert(has(text,part));
+    LightSample measured = s;
+    measured.level = {true,true,.7234f,.2234f,12,40,3};
+    assert(formatLight(line,sizeof(line),measured));
+    assert(has(line,"levelHook=1 neutral=1 level=0.7234 levelNoFill=0.2234 levelCalls=12 npcCalls=40 npcAdjusted=3 sample=state"));
     LightSample none;
     assert(formatLight(line,sizeof(line),none));
     assert(has(line,"pointNearest=inf") && has(line,"fillCull=999 fillDimmer=nan") && has(line,"fill=absent"));
@@ -245,6 +281,8 @@ void lines() {
     wide.census.shadowReach = wide.census.shadowLit = wide.census.playerRooms = 99999; wide.census.shadowLitChannel = 0;
     wide.census.pointNearest = wide.census.shadowNearest = -99999.9f;
     wide.fill.presence = Presence::queuedRemove; wide.fill.adds = wide.fill.removes = wide.fill.drops = 99999;
+    wide.level.hooked = wide.level.neutral = true; wide.level.with = wide.level.without = -99999.9999f;
+    wide.level.playerCalls = wide.level.npcCalls = wide.level.npcAdjusted = 99999999999ull;
     assert(formatLight(line,std::tuple_size<TraceRow>::value,wide));
     // Shadow list line: reference IDs, ordered, and the full list fits one row.
     ShadowList list;
@@ -265,6 +303,7 @@ void lines() {
 int main() {
     settings();
     wanted();
+    duty();
     presence();
     steps();
     rooms();

@@ -16,6 +16,11 @@ struct Config {
     float fillRadius{640.0f};  // NiLight radius
     float fillFade{.6f};       // NiLight fade (dimmer)
     float fillRed{1.0f},fillGreen{.86f},fillBlue{.70f};
+    // 1 (default): the fill light adds nothing to any actor's light level (the
+    // stealth light level, IDs 39946 -> 106362 / 107776 -> 108292); 0: it counts
+    // like any other light. With 1, the fill light is refused unless the two
+    // light-level summers can be wrapped (FCS-58 / FCS-59).
+    bool stealthNeutral{true};
     bool trace{};              // FixedLight census lines
 };
 // ID 106342 (150E444-150E453) switches a light off when its NiLight fade is
@@ -43,6 +48,32 @@ constexpr unsigned lightTraceLines = 6000;
 // the player would read as a lantern.
 constexpr bool fillWanted(unsigned mode,bool eligible,bool interior,bool ready) {
     return mode == 1 && eligible && interior && ready;
+}
+// What the fill light does in a frame, by the reason the rig is (in)eligible.
+// keep: lit and following the player. hold: left exactly as it was (no hide,
+// no move, no removal timer). off: hidden at once, handed back after the delay.
+// Starting points for the owner, one row each in the evidence document:
+// eligible -> keep; a hook-silent frame inside the grace -> hold; menu or
+// console (State::menu) -> hold; precision aim, targeting, obstruction and the
+// special states (mount, swim, beast, bleedout, furniture, killmove, scripted)
+// -> keep; first person, Camera off, F8, load, death, invalid world and a
+// hook-silent stretch past the grace -> off.
+enum class FillDuty { off, keep, hold };
+constexpr FillDuty fillDuty(bool eligible,bool exiting,Exit cause,bool stateSeen,State state) {
+    if (eligible) return FillDuty::keep;
+    if (!exiting) return FillDuty::hold;
+    if (cause == Exit::menu) return FillDuty::hold;
+    if (cause == Exit::special && stateSeen && (state == State::precision || state == State::targeting ||
+        state == State::obstruction || state == State::special)) return FillDuty::keep;
+    return FillDuty::off;
+}
+constexpr const char* dutyName(FillDuty d) { return d == FillDuty::keep ? "keep" : d == FillDuty::hold ? "hold" : "off"; }
+// Light level without the fill light: the engine's sum minus the fill light's
+// own ID 108292 terms, as the wrapped summer saw them; never below zero, and
+// untouched when the fill light contributed nothing or a value is not finite.
+inline float withoutFill(float total,float fill) {
+    if (!std::isfinite(total) || !std::isfinite(fill) || !(fill > 0.0f)) return total;
+    return (std::max)(0.0f,total-fill);
 }
 inline Vec fillPoint(Vec feet,float height) { return {feet.x,feet.y,feet.z+height}; }
 // Where the engine holds our light, read under the ShadowSceneNode light lock
@@ -171,7 +202,7 @@ struct Census {
         return r;
     }
     // Could light the player (room-aware), but held no shadow-mask channel last
-    // frame: such a light contributes nothing (ID 107784 draws shadow lights by
+    // frame: such a light adds nothing to the picture (ID 107784 draws shadow lights by
     // channel only). Only this count can argue for a shadow-admission change.
     constexpr unsigned starved() const { return shadowLit-shadowLitChannel; }
 };
@@ -224,6 +255,14 @@ struct FillReading {
     Vec at{};
     unsigned adds{},removes{},drops{};
 };
+// The player's light level as ID 106362 summed it (with the fill light) and as
+// returned (without it when neutral); units are ID 106362's sum, which ID 39946
+// adds to the sun and ambient terms and multiplies by 100 (726522-72653E).
+struct LevelReading {
+    bool hooked{},neutral{};
+    float with{std::numeric_limits<float>::quiet_NaN()},without{std::numeric_limits<float>::quiet_NaN()};
+    unsigned long long playerCalls{},npcCalls{},npcAdjusted{};
+};
 struct LightSample {
     double seconds{};
     unsigned long long frame{};
@@ -232,6 +271,7 @@ struct LightSample {
     Vec eye{},camera{};
     Census census{};
     FillReading fill{};
+    LevelReading level{};
 };
 inline bool formatLight(char* out,std::size_t size,const LightSample& s) {
     const auto& c = s.census;
@@ -241,7 +281,8 @@ inline bool formatLight(char* out,std::size_t size,const LightSample& s) {
         "rooms=%u playerRooms=%u point=%u pointCulled=%u pointDimmed=%u pointReach=%u pointLit=%u pointLitLive=%u pointNearest=%.1f "
         "shadow=%u shadowChannel=%u shadowReach=%u shadowLit=%u shadowLitChannel=%u shadowStarved=%u shadowNearest=%.1f "
         "fillWanted=%u fill=%s fillCreated=%u fillHidden=%u fillCull=%u fillDimmer=%.3f fillAt=%.1f,%.1f,%.1f "
-        "adds=%u removes=%u drops=%u sample=state",
+        "adds=%u removes=%u drops=%u levelHook=%u neutral=%u level=%.4f levelNoFill=%.4f levelCalls=%llu npcCalls=%llu npcAdjusted=%llu "
+        "sample=state",
         s.seconds,s.frame,s.cell,static_cast<unsigned>(s.interior),static_cast<unsigned>(s.eligible),
         static_cast<double>(s.eye.x),static_cast<double>(s.eye.y),static_cast<double>(s.eye.z),
         static_cast<double>(s.camera.x),static_cast<double>(s.camera.y),static_cast<double>(s.camera.z),
@@ -250,7 +291,9 @@ inline bool formatLight(char* out,std::size_t size,const LightSample& s) {
         c.shadow,c.shadowChannel,c.shadowReach,c.shadowLit,c.shadowLitChannel,c.starved(),static_cast<double>(c.shadowNearest),
         static_cast<unsigned>(s.wanted),presenceName(f.presence),static_cast<unsigned>(f.created),static_cast<unsigned>(f.hidden),
         f.found ? f.cull : 999u,static_cast<double>(f.found ? f.dimmer : std::numeric_limits<float>::quiet_NaN()),
-        static_cast<double>(f.at.x),static_cast<double>(f.at.y),static_cast<double>(f.at.z),f.adds,f.removes,f.drops);
+        static_cast<double>(f.at.x),static_cast<double>(f.at.y),static_cast<double>(f.at.z),f.adds,f.removes,f.drops,
+        static_cast<unsigned>(s.level.hooked),static_cast<unsigned>(s.level.neutral),static_cast<double>(s.level.with),
+        static_cast<double>(s.level.without),s.level.playerCalls,s.level.npcCalls,s.level.npcAdjusted);
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 // Fill transitions are traced as events, eligible or not, so a lifecycle exit

@@ -2,9 +2,12 @@
 #pragma once
 // Included by fixed_spike.h after its runtime helpers. P5.5-02 wave 2 package
 // "light" (DYL-217). Nothing is allocated, read or installed unless
-// [FixedCameraSpike] iLightFillMode=1 or iLightTrace=1. No hook: the light
-// trace reads the main ShadowSceneNode under its own light lock, and the fill
-// light is an ordinary dynamic point light handed to the engine's AddLight.
+// [FixedCameraSpike] iLightFillMode=1 or iLightTrace=1. The light trace reads
+// the main ShadowSceneNode under its own light lock, and the fill light is an
+// ordinary dynamic point light handed to the engine's AddLight. One code patch,
+// only with iLightFillMode=1: the two light-level summers (IDs 106362 and
+// 107776, each with a single caller in ID 39946) are wrapped at their entry so
+// the fill light's own term can be taken out of every actor's light level.
 #include "fixed_spike_light_policy.h"
 
 namespace skycrpg::camera::fixed::light {
@@ -18,6 +21,19 @@ constexpr std::uintptr_t removeLightRva = 0x150cff0; // ID 106331, ShadowSceneNo
 constexpr std::array<std::uint8_t,14> pointCtorPrologue{0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0xe8,0x52,0xec,0xfe,0xff};
 constexpr std::array<std::uint8_t,16> addLightPrologue{0x4c,0x8b,0xdc,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x83};
 constexpr std::array<std::uint8_t,15> removeLightPrologue{0x48,0x85,0xd2,0x0f,0x84,0x1e,0x01,0x00,0x00,0x53,0x48,0x83,0xec,0x30,0x48};
+// Light level (stealth). ID 39946 (726250) sums, for the player, ID 106362 over
+// the scene node's active and shadow lights (call 726423), for anyone else ID
+// 107776 over the lights linked to that actor's geometry (call 7264AC); both
+// add ID 108292 per light, which skips only the caller's own light (exclude)
+// and has no hidden, frustum or dimmer test. Both summers start with the same
+// 15 bytes of whole, position-independent instructions (three register saves
+// into the shadow space); nothing branches into them.
+constexpr std::uintptr_t playerLevelRva = 0x150f930; // ID 106362
+constexpr std::uintptr_t listLevelRva = 0x1569070;   // ID 107776
+constexpr std::uintptr_t lightTermRva = 0x1576ca0;   // ID 108292
+constexpr std::uintptr_t playerLevelCallRva = 0x726423, listLevelCallRva = 0x7264ac; // the only callers (E8 rel32)
+constexpr std::array<std::uint8_t,15> levelPrologue{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18};
+constexpr std::array<std::uint8_t,16> lightTermPrologue{0x48,0x83,0xec,0x38,0x4c,0x8b,0x49,0x48,0x4d,0x3b,0xc8,0x75,0x08,0x0f,0x57,0xc0};
 // CommonLib declarations this file reads or writes, pinned to the audited offsets.
 static_assert(offsetof(RE::BSLight,lodDimmer) == 0x14);    // written with +5C by 108278 / 108618 / 108625
 static_assert(offsetof(RE::BSLight,light) == 0x48);        // NiLight; SetLight (108289) at 1576AF2
@@ -47,6 +63,28 @@ static_assert(offsetof(RE::ShadowSceneNode::LIGHT_CREATE_PARAMS,affectWater) == 
 static_assert(offsetof(RE::ShadowSceneNode::LIGHT_CREATE_PARAMS,neverFades) == 5);
 static_assert(offsetof(RE::ShadowSceneNode::LIGHT_CREATE_PARAMS,restrictedNode) == 0x20);
 static_assert(offsetof(RE::ShadowSceneNode::LIGHT_CREATE_PARAMS,lensFlareData) == 0x28);
+
+// ID 106362: (scene node, position, light count out, sun term out, ambient term
+// out, exclude light, shadow-light mask) -> sum of ID 108292 (726414-726423 sets
+// rcx, rdx, r8, r9 and [rsp+20/28/30]; the body reads them at 150F930-150F97C).
+using PlayerLevel = float (*)(RE::ShadowSceneNode*,const RE::NiPoint3*,std::uint32_t*,float*,float*,RE::NiLight*,std::uint32_t);
+// ID 107776: (light list, position, exclude light, first index) -> sum (1569070-15690BF).
+using ListLevel = float (*)(RE::BSShaderPropertyLightData*,const RE::NiPoint3*,RE::NiLight*,std::uint32_t);
+// ID 108292: (light, position, exclude light) -> fade x mean(diffuse) x falloff; it also stores that value at light+10.
+using LightTerm = float (*)(RE::BSLight*,const RE::NiPoint3*,RE::NiLight*);
+// Read by the wrappers on whichever thread runs ID 39946: atomics and values
+// fixed before the code is patched only.
+struct Stealth {
+    std::atomic<const RE::NiLight*> fill{nullptr}; // published once the fill light exists, never cleared (never freed)
+    bool neutral{};
+    PlayerLevel player{};
+    ListLevel list{};
+    LightTerm term{};
+    std::atomic<float> with{std::numeric_limits<float>::quiet_NaN()},without{std::numeric_limits<float>::quiet_NaN()};
+    std::atomic<unsigned long long> playerCalls{0},npcCalls{0},npcAdjusted{0};
+    bool installed{};
+};
+inline Stealth stealth;
 
 struct LightRuntime {
     Config config;
@@ -141,6 +179,11 @@ inline void census(RE::ShadowSceneNode* node,const PlayerRooms& player,Vec at,Li
     s.census.cellHasRooms = player.graph; s.census.playerRooms = player.count;
     auto& data = node->GetRuntimeData();
     RE::BSSpinLockGuard guard(data.lightQueueLock);
+    // A light queued for removal may be losing its 3D: no reference walk for it.
+    const auto leaving = [&](const RE::BSLight* light) {
+        for (const auto& queued : data.lightQueueRemove) if (queued.get() == light) return true;
+        return false;
+    };
     for (const auto& entry : data.activeLights) {
         if (!entry || !entry->light) continue;
         if (entry->light.get() == mine) {
@@ -154,9 +197,90 @@ inline void census(RE::ShadowSceneNode* node,const PlayerRooms& player,Vec at,Li
         const auto seen = view(*entry,player);
         const auto channel = entry->GetRuntimeData().maskIndex;
         const float r = s.census.addShadow(seen,channel,at);
-        shadows.offer({lightReference(*entry->light),r,seen.radius,channel,seen.cull,seen.portalStrict,seen.sharesRoom,
+        shadows.offer({leaving(entry.get()) ? 0u : lightReference(*entry->light),r,seen.radius,channel,seen.cull,seen.portalStrict,seen.sharesRoom,
             lightsPoint(r <= 0.0f,seen.portalStrict,player.graph,seen.sharesRoom),seen.hidden});
     }
+}
+
+// ---- light level (stealth) -----------------------------------------------------
+// Sum of the fill light's own terms in what the summer just added up, with the
+// engine's ID 108292 (same inputs, same arithmetic). The lists are the ones the
+// engine walked a moment ago on this same thread; only the entry pointers and
+// their light pointers are compared.
+inline float hookPlayerLevel(RE::ShadowSceneNode* node,const RE::NiPoint3* at,std::uint32_t* count,float* sun,float* ambient,
+    RE::NiLight* exclude,std::uint32_t mask) {
+    const float total = stealth.player(node,at,count,sun,ambient,exclude,mask);
+    stealth.playerCalls.fetch_add(1ull,std::memory_order_relaxed);
+    const RE::NiLight* ours = stealth.fill.load(std::memory_order_acquire);
+    float fill = 0.0f;
+    if (ours && node && at)
+        for (const auto& entry : node->GetRuntimeData().activeLights)
+            if (entry && entry->light.get() == ours) fill += stealth.term(entry.get(),at,exclude);
+    const float without = withoutFill(total,fill);
+    stealth.with.store(total,std::memory_order_relaxed); stealth.without.store(without,std::memory_order_relaxed);
+    return stealth.neutral ? without : total;
+}
+inline float hookListLevel(RE::BSShaderPropertyLightData* data,const RE::NiPoint3* at,RE::NiLight* exclude,std::uint32_t first) {
+    const float total = stealth.list(data,at,exclude,first);
+    stealth.npcCalls.fetch_add(1ull,std::memory_order_relaxed);
+    const RE::NiLight* ours = stealth.fill.load(std::memory_order_acquire);
+    if (!ours || !data || !at) return total;
+    float fill = 0.0f;
+    const auto& list = data->lights;
+    for (std::uint32_t i = first;i < list.size();++i)
+        if (list[i] && list[i]->light.get() == ours) fill += stealth.term(list[i],at,exclude);
+    if (!(fill > 0.0f)) return total;
+    stealth.npcAdjusted.fetch_add(1ull,std::memory_order_relaxed);
+    return stealth.neutral ? withoutFill(total,fill) : total;
+}
+// installLight(), kDataLoaded, only with iLightFillMode=1. True = both wrappers
+// are in place. Every check precedes the first write; the gateways are sealed
+// execute-read before either entry is patched.
+inline bool installStealth(std::uintptr_t base) {
+    const auto callsTo = [&](std::uintptr_t site,std::uintptr_t target) {
+        const auto bytes = reinterpret_cast<const std::uint8_t*>(base+site);
+        std::int32_t displacement{};
+        std::memcpy(&displacement,bytes+1,sizeof(displacement));
+        return bytes[0] == 0xe8 && base+site+5+static_cast<std::uintptr_t>(static_cast<std::intptr_t>(displacement)) == base+target;
+    };
+    if (REL::ID(106362).address() != base+playerLevelRva || REL::ID(107776).address() != base+listLevelRva ||
+        REL::ID(108292).address() != base+lightTermRva || !sameBytes(base+playerLevelRva,levelPrologue) ||
+        !sameBytes(base+listLevelRva,levelPrologue) || !sameBytes(base+lightTermRva,lightTermPrologue) ||
+        !callsTo(playerLevelCallRva,playerLevelRva) || !callsTo(listLevelCallRva,listLevelRva)) {
+        refuse(Refusal::stealthGuard,"light-level summers (IDs 106362, 107776, 108292) or their callers differ from the audited code; fill light not stealth-neutral");
+        return false;
+    }
+    const auto gateway = static_cast<std::uint8_t*>(VirtualAlloc(nullptr,128,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
+    bool sealed = false;
+    if (gateway) {
+        constexpr std::array<std::pair<std::size_t,std::uintptr_t>,2> copies{{{0,playerLevelRva},{64,listLevelRva}}};
+        for (const auto& [offset,target] : copies) {
+            std::memcpy(gateway+offset,levelPrologue.data(),levelPrologue.size());
+            const auto back = thin::jump(base+target+levelPrologue.size());
+            std::memcpy(gateway+offset+levelPrologue.size(),back.data(),back.size());
+        }
+        DWORD previous{};
+        sealed = VirtualProtect(gateway,128,PAGE_EXECUTE_READ,&previous) != 0;
+        if (!sealed) VirtualFree(gateway,0,MEM_RELEASE);
+    }
+    if (!sealed) {
+        refuse(Refusal::stealthMemory,"light-level gateway could not be allocated or sealed execute-read; fill light not stealth-neutral");
+        return false;
+    }
+    FlushInstructionCache(GetCurrentProcess(),gateway,128);
+    stealth.player = reinterpret_cast<PlayerLevel>(gateway);
+    stealth.list = reinterpret_cast<ListLevel>(gateway+64);
+    stealth.term = reinterpret_cast<LightTerm>(base+lightTermRva);
+    stealth.neutral = lights->config.stealthNeutral;
+    const std::array<std::pair<std::uintptr_t,std::uintptr_t>,2> detours{{{playerLevelRva,reinterpret_cast<std::uintptr_t>(&hookPlayerLevel)},
+        {listLevelRva,reinterpret_cast<std::uintptr_t>(&hookListLevel)}}};
+    for (const auto& [target,hook] : detours) {
+        const auto detour = thin::jump(hook);
+        REL::safe_write(base+target,detour.data(),detour.size());
+        FlushInstructionCache(GetCurrentProcess(),reinterpret_cast<void*>(base+target),detour.size());
+    }
+    stealth.installed = true;
+    return true;
 }
 
 // ---- fill light ----------------------------------------------------------------
@@ -169,6 +293,7 @@ inline bool createFill() {
         return false;
     }
     l.fill.reset(created);
+    stealth.fill.store(created,std::memory_order_release); // before AddLight: the wrappers see it from its first sum
     auto& data = created->GetLightRuntimeData();
     data.ambient = {0.0f,0.0f,0.0f}; // as TESObjectLIGH lights (ID 17610 at 274666)
     data.diffuse = {l.config.fillRed,l.config.fillGreen,l.config.fillBlue};
@@ -229,7 +354,7 @@ inline void serviceFill(RE::ShadowSceneNode* node,bool wanted,Vec feet,const cha
         break;
     case FillAction::removeLimit:
         fillEvent("remove-limit",cause);
-        refuse(Refusal::fillStuck,"the fill light stayed active after repeated RemoveLight; it stays hidden (contributes nothing)");
+        refuse(Refusal::fillStuck,"the fill light stayed active after repeated RemoveLight; it stays hidden: nothing on screen, and nothing to light levels while bLightFillStealthNeutral=1");
         break;
     case FillAction::none: break;
     }
@@ -261,20 +386,22 @@ inline void installLight(std::uintptr_t base) {
         refuse(Refusal::fillFunctions,"NiPointLight ctor / AddLight / RemoveLight differ from the audited 1.7.104 code; fill light off");
         return;
     }
+    // Neutral by default: without the wrappers the fill light is refused, not added unneutralised.
+    if (!installStealth(base) && l.config.stealthNeutral) return;
     l.fillReady = true;
 }
 // endFrame(), main thread, both eligible and ineligible frames. `at` is the
 // census point (feet + eyeLift), `camera` the rendered camera position.
-// `hold`: a camera update that skipped a frame inside wave 1's grace
-// (restoreNow false): keep the fill light exactly as it was.
-inline void frameLight(bool eligible,bool hold,RE::TESObjectCELL* parent,Vec feet,Vec at,Vec camera,const char* cause) {
-    if (!lights || hold) return;
+// `duty` (fillDuty): hold leaves the fill light exactly as it was; keep lights it
+// at the player; off hides it. `loadExit`: a load restarts the drop budget.
+inline void frameLight(bool eligible,FillDuty duty,bool loadExit,RE::TESObjectCELL* parent,Vec feet,Vec at,Vec camera,const char* cause) {
+    if (!lights || duty == FillDuty::hold) return;
     auto& l = *lights;
     const RE::FormID cellId = parent ? parent->GetFormID() : 0u;
-    if (cellId != l.cell) { l.cell = cellId; l.track.newCell(); }
+    if (cellId != l.cell || loadExit) { l.cell = cellId; l.track.newCell(); }
     const bool interior = parent && parent->IsInteriorCell();
     const auto node = scene();
-    const bool wanted = fillWanted(l.config.fillMode,eligible && finite(feet),interior,l.fillReady && node != nullptr);
+    const bool wanted = fillWanted(l.config.fillMode,duty == FillDuty::keep && finite(feet),interior,l.fillReady && node != nullptr);
     serviceFill(node,wanted,feet,cause);
     if (!l.config.trace || !node || !eligible || runtime->now < l.nextTrace) return;
     l.nextTrace = runtime->now+.1;
@@ -287,6 +414,10 @@ inline void frameLight(bool eligible,bool hold,RE::TESObjectCELL* parent,Vec fee
     s.fill.created = l.fill != nullptr; s.fill.hidden = l.fillHidden; s.fill.presence = l.presence;
     s.fill.at = l.fill ? Vec{l.fill->world.translate.x,l.fill->world.translate.y,l.fill->world.translate.z} : Vec{};
     s.fill.adds = l.adds; s.fill.removes = l.removes; s.fill.drops = l.track.drops;
+    s.level.hooked = stealth.installed; s.level.neutral = stealth.installed && stealth.neutral;
+    s.level.with = stealth.with.load(std::memory_order_relaxed); s.level.without = stealth.without.load(std::memory_order_relaxed);
+    s.level.playerCalls = stealth.playerCalls.load(std::memory_order_relaxed);
+    s.level.npcCalls = stealth.npcCalls.load(std::memory_order_relaxed); s.level.npcAdjusted = stealth.npcAdjusted.load(std::memory_order_relaxed);
     char line[768]{};
     if (formatLight(line,sizeof(line),s)) emitLight(line);
     if (runtime->now < l.nextShadows) return;

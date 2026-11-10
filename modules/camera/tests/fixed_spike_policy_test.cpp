@@ -257,8 +257,31 @@ void rooms() {
     assert(formatRoom(line,sizeof(line),s));
     const std::string text = line;
     for (const char* field : {"mode=2","hook=1","active=1","cell=0001605E","graph=1","rooms=14","playerRoom=3","cameraRoom=-1",
-        "calls=40","cullCalls=30","cameraPassCalls=22","lightPassCalls=8","attachCalls=6","waterCalls=3","otherCalls=1","viewerCalls=28","gatedNear=2","claims=9"})
+        "calls=40","cullCalls=30","attachCalls=6","waterCalls=3","otherCalls=1","viewerCalls=28","gatedNear=2","claims=9"})
         assert(text.find(field) != std::string::npos);
+    // FixedRoom keeps the 744609f field list exactly: the route checker parses
+    // an exact list (session-p55/routes/check_spike_log.py ROOM_FIELDS).
+    std::string keys;
+    for (std::size_t at = text.find(' ');at != std::string::npos;at = text.find(' ',at+1)) {
+        const auto eq = text.find('=',at);
+        if (eq != std::string::npos) keys += text.substr(at+1,eq-at-1)+",";
+    }
+    assert(text.rfind("FixedRoom ",0) == 0);
+    assert(keys == "t,frame,mode,hook,active,cell,graph,rooms,capped,playerRoom,cameraRoom,eyeRooms,cameraRooms,calls,cullCalls,"
+        "attachCalls,waterCalls,otherCalls,viewerCalls,gatedNear,vanillaTrue,claims,sample,");
+    // The pass split rides on its own line kind, accumulated over a second.
+    RoomPassSample pass;
+    pass.add(s,3); pass.add(s,1);
+    pass.seconds = 2.5; pass.frame = 99;
+    assert(pass.cameraPass == 44 && pass.lightPass == 16 && pass.lightNear == 4);
+    assert(formatRoomPass(line,sizeof(line),pass));
+    assert(std::string(line) == "FixedRoomPass t=2.500 frame=99 cameraPassCalls=44 lightPassCalls=16 lightPassNear=4 sample=second");
+    char tiny[12]{};
+    assert(!formatRoomPass(tiny,sizeof(tiny),pass));
+    RoomCounters near;
+    near.lightNear.fetch_add(2ull); near.gatedNear.fetch_add(1ull);
+    assert(near.lightNear.load() == 2 && near.gatedNear.load() == 1);
+    assert(roomPassTraceLines > 0 && roomPassTraceLines < roomTraceLines);
 }
 
 void hide() {

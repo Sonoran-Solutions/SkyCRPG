@@ -18,6 +18,7 @@ enum class Refusal : unsigned {
     traceWriter = 50,
     // Wave 2 package "light" (FCS-51..59; 50 was already the trace writer).
     lightSettings = 51, lightScene = 52, sceneReplaced = 53, fillFunctions = 54, fillCreate = 55, fillDropped = 56, fillStuck = 57,
+    stealthGuard = 58, stealthMemory = 59,
     restoreConflict = 60, offMain = 61
 };
 struct Hidden {
@@ -79,6 +80,9 @@ struct Runtime {
     TraceWriter writer;
     LineBudget rigLines{rigTraceLines},roomLines{roomTraceLines},hideLines{hideTraceLines};
     double nextRig{},nextRoom{};
+    LineBudget roomPassLines{roomPassTraceLines};
+    RoomPassSample roomPass;
+    double nextRoomPass{};
 };
 // Process lifetime, like the thin runtime: hidden roots and the trace worker
 // must never be torn down under the loader lock.
@@ -418,7 +422,10 @@ inline bool hookRoom(RE::BSMultiBoundRoom* room,const RE::NiPoint3& point) {
     const auto view = r.view.load(std::memory_order_acquire);
     const Vec asked{point.x,point.y,point.z};
     if (!view || !viewerQuery(*view,asked)) return vanilla;
-    if (caller != RoomCaller::camera) { r.counters.gatedNear.fetch_add(1ull,std::memory_order_relaxed); return vanilla; }
+    if (caller != RoomCaller::camera) {
+        (caller == RoomCaller::light ? r.counters.lightNear : r.counters.gatedNear).fetch_add(1ull,std::memory_order_relaxed);
+        return vanilla;
+    }
     r.counters.viewerCalls.fetch_add(1ull,std::memory_order_relaxed);
     if (vanilla) { r.counters.vanillaTrue.fetch_add(1ull,std::memory_order_relaxed); return true; }
     const auto& bound = room->worldBound;
@@ -480,6 +487,12 @@ inline void traceRoom(RE::TESObjectCELL* parent,Vec viewer,Vec eye) {
     s.claims = r.counters.claims.exchange(0ull,std::memory_order_relaxed);
     char line[640]{};
     if (formatRoom(line,sizeof(line),s)) emit(r.roomLines,line);
+    r.roomPass.add(s,r.counters.lightNear.exchange(0ull,std::memory_order_relaxed));
+    if (r.now < r.nextRoomPass) return;
+    r.nextRoomPass = r.now+1.0;
+    r.roomPass.seconds = r.now; r.roomPass.frame = r.frame;
+    if (formatRoomPass(line,sizeof(line),r.roomPass)) emit(r.roomPassLines,line);
+    r.roomPass = {};
 }
 
 } // namespace skycrpg::camera::fixed
@@ -636,7 +649,9 @@ inline void endFrame() {
         dropSnaps();
         const bool exiting = restoreNow(cause,r.silentFrames);
         if (exiting) restoreAll(cause);
-        light::frameLight(false,!exiting,parent,{},{},{},exitNames[static_cast<std::size_t>(cause)]);
+        const auto at = player && parent ? player->GetPosition() : RE::NiPoint3{};
+        light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState),cause == Exit::load,parent,
+            player && parent ? Vec{at.x,at.y,at.z} : Vec{},{},{},exitNames[static_cast<std::size_t>(cause)]);
         traceRig(false);
         r.previousEligible = false;
         return;
@@ -652,7 +667,7 @@ inline void endFrame() {
     traceRig(true);
     r.previousCamera = viewer; r.previousFrame = r.frame; r.previousEligible = true;
     traceRoom(parent,viewer,eye);
-    light::frameLight(true,false,parent,{position.x,position.y,position.z},eye,viewer,"eligible");
+    light::frameLight(true,light::FillDuty::keep,false,parent,{position.x,position.y,position.z},eye,viewer,"eligible");
 }
 
 // ---- install ----------------------------------------------------------------
@@ -772,7 +787,7 @@ inline void configure(const Config& requested,const light::Config& lightRequeste
     light::configureLight(lightRequested);
     const bool lightTrace = light::lights && light::lights->config.trace;
     if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace || lightTrace) {
-        const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines : 0u)+
+        const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines+roomPassTraceLines : 0u)+
             (r.config.hideTrace ? hideTraceLines : 0u)+(lightTrace ? light::lightTraceLines : 0u);
         r.traceReady = r.writer.start(tracePath,rows);
         if (!r.traceReady) refuse(Refusal::traceWriter,"trace writer did not start; traces off, behaviour unchanged");

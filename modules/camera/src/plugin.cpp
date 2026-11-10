@@ -350,6 +350,7 @@ void loadSettings() {
         l.fillRed = number("FixedCameraSpike","fLightFillRed",l.fillRed);
         l.fillGreen = number("FixedCameraSpike","fLightFillGreen",l.fillGreen);
         l.fillBlue = number("FixedCameraSpike","fLightFillBlue",l.fillBlue);
+        l.stealthNeutral = flag("FixedCameraSpike","bLightFillStealthNeutral",1);
         l.trace = flag("FixedCameraSpike","iLightTrace",0);
         fixed::configure(f,l,settings,cursorSettings.enabled ? cursorSettings.toggleKey : -1,
             std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera_FixedSpike.log",log,thinGoal,fixedPreCollision,fixedCause);
