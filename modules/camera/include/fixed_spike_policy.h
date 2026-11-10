@@ -320,7 +320,7 @@ inline bool formatRoom(char* out,std::size_t size,const RoomSample& s) {
 struct RoomPassSample {
     double seconds{};
     unsigned long long frame{},cameraPass{},lightPass{},lightNear{};
-    void add(const RoomSample& s,unsigned long long near) { cameraPass += s.cameraPass; lightPass += s.lightPass; lightNear += near; }
+    void add(const RoomSample& s,unsigned long long nearCalls) { cameraPass += s.cameraPass; lightPass += s.lightPass; lightNear += nearCalls; }
 };
 inline bool formatRoomPass(char* out,std::size_t size,const RoomPassSample& s) {
     const int written = std::snprintf(out,size,"FixedRoomPass t=%.3f frame=%llu cameraPassCalls=%llu lightPassCalls=%llu lightPassNear=%llu sample=second",
