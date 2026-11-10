@@ -28,6 +28,9 @@ void settings() {
     { Config wide; wide.hideRadius = 1e9f; assert(validate(wide,base,48).hideRadius == 2048.0f); wide.hideRadius = nan; assert(validate(wide,base,48).hideRadius == 384.0f); }
     assert(adjusted && c.heading == 270.0f && c.snapSeconds == .05f && c.zoom == 1.0f && c.roomSeedMode == 0);
     assert(c.seeThroughMode == 0 && c.cutHeight == 160.0f && c.roomSeedRadius == 0.0f && c.hidePerFrame == 1 && c.hideTotal == maxHidden);
+    c = {}; c.seeThroughMode = 3; assert(validate(c,base,48,&adjusted).seeThroughMode == 3 && !adjusted); // wave 2 shader cut
+    c = {}; c.seeThroughMode = 4; assert(validate(c,base,48,&adjusted).seeThroughMode == 0 && adjusted);
+    assert(!hideScanned(3,true)); // the shader cut hides no reference
     c = {}; c.heading = nan; assert(validate(c,base,48).heading == 45.0f);
     c = {}; c.heading = 405; assert(validate(c,base,48).heading == 45.0f);
     // Reserved or owned keys are unbound, never silently remapped.

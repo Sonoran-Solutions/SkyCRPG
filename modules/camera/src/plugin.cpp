@@ -341,7 +341,14 @@ void loadSettings() {
         f.hidePerFrame = number("FixedCameraSpike","iHideMaxPerFrame",f.hidePerFrame);
         f.hideTotal = number("FixedCameraSpike","iHideMaxTotal",f.hideTotal);
         f.hideTrace = flag("FixedCameraSpike","iHideTrace",0);
-        fixed::configure(f,settings,cursorSettings.enabled ? cursorSettings.toggleKey : -1,
+        // Wave 2 shader cut (iSeeThroughMode=3); unused in every other mode.
+        fixed::shader::Config shaderCut;
+        shaderCut.height = number("FixedCameraSpike","fShaderCutHeight",shaderCut.height);
+        shaderCut.radius = number("FixedCameraSpike","fShaderCutRadius",shaderCut.radius);
+        shaderCut.maxPerFrame = number("FixedCameraSpike","iShaderCutMaxPerFrame",shaderCut.maxPerFrame);
+        shaderCut.shaders = number("FixedCameraSpike","iShaderCutShaders",shaderCut.shaders);
+        shaderCut.trace = flag("FixedCameraSpike","iShaderCutTrace",0);
+        fixed::configure(f,shaderCut,settings,cursorSettings.enabled ? cursorSettings.toggleKey : -1,
             std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera_FixedSpike.log",log,thinGoal,fixedPreCollision,fixedCause);
     }
     if (badSettings) log("Invalid Camera INI values: defaults or safe bounds applied; unsupported schema disables policy.");
