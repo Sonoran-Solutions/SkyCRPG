@@ -28,21 +28,38 @@ inline constexpr unsigned kViewProtocol = 1;
 inline constexpr std::uint32_t kViewRayLayer = 41;
 // Layers in that list whose bodies are not drawn surfaces: L_SPELL (7),
 // L_CLOUDTRAP (16, the only one with the COLL "sensor" flag 0x02),
-// L_CONEPROJECTILE (38), the query layers L_CAMERA/L_ITEMPICKER/L_LOS/
-// L_CUSTOMPICK1/L_CUSTOMPICK2 (39, 40, 41, 43, 44) and L_DETECTION (53).
-// Hits on them are reported as `volume` and never block. Choosing them is an
-// engineering reading of the COLL names and flags (Hypothesis), not a render test.
+// L_CONEPROJECTILE (38) and the query layers L_CAMERA/L_ITEMPICKER/L_LOS/
+// L_CUSTOMPICK1/L_CUSTOMPICK2 (39, 40, 41, 43, 44). Hits on them are reported
+// as `volume` and never block. Choosing them is an engineering reading of the
+// COLL names and flags (Hypothesis), not a render test; no vanilla NIF carries
+// a body on them, so they are made at run time.
 inline constexpr bool VolumeLayer(std::uint32_t layer) noexcept
 {
 	return layer == 7 || layer == 16 || layer == 38 || layer == 39 || layer == 40 || layer == 41 ||
-		layer == 43 || layer == 44 || layer == 53;
+		layer == 43 || layer == 44;
 }
+// L_DETECTION (53) collides only with L_LOS: its bodies exist to be hit by
+// line-of-sight rays, and what they stand for is unknown. They report
+// `unknown`/`detection`, which always blocks and so can never give a wrong clear.
+inline constexpr std::uint32_t kDetectionLayer = 53;
 // FindCollidableObject (ID 15870) resolves system-group-1 entities through a
-// TES grid lookup (2236E8..22374D). Those and terrain (13) are recorded as
-// opaque landscape without resolving an object or walking a land node.
-inline constexpr bool LandscapeHit(std::uint32_t layer, std::uint32_t filterInfo) noexcept
+// TES grid lookup (2236D9..22374D). The land heightfield body is built with
+// filter info 0x10011 (system group 1, layer 17; ID 18750 at 2AEAA5). Those
+// hits are recorded as opaque landscape without resolving an object. Layer 13
+// itself is not shortcut: in vanilla it is placed static meshes with 3D.
+inline constexpr bool LandscapeHit(std::uint32_t filterInfo) noexcept
 {
-	return layer == 13 || (filterInfo & 0xFFFF0000U) == 0x10000U;
+	return (filterInfo & 0xFFFF0000U) == 0x10000U;
+}
+// The hit class is part of a hit's identity, so a record only absorbs
+// surfaces of its own class.
+enum class HitClass : std::uint8_t { ordinary, volume, landscape, detection };
+inline constexpr HitClass ClassifyHit(std::uint32_t layer, std::uint32_t filterInfo) noexcept
+{
+	if (LandscapeHit(filterInfo)) return HitClass::landscape;
+	if (layer == kDetectionLayer) return HitClass::detection;
+	if (VolumeLayer(layer)) return HitClass::volume;
+	return HitClass::ordinary;
 }
 inline constexpr unsigned kViewMaxInFlight = 4;      // outstanding samples, requested + periodic
 inline constexpr unsigned kViewMaxHops = 600;        // UI -> main-queue -> UI retries for a main-thread drain
@@ -51,6 +68,7 @@ inline constexpr unsigned kViewCastBudget = 256;     // Havok casts per sample, 
 inline constexpr unsigned kViewPlayerSkips = 8;      // player surfaces skipped per ray
 inline constexpr unsigned kViewRayCasts = 48;        // casts per ray, merged surfaces included
 inline constexpr unsigned kViewTreatmentNodes = 256; // nodes visited per hit reference
+inline constexpr unsigned kViewParentLinks = 64;     // held bone -> held player root check
 inline constexpr unsigned kViewSkeletonNodes = 1024; // player bone search
 inline constexpr double kViewEndClearance = 2;       // rays stop this many units before the point
 inline constexpr double kViewRecastStep = 1;         // re-cast this many units past each hit
@@ -330,7 +348,9 @@ public:
 };
 
 struct HitRecord {
-	std::uint64_t key{};       // identity for merging: form ID, or a tagged object address
+	HitClass hitClass{ HitClass::ordinary };
+	std::uint64_t key{};       // identity for merging: form ID, or a tagged held-object address
+	bool mergeable{};          // false: never merged (no nonzero form ID and no held object)
 	std::optional<std::uint32_t> ref, base;
 	std::uint32_t layer{};
 	double distance{};         // to the nearest surface of this reference
@@ -339,12 +359,38 @@ struct HitRecord {
 	std::optional<double> alpha;
 	std::string_view reason;
 };
-// Reference identity: the form ID when there is a reference, otherwise the
-// resolved object's (or collidable's) address with bit 63 set, which no form
-// ID and no user-mode address uses.
-inline constexpr std::uint64_t HitKey(std::optional<std::uint32_t> ref, std::uintptr_t object) noexcept
+// Reference identity: a nonzero form ID; otherwise the address of a resolved
+// object the probe holds for the whole sample (so the address cannot be
+// reused), tagged with bit 63, which no form ID and no user-mode address uses.
+// Anything else (form ID 0, an unheld object or a bare collidable) is never
+// merged: each surface is its own record.
+struct HitIdentity {
+	std::uint64_t key{};
+	bool mergeable{};
+};
+inline constexpr HitIdentity MakeIdentity(std::optional<std::uint32_t> ref, std::uintptr_t heldObject) noexcept
 {
-	return ref ? static_cast<std::uint64_t>(*ref) : (static_cast<std::uint64_t>(object) | (1ULL << 63));
+	if (ref && *ref != 0) return { static_cast<std::uint64_t>(*ref), true };
+	if (heldObject != 0) return { static_cast<std::uint64_t>(heldObject) | (1ULL << 63), true };
+	return {};
+}
+inline constexpr bool SameHit(const HitRecord& a, HitClass hitClass, HitIdentity identity) noexcept
+{
+	return a.mergeable && identity.mergeable && a.hitClass == hitClass && a.key == identity.key;
+}
+// Fixed treatments that need no scene-graph walk. A reference-less hit whose
+// own resolved node is app-culled is unknown: that node is only the collision
+// node, and its culling says nothing about what else is drawn.
+inline std::optional<TreatmentResult> FixedTreatment(HitClass hitClass, bool hasReference, bool nodeCulled) noexcept
+{
+	switch (hitClass) {
+	case HitClass::landscape: return TreatmentResult{ Treatment::opaque, std::nullopt, "landscape" };
+	case HitClass::volume: return TreatmentResult{ Treatment::volume, std::nullopt, {} };
+	case HitClass::detection: return TreatmentResult{ Treatment::unknown, std::nullopt, "detection" };
+	default: break;
+	}
+	if (!hasReference && nodeCulled) return TreatmentResult{ Treatment::unknown, std::nullopt, "unresolved_culled" };
+	return std::nullopt;
 }
 struct RayRecord {
 	bool ran{};          // every cast needed for a complete answer ran
@@ -363,7 +409,7 @@ enum class AddResult { appended, merged, full };
 inline AddResult AddHit(RayRecord& ray, const HitRecord& hit, std::uint32_t maxHits)
 {
 	for (auto& existing : ray.hits) {
-		if (existing.key != hit.key) continue;
+		if (!SameHit(existing, hit.hitClass, { hit.key, hit.mergeable })) continue;
 		++existing.surfaces;
 		existing.distance = (std::min)(existing.distance, hit.distance);
 		return AddResult::merged;
@@ -372,10 +418,10 @@ inline AddResult AddHit(RayRecord& ray, const HitRecord& hit, std::uint32_t maxH
 	ray.hits.push_back(hit);
 	return AddResult::appended;
 }
-inline bool KnownHit(const RayRecord& ray, std::uint64_t key) noexcept
+inline bool KnownHit(const RayRecord& ray, HitClass hitClass, HitIdentity identity) noexcept
 {
 	for (const auto& existing : ray.hits)
-		if (existing.key == key) return true;
+		if (SameHit(existing, hitClass, identity)) return true;
 	return false;
 }
 struct RayFold {

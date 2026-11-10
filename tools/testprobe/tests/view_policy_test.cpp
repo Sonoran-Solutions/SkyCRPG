@@ -315,48 +315,112 @@ void Json()
 	assert(line == "{\"t\":5,\"wall\":\"2026-11-09T00:00:00Z\",\"ev\":\"view_sample\",\"view_protocol\":1,\"seq\":1,"
 		"\"requested\":true,\"tag\":\"arrive\",\"available\":false,\"reason\":\"game_paused\"}\n");
 }
+// Builds a record the way the adapter does: class, identity, then treatment.
+HitRecord Classed(HitClass hitClass, std::optional<std::uint32_t> ref, std::uintptr_t heldObject, Treatment treatment,
+	std::optional<double> alpha = std::nullopt)
+{
+	HitRecord hit = Hit(treatment, alpha);
+	hit.ref = ref;
+	const auto identity = MakeIdentity(ref, heldObject);
+	hit.hitClass = hitClass;
+	hit.key = identity.key;
+	hit.mergeable = identity.mergeable;
+	return hit;
+}
+
 void Merging()
 {
 	// M2: one faded wall hit on entry and exit counts once, not 0.65^2.
 	RayRecord ray = Ray({});
-	HitRecord wall = Hit(Treatment::faded, .35);
-	wall.key = HitKey(0x0001A2B3, 0);
+	const HitRecord wall = Classed(HitClass::ordinary, 0x0001A2B3, 0, Treatment::faded, .35);
 	assert(AddHit(ray, wall, 8) == AddResult::appended);
 	HitRecord exitFace = wall;
 	exitFace.distance = 140;
-	assert(KnownHit(ray, wall.key) && AddHit(ray, exitFace, 8) == AddResult::merged);
+	assert(KnownHit(ray, HitClass::ordinary, MakeIdentity(0x0001A2B3, 0)) && AddHit(ray, exitFace, 8) == AddResult::merged);
 	assert(ray.hits.size() == 1 && ray.hits[0].surfaces == 2 && Near(ray.hits[0].distance, 100));
 	auto fold = FoldRay(ray);
 	assert(fold.status == RayStatus::faded_only && Near(*fold.transmittance, .65));
 	// Merged surfaces do not use maxHits slots; eight distinct references still multiply.
 	RayRecord eight = Ray({});
 	for (std::uint32_t i = 0; i < 8; ++i) {
-		HitRecord layer = Hit(Treatment::faded, .35);
-		layer.key = HitKey(0x00100000 + i, 0);
+		const HitRecord layer = Classed(HitClass::ordinary, 0x00100000 + i, 0, Treatment::faded, .35);
 		assert(AddHit(eight, layer, 8) == AddResult::appended);
 		assert(AddHit(eight, layer, 8) == AddResult::merged);  // its exit face
 	}
 	fold = FoldRay(eight);
 	assert(eight.hits.size() == 8 && fold.status == RayStatus::faded_only && Near(*fold.transmittance, std::pow(.65, 8), 1e-12));
-	HitRecord ninth = Hit(Treatment::faded, .35);
-	ninth.key = HitKey(0x00200000, 0);
-	assert(AddHit(eight, ninth, 8) == AddResult::full && eight.hits.size() == 8);
-	// Keys: form IDs and tagged addresses never collide.
-	assert(HitKey(0x14, 0x14) == 0x14 && HitKey(std::nullopt, 0x14) == (0x14ULL | (1ULL << 63)));
-	assert(HitKey(std::nullopt, 0x7FF600001000ULL) != HitKey(0x00001000, 0));
+	assert(AddHit(eight, Classed(HitClass::ordinary, 0x00200000, 0, Treatment::faded, .35), 8) == AddResult::full);
+	assert(eight.hits.size() == 8);
+	// Identities: form IDs and tagged held addresses never collide.
+	assert(MakeIdentity(0x14, 0x14).key == 0x14 && MakeIdentity(std::nullopt, 0x14).key == (0x14ULL | (1ULL << 63)));
+	assert(MakeIdentity(std::nullopt, 0x7FF600001000ULL).key != MakeIdentity(0x00001000, 0).key);
+}
+
+void Classes()
+{
+	// N1: a volume and a later solid surface of the same reference stay apart.
+	RayRecord ray = Ray({});
+	assert(AddHit(ray, Classed(HitClass::volume, 0x0002B000, 0, Treatment::volume), 8) == AddResult::appended);
+	assert(!KnownHit(ray, HitClass::ordinary, MakeIdentity(0x0002B000, 0)));
+	assert(AddHit(ray, Classed(HitClass::ordinary, 0x0002B000, 0, Treatment::unknown), 8) == AddResult::appended);
+	assert(ray.hits.size() == 2 && FoldRay(ray).status == RayStatus::blocked);
+	RayRecord opaque = Ray({});
+	AddHit(opaque, Classed(HitClass::volume, 0x0002B000, 0, Treatment::volume), 8);
+	AddHit(opaque, Classed(HitClass::ordinary, 0x0002B000, 0, Treatment::opaque), 8);
+	assert(FoldRay(opaque).status == RayStatus::blocked && *FoldRay(opaque).transmittance == 0);
+	// Volume then volume of the same reference: one record.
+	RayRecord volumes = Ray({});
+	AddHit(volumes, Classed(HitClass::volume, 0x0002B000, 0, Treatment::volume), 8);
+	assert(AddHit(volumes, Classed(HitClass::volume, 0x0002B000, 0, Treatment::volume), 8) == AddResult::merged);
+	assert(volumes.hits.size() == 1 && volumes.hits[0].surfaces == 2 && FoldRay(volumes).status == RayStatus::clear);
+	// Landscape then ordinary of the same reference: two records.
+	RayRecord land = Ray({});
+	AddHit(land, Classed(HitClass::landscape, 0x0003C000, 0, Treatment::opaque), 8);
+	assert(AddHit(land, Classed(HitClass::ordinary, 0x0003C000, 0, Treatment::hidden), 8) == AddResult::appended);
+	assert(land.hits.size() == 2 && FoldRay(land).status == RayStatus::blocked);
+	// Form ID 0, or no reference and no held object: never merged.
+	RayRecord loose = Ray({});
+	AddHit(loose, Classed(HitClass::ordinary, 0, 0, Treatment::hidden), 8);
+	assert(AddHit(loose, Classed(HitClass::ordinary, 0, 0, Treatment::opaque), 8) == AddResult::appended);
+	AddHit(loose, Classed(HitClass::volume, std::nullopt, 0, Treatment::volume), 8);
+	assert(AddHit(loose, Classed(HitClass::volume, std::nullopt, 0, Treatment::volume), 8) == AddResult::appended);
+	assert(loose.hits.size() == 4 && FoldRay(loose).status == RayStatus::blocked);
+	assert(!MakeIdentity(0, 0).mergeable && !MakeIdentity(std::nullopt, 0).mergeable);
+	// A held reference-less object merges only with itself.
+	RayRecord held = Ray({});
+	AddHit(held, Classed(HitClass::ordinary, std::nullopt, 0x7FF600002000ULL, Treatment::faded, .35), 8);
+	assert(AddHit(held, Classed(HitClass::ordinary, std::nullopt, 0x7FF600002000ULL, Treatment::faded, .35), 8) == AddResult::merged);
+	assert(AddHit(held, Classed(HitClass::ordinary, std::nullopt, 0x7FF600003000ULL, Treatment::faded, .35), 8) == AddResult::appended);
+	assert(Near(*FoldRay(held).transmittance, .65 * .65));
 }
 
 void Layers()
 {
-	// m6: non-drawn layers seen by L_LOS are volumes and never block.
-	for (const std::uint32_t layer : { 7u, 16u, 38u, 39u, 40u, 41u, 43u, 44u, 53u }) assert(VolumeLayer(layer));
-	for (const std::uint32_t layer : { 0u, 1u, 2u, 4u, 5u, 6u, 8u, 9u, 10u, 13u, 14u, 17u, 32u }) assert(!VolumeLayer(layer));
+	// m6/N4: non-drawn layers seen by L_LOS are volumes and never block; L_DETECTION is not one.
+	for (const std::uint32_t layer : { 7u, 16u, 38u, 39u, 40u, 41u, 43u, 44u }) assert(VolumeLayer(layer));
+	for (const std::uint32_t layer : { 0u, 1u, 2u, 4u, 5u, 6u, 8u, 9u, 10u, 13u, 14u, 17u, 32u, 53u }) assert(!VolumeLayer(layer));
 	assert(FoldRay(Ray({ Hit(Treatment::volume), Hit(Treatment::hidden) })).status == RayStatus::clear);
 	assert(FoldRay(Ray({ Hit(Treatment::volume), Hit(Treatment::faded, .35) })).status == RayStatus::faded_only);
 	assert(FoldRay(Ray({ Hit(Treatment::volume), Hit(Treatment::opaque) })).status == RayStatus::blocked);
-	// m5: terrain and system-group-1 collidables skip the grid lookup.
-	assert(LandscapeHit(13, 13) && LandscapeHit(1, 0x10001) && LandscapeHit(17, 0x10011));
-	assert(!LandscapeHit(17, 17) && !LandscapeHit(1, 0x20001) && !LandscapeHit(1, 0x1));
+	// N2: only system group 1 (the heightfield is built with 0x10011) is landscape; layer 13 statics are ordinary.
+	assert(LandscapeHit(0x10011) && LandscapeHit(0x10001) && !LandscapeHit(13) && !LandscapeHit(17) && !LandscapeHit(0x20001));
+	assert(ClassifyHit(17, 0x10011) == HitClass::landscape && ClassifyHit(13, 13) == HitClass::ordinary);
+	assert(ClassifyHit(53, 53) == HitClass::detection && ClassifyHit(16, 16) == HitClass::volume);
+	assert(ClassifyHit(1, 1) == HitClass::ordinary && ClassifyHit(7, 0x10007) == HitClass::landscape);
+	// Fixed treatments: detection always blocks (never a wrong clear); landscape opaque; volume free.
+	auto fixed = FixedTreatment(HitClass::detection, true, false);
+	assert(fixed && fixed->treatment == Treatment::unknown && fixed->reason == "detection");
+	fixed = FixedTreatment(HitClass::detection, false, true);
+	assert(fixed && fixed->treatment == Treatment::unknown);
+	fixed = FixedTreatment(HitClass::landscape, false, false);
+	assert(fixed && fixed->treatment == Treatment::opaque && fixed->reason == "landscape");
+	fixed = FixedTreatment(HitClass::volume, true, true);
+	assert(fixed && fixed->treatment == Treatment::volume);
+	// N6: a reference-less hit whose own node is culled is unknown, not hidden.
+	fixed = FixedTreatment(HitClass::ordinary, false, true);
+	assert(fixed && fixed->treatment == Treatment::unknown && fixed->reason == "unresolved_culled");
+	assert(!FixedTreatment(HitClass::ordinary, false, false));  // walked
+	assert(!FixedTreatment(HitClass::ordinary, true, true));    // reference root culled: walked, hidden
 }
 
 void Periodics()
@@ -386,6 +450,7 @@ int main()
 	Cadence();
 	Json();
 	Merging();
+	Classes();
 	Layers();
 	Periodics();
 }

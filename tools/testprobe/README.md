@@ -517,7 +517,9 @@ Each point and ring entry:
   skeleton nodes `NPC Head [Head]`, `NPC Spine2 [Spn2]`, `NPC L UpperArm [LUar]`
   and `NPC R UpperArm [RUar]` (case-insensitive name match, at most 1024 nodes
   searched). The search runs once per player 3D root and load; later samples read
-  only the held nodes' world positions. A missing node (for example a beast
+  only the held nodes' world positions, after checking that each held node still
+  hangs under the held root (otherwise the search runs again). A game load drops
+  the cache. A missing node (for example a beast
   skeleton) gives `world:null` and an indeterminate ray with reason
   `point_unavailable` (or `skeleton_cap`). `feet` and ring points are 8 units
   above `player.pos.z`; ring points assume a flat floor, so steps and slopes can
@@ -533,13 +535,17 @@ Each point and ring entry:
   After each hit the probe casts again 1 unit past it. The player's own
   surfaces are skipped and counted (`skipped_player`, at most 8). A ray uses at
   most 48 casts.
-- **One hit per reference.** Another surface of a reference already on the ray
-  (several collision shapes, or the entry and exit faces of a closed mesh) is
-  merged: its `surfaces` count rises, `distance` stays the nearest, and it uses
-  no `iViewMaxHits` slot and no extra transmittance factor. Identity is the
-  reference's form ID, or for a hit without a reference the resolved object (or
-  collidable) address. After `iViewMaxHits` distinct references, one more
-  reference before the point, or the 48-cast limit, sets `truncated:true`.
+- **One hit per reference and class.** Another surface of a reference already
+  on the ray **in the same hit class** (ordinary, volume, landscape, detection)
+  is merged: its `surfaces` count rises, `distance` stays the nearest, and it
+  uses no `iViewMaxHits` slot and no extra transmittance factor. So a volume
+  body and a solid surface of the same reference are always two hits, and the
+  solid one still blocks. Identity is a nonzero form ID, or for a hit without a
+  reference the resolved object, which the probe then holds for the rest of the
+  sample so its address cannot be reused. A hit with form ID 0, or with neither
+  a reference nor a resolved object, is never merged. After `iViewMaxHits`
+  records, one more before the point, or the 48-cast limit, sets
+  `truncated:true`.
 - `layer` is the hit collidable's collision layer. The ray uses layer 41
   (`L_LOS`). From the Skyrim.esm COLL records it collides with layers 0, 1, 2,
   4, 5, 6, 7, 8, 9, 10, 13, 14, 16, 17, 32, 38, 39, 40, 41, 43, 44 and 53. Unlike
@@ -549,13 +555,20 @@ Each point and ring entry:
   water (11). So `clear` here does **not** mean the camera's collision caster is
   clear, and drawn objects that exist only on those layers are invisible to the
   rays. A hit with no reference has `ref:null`.
-- `treatment`, decided once per reference:
+- `treatment`, decided once per reference and class:
   - `volume` for hits on layers that are not drawn surfaces: `L_SPELL` (7),
-    `L_CLOUDTRAP` (16), `L_CONEPROJECTILE` (38), the query layers 39, 40, 41,
-    43, 44 and `L_DETECTION` (53). Volumes never block and are not walked.
-  - `opaque` with reason `landscape` for terrain (layer 13) and any collidable
-    in system group 1, without resolving its scene object (that lookup walks the
-    TES cell grid).
+    `L_CLOUDTRAP` (16), `L_CONEPROJECTILE` (38) and the query layers 39, 40,
+    41, 43, 44. Volumes never block and are not walked. No vanilla NIF has a
+    body on these layers; they are created at run time.
+  - `unknown` with reason `detection` for `L_DETECTION` (53), whose only
+    partner layer is `L_LOS`: what such a body stands for is unknown, and
+    `unknown` always blocks, so it can never produce a wrong `clear`.
+  - `opaque` with reason `landscape` for any collidable in system group 1 (the
+    land heightfield is built with filter info `0x10011`), without resolving its
+    scene object (that lookup walks the TES cell grid). Layer 13 hits are
+    ordinary: in vanilla they are placed static meshes with their own 3D.
+  - A hit without a reference whose own resolved node is app-culled: `unknown`
+    with reason `unresolved_culled` (that node is only the collision node).
   - Actor hits (form type ACHR) read only the root's app-culled flag: `hidden`,
     otherwise `unknown` with reason `actor` (actor 3D is not walked).
   - Other references: their 3D is walked (at most 256 nodes). `hidden` only
@@ -567,7 +580,8 @@ Each point and ring entry:
     `faded` with `alpha` = the highest lighting material alpha when every
     drawn part blends with an alpha below 1 (the DYL-201 fade); `unknown` with
     a `reason` (`unresolved`, `node_cap`, `non_lighting_blend`,
-    `invalid_alpha`, `no_geometry`) when it cannot be read.
+    `invalid_alpha`, `no_geometry`) when it cannot be read. A hit without a
+    reference walks its resolved node the same way.
 - `status`: `indeterminate` if the cast could not run (`reason`
   `invalid_geometry`, `no_havok_world`, `cast_budget`, `point_unavailable`,
   `skeleton_cap`) or `truncated`; otherwise `blocked` if any hit is `opaque` or
@@ -622,7 +636,9 @@ the same job-list segment are not excluded. The probe holds a reference count
 on every node it reads; if the engine drops its own reference meanwhile, the
 probe's release runs that node's destructor on the job thread. Superseded bone
 holds are kept until a load message or a menu event on `Main::threadID`
-releases them (at most 10; beyond that they are released on the job thread).
+releases them (at most 10; beyond that they are released on the job thread);
+`kPreLoadGame` retires the active cache. Per-sample hit holds are released on
+the job thread at the end of the sample.
 This residual risk is stated in the evidence doc; `bViewMainThreadOnly=1`
 removes it at the cost of no samples during unpaused play.
 
@@ -647,8 +663,10 @@ be claimed from view samples at all; it needs per-frame image evidence.
 `view_policy_test.cpp` covers the request grammar and settings bounds, the
 periodic opt-in, projection (including behind-camera points and non-unit
 ports), pose angles and frustum FOV, ring and ray planning, every folding rule,
-per-reference merging, transmittance (single, a two-faced wall, eight stacked
-0.35 fades), treatment aggregation (including a culled proxy beside an opaque
-sibling), volume and landscape layers, cadence coalescing and the exact JSON
+per-reference and per-class merging (a volume never absorbs a solid surface;
+form ID 0 and unidentified hits never merge), transmittance (single, a
+two-faced wall, eight stacked 0.35 fades), treatment aggregation (including a
+culled proxy beside an opaque sibling), hit classes (volume, detection,
+landscape, reference-less culled node), cadence coalescing and the exact JSON
 shape. It does not compile the Windows adapter or prove any engine behaviour;
 all in-game rows are NOT_RUN.

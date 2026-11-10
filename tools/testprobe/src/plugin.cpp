@@ -78,6 +78,14 @@ namespace json = skycrpg::testprobe;
 constexpr std::uint32_t kPlayerFormID = 0x00000014;
 using Clock = std::chrono::steady_clock;
 
+// view_sample bone cache (PlayerBones); lives in the never-destroyed Probe.
+struct ViewBoneCache {
+	RE::NiPointer<RE::NiAVObject> root;
+	std::array<RE::NiPointer<RE::NiAVObject>, 4> nodes;
+	std::uint64_t generation{};
+	bool capped{}, valid{};
+};
+
 // SKSE plugins are process-lifetime modules (no hot unloading). Keep the state
 // and sinks alive until process termination, including timer/task callbacks.
 // No static destructor waits on a worker under the Windows loader lock.
@@ -119,6 +127,9 @@ struct Probe {
 	std::atomic_int viewBinaryGuard{ 0 };  // 0 unchecked, 1 pass, 2 fail
 	std::atomic_uint32_t viewReasonsLogged{ 0 };
 	std::atomic<std::uintptr_t> frameCounter{ 0 };  // ID 411489, set by a passing binary guard
+	std::mutex viewBonesMutex;                       // viewBones and viewRetired
+	ViewBoneCache viewBones;
+	std::vector<RE::NiPointer<RE::NiAVObject>> viewRetired;
 	HANDLE viewTimer{};
 };
 Probe* g_probe = nullptr;
@@ -1128,77 +1139,97 @@ BoneSearch FindBones(RE::NiAVObject* root)
 }
 
 // The skeleton is searched once per player 3D root and load generation; later
-// samples read only the held bones' world.translate. Holding the root means a
-// replacement root (3D reload, race menu, beast form) has a different address.
-// Only UI-drain tasks touch the cache, and SKSE runs them one at a time.
-// Superseded holds are released on Main::threadID (load messages, or a menu
-// event delivered there) because the probe's reference may be the last one;
-// beyond kRetiredCap they are released where they are, on the drain thread.
-struct BoneCache {
-	RE::NiPointer<RE::NiAVObject> root;
-	std::array<RE::NiPointer<RE::NiAVObject>, 4> nodes;
-	std::uint64_t generation{};
-	bool capped{}, valid{};
-};
-BoneCache* g_viewBones = nullptr;  // process lifetime, like g_probe
-std::mutex g_viewRetiredMutex;
-std::vector<RE::NiPointer<RE::NiAVObject>>* g_viewRetired = nullptr;
+// samples read only the held bones' world.translate, after checking that each
+// held bone still hangs under the held root (else the search runs again).
+// Holding the root means a replacement root (3D reload, race menu, beast form)
+// has a different address. The cache and the retired holds are guarded by
+// Probe::viewBonesMutex. kPreLoadGame retires the cache. Superseded holds are
+// released on Main::threadID (load messages, or a menu event delivered there)
+// because the probe's reference may be the last one; beyond kRetiredCap they
+// are released where they are, on the drain thread.
 constexpr std::size_t kRetiredCap = 10;
 
-void RetireViewNodes(BoneCache& cache) noexcept
+// Caller holds viewBonesMutex. Overflow is returned for release outside the lock.
+void RetireBonesLocked(std::vector<RE::NiPointer<RE::NiAVObject>>& overflow)
 {
-	std::vector<RE::NiPointer<RE::NiAVObject>> overflow;
-	try {
-		std::scoped_lock lock(g_viewRetiredMutex);
-		if (!g_viewRetired) g_viewRetired = new std::vector<RE::NiPointer<RE::NiAVObject>>();
-		if (cache.root) g_viewRetired->push_back(std::move(cache.root));
-		for (auto& node : cache.nodes)
-			if (node) g_viewRetired->push_back(std::move(node));
-		if (g_viewRetired->size() > kRetiredCap) overflow.swap(*g_viewRetired);
-	} catch (...) { Log("SkyCRPG_TestProbe: view bone retirement failed\n"); }
+	auto& cache = g_probe->viewBones;
+	auto& retired = g_probe->viewRetired;
+	if (cache.root) retired.push_back(std::move(cache.root));
+	for (auto& node : cache.nodes)
+		if (node) retired.push_back(std::move(node));
 	cache = {};
-	if (!overflow.empty()) Log("SkyCRPG_TestProbe: view bone holds released on the drain thread (cap reached)\n");
+	if (retired.size() > kRetiredCap) {
+		for (auto& node : retired) overflow.push_back(std::move(node));
+		retired.clear();
+	}
 }
 
-// Releases superseded holds, only on Main::threadID: load messages (observed
-// on main 606/606) and the menu events that arrive there.
-void ReleaseRetiredViewNodes() noexcept
+// retireCache: kPreLoadGame drops the previous session's player root and bones
+// on any thread; the holds themselves are released only on Main::threadID.
+void ReleaseRetiredViewNodes(bool retireCache) noexcept
 {
 	if (!g_probe->view.enabled) return;  // base behaviour without bViewSamples
 	const auto* main = RE::Main::GetSingleton();
-	if (!main || main->threadID != GetCurrentThreadId()) return;
+	const bool onMain = main && main->threadID == GetCurrentThreadId();
+	if (!retireCache && !onMain) return;
 	std::vector<RE::NiPointer<RE::NiAVObject>> released;
 	try {
-		std::scoped_lock lock(g_viewRetiredMutex);
-		if (g_viewRetired) released.swap(*g_viewRetired);
-	} catch (...) { return; }
+		std::scoped_lock lock(g_probe->viewBonesMutex);
+		if (retireCache && g_probe->viewBones.valid) RetireBonesLocked(released);
+		if (onMain) {
+			for (auto& node : g_probe->viewRetired) released.push_back(std::move(node));
+			g_probe->viewRetired.clear();
+		}
+	} catch (...) { Log("SkyCRPG_TestProbe: view bone release failed\n"); }
+	if (!onMain && !released.empty()) Log("SkyCRPG_TestProbe: view bone holds released off the main thread (cap reached)\n");
+}
+
+// Each held bone must still reach the held root through its parents.
+bool BonesAttached(const ViewBoneCache& cache)
+{
+	for (const auto& bone : cache.nodes) {
+		if (!bone) continue;
+		const RE::NiAVObject* node = bone.get();
+		std::uint32_t links = 0;
+		while (node && node != cache.root.get() && links < json::kViewParentLinks) {
+			node = node->parent;
+			++links;
+		}
+		if (node != cache.root.get()) return false;
+	}
+	return true;
 }
 
 std::array<std::optional<json::Vec3>, 4> PlayerBones(RE::PlayerCharacter* player, std::uint64_t generation, bool& capped)
 {
 	std::array<std::optional<json::Vec3>, 4> result;
-	if (!g_viewBones) g_viewBones = new BoneCache();
-	auto& cache = *g_viewBones;
-	auto* root = player->Get3D(false);
-	if (!root) {
-		if (cache.valid) RetireViewNodes(cache);
-		return result;
+	std::vector<RE::NiPointer<RE::NiAVObject>> overflow;
+	{
+		std::scoped_lock lock(g_probe->viewBonesMutex);
+		auto& cache = g_probe->viewBones;
+		auto* root = player->Get3D(false);
+		if (!root) {
+			if (cache.valid) RetireBonesLocked(overflow);
+		} else {
+			const bool fresh = cache.valid && cache.root.get() == root && cache.generation == generation && BonesAttached(cache);
+			if (!fresh) {
+				if (cache.valid) RetireBonesLocked(overflow);
+				auto search = FindBones(root);
+				cache.root.reset(root);
+				cache.nodes = std::move(search.nodes);
+				cache.capped = search.capped;
+				cache.generation = generation;
+				cache.valid = true;
+			}
+			capped = cache.capped;
+			for (std::size_t index = 0; index < cache.nodes.size(); ++index) {
+				if (!cache.nodes[index]) continue;
+				const auto& translate = cache.nodes[index]->world.translate;
+				result[index] = json::Vec3{ translate.x, translate.y, translate.z };
+			}
+		}
 	}
-	if (!cache.valid || cache.root.get() != root || cache.generation != generation) {
-		if (cache.valid) RetireViewNodes(cache);
-		auto search = FindBones(root);
-		cache.root.reset(root);
-		cache.nodes = std::move(search.nodes);
-		cache.capped = search.capped;
-		cache.generation = generation;
-		cache.valid = true;
-	}
-	capped = cache.capped;
-	for (std::size_t index = 0; index < cache.nodes.size(); ++index) {
-		if (!cache.nodes[index]) continue;
-		const auto& translate = cache.nodes[index]->world.translate;
-		result[index] = json::Vec3{ translate.x, translate.y, translate.z };
-	}
+	if (!overflow.empty()) Log("SkyCRPG_TestProbe: view bone holds released on the drain thread (cap reached)\n");
 	return result;
 }
 
@@ -1235,10 +1266,10 @@ public:
 			input.enableShapeCollectionFilter = false;
 			input.filterInfo.filter = json::kViewRayLayer;  // group 0, layer L_LOS
 			RE::hkpWorldRayCastOutput output;
-			bool hit = false, isPlayer = false, isActor = false, landscape = false, volume = false;
+			bool hit = false, isPlayer = false, isActor = false, hasReference = false;
+			json::HitClass hitClass = json::HitClass::ordinary;
 			double fraction = 1;
 			std::uint32_t layer = 0;
-			std::uint64_t key = 0;
 			std::optional<std::uint32_t> refID, baseID;
 			RE::NiPointer<RE::NiAVObject> root;
 			{
@@ -1253,21 +1284,20 @@ public:
 					auto* ref = RE::TESHavokUtilities::FindCollidableRef(*collidable);
 					isPlayer = ref && ref == player_;
 					if (!isPlayer) {
+						hasReference = ref != nullptr;
 						if (ref) {
 							// Form type 3Eh, the Character test the native caster makes at 5578C7.
 							isActor = ref->GetFormType() == RE::FormType::ActorCharacter;
 							refID = ref->GetFormID();
 							if (const auto* base = ref->GetBaseObject()) baseID = base->GetFormID();
 						}
-						landscape = json::LandscapeHit(layer, filterInfo);
-						volume = !landscape && json::VolumeLayer(layer);
-						// Landscape skips FindCollidableObject's grid lookup; volumes need no 3D.
-						if (!landscape && !volume) {
+						hitClass = json::ClassifyHit(layer, filterInfo);
+						// Landscape skips FindCollidableObject's grid lookup; volume and
+						// detection hits have fixed treatments and need no 3D.
+						if (hitClass == json::HitClass::ordinary) {
 							if (ref) root.reset(ref->Get3D());
 							else root.reset(RE::TESHavokUtilities::FindCollidableObject(*collidable));
 						}
-						key = json::HitKey(refID, root ? reinterpret_cast<std::uintptr_t>(root.get()) :
-							reinterpret_cast<std::uintptr_t>(collidable));
 					}
 				}
 			}
@@ -1277,17 +1307,27 @@ public:
 			if (isPlayer) {
 				if (++ray.skippedPlayer > json::kViewPlayerSkips) { ray.truncated = true; ray.ran = true; return ray; }
 			} else {
+				// A reference-less object is held for the rest of the sample, so its
+				// address can serve as identity; anything else unidentified never merges.
+				std::uintptr_t heldObject = 0;
+				if (!hasReference && root) {
+					holds_.push_back(root);
+					heldObject = reinterpret_cast<std::uintptr_t>(root.get());
+				}
+				const auto identity = json::MakeIdentity(refID, heldObject);
 				json::HitRecord record;
-				record.key = key;
+				record.hitClass = hitClass;
+				record.key = identity.key;
+				record.mergeable = identity.mergeable;
 				record.distance = json::Length(point - eye);
-				if (!json::KnownHit(ray, key)) {
-					// A new reference is treated once; another surface of a known one is merged by AddHit.
+				if (!json::KnownHit(ray, hitClass, identity)) {
+					// A new reference of this class is treated once; another surface of the
+					// same reference and class is merged by AddHit.
 					record.ref = refID;
 					record.base = baseID;
 					record.layer = layer;
 					json::TreatmentResult treated;
-					if (landscape) treated = { json::Treatment::opaque, std::nullopt, "landscape" };
-					else if (volume) treated = { json::Treatment::volume, std::nullopt, {} };
+					if (const auto fixed = json::FixedTreatment(hitClass, hasReference, root && root->GetAppCulled())) treated = *fixed;
 					else if (isActor) treated = ActorTreatment(root.get());
 					else treated = Treat(root.get());
 					record.treatment = treated.treatment;
@@ -1766,7 +1806,7 @@ public:
 			if (!event) { Log("SkyCRPG_TestProbe: null menu event\n"); return RE::BSEventNotifyControl::kContinue; }
 			// Capture the open endpoint before JSON/log I/O on this callback.
 			if (event->menuName == "InventoryMenu") InventoryMenuEvent(event->opening, PerfNow());
-			ReleaseRetiredViewNodes();  // no-op unless on Main::threadID
+			ReleaseRetiredViewNodes(false);  // no-op unless on Main::threadID
 			ThreadContext("menu");
 			Emit("menu", json::Object{}.String("name", event->menuName.c_str()).Boolean("opening", event->opening));
 			if (!event->opening) QueueSnapshot();
@@ -1863,7 +1903,7 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 		}
 		case SKSE::MessagingInterface::kPreLoadGame: {
 			g_probe->loaded.store(false);
-			ReleaseRetiredViewNodes();
+			ReleaseRetiredViewNodes(true);  // drop the previous session's player 3D
 			g_probe->generation.fetch_add(1);
 			ResetPerformance();
 			ThreadContext("pre_load_game");
@@ -1876,7 +1916,7 @@ void Messages(SKSE::MessagingInterface::Message* message) noexcept
 		}
 		case SKSE::MessagingInterface::kPostLoadGame: {
 			ThreadContext("post_load_game");
-			ReleaseRetiredViewNodes();
+			ReleaseRetiredViewNodes(false);
 			// SKSE encodes success in the pointer value (0/1), not a bool*.
 			const bool success = message->data != nullptr;
 			g_probe->loaded.store(success);
