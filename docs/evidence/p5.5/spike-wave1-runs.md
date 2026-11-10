@@ -69,3 +69,5 @@ These differences remain visible rather than being silently reconciled:
 - The Dragonsreach seed-1 checker failed on four transient room lines, although seeding is inapplicable with the camera inside the player's room at that pose.
 
 The all-vanilla-and-DLC-interiors unattended visibility sweep and owner screenshot review remain open. Wave 1 was a hand-picked feasibility spike; it does not close D044 acceptance or the P5.5 runtime gate. **Unverified (NOT_RUN):** corrected loft route, hands-on G16, full location matrix acceptance, every-interior sweep, and frame cost for seeding in a room-graph dungeon.
+
+**Owner clarification, 2026-11-10 (verbatim):** “First control run: mouse keyboard”. The owner used the mouse and keyboard on the host during `p55-control-1`. That confirms the run as input-contaminated: its camera turn with the spike off, its response to the route's mouse moves and its different late distances came from real input reaching the game, not from the build. `p55-control-2` against `p55-control-base-1` remains the off-equals-base evidence.
