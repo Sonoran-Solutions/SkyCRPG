@@ -194,7 +194,7 @@ hook_room = spike_body("inline bool hookRoom(", "inline bool within(")
 assert hook_room.index("r.originalRoom(room,point)") < hook_room.index("r.roomActive.load(") < hook_room.index("viewerQuery(*view,asked)") < \
     hook_room.index("seedClaim(")
 assert hook_room.index("roomCaller(runtime->callers,reinterpret_cast<std::uintptr_t>(_ReturnAddress()))") < hook_room.index("r.originalRoom(room,point)")
-assert hook_room.index("if (caller != RoomCaller::culling) {") < hook_room.index("r.counters.viewerCalls") < hook_room.index("seedClaim(caller,*view,asked,")
+assert hook_room.index("if (caller != RoomCaller::camera) {") < hook_room.index("r.counters.viewerCalls") < hook_room.index("seedClaim(caller,*view,asked,")
 assert hook_room.count("return true;") == 1 and "vanillaTrue" in hook_room[:hook_room.index("return true;")]  # true only repeats a vanilla true
 for engine in ("RE::PlayerCharacter", "RE::PlayerCamera", "RE::TESObjectCELL", "GetAppCulled", "logger", "emit("):
     assert engine not in hook_room, engine  # culling thread: the published copy and atomics only
@@ -236,12 +236,12 @@ configure = spike_body("inline void configure(", "} // namespace")
 assert configure.index("runtime = new Runtime;") < configure.index("light::configureLight(lightRequested);") < configure.index("r.writer.start(")
 assert "fixed::configure(f,l,settings," in loader
 for entry in ("inline void installLight(std::uintptr_t base) {\n    if (!lights) return;",
-              "inline void frameLight(bool eligible,RE::TESObjectCELL* parent,Vec feet,Vec at,Vec camera,const char* cause) {\n    if (!lights) return;",
+              "inline void frameLight(bool eligible,bool hold,RE::TESObjectCELL* parent,Vec feet,Vec at,Vec camera,const char* cause) {\n    if (!lights || hold) return;",
               "inline RE::ShadowSceneNode* scene() {\n    if (!lights || !lights->ready) return nullptr;"):
     assert entry in light, entry
 assert spike.count("light::installLight(base);") == 1 and spike.count("light::frameLight(") == 2
-assert end_frame.index("light::frameLight(false,parent,{},{},{},") < end_frame.index("traceRig(false);") < \
-    end_frame.index("light::frameLight(true,parent,")
+assert end_frame.index("light::frameLight(false,!exiting,parent,{},{},{},") < end_frame.index("traceRig(false);") < \
+    end_frame.index("light::frameLight(true,false,parent,")
 assert end_frame.index("if (!thin::onMain())") < end_frame.index("light::frameLight(")  # main thread only
 for forbidden in ("write_vfunc", "safe_write", "write_call", "write_branch", "VirtualProtect", "_ReturnAddress", "BSFixedString",
                   "GetMenu(", "IsMenuOpen(", "AddTask(", "RequestCameraControl"):
@@ -270,10 +270,20 @@ for param in ("params.dynamic = true;", "params.shadowLight = false;", "params.p
     assert param in add_fill, param
 assert light.count("SetAppCulled(") == 2  # created hidden; show() is the only other writer
 service = light_body("inline void serviceFill(", "// ---- entry points")
-assert service.index("if (!l.fillReady) return;") < service.index("createFill()") < service.index("show(false,cause);") < \
-    service.index("presenceNow(node)") < service.index("fillStep(wanted,l.presence,l.track)")
+assert service.index("if (!l.fillReady) { show(false,\"refused\"); return; }") < service.index("createFill()") < service.index("show(false,cause);") < \
+    service.index("presenceNow(node)") < service.index("fillStep(wanted,l.presence,l.track,runtime->now)")
 frame_light = light_body("inline void frameLight(", "} // namespace")
 assert frame_light.index("serviceFill(node,wanted,feet,cause);") < frame_light.index("if (!l.config.trace || !node || !eligible")
 assert "fillWanted(l.config.fillMode,eligible && finite(feet),interior,l.fillReady && node != nullptr)" in frame_light
+# Hook-silent frames inside wave 1's grace hold the fill light as it is.
+assert end_frame.index("const bool exiting = restoreNow(cause,r.silentFrames);") < end_frame.index("if (exiting) restoreAll(cause);") < \
+    end_frame.index("light::frameLight(false,!exiting,")
+# The census include follows the vanilla room test it uses; player rooms are
+# found before the light lock, and the census itself never runs a room query.
+assert spike.index("inline bool within(") < spike.index('#include "fixed_spike_light.h"') < spike.index("inline void endFrame() {")
+census_body = light_body("inline void census(", "// ---- fill light")
+assert "within(" not in census_body and "playerRooms(" not in census_body
+assert frame_light.index("const PlayerRooms player = playerRooms(parent,at);") < frame_light.index("census(node,player,at,s,shadows);")
+assert "fillStep(wanted,l.presence,l.track,runtime->now)" in service
 print("PASS light wiring: off unless configured; no hook; audited IDs and prologues before use; locked read-only census; "
       "one AddLight/RemoveLight site; hidden on every ineligible frame; one site per refusal code")

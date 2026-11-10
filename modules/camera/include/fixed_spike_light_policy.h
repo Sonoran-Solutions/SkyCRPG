@@ -58,26 +58,36 @@ constexpr const char* presenceName(Presence p) {
 enum class FillAction { none, add, remove, dropLimit, removeLimit };
 constexpr unsigned maxDropsPerCell = 3;   // the engine removed our light while wanted
 constexpr unsigned maxRemoveRequests = 8; // RemoveLight is a no-op while +300 is false
+// The light is app-culled on the first unwanted frame, but handed back only
+// after it has been unwanted this long, so a menu tap or a short special state
+// does not free and rebuild the engine's BSLight (and its 0x30230-byte culling
+// process, allocated by ID 106401 at 1513344) for nothing.
+constexpr double removeDelaySeconds = .5;
 struct FillTrack {
     bool requested{};    // AddLight called and no removal asked for since
     bool gaveUp{};       // drop limit reached: no more adds in this cell
     bool stuck{};        // removal limit reached: the light stays hidden
     unsigned drops{},removeRequests{};
+    double unwantedSince{-1.0};
     void newCell() { drops = 0; gaveUp = false; }
 };
 // One decision per presence check. Wanted: add only when the engine holds no
 // copy at all; a queued removal finishes before a new add. Unwanted: ask for
-// removal only while the light is active; RemoveLight (ID 106331) searches the
-// active arrays only, so a queued add is waited out.
-inline FillAction fillStep(bool wanted,Presence p,FillTrack& t) {
+// removal only while the light is active and has been unwanted for
+// removeDelaySeconds; RemoveLight (ID 106331) searches the active arrays only,
+// so a queued add is waited out.
+inline FillAction fillStep(bool wanted,Presence p,FillTrack& t,double now) {
     if (wanted) {
         t.removeRequests = 0;
+        t.unwantedSince = -1.0;
         if (p != Presence::absent || t.gaveUp) return FillAction::none;
         if (t.requested && ++t.drops > maxDropsPerCell) { t.gaveUp = true; return FillAction::dropLimit; }
         t.requested = true;
         return FillAction::add;
     }
     t.requested = false;
+    if (t.unwantedSince < 0.0 || !std::isfinite(now) || now < t.unwantedSince) t.unwantedSince = now;
+    if (p == Presence::active && std::isfinite(now) && now-t.unwantedSince < removeDelaySeconds) return FillAction::none;
     if (p != Presence::active) {
         if (p == Presence::absent) { t.removeRequests = 0; t.stuck = false; }
         return FillAction::none;
@@ -97,37 +107,115 @@ inline float reach(Vec light,float radius,Vec point) {
     const float d = span(light,point)-radius;
     return std::isfinite(d) ? d : std::numeric_limits<float>::infinity();
 }
+// Can a light reach geometry at the point? Its sphere must contain the point
+// and, for a portal-strict light in a cell with rooms, one of the rooms its own
+// portal walk attached it to (BSLight+D8, appended by ID 108279 from ID
+// 106400/106401) must contain the point too: ID 108302 lights a node under a
+// room only if the room is in that light's walk (15775A0-15775DD). A cell
+// without rooms takes the no-graph path (ID 106400 at 15127B0), where the
+// sphere is all. Spot cones and occlusion are not modelled: this is an upper
+// bound on "lights the player", never a proof that it does.
+constexpr bool lightsPoint(bool contains,bool portalStrict,bool cellHasRooms,bool sharesRoom) {
+    return contains && (!portalStrict || !cellHasRooms || sharesRoom);
+}
+template<class T>
+bool anyShared(const T* a,std::size_t aCount,const T* b,std::size_t bCount) {
+    if (!a || !b) return false;
+    for (std::size_t i = 0;i < aCount;++i)
+        for (std::size_t j = 0;j < bCount;++j)
+            if (a[i] && a[i] == b[j]) return true;
+    return false;
+}
 struct LightView {
     Vec position{};
     float radius{},dimmer{};
     std::uint32_t cull{};
-    bool hidden{};
+    bool hidden{},portalStrict{},sharesRoom{};
     constexpr bool live() const { return cull != culled && !hidden && dimmer > 0.0f; }
 };
+// Census counters. *Reach = the bare sphere test (kept for comparison with
+// wave 2 first-pass lines); *Lit = lightsPoint(), the room-aware test; only
+// the room-aware counts say anything about the player. *Nearest = smallest
+// (distance - radius) among lights that may light the player's room.
 struct Census {
-    unsigned point{},pointCulled{},pointDimmed{},pointReach{},pointReachLive{};
-    unsigned shadow{},shadowChannel{},shadowReach{},shadowReachChannel{};
+    bool cellHasRooms{};
+    unsigned playerRooms{};
+    unsigned point{},pointCulled{},pointDimmed{},pointReach{},pointLit{},pointLitLive{};
+    unsigned shadow{},shadowChannel{},shadowReach{},shadowLit{},shadowLitChannel{};
     float pointNearest{std::numeric_limits<float>::infinity()},shadowNearest{std::numeric_limits<float>::infinity()};
+    bool lights(const LightView& l,float r) const { return lightsPoint(r <= 0.0f,l.portalStrict,cellHasRooms,l.sharesRoom); }
+    bool roomOk(const LightView& l) const { return lightsPoint(true,l.portalStrict,cellHasRooms,l.sharesRoom); }
     void addPoint(const LightView& l,Vec at) {
         ++point;
         if (l.cull == culled) ++pointCulled;
         else if (l.dimmer < 1.0f) ++pointDimmed;
         const float r = reach(l.position,l.radius,at);
-        if (r < pointNearest) pointNearest = r;
-        if (r <= 0.0f) { ++pointReach; if (l.live()) ++pointReachLive; }
+        if (r <= 0.0f) ++pointReach;
+        if (roomOk(l) && r < pointNearest) pointNearest = r;
+        if (!lights(l,r)) return;
+        ++pointLit;
+        if (l.live()) ++pointLitLive;
     }
-    void addShadow(const LightView& l,std::uint32_t channel,Vec at) {
+    // Returns the bare reach, for the per-light list.
+    float addShadow(const LightView& l,std::uint32_t channel,Vec at) {
         ++shadow;
         const bool lit = channel != noChannel && !l.hidden;
         if (lit) ++shadowChannel;
         const float r = reach(l.position,l.radius,at);
-        if (r < shadowNearest) shadowNearest = r;
-        if (r <= 0.0f) { ++shadowReach; if (lit) ++shadowReachChannel; }
+        if (r <= 0.0f) ++shadowReach;
+        if (roomOk(l) && r < shadowNearest) shadowNearest = r;
+        if (lights(l,r)) {
+            ++shadowLit;
+            if (lit) ++shadowLitChannel;
+        }
+        return r;
     }
-    // In reach of the point, but without a shadow-mask channel last frame: such
-    // a light contributes nothing (ID 107784 draws shadow lights by channel only).
-    constexpr unsigned starved() const { return shadowReach-shadowReachChannel; }
+    // Could light the player (room-aware), but held no shadow-mask channel last
+    // frame: such a light contributes nothing (ID 107784 draws shadow lights by
+    // channel only). Only this count can argue for a shadow-admission change.
+    constexpr unsigned starved() const { return shadowLit-shadowLitChannel; }
 };
+// Every active shadow light, nearest first, reported by reference, so a route
+// can follow one light (for example 000395F1 in the BFB corridor room) by ID.
+struct ShadowEntry {
+    std::uint32_t ref{};             // placed reference whose 3D holds the NiLight, 0 unknown
+    float reach{},radius{};
+    std::uint32_t channel{noChannel},cull{};
+    bool portalStrict{},sharesRoom{},lit{},hidden{};
+};
+constexpr unsigned maxShadowEntries = 8; // the widest list still fits one 768-byte trace row
+struct ShadowList {
+    std::array<ShadowEntry,maxShadowEntries> items{};
+    unsigned count{},total{};
+    // Keeps the nearest entries; NaN reach sorts last.
+    void offer(const ShadowEntry& e) {
+        ++total;
+        const auto before = [](const ShadowEntry& a,const ShadowEntry& b) {
+            return a.reach < b.reach || (!std::isnan(a.reach) && std::isnan(b.reach));
+        };
+        unsigned at = count;
+        while (at > 0 && before(e,items[at-1])) --at;
+        if (at >= maxShadowEntries) return;
+        const unsigned last = count < maxShadowEntries ? count : maxShadowEntries-1;
+        for (unsigned i = last;i > at;--i) items[i] = items[i-1];
+        items[at] = e;
+        if (count < maxShadowEntries) ++count;
+    }
+};
+inline bool formatShadows(char* out,std::size_t size,double seconds,unsigned long long frame,const ShadowList& list) {
+    int written = std::snprintf(out,size,"FixedLightShadow t=%.3f frame=%llu total=%u listed=%u",seconds,frame,list.total,list.count);
+    if (written <= 0 || static_cast<std::size_t>(written) >= size) return false;
+    std::size_t used = static_cast<std::size_t>(written);
+    for (unsigned i = 0;i < list.count;++i) {
+        const auto& e = list.items[i];
+        written = std::snprintf(out+used,size-used," %08X:reach=%.0f,r=%.0f,ch=%u,cull=%u,strict=%u,room=%u,lit=%u,hidden=%u",
+            e.ref,static_cast<double>(e.reach),static_cast<double>(e.radius),e.channel,e.cull,static_cast<unsigned>(e.portalStrict),
+            static_cast<unsigned>(e.sharesRoom),static_cast<unsigned>(e.lit),static_cast<unsigned>(e.hidden));
+        if (written <= 0 || static_cast<std::size_t>(written) >= size-used) return false;
+        used += static_cast<std::size_t>(written);
+    }
+    return true;
+}
 struct FillReading {
     bool created{},hidden{},found{};
     Presence presence{Presence::absent};
@@ -150,15 +238,16 @@ inline bool formatLight(char* out,std::size_t size,const LightSample& s) {
     const auto& f = s.fill;
     const int written = std::snprintf(out,size,
         "FixedLight t=%.3f frame=%llu cell=%08X interior=%u eligible=%u eye=%.1f,%.1f,%.1f cam=%.1f,%.1f,%.1f "
-        "point=%u pointCulled=%u pointDimmed=%u pointReach=%u pointReachLive=%u pointNearest=%.1f "
-        "shadow=%u shadowChannel=%u shadowReach=%u shadowReachChannel=%u shadowStarved=%u shadowNearest=%.1f "
+        "rooms=%u playerRooms=%u point=%u pointCulled=%u pointDimmed=%u pointReach=%u pointLit=%u pointLitLive=%u pointNearest=%.1f "
+        "shadow=%u shadowChannel=%u shadowReach=%u shadowLit=%u shadowLitChannel=%u shadowStarved=%u shadowNearest=%.1f "
         "fillWanted=%u fill=%s fillCreated=%u fillHidden=%u fillCull=%u fillDimmer=%.3f fillAt=%.1f,%.1f,%.1f "
         "adds=%u removes=%u drops=%u sample=state",
         s.seconds,s.frame,s.cell,static_cast<unsigned>(s.interior),static_cast<unsigned>(s.eligible),
         static_cast<double>(s.eye.x),static_cast<double>(s.eye.y),static_cast<double>(s.eye.z),
         static_cast<double>(s.camera.x),static_cast<double>(s.camera.y),static_cast<double>(s.camera.z),
-        c.point,c.pointCulled,c.pointDimmed,c.pointReach,c.pointReachLive,static_cast<double>(c.pointNearest),
-        c.shadow,c.shadowChannel,c.shadowReach,c.shadowReachChannel,c.starved(),static_cast<double>(c.shadowNearest),
+        static_cast<unsigned>(c.cellHasRooms),c.playerRooms,
+        c.point,c.pointCulled,c.pointDimmed,c.pointReach,c.pointLit,c.pointLitLive,static_cast<double>(c.pointNearest),
+        c.shadow,c.shadowChannel,c.shadowReach,c.shadowLit,c.shadowLitChannel,c.starved(),static_cast<double>(c.shadowNearest),
         static_cast<unsigned>(s.wanted),presenceName(f.presence),static_cast<unsigned>(f.created),static_cast<unsigned>(f.hidden),
         f.found ? f.cull : 999u,static_cast<double>(f.found ? f.dimmer : std::numeric_limits<float>::quiet_NaN()),
         static_cast<double>(f.at.x),static_cast<double>(f.at.y),static_cast<double>(f.at.z),f.adds,f.removes,f.drops);

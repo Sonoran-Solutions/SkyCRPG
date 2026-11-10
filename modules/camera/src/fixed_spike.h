@@ -111,12 +111,6 @@ inline void dropSnaps() {
     if (!runtime) return;
     runtime->snapLeft.store(0u,std::memory_order_relaxed); runtime->snapRight.store(0u,std::memory_order_relaxed);
 }
-} // namespace skycrpg::camera::fixed
-
-// ---- light (wave 2 package, DYL-217) -----------------------------------------
-#include "fixed_spike_light.h"
-
-namespace skycrpg::camera::fixed {
 
 // ---- hide -------------------------------------------------------------------
 inline const char* modelOf(RE::TESBoundObject* base) {
@@ -424,7 +418,7 @@ inline bool hookRoom(RE::BSMultiBoundRoom* room,const RE::NiPoint3& point) {
     const auto view = r.view.load(std::memory_order_acquire);
     const Vec asked{point.x,point.y,point.z};
     if (!view || !viewerQuery(*view,asked)) return vanilla;
-    if (caller != RoomCaller::culling) { r.counters.gatedNear.fetch_add(1ull,std::memory_order_relaxed); return vanilla; }
+    if (caller != RoomCaller::camera) { r.counters.gatedNear.fetch_add(1ull,std::memory_order_relaxed); return vanilla; }
     r.counters.viewerCalls.fetch_add(1ull,std::memory_order_relaxed);
     if (vanilla) { r.counters.vanillaTrue.fetch_add(1ull,std::memory_order_relaxed); return true; }
     const auto& bound = room->worldBound;
@@ -475,7 +469,8 @@ inline void traceRoom(RE::TESObjectCELL* parent,Vec viewer,Vec eye) {
         }
     }
     s.calls = r.counters.calls.exchange(0ull,std::memory_order_relaxed);
-    s.culling = r.counters.culling.exchange(0ull,std::memory_order_relaxed);
+    s.cameraPass = r.counters.cameraPass.exchange(0ull,std::memory_order_relaxed);
+    s.lightPass = r.counters.lightPass.exchange(0ull,std::memory_order_relaxed);
     s.attach = r.counters.attach.exchange(0ull,std::memory_order_relaxed);
     s.water = r.counters.water.exchange(0ull,std::memory_order_relaxed);
     s.other = r.counters.other.exchange(0ull,std::memory_order_relaxed);
@@ -487,6 +482,13 @@ inline void traceRoom(RE::TESObjectCELL* parent,Vec viewer,Vec eye) {
     if (formatRoom(line,sizeof(line),s)) emit(r.roomLines,line);
 }
 
+} // namespace skycrpg::camera::fixed
+
+// ---- light (wave 2 package, DYL-217): after the room helpers, whose vanilla
+// room test (within) the light census uses -------------------------------------
+#include "fixed_spike_light.h"
+
+namespace skycrpg::camera::fixed {
 // ---- rig --------------------------------------------------------------------
 // Main thread, eligible look call: consume snap presses, return the yaw request.
 inline float yawInput(bool slide,float rawX,float playerHeading,float freeRotationX,float gain,float dt,bool home) {
@@ -632,8 +634,9 @@ inline void endFrame() {
         r.silentFrames = cause == Exit::hookSilent ? r.silentFrames+1u : 0u;
         r.roomActive.store(false,std::memory_order_release);
         dropSnaps();
-        if (restoreNow(cause,r.silentFrames)) restoreAll(cause);
-        light::frameLight(false,parent,{},{},{},exitNames[static_cast<std::size_t>(cause)]);
+        const bool exiting = restoreNow(cause,r.silentFrames);
+        if (exiting) restoreAll(cause);
+        light::frameLight(false,!exiting,parent,{},{},{},exitNames[static_cast<std::size_t>(cause)]);
         traceRig(false);
         r.previousEligible = false;
         return;
@@ -649,7 +652,7 @@ inline void endFrame() {
     traceRig(true);
     r.previousCamera = viewer; r.previousFrame = r.frame; r.previousEligible = true;
     traceRoom(parent,viewer,eye);
-    light::frameLight(true,parent,{position.x,position.y,position.z},eye,viewer,"eligible");
+    light::frameLight(true,false,parent,{position.x,position.y,position.z},eye,viewer,"eligible");
 }
 
 // ---- install ----------------------------------------------------------------

@@ -220,15 +220,19 @@ struct RoomView {
 constexpr float eyeLift = 64.0f;        // Hypothesis for eye height, as in the DYL-199 spike
 constexpr float viewerTolerance = 96.0f; // near plane (15) plus one frame of camera travel
 // QPointWithin (RVA FCE0C0) is reachable only through vtable slot 0x3F, from
-// five functions. Three are the culling passes, which ask about camera + near
-// * forward. Reference-to-room attachment and the room-bounded water lookup
-// ask about arbitrary points and must always keep the vanilla answer, even for
-// a point next to the camera. Extents are the .pdata entries of 1.7.104.
+// five functions. ID 13408 is the main camera's culling pass (camera + near *
+// forward). IDs 106400 and 106401 are per-light room passes (wave 2 light
+// audit): they ask at the light's own position, through a NiCamera each light
+// owns (15126B2, 151340C), and only ever change which rooms a portal-strict
+// light belongs to. Reference-to-room attachment and the room-bounded water
+// lookup ask about arbitrary points. Only the camera pass is ever claimed for;
+// the three-function guard still checks all of them at install.
+// Extents are the .pdata entries of 1.7.104.
 struct CodeRange {
     std::uintptr_t begin{},end{};
     constexpr bool holds(std::uintptr_t address) const { return address >= begin && address < end; }
 };
-enum class RoomCaller { culling, attach, water, other };
+enum class RoomCaller { camera, light, attach, water, other };
 constexpr std::array<CodeRange,3> cullingRvas{{{0x1a97b0,0x1a9de7},{0x1512540,0x151328c},{0x1513290,0x1513fbe}}}; // IDs 13408, 106400, 106401
 constexpr std::array<std::uint64_t,3> cullingIds{13408,106400,106401};
 // Return addresses of the six `call [rax+1F8]` sites inside those functions.
@@ -247,8 +251,10 @@ constexpr RoomCallers roomCallersAt(std::uintptr_t base,bool attachKnown = true,
     if (waterKnown) callers.water = rebased(waterRva,base);
     return callers;
 }
+// culling[0] is ID 13408 (camera); culling[1] and [2] are IDs 106400 / 106401 (lights).
 constexpr RoomCaller roomCaller(const RoomCallers& callers,std::uintptr_t returnAddress) {
-    for (const auto range : callers.culling) if (range.holds(returnAddress)) return RoomCaller::culling;
+    if (callers.culling[0].holds(returnAddress)) return RoomCaller::camera;
+    if (callers.culling[1].holds(returnAddress) || callers.culling[2].holds(returnAddress)) return RoomCaller::light;
     if (callers.attach.holds(returnAddress)) return RoomCaller::attach;
     if (callers.water.holds(returnAddress)) return RoomCaller::water;
     return RoomCaller::other;
@@ -262,7 +268,7 @@ inline bool viewerQuery(const RoomView& view,Vec point) {
 // about another point through the original function.
 template<class Contains>
 bool seedClaim(RoomCaller caller,const RoomView& view,Vec point,Vec roomCentre,float roomRadius,Contains contains) {
-    if (caller != RoomCaller::culling) return false;
+    if (caller != RoomCaller::camera) return false;
     if (view.mode == 0 || view.mode > 3 || !viewerQuery(view,point) || !finite(view.eye)) return false;
     if (view.mode == 1) return contains(view.eye);
     if (view.mode == 2) {
@@ -274,15 +280,16 @@ bool seedClaim(RoomCaller caller,const RoomView& view,Vec point,Vec roomCentre,f
     if (!finite(roomCentre) || !std::isfinite(roomRadius) || roomRadius < 0 || !std::isfinite(view.radius) || view.radius < 0) return false;
     return span(roomCentre,view.eye) < view.radius+roomRadius;
 }
-// calls = every hook call, split by caller class. viewerCalls = culling calls
-// at the camera while seeding is active; gatedNear = non-culling calls at the
-// camera while seeding is active, i.e. what the caller gate kept vanilla.
+// calls = every hook call, split by caller class. viewerCalls = camera-pass
+// calls at the camera while seeding is active; gatedNear = any other call at
+// the camera while seeding is active (light passes included), i.e. what the
+// caller gate kept vanilla.
 struct RoomCounters {
-    std::atomic<unsigned long long> calls{0},culling{0},attach{0},water{0},other{0},viewerCalls{0},gatedNear{0},vanillaTrue{0},claims{0};
+    std::atomic<unsigned long long> calls{0},cameraPass{0},lightPass{0},attach{0},water{0},other{0},viewerCalls{0},gatedNear{0},vanillaTrue{0},claims{0};
     void count(RoomCaller caller) {
         calls.fetch_add(1ull,std::memory_order_relaxed);
-        (caller == RoomCaller::culling ? culling : caller == RoomCaller::attach ? attach : caller == RoomCaller::water ? water : other)
-            .fetch_add(1ull,std::memory_order_relaxed);
+        (caller == RoomCaller::camera ? cameraPass : caller == RoomCaller::light ? lightPass : caller == RoomCaller::attach ? attach :
+            caller == RoomCaller::water ? water : other).fetch_add(1ull,std::memory_order_relaxed);
     }
 };
 struct RoomSample {
@@ -291,16 +298,17 @@ struct RoomSample {
     unsigned mode{},cell{},rooms{},eyeRooms{},cameraRooms{};
     bool hook{},active{},graph{},capped{};
     int playerRoom{-1},cameraRoom{-1}; // index of the first containing room, -1 none
-    unsigned long long calls{},culling{},attach{},water{},other{},viewerCalls{},gatedNear{},vanillaTrue{},claims{};
+    unsigned long long calls{},cameraPass{},lightPass{},attach{},water{},other{},viewerCalls{},gatedNear{},vanillaTrue{},claims{};
 };
 inline bool formatRoom(char* out,std::size_t size,const RoomSample& s) {
     const int written = std::snprintf(out,size,
         "FixedRoom t=%.3f frame=%llu mode=%u hook=%u active=%u cell=%08X graph=%u rooms=%u capped=%u playerRoom=%d cameraRoom=%d "
-        "eyeRooms=%u cameraRooms=%u calls=%llu cullCalls=%llu attachCalls=%llu waterCalls=%llu otherCalls=%llu viewerCalls=%llu "
-        "gatedNear=%llu vanillaTrue=%llu claims=%llu sample=window",
+        "eyeRooms=%u cameraRooms=%u calls=%llu cullCalls=%llu cameraPassCalls=%llu lightPassCalls=%llu attachCalls=%llu waterCalls=%llu "
+        "otherCalls=%llu viewerCalls=%llu gatedNear=%llu vanillaTrue=%llu claims=%llu sample=window",
         s.seconds,s.frame,s.mode,static_cast<unsigned>(s.hook),static_cast<unsigned>(s.active),s.cell,
         static_cast<unsigned>(s.graph),s.rooms,static_cast<unsigned>(s.capped),s.playerRoom,s.cameraRoom,s.eyeRooms,s.cameraRooms,
-        s.calls,s.culling,s.attach,s.water,s.other,s.viewerCalls,s.gatedNear,s.vanillaTrue,s.claims);
+        // cullCalls keeps its wave 1 meaning (both pass kinds) for the route checker.
+        s.calls,s.cameraPass+s.lightPass,s.cameraPass,s.lightPass,s.attach,s.water,s.other,s.viewerCalls,s.gatedNear,s.vanillaTrue,s.claims);
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 

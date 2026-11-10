@@ -22,6 +22,9 @@ constexpr std::array<std::uint8_t,15> removeLightPrologue{0x48,0x85,0xd2,0x0f,0x
 static_assert(offsetof(RE::BSLight,lodDimmer) == 0x14);    // written with +5C by 108278 / 108618 / 108625
 static_assert(offsetof(RE::BSLight,light) == 0x48);        // NiLight; SetLight (108289) at 1576AF2
 static_assert(offsetof(RE::BSLight,frustrumCull) == 0x5c); // 0 visible / 0xFF culled
+static_assert(offsetof(RE::BSLight,portalStrict) == 0x47); // read by 106400 (151257D) / 106401 (15132C9); AddLight 150C9F0
+static_assert(offsetof(RE::BSLight,rooms) == 0xd8);        // the light's own rooms, appended by 108279 (1575EF0), removed by 108280
+static_assert(offsetof(RE::NiAVObject,parent) == 0x30);    // FindReferenceFor3D (ID 19750) walks +30 and reads node +F8
 static_assert(offsetof(RE::ShadowSceneNode::RUNTIME_DATA,activeLights) == 0x130-0x128);
 static_assert(offsetof(RE::ShadowSceneNode::RUNTIME_DATA,activeShadowLights) == 0x148-0x128);
 static_assert(offsetof(RE::ShadowSceneNode::RUNTIME_DATA,lightQueueAdd) == 0x160-0x128);
@@ -56,9 +59,10 @@ struct LightRuntime {
     Presence presence{Presence::absent};
     unsigned adds{},removes{};
     RE::FormID cell{};
-    double nextCheck{},nextTrace{};
+    double nextCheck{},nextTrace{},nextShadows{};
     LineBudget lines{lightTraceLines};
 };
+constexpr unsigned maxPlayerRooms = 8;
 inline LightRuntime* lights = nullptr;
 
 inline void emitLight(const char* text) { emit(lights->lines,text); }
@@ -85,10 +89,38 @@ inline RE::ShadowSceneNode* scene() {
     }
     return node;
 }
-inline LightView view(const RE::BSLight& entry) {
+struct PlayerRooms {
+    std::array<const RE::BSMultiBoundRoom*,maxPlayerRooms> rooms{};
+    unsigned count{};
+    bool graph{}; // the cell has a portal graph with rooms
+};
+// Main thread, before the light lock: the rooms whose vanilla QPointWithin
+// (the original slot, never a seeded claim) contains the census point.
+inline PlayerRooms playerRooms(RE::TESObjectCELL* parent,Vec at) {
+    PlayerRooms out;
+    const auto loaded = parent ? parent->GetRuntimeData().loadedData : nullptr;
+    const auto graph = loaded ? loaded->portalGraph.get() : nullptr;
+    if (!graph || graph->rooms.empty()) return out;
+    out.graph = true;
+    unsigned index{};
+    for (const auto& room : graph->rooms) {
+        if (index++ == maxRooms || out.count == maxPlayerRooms) break;
+        if (room && within(room.get(),at)) out.rooms[out.count++] = room.get();
+    }
+    return out;
+}
+inline LightView view(const RE::BSLight& entry,const PlayerRooms& player) {
     const auto& source = *entry.light;
     const auto& at = source.world.translate;
-    return {{at.x,at.y,at.z},source.GetLightRuntimeData().radius.x,entry.lodDimmer,entry.frustrumCull,source.GetAppCulled()};
+    // Pointer comparison only: no room the light lists is dereferenced.
+    const bool shares = anyShared<const RE::BSMultiBoundRoom*>(entry.rooms.data(),entry.rooms.size(),player.rooms.data(),player.count);
+    return {{at.x,at.y,at.z},source.GetLightRuntimeData().radius.x,entry.lodDimmer,entry.frustrumCull,source.GetAppCulled(),
+        entry.portalStrict,shares};
+}
+// The placed reference whose 3D holds the NiLight, as ID 19750 finds it.
+inline std::uint32_t lightReference(const RE::NiLight& source) {
+    const auto ref = source.parent ? source.parent->GetUserData() : nullptr;
+    return ref ? ref->GetFormID() : 0u;
 }
 template<class Array>
 bool holds(const Array& array,const RE::NiLight* ours) {
@@ -104,8 +136,9 @@ inline Presence presenceNow(RE::ShadowSceneNode* node) {
     RE::BSSpinLockGuard guard(data.lightQueueLock);
     return presenceOf(holds(data.activeLights,ours),holds(data.lightQueueAdd,ours),holds(data.lightQueueRemove,ours));
 }
-inline void census(RE::ShadowSceneNode* node,Vec at,LightSample& s) {
+inline void census(RE::ShadowSceneNode* node,const PlayerRooms& player,Vec at,LightSample& s,ShadowList& shadows) {
     const RE::NiLight* mine = lights->fill.get();
+    s.census.cellHasRooms = player.graph; s.census.playerRooms = player.count;
     auto& data = node->GetRuntimeData();
     RE::BSSpinLockGuard guard(data.lightQueueLock);
     for (const auto& entry : data.activeLights) {
@@ -114,11 +147,15 @@ inline void census(RE::ShadowSceneNode* node,Vec at,LightSample& s) {
             s.fill.found = true; s.fill.cull = entry->frustrumCull; s.fill.dimmer = entry->lodDimmer;
             continue;
         }
-        s.census.addPoint(view(*entry),at);
+        s.census.addPoint(view(*entry,player),at);
     }
     for (const auto& entry : data.activeShadowLights) {
         if (!entry || !entry->light) continue;
-        s.census.addShadow(view(*entry),entry->GetRuntimeData().maskIndex,at);
+        const auto seen = view(*entry,player);
+        const auto channel = entry->GetRuntimeData().maskIndex;
+        const float r = s.census.addShadow(seen,channel,at);
+        shadows.offer({lightReference(*entry->light),r,seen.radius,channel,seen.cull,seen.portalStrict,seen.sharesRoom,
+            lightsPoint(r <= 0.0f,seen.portalStrict,player.graph,seen.sharesRoom),seen.hidden});
     }
 }
 
@@ -171,7 +208,8 @@ inline void addFill(RE::ShadowSceneNode* node) {
 // Main thread, every frame the spike bracket ends, eligible or not.
 inline void serviceFill(RE::ShadowSceneNode* node,bool wanted,Vec feet,const char* cause) {
     auto& l = *lights;
-    if (!l.fillReady) return;
+    // Refused after creation (FCS-53): hide it; no further engine call.
+    if (!l.fillReady) { show(false,"refused"); return; }
     if (wanted && !l.fill && !createFill()) return;
     if (!l.fill) return;
     if (wanted) { place(fillPoint(feet,l.config.fillHeight)); show(true,cause); }
@@ -182,7 +220,7 @@ inline void serviceFill(RE::ShadowSceneNode* node,bool wanted,Vec feet,const cha
     if (!wanted && !l.track.requested && l.presence == Presence::absent && !changed) return; // idle
     l.nextCheck = runtime->now+.1;
     l.presence = presenceNow(node);
-    switch (fillStep(wanted,l.presence,l.track)) {
+    switch (fillStep(wanted,l.presence,l.track,runtime->now)) {
     case FillAction::add: addFill(node); fillEvent("add",cause); break;
     case FillAction::remove: node->RemoveLight(l.fill.get()); ++l.removes; fillEvent("remove",cause); break;
     case FillAction::dropLimit:
@@ -227,8 +265,10 @@ inline void installLight(std::uintptr_t base) {
 }
 // endFrame(), main thread, both eligible and ineligible frames. `at` is the
 // census point (feet + eyeLift), `camera` the rendered camera position.
-inline void frameLight(bool eligible,RE::TESObjectCELL* parent,Vec feet,Vec at,Vec camera,const char* cause) {
-    if (!lights) return;
+// `hold`: a camera update that skipped a frame inside wave 1's grace
+// (restoreNow false): keep the fill light exactly as it was.
+inline void frameLight(bool eligible,bool hold,RE::TESObjectCELL* parent,Vec feet,Vec at,Vec camera,const char* cause) {
+    if (!lights || hold) return;
     auto& l = *lights;
     const RE::FormID cellId = parent ? parent->GetFormID() : 0u;
     if (cellId != l.cell) { l.cell = cellId; l.track.newCell(); }
@@ -241,11 +281,16 @@ inline void frameLight(bool eligible,RE::TESObjectCELL* parent,Vec feet,Vec at,V
     LightSample s;
     s.seconds = runtime->now; s.frame = runtime->frame; s.cell = cellId; s.interior = interior; s.eligible = eligible;
     s.wanted = wanted; s.eye = at; s.camera = camera;
-    census(node,at,s);
+    const PlayerRooms player = playerRooms(parent,at);
+    ShadowList shadows;
+    census(node,player,at,s,shadows);
     s.fill.created = l.fill != nullptr; s.fill.hidden = l.fillHidden; s.fill.presence = l.presence;
     s.fill.at = l.fill ? Vec{l.fill->world.translate.x,l.fill->world.translate.y,l.fill->world.translate.z} : Vec{};
     s.fill.adds = l.adds; s.fill.removes = l.removes; s.fill.drops = l.track.drops;
     char line[768]{};
     if (formatLight(line,sizeof(line),s)) emitLight(line);
+    if (runtime->now < l.nextShadows) return;
+    l.nextShadows = runtime->now+1.0;
+    if (formatShadows(line,sizeof(line),s.seconds,s.frame,shadows)) emitLight(line);
 }
 } // namespace skycrpg::camera::fixed::light
