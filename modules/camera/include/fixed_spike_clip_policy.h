@@ -18,6 +18,15 @@ constexpr Address rendererAddress{411393,0x3331f40}; // the RCX every caller pas
 constexpr Address gateAddress{411490,0x3336400};     // byte: 1 from frame begin to present, the upload returns at once on 0
 constexpr Address biasAddress{411359,0x3330200};     // 12 floats indexed by the raster depth-bias mode
 constexpr unsigned biasModes = 12;
+// TESObjectREFR* owner(NiAVObject*): the engine's own walk from a scene node to
+// the reference that owns it. It reads the owner only on fade nodes
+// (AsFadeNode, vtable +28h, at 2EED25), returns the player for the player's
+// first-person 3D and goes on to the parent's reference for ammunition stuck
+// in something. Two trivial virtual calls and field reads; no lock, no
+// allocation. First .pdata entry and first 16 bytes follow.
+constexpr Address ownerAddress{19750,0x2eece0};
+constexpr CodeRange ownerExtent{0x2eece0,0x2eed9e};
+constexpr std::array<std::uint8_t,16> ownerBytes{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x20,0x33};
 // First .pdata chunk of the upload function and its first 21 bytes: three
 // whole instructions in 14 bytes, none RIP-relative, then sub rsp,320h.
 constexpr CodeRange uploadExtent{0x100ae80,0x100b03c};
@@ -54,25 +63,25 @@ constexpr std::size_t viewProjectionUnjittered = 0x130, projectionUnjittered = 0
 // at 30h..F0h and the three unjittered matrices at 130h..1F0h.
 constexpr std::size_t uploadedFirst = 0x30, uploadedSecond = 0x130, uploadedSize = 0xc0;
 constexpr std::size_t passGeometry = 0x10;                         // BSRenderPass
-constexpr std::size_t objectParent = 0x30, objectBound = 0xe4, objectUser = 0xf8; // NiAVObject
+constexpr std::size_t objectBound = 0xe4;                          // NiAVObject: centre, then radius
 constexpr std::size_t geometrySkin = 0x130;                        // BSGeometry
 constexpr std::size_t shaderCodeSize = 0x10, shaderCode = 0x68;    // BSGraphics::VertexShader: DXBC length and bytes
 }
 constexpr std::uint32_t dirtyViewport = 0x2;   // stateUpdateFlags bit that makes the next draw call RSSetViewports
 constexpr std::uint32_t dirtyDepthBias = 0x40; // and the bit that makes it rebuild the viewport's depth range first
-constexpr unsigned maxOwnerHops = 32;
 
 // One code per refusal site. FCS-40 and FCS-41 belong to the wave 1 snap keys.
 enum class Refusal : unsigned { settings = 42, module = 43, address = 44, table = 45, prologue = 46, thread = 47, bracket = 48, state = 49 };
 
 // ---- [FixedCameraSpike] clip keys ------------------------------------------
 constexpr unsigned traceLines = 6000;
+constexpr unsigned maxAdmitted = 4096; // upper bound of iClipMaxPerFrame
 struct Config {
     float height{128.0f};    // plane anchor above the player's feet (top of the head)
     float margin{24.0f};     // view depth by which the plane sits in front of the anchor
     float corridor{384.0f};  // only bounds within this of the camera-anchor segment; 0 = the whole view
     float floorBand{24.0f};  // a reference wholly at or below feet + this is never clipped
-    unsigned maxPerFrame{512};
+    unsigned maxPerFrame{512}; // clipped geometries per frame; every pass of an admitted one is clipped
     unsigned shaders{3};     // bit 0 lighting, bit 1 utility (depth), bit 2 effect
     bool exterior{};         // 0 = interior cells only
     bool trace{};
@@ -83,7 +92,7 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     c.margin = bounded(c.margin,24.0f,0.0f,256.0f);
     c.corridor = bounded(c.corridor,384.0f,0.0f,4096.0f);
     c.floorBand = bounded(c.floorBand,24.0f,0.0f,128.0f);
-    c.maxPerFrame = std::clamp(c.maxPerFrame,1u,4096u);
+    c.maxPerFrame = std::clamp(c.maxPerFrame,1u,maxAdmitted);
     if (!c.shaders || c.shaders > 7u) c.shaders = 3;
     if (adjusted) *adjusted = c.height != in.height || c.margin != in.margin || c.corridor != in.corridor ||
         c.floorBand != in.floorBand || c.maxPerFrame != in.maxPerFrame || c.shaders != in.shaders;
@@ -280,12 +289,49 @@ inline Skip ownerRule(bool owned,bool actor,Kind kind,const Extent& box,float fe
 // must take all four rows of ViewProj (c8..c11 of cb12) from there. All 127
 // vanilla Lighting vertex shaders do, 286 of 339 Utility and 599 of 606 Effect
 // ones; the others position their vertices some other way and are left alone.
-// `code` is a DXBC container; only its SHEX/SHDR token stream is scanned for
-// constant-buffer operands with two immediate indices.
+// `code` is a DXBC container. Its SHEX/SHDR stream is walked instruction by
+// instruction and every operand is decoded, so a declaration's size
+// (dcl_constantbuffer cb12[N]) and the contents of a custom-data block are
+// never taken for a read. Anything that does not parse counts as "does not".
 inline std::uint32_t word(const std::uint8_t* at) {
     std::uint32_t value{};
     std::memcpy(&value,at,sizeof(value));
     return value;
+}
+constexpr std::uint32_t customDataOpcode = 53, interfaceCallOpcode = 120;
+constexpr bool declarationOpcode(std::uint32_t opcode) { return (opcode >= 88u && opcode <= 106u) || (opcode >= 143u && opcode <= 162u); }
+// Decodes the operand at token `at` of [.., end) and returns the token after
+// it, 0 when it does not fit. `rows` collects cb12[8..11] with immediate indices.
+inline std::size_t operandEnd(const std::uint8_t* stream,std::size_t at,std::size_t end,unsigned& rows,unsigned depth = 0) {
+    if (at >= end || depth > 3u) return 0;
+    const std::uint32_t token = word(stream+at*4);
+    ++at;
+    for (std::uint32_t more = token >> 31;more != 0u;++at) {
+        if (at >= end) return 0;
+        more = word(stream+at*4) >> 31;
+    }
+    const std::uint32_t components = token & 3u,type = (token >> 12) & 0xffu,dimension = (token >> 20) & 3u;
+    if (type == 4u) at += components == 1u ? 1u : components == 2u ? 4u : 0u;       // immediate32
+    else if (type == 5u) at += components == 1u ? 2u : components == 2u ? 8u : 0u;  // immediate64
+    std::array<std::uint32_t,3> index{};
+    std::array<bool,3> immediate{};
+    for (std::uint32_t i = 0;i < dimension;++i) {
+        const std::uint32_t representation = (token >> (22u+3u*i)) & 7u;
+        if (representation > 4u) return 0;
+        if (representation == 0u || representation == 3u) {
+            if (at >= end) return 0;
+            index[i] = word(stream+at*4); immediate[i] = representation == 0u;
+            ++at;
+        } else if (representation == 1u || representation == 4u) at += 2;
+        if (representation >= 2u) {
+            at = operandEnd(stream,at,end,rows,depth+1u);
+            if (!at) return 0;
+        }
+    }
+    if (at > end) return 0;
+    if (type == 8u && dimension == 2u && immediate[0] && immediate[1] && index[0] == 12u && index[1] >= 8u && index[1] <= 11u)
+        rows |= 1u << (index[1]-8u);
+    return at;
 }
 inline bool readsViewProjection(const std::uint8_t* code,std::size_t size) {
     constexpr std::size_t header = 32, largest = std::size_t{1} << 20;
@@ -298,26 +344,54 @@ inline bool readsViewProjection(const std::uint8_t* code,std::size_t size) {
         if (at > total || total-at < 16) continue;
         if (std::memcmp(code+at,"SHEX",4) != 0 && std::memcmp(code+at,"SHDR",4) != 0) continue;
         const std::size_t bytes = word(code+at+4);
-        if (bytes > total-at-8) continue;
+        if (bytes > total-at-8) return false;
         const std::size_t tokens = (std::min)(static_cast<std::size_t>(word(code+at+12)),bytes/4);
         const std::uint8_t* stream = code+at+8;
-        for (std::size_t k = 2;k+2 < tokens;++k) {
-            const std::uint32_t operand = word(stream+k*4);
-            if (((operand >> 12) & 0xffu) != 8u || ((operand >> 20) & 0xffu) != 2u || (operand >> 31) != 0u) continue;
-            if (word(stream+(k+1)*4) != 12u) continue;
-            const std::uint32_t row = word(stream+(k+2)*4);
-            if (row >= 8u && row <= 11u) rows |= 1u << (row-8u);
+        for (std::size_t k = 2;k < tokens;) {
+            const std::uint32_t token = word(stream+k*4),opcode = token & 0x7ffu;
+            const std::size_t length = opcode != customDataOpcode ? (token >> 24) & 0x7fu : k+1 < tokens ? word(stream+(k+1)*4) : 0u;
+            if (!length || length > tokens-k) return false;
+            const std::size_t next = k+length;
+            if (opcode != customDataOpcode && !declarationOpcode(opcode)) {
+                std::size_t operand = k+1;
+                for (std::uint32_t more = token >> 31;more != 0u && operand < next;++operand) more = word(stream+operand*4) >> 31;
+                if (opcode == interfaceCallOpcode) ++operand;
+                while (operand < next) {
+                    operand = operandEnd(stream,operand,next,rows);
+                    if (!operand) return false;
+                }
+            }
+            k = next;
         }
     }
     return rows == 0xfu;
 }
-struct Budget {
+// The per-frame cap counts geometries, not passes, and the decision holds for
+// the frame: a geometry admitted once is clipped in every later pass of the
+// same frame (its depth pass and its colour pass always agree), and once the
+// cap is reached a geometry not yet admitted is refused in all of its passes.
+struct Admission {
+    struct Slot { const void* geometry{}; unsigned long long stamp{}; };
+    std::array<Slot,2*maxAdmitted> slots{};
+    unsigned long long stamp{1};
     unsigned limit{},used{},peak{};
-    void frame() { used = 0; }
-    bool take() {
-        if (used >= limit) return false;
-        if (++used > peak) peak = used;
-        return true;
+    void frame() { ++stamp; used = 0; }
+    bool admit(const void* geometry) {
+        if (!geometry) return false;
+        const std::size_t first = (reinterpret_cast<std::uintptr_t>(geometry) >> 4) % slots.size();
+        for (std::size_t probe = 0;probe < slots.size();++probe) {
+            Slot& slot = slots[(first+probe) % slots.size()];
+            if (slot.stamp == stamp) {
+                if (slot.geometry == geometry) return true;
+                continue;
+            }
+            // First slot not used this frame: the geometry has not been admitted yet.
+            if (used >= limit || used >= maxAdmitted) return false;
+            slot = {geometry,stamp};
+            if (++used > peak) peak = used;
+            return true;
+        }
+        return false;
     }
 };
 // A clip is open from SetupGeometry to RestoreGeometry of one pass. Finding it

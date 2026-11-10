@@ -4,7 +4,8 @@
 // [FixedCameraSpike] iSeeThroughMode=2. Nothing here is allocated, installed
 // or evaluated in any other mode.
 //
-// Threads. The camera frame service publishes the plane on Main::threadID.
+// Threads. The camera frame service publishes the plane on Main::threadID and,
+// in its first eligible frame with no frame being drawn, installs the hooks.
 // The hooks (BSShader slots 6 and 7 of the selected classes, and the per-frame
 // constant buffer upload) are expected on the same thread, because the engine
 // draws through one immediate device context; that is checked on every call.
@@ -24,6 +25,7 @@ namespace skycrpg::camera::fixed::clip {
 // RAX returned, whatever their real arity.
 using PassFunction = std::uintptr_t(*)(void*,void*,std::uintptr_t,std::uintptr_t);
 using Upload = std::uintptr_t(*)(void*,std::uintptr_t,std::uintptr_t,std::uintptr_t);
+using OwnerLookup = RE::TESObjectREFR*(*)(RE::NiAVObject*);
 // The engine's camera data as of its last per-frame upload, and the plan made from it.
 struct Epoch {
     bool known{},evaluated{};
@@ -40,7 +42,7 @@ struct Runtime {
     void (*logger)(const char*){};
     void (*emitter)(const char*){};
     std::atomic<std::uint64_t> refusals{};
-    std::atomic_bool pending{};   // hooks to be installed by the next main-thread camera frame
+    std::atomic_bool pending{};   // hooks to be installed by an eligible main-thread camera frame
     std::atomic_bool active{};    // a fresh snapshot is published
     std::atomic_bool latched{};   // a run-time refusal: native for the rest of the session
     std::atomic_bool opened{};    // a pass is being drawn clipped
@@ -48,7 +50,7 @@ struct Runtime {
     std::atomic<unsigned long long> offMain{};
     std::atomic<std::shared_ptr<const View>> view;
     // Main thread only from here on.
-    bool installed{},planSeen{};
+    bool installed{},planSeen{},deferNoted{};
     unsigned stateNotes{};
     std::uintptr_t base{};
     std::uint8_t* state{};
@@ -56,13 +58,14 @@ struct Runtime {
     const float* bias{};
     void* renderer{};
     Upload upload{};
+    OwnerLookup owner{};
     std::array<PassFunction,shaderClasses.size()> setup{},restore{};
     Epoch epoch;
     Applied applied;
     Plan lastPlan;
     int lastTarget{-1};
     std::array<ShaderVerdict,4096> verdicts{};
-    Budget budget;
+    Admission budget;
     Window window;
     unsigned long long frame{};
     double nextTrace{};
@@ -164,7 +167,7 @@ inline bool drifted() {
 }
 // The pass is drawn with the plan's matrices and depth range. The state
 // matrices are changed only for the duration of the upload call.
-inline void apply(const Plan& plan,std::size_t shaderClass) {
+inline void apply(const Plan& plan,std::size_t shaderClass,const void* geometry) {
     auto& r = *runtime;
     const double started = thin::seconds();
     const auto camera = r.state+offset::camera;
@@ -183,7 +186,8 @@ inline void apply(const Plan& plan,std::size_t shaderClass) {
         if (!minDepth) why = Reject::depthRange;
     }
     if (why != Reject::none) { rejectPass(why); return; }
-    if (!r.budget.take()) { ++r.window.skips[static_cast<std::size_t>(Skip::cap)]; return; }
+    // By geometry, for the whole frame: all passes of one geometry are clipped or none is.
+    if (!r.budget.admit(geometry)) { ++r.window.skips[static_cast<std::size_t>(Skip::cap)]; return; }
     for (std::size_t i = 0;i < matrixCount;++i)
         for (std::size_t row = 0;row < 4;++row) poke(camera,zColumn(i,row),plan.columns[i][row]);
     r.upload(r.renderer,r.epoch.flags,0,0);
@@ -201,23 +205,23 @@ inline void apply(const Plan& plan,std::size_t shaderClass) {
     if (*bias > 0.0f) ++r.window.biased;
     r.window.seconds += thin::seconds()-started;
 }
-// The reference that owns a geometry, by the scene graph: actors, lights and
+// The reference that owns a geometry, found by the engine's own walk (ID
+// 19750), which knows where an owner may be read: actors, lights and
 // floor-level references are never clipped, nor is geometry nobody owns.
-inline Skip ownerSkip(const std::uint8_t* geometry,const View& view) {
-    const std::uint8_t* node = geometry;
-    RE::TESObjectREFR* ref = nullptr;
-    for (unsigned hop = 0;node && hop < maxOwnerHops;++hop) {
-        ref = peek<RE::TESObjectREFR*>(node,offset::objectUser);
-        if (ref) break;
-        node = peek<const std::uint8_t*>(node,offset::objectParent);
-    }
-    if (!ref || !node) return ownerRule(false,false,Kind::excluded,{},view.feetZ,view.floorBand);
+// Main thread only; the walk takes no lock and allocates nothing.
+inline Skip ownerSkip(RE::NiAVObject* geometry,const View& view) {
+    const auto ref = runtime->owner(geometry);
+    if (!ref) return ownerRule(false,false,Kind::excluded,{},view.feetZ,view.floorBand);
     const bool actor = ref->GetFormType() == RE::FormType::ActorCharacter;
     const auto form = actor ? nullptr : ref->GetBaseObject();
     const Kind kind = actor ? Kind::excluded : kindOf(ref,form);
     bool sphere = false;
     Extent box;
-    if (kind != Kind::excluded) box = extentOf(reinterpret_cast<const RE::NiAVObject*>(node),form,sphere);
+    if (kind != Kind::excluded) {
+        const auto root = ref->Get3D();
+        if (!root) return ownerRule(false,false,Kind::excluded,{},view.feetZ,view.floorBand);
+        box = extentOf(root,form,sphere);
+    }
     return ownerRule(true,actor,kind,box,view.feetZ,view.floorBand);
 }
 // Whether the vertex shader bound for this pass takes ViewProj from the
@@ -251,16 +255,16 @@ inline void consider(void* pass,std::size_t shaderClass) {
         e.evaluated = true;
     }
     if (e.plan.reject != Reject::none) { rejectPass(e.plan.reject); return; }
-    const auto geometry = peek<const std::uint8_t*>(pass,offset::passGeometry);
+    const auto geometry = peek<std::uint8_t*>(pass,offset::passGeometry);
     Skip skip = Skip::noBound;
     if (geometry) {
         const Bound bound{peek<Vec>(geometry,offset::objectBound),peek<float>(geometry,offset::objectBound+sizeof(Vec))};
         skip = reach(e.plan,*e.view,bound,peek<const void*>(geometry,offset::geometrySkin) != nullptr);
-        if (skip == Skip::none) skip = ownerSkip(geometry,*e.view);
+        if (skip == Skip::none) skip = ownerSkip(reinterpret_cast<RE::NiAVObject*>(geometry),*e.view);
         if (skip == Skip::none && !shaderReads()) skip = Skip::shader;
     }
     if (skip != Skip::none) { ++r.window.skips[static_cast<std::size_t>(skip)]; return; }
-    apply(e.plan,shaderClass);
+    apply(e.plan,shaderClass,geometry);
 }
 
 // ---- hooks ------------------------------------------------------------------
@@ -314,20 +318,29 @@ inline const char* foreignRenderer() {
     if (GetModuleHandleW(L"d3dcompiler_46e.dll")) return "d3dcompiler_46e.dll (ENB)";
     return nullptr;
 }
-// 0 = every ID resolves to the audited RVA. 1-5 state, upload, renderer, gate,
-// bias table; 10-12 the lighting, utility and effect vtables.
+// 0 = every ID resolves to the audited RVA. 1-6 state, upload, renderer, gate,
+// bias table, owner lookup; 10-12 the lighting, utility and effect vtables.
 inline unsigned addressGuard(std::uintptr_t base) {
-    constexpr std::array<Address,5> data{stateAddress,uploadAddress,rendererAddress,gateAddress,biasAddress};
+    constexpr std::array<Address,6> data{stateAddress,uploadAddress,rendererAddress,gateAddress,biasAddress,ownerAddress};
     for (unsigned i = 0;i < data.size();++i)
         if (REL::ID(data[i].id).address() != base+data[i].rva) return 1u+i;
     for (unsigned i = 0;i < shaderClasses.size();++i)
         if (REL::ID(shaderClasses[i].table.id).address() != base+shaderClasses[i].table.rva) return 10u+i;
     return 0;
 }
-// 0 = slots 6 and 7 of every enabled class hold the audited functions with the
-// audited first bytes. Otherwise 10 * (class + 1) + 1 setup slot, 2 restore
-// slot, 3 setup bytes, 4 restore bytes: another module owns the slot or patched it.
+// The live unwind table must describe a function exactly as the audited file does.
+inline bool extentMatches(std::uintptr_t base,CodeRange rva) {
+    DWORD64 image{};
+    const auto entry = RtlLookupFunctionEntry(base+rva.begin,&image,nullptr);
+    return entry && image == base && entry->BeginAddress == rva.begin && entry->EndAddress == rva.end;
+}
+// 0 = the owner lookup and slots 6 and 7 of every enabled class are the audited
+// functions with the audited first bytes. 1 owner lookup bytes, 2 its unwind
+// extent; otherwise 10 * (class + 1) + 1 setup slot, 2 restore slot, 3 setup
+// bytes, 4 restore bytes: another module owns the slot or patched the function.
 inline unsigned tableGuard(std::uintptr_t base,unsigned mask) {
+    if (std::memcmp(reinterpret_cast<const void*>(base+ownerAddress.rva),ownerBytes.data(),ownerBytes.size()) != 0) return 1;
+    if (!extentMatches(base,ownerExtent)) return 2;
     for (unsigned i = 0;i < shaderClasses.size();++i) {
         if (!shaderEnabled(mask,i)) continue;
         const auto& c = shaderClasses[i];
@@ -339,15 +352,16 @@ inline unsigned tableGuard(std::uintptr_t base,unsigned mask) {
     }
     return 0;
 }
-// 0 = `out` calls the original upload. 1 first bytes differ (another patch
-// owns the entry), 2 live unwind extent differs, 3 allocation, 4 protection.
-// 14 bytes of whole instructions with no RIP-relative operand, then an
-// absolute jump back, as for the caster: no trampoline, never freed once used.
-inline unsigned buildGateway(std::uintptr_t target,std::uintptr_t base,Upload& out) {
+// 0 = the upload entry is the audited one. 1 first bytes differ (another patch
+// owns the entry), 2 live unwind extent differs.
+inline unsigned uploadGuard(std::uintptr_t target,std::uintptr_t base) {
     if (std::memcmp(reinterpret_cast<const void*>(target),uploadPrologue.data(),uploadPrologue.size()) != 0) return 1;
-    DWORD64 image{};
-    const auto entry = RtlLookupFunctionEntry(target,&image,nullptr);
-    if (!entry || image != base || entry->BeginAddress != uploadExtent.begin || entry->EndAddress != uploadExtent.end) return 2;
+    return extentMatches(base,uploadExtent) ? 0u : 2u;
+}
+// 0 = `out` calls the original upload. 3 allocation, 4 protection. 14 bytes of
+// whole instructions with no RIP-relative operand, then an absolute jump back,
+// as for the caster: no trampoline, never freed once used.
+inline unsigned buildGateway(std::uintptr_t target,Upload& out) {
     const auto gateway = static_cast<std::uint8_t*>(VirtualAlloc(nullptr,64,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
     if (!gateway) return 3;
     std::memcpy(gateway,uploadPrologue.data(),uploadCopied);
@@ -371,41 +385,60 @@ void hookClass() {
     static_cast<void>(table.write_vfunc(restoreSlot,&hookRestore<Index>));
     static_cast<void>(table.write_vfunc(setupSlot,&hookSetup<Index>));
 }
-// Main thread, inside the camera frame service: the thread that draws is here,
-// not inside the function whose first 14 bytes are replaced.
+// Main thread, in the camera frame service of an eligible frame (normal play:
+// no load in progress, no menu state), and only while no frame is being drawn.
+// The camera update runs in Main::Update before the frame begins (36564 ->
+// 40438 at 6588DE -> 40744 -> 40449 -> 50784; the frame, ID 36555, is called at
+// 659319 and raises the gate at 6565F7), so the gate reads 0 here unless some
+// other thread is inside a frame of its own (IDs 39039 and 90259 also bracket
+// frames; their threads are not established). In that case nothing is written
+// and the next eligible frame tries again. What remains is a thread that
+// begins a frame between the last gate read and the end of the 14-byte write.
 inline void commit() {
     auto& r = *runtime;
     const auto base = r.base;
     char text[256]{};
     if (const char* found = foreignRenderer()) {
         std::snprintf(text,sizeof(text),"%s is loaded; the clip is not installed, native rendering",found);
+        r.pending.store(false,std::memory_order_release);
         refuse(Refusal::module,text); return;
     }
     if (const unsigned failed = addressGuard(base)) {
         std::snprintf(text,sizeof(text),"check=%u: an address ID does not resolve to the audited RVA; the clip is not installed, native rendering",failed);
+        r.pending.store(false,std::memory_order_release);
         refuse(Refusal::address,text); return;
     }
     if (const unsigned failed = tableGuard(base,r.config.shaders)) {
-        std::snprintf(text,sizeof(text),"check=%u: a shader vtable slot or its first bytes differ (already hooked or wrong build); "
+        std::snprintf(text,sizeof(text),"check=%u: the owner lookup, a shader vtable slot or its first bytes differ (already hooked or wrong build); "
             "the clip is not installed, native rendering",failed);
+        r.pending.store(false,std::memory_order_release);
         refuse(Refusal::table,text); return;
     }
     const auto target = base+uploadAddress.rva;
-    Upload gateway{};
-    if (const unsigned failed = buildGateway(target,base,gateway)) {
+    unsigned failed = uploadGuard(target,base);
+    if (!failed && !r.upload) failed = buildGateway(target,r.upload);
+    if (failed) {
         std::snprintf(text,sizeof(text),"check=%u: the per-frame upload entry differs or its gateway could not be built; "
             "the clip is not installed, native rendering",failed);
+        r.pending.store(false,std::memory_order_release);
         refuse(Refusal::prologue,text); return;
     }
     r.state = reinterpret_cast<std::uint8_t*>(base+stateAddress.rva);
     r.gate = reinterpret_cast<const std::uint8_t*>(base+gateAddress.rva);
     r.bias = reinterpret_cast<const float*>(base+biasAddress.rva);
     r.renderer = reinterpret_cast<void*>(base+rendererAddress.rva);
-    r.upload = gateway;
+    r.owner = reinterpret_cast<OwnerLookup>(base+ownerAddress.rva);
     const auto detour = thin::jump(reinterpret_cast<std::uintptr_t>(&hookUpload));
+    if (*r.gate != 0) {
+        // A frame is in progress somewhere: its thread may be in the upload. Not now.
+        if (!r.deferNoted) r.logger("FixedCameraSpike clip install deferred: a frame is being drawn; retrying in the next eligible frame");
+        r.deferNoted = true;
+        return;
+    }
     REL::safe_write(target,detour.data(),detour.size());
     FlushInstructionCache(GetCurrentProcess(),reinterpret_cast<void*>(target),detour.size());
     hookClass<0>(); hookClass<1>(); hookClass<2>();
+    r.pending.store(false,std::memory_order_release);
     r.installed = true;
     std::snprintf(text,sizeof(text),"FixedCameraSpike clip installed shaders=%u height=%.1f margin=%.1f corridor=%.1f floorBand=%.1f cap=%u exterior=%u trace=%u",
         r.config.shaders,static_cast<double>(r.config.height),static_cast<double>(r.config.margin),static_cast<double>(r.config.corridor),
@@ -428,7 +461,6 @@ inline void deactivate() {
 inline void frameStart() {
     if (!runtime) return;
     auto& r = *runtime;
-    if (r.pending.exchange(false,std::memory_order_acq_rel)) commit();
     if (r.opened.load(std::memory_order_acquire)) fault(Fault::frame);
     if (r.offMain.load(std::memory_order_relaxed))
         refuse(Refusal::thread,"a render hook ran off the main thread while the clip was active; such calls touch nothing and are drawn natively");
@@ -438,6 +470,7 @@ inline void publish(Vec eye,Vec forward,Vec feet,bool interiorCell,unsigned long
     if (!runtime) return;
     auto& r = *runtime;
     r.frame = frame;
+    if (r.pending.load(std::memory_order_acquire)) commit();
     std::optional<View> next;
     if (r.installed && !r.latched.load(std::memory_order_acquire) && cellAllowed(interiorCell,r.config.exterior))
         next = makeView(r.config,eye,forward,feet,frame,now);

@@ -588,7 +588,7 @@ inline void beginFrame() {
     if (!r.active.load(std::memory_order_acquire) || !thin::onMain()) return;
     r.frameEligible = r.frameSeen = false;
     ++r.frame;
-    clip::frameStart(); // wave 2 clip: pending install, a pass left open, an off-thread call
+    clip::frameStart(); // wave 2 clip: a pass left open, an off-thread call
 }
 // ThirdPersonState update hook entry: a second, unbracketed camera update
 // (callers 746A79 and 9969F5) starts from "not eligible" too.
@@ -645,7 +645,7 @@ inline void endFrame() {
     traceRig(true);
     r.previousCamera = viewer; r.previousFrame = r.frame; r.previousEligible = true;
     traceRoom(parent,viewer,eye);
-    // wave 2 clip: this frame's plane, from the transform SmoothCam has just written.
+    // wave 2 clip: this frame's plane, from the transform SmoothCam has just written (and, once, the install).
     const auto& facing = camera->cameraRoot->world.rotate.entry;
     clip::publish(viewer,{facing[0][1],facing[1][1],facing[2][1]},{position.x,position.y,position.z},parent->IsInteriorCell(),r.frame,r.now);
     clip::trace(r.now);
@@ -740,7 +740,7 @@ inline void install(bool prerequisites,bool service) {
     const auto base = REL::Module::get().base();
     installCaster(base);
     if (r.config.roomSeedMode) installRoomHook(base);
-    clip::install(base); // wave 2 clip: a no-op unless iSeeThroughMode=2
+    clip::install(base); // wave 2 clip: a no-op unless iSeeThroughMode=2; the hooks go in from an eligible frame
     r.active.store(true,std::memory_order_release);
     char line[256]{};
     std::snprintf(line,sizeof(line),"installed rig=1 caster=%s rooms=%s seeThrough=%u clip=%s heading=%.3f zoom=%.3f snapKeys=%d,%d traces=%u,%u,%u",

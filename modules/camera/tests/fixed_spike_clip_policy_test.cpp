@@ -1,6 +1,7 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #include "fixed_spike_clip_policy.h"
 #include <cassert>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -76,7 +77,8 @@ void audit() {
     // The 14 copied bytes end on an instruction boundary: sub rsp,320h follows.
     assert(uploadCopied == 14 && uploadPrologue[14] == 0x48 && uploadPrologue[15] == 0x81 && uploadPrologue[16] == 0xec);
     assert(uploadExtent.begin == uploadAddress.rva && uploadExtent.holds(uploadAddress.rva+uploadCopied));
-    assert(setupSlot == 6 && restoreSlot == 7 && biasModes == 12 && dirtyViewport == 2);
+    assert(setupSlot == 6 && restoreSlot == 7 && biasModes == 12 && dirtyViewport == 2 && dirtyDepthBias == 0x40);
+    assert(ownerExtent.begin == ownerAddress.rva && ownerExtent.end > ownerExtent.begin && ownerBytes[0] == 0x48 && ownerBytes[15] == 0x33);
     std::set<std::uintptr_t> addresses;
     for (const auto& c : shaderClasses) {
         assert(c.setupRva != c.restoreRva && c.setupBytes != c.restoreBytes);
@@ -255,6 +257,7 @@ void rejects() {
     assert(std::string(rejectNames[static_cast<std::size_t>(Reject::drift)]) == "drift" &&
         std::string(rejectNames[static_cast<std::size_t>(Reject::bias)]) == "bias");
 }
+constexpr std::size_t budget_slots() { return 2u*maxAdmitted; }
 void selection() {
     const View v = rigView();
     const Plan plan = evaluate(mainCamera(),v,100);
@@ -299,10 +302,30 @@ void selection() {
     assert(ownerRule(true,false,Kind::architecture,wall,feet.z,24) == Skip::none && ownerRule(true,false,Kind::object,raised,feet.z,24) == Skip::none);
     assert(ownerRule(true,false,Kind::architecture,unknown,feet.z,24) == Skip::none); // no bounds: the plane alone decides
     assert(ownerRule(true,false,Kind::architecture,floorTile,feet.z-100.0f,24) == Skip::none); // above the player's level it is not floor
-    Budget budget; budget.limit = 2;
-    assert(budget.take() && budget.take() && !budget.take() && budget.peak == 2);
-    budget.frame();
-    assert(budget.take() && budget.used == 1 && budget.peak == 2);
+    // The cap counts geometries and the decision holds for the frame: an admitted geometry is clipped in every
+    // later pass (depth pass and colour pass agree), and one that arrives after the cap is refused in all of them.
+    {
+        const auto budget = std::make_unique<Admission>();
+        budget->limit = 2;
+        const int a = 0,b = 0,c = 0,d = 0;
+        assert(budget->admit(&a) && budget->admit(&b) && budget->admit(&a) && budget->admit(&b) && budget->used == 2);
+        assert(!budget->admit(&c) && budget->admit(&a) && !budget->admit(&c) && !budget->admit(&d) && budget->admit(&b) && budget->peak == 2);
+        assert(!budget->admit(nullptr));
+        budget->frame();
+        assert(budget->used == 0 && budget->admit(&c) && budget->admit(&d) && !budget->admit(&a) && budget->admit(&c) && budget->peak == 2);
+        // Colliding keys (same slot modulo the table) are kept apart, in any order of arrival.
+        budget->frame(); budget->limit = maxAdmitted;
+        const auto key = [](std::size_t n) { return reinterpret_cast<const void*>((n*budget_slots()+7u) << 4); };
+        for (std::size_t n = 1;n <= 5;++n) assert(budget->admit(key(n)));
+        for (std::size_t n = 5;n >= 1;--n) assert(budget->admit(key(n)));
+        assert(budget->used == 5);
+        // The table can hold the largest cap, and nothing beyond it.
+        budget->frame();
+        for (std::size_t n = 1;n <= maxAdmitted;++n) assert(budget->admit(reinterpret_cast<const void*>(n << 4)));
+        assert(budget->used == maxAdmitted && !budget->admit(reinterpret_cast<const void*>((maxAdmitted+1u) << 4)) && budget->admit(reinterpret_cast<const void*>(std::size_t{16})));
+        Config most; most.maxPerFrame = 1000000;
+        assert(validate(most).maxPerFrame == maxAdmitted);
+    }
     assert(std::string(skipNames[static_cast<std::size_t>(Skip::cap)]) == "cap" && std::string(skipNames[static_cast<std::size_t>(Skip::floor)]) == "floor" &&
         std::string(skipNames[static_cast<std::size_t>(Skip::shader)]) == "shader");
     assert(std::string(faultName(Fault::setup)) != faultName(Fault::upload) && std::string(faultName(Fault::frame)) != faultName(Fault::upload));
@@ -323,31 +346,43 @@ std::vector<std::uint8_t> shaderBlob(const std::vector<std::uint32_t>& tokens,co
     return blob;
 }
 void shaders() {
-    // dp4 against cb12[row]: operand type 8 (constant buffer), two immediate indices.
-    const std::uint32_t cb = (8u << 12) | (2u << 20) | 0x46u;
-    const auto rows = [&](std::initializer_list<std::uint32_t> list) {
-        std::vector<std::uint32_t> tokens{0x0100086a,0x08000011};
-        for (const auto row : list) { tokens.insert(tokens.end(),{0x08000011,cb,12u,row,0x00101e46}); }
-        return tokens;
+    // dp4 o0.x, v0.xyzw, cb12[row].xyzw: opcode 17, eight tokens, three operands.
+    const std::uint32_t cb = 0x00208e46u,out = 0x00102012u,in = 0x00101e46u,dp4 = 0x08000011u;
+    using Tokens = std::vector<std::uint32_t>;
+    const auto read = [&](std::uint32_t row,std::uint32_t buffer = 12u) { return Tokens{dp4,out,0u,in,0u,cb,buffer,row}; };
+    const auto join = [](std::initializer_list<Tokens> parts) {
+        Tokens all{0x04000059u,0x00208e46u,12u,45u}; // dcl_constantbuffer cb12[45]
+        for (const auto& part : parts) all.insert(all.end(),part.begin(),part.end());
+        return all;
     };
-    const auto reads = [](const std::vector<std::uint32_t>& tokens,const char* tag = "SHEX") {
+    const auto reads = [](const Tokens& tokens,const char* tag = "SHEX") {
         const auto made = shaderBlob(tokens,tag);
         return readsViewProjection(made.data(),made.size());
     };
-    const auto blob = shaderBlob(rows({8,9,10,11}));
-    assert(readsViewProjection(blob.data(),blob.size()) && reads(rows({11,10,9,8,12,41}),"SHDR"));
-    // The depth row (c10) missing, another buffer, or an operand with a relative index: not this draw's ViewProj.
-    assert(!reads(rows({8,9,11})) && !reads(rows({8,9,10})) && !reads(rows({})) && !reads(rows({0,1,2,3})));
-    auto other = rows({8,9,10,11});
-    for (auto& token : other) if (token == 12u) token = 2u;       // cb2[8..11]
-    assert(!reads(other));
-    other = rows({8,9,10,11});
-    for (auto& token : other) if (token == cb) token = cb | (1u << 22); // index 0 not immediate
-    assert(!reads(other));
-    other = rows({8,9,10,11});
-    for (auto& token : other) if (token == cb) token = cb | (1u << 31); // extended operand
-    assert(!reads(other));
-    // Malformed or truncated input is never read past its size.
+    const auto blob = shaderBlob(join({read(8),read(9),read(10),read(11)}));
+    assert(readsViewProjection(blob.data(),blob.size()) && reads(join({read(11),read(10),read(9),read(8),read(40)}),"SHDR"));
+    // The depth row (c10) missing, no row at all, the view matrix, another buffer: not this draw's ViewProj.
+    assert(!reads(join({read(8),read(9),read(11)})) && !reads(join({read(8),read(9),read(10)})) && !reads(join({})) &&
+        !reads(join({read(0),read(1),read(2),read(3)})) && !reads(join({read(8,2),read(9,2),read(10,2),read(11,2)})));
+    // A declaration's size is not a read: cb12[11] declared, rows 8-10 read.
+    assert(!reads(Tokens{0x04000059u,cb,12u,11u,dp4,out,0u,in,0u,cb,12u,8u,dp4,out,0u,in,0u,cb,12u,9u,dp4,out,0u,in,0u,cb,12u,10u}));
+    // Nor is anything inside a custom-data block (opcode 53 with its own length).
+    assert(!reads(join({read(8),read(9),read(10),Tokens{53u,5u,cb,12u,11u}})) && reads(join({read(8),read(9),read(10),Tokens{53u,5u,cb,12u,11u},read(11)})));
+    // An extended operand (a negated row) is still that row; a computed row index is not.
+    assert(reads(join({read(8),read(9),read(10),Tokens{0x09000011u,out,0u,in,0u,cb | 0x80000000u,0x00000041u,12u,11u}})));
+    const Tokens relative{0x09000011u,out,0u,in,0u,cb | (2u << 25),12u,0x0010000au,0u};          // cb12[r0.x]
+    const Tokens offset{0x0a000011u,out,0u,in,0u,cb | (3u << 25),12u,11u,0x0010000au,0u};        // cb12[r0.x + 11]
+    assert(!reads(join({read(8),read(9),read(10),relative})) && !reads(join({read(8),read(9),read(10),offset})));
+    assert(reads(join({read(8),read(9),read(10),relative,offset,read(11)}))); // both decode; the stream goes on
+    // Immediates are skipped by their size: l(8,9,10,11) holds no row; mov o0, l(12,8,12,9).
+    const Tokens literal{0x08000036u,0x001020f2u,0u,0x00004002u,cb,12u,11u,0u};
+    assert(!reads(join({read(8),read(9),read(10),literal})) && reads(join({read(8),read(9),literal,read(10),read(11)})));
+    // An instruction that overruns the stream, has no length, or an operand that overruns its instruction: nothing is trusted.
+    assert(!reads(join({read(8),read(9),read(10),read(11),Tokens{0x7f000011u,out,0u}})) && !reads(join({read(8),read(9),read(10),read(11),Tokens{0x00000011u}})) &&
+        !reads(join({read(8),read(9),read(10),read(11),Tokens{0x03000011u,cb,12u}})) && !reads(join({read(8),read(9),read(10),read(11),Tokens{53u,0u}})));
+    assert(declarationOpcode(89) && declarationOpcode(88) && declarationOpcode(106) && declarationOpcode(143) && declarationOpcode(162) &&
+        !declarationOpcode(17) && !declarationOpcode(107) && !declarationOpcode(163) && !declarationOpcode(53));
+    // Malformed or truncated containers are never read past their size.
     assert(!readsViewProjection(nullptr,100) && !readsViewProjection(blob.data(),31) && !readsViewProjection(blob.data(),blob.size()-1));
     auto bad = blob; bad[0] = 'X';
     assert(!readsViewProjection(bad.data(),bad.size()));
