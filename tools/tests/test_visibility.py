@@ -23,6 +23,7 @@ WAVE1 = Path('/srv/storage/Projects/SkyCRPG/session-p4/autotest/runs')
 WAVE1_ROUTES = Path('/srv/storage/Projects/SkyCRPG/session-p55/routes/runs')
 ORACLE_EXT_1 = Path('/srv/storage/Projects/SkyCRPG/session-p55/oracle/runs/p55-oracle-ext-1/collected')
 ORACLE_EXT_1_SHOTS = WAVE1 / 'batch-p55-oracle-ext-1-00/screenshots'
+ORACLE_RUNS = Path('/srv/storage/Projects/SkyCRPG/session-p55/oracle/runs')
 
 
 # ---- PNG fixtures ------------------------------------------------------------------------------
@@ -97,17 +98,22 @@ class PngTests(unittest.TestCase):
 class Scene:
     """A decorated window (3 px border, 29 px top) around a 200x120 client with a textured background."""
 
-    def __init__(self, seed=3, dark=False):
+    def __init__(self, seed=3, dark=False, dim=False):
+        """dark: everything at 12 % brightness. dim: a dim wooden floor (32-36) and a dark-clad player 8-12
+        levels darker than it, still above the dark limit (mare-on-h0 in p55-oracle-hide-O2)."""
         rng = random.Random(seed)
         self.w, self.h = CLIENT[0] + 2 * BORDER, CLIENT[1] + TITLE + BORDER
         scale = 0.12 if dark else 1.0
-        self.bg = [[tuple(int((60 + rng.randrange(120)) * scale) for _ in range(3)) for _ in range(self.w)] for _ in range(self.h)]
+        if dim:
+            self.bg = [[tuple(32 + rng.randrange(5) for _ in range(3)) for _ in range(self.w)] for _ in range(self.h)]
+        else:
+            self.bg = [[tuple(int((60 + rng.randrange(120)) * scale) for _ in range(3)) for _ in range(self.w)] for _ in range(self.h)]
         for y in range(self.h):
             for x in range(self.w):
                 if y < TITLE or x < BORDER or x >= self.w - BORDER or y >= self.h - BORDER:
                     self.bg[y][x] = (50, 150, 250)
-        self.player_colour = tuple(int(c * scale) for c in (220, 40, 40))
-        self.idle_colour = tuple(int(c * scale) for c in (40, 200, 40))
+        self.player_colour = (24, 25, 24) if dim else tuple(int(c * scale) for c in (220, 40, 40))
+        self.idle_colour = (22, 24, 20) if dim else tuple(int(c * scale) for c in (40, 200, 40))
         self.scale = scale
         # Player figure in client pixels: a 16 px wide body from y 28 to 86 (head point 40, feet point 80), and
         # its shadow on the ground to the lower right (B loses both, as in p55-oracle-ext-1).
@@ -197,10 +203,22 @@ class GeometryTests(unittest.TestCase):
         with self.assertRaisesRegex(rv.Indeterminate, 'box_too_small'):
             rv.layout(view({'head': (100, 70), 'feet': (100, 75)}), g, PARAMS)
 
-    def test_dark_threshold_scales_with_luminance(self):
-        self.assertEqual(rv.change_threshold(100, PARAMS), 12)
-        self.assertEqual(rv.change_threshold(14, PARAMS), 6)
-        self.assertEqual(rv.change_threshold(1, PARAMS), 3)
+    def test_threshold_follows_the_ring_noise(self):
+        """Version 3: the threshold is the ring's non-shadow noise (99th percentile) + 1, clamped to [3, 12]."""
+        lay = rv.layout(view(), rv.Geometry((3, 29), CLIENT), PARAMS)
+        still = triple(Scene())
+        self.assertEqual(rv.adaptive_threshold(*still, lay.ring, lay.box, PARAMS), (3, 0))
+        rng = random.Random(5)
+
+        def shimmer(image):
+            rgb = bytearray(image.rgb)
+            for i in range(0, len(rgb), 3):
+                rgb[i] = min(255, rgb[i] + rng.randrange(30))
+            return png.Image(image.width, image.height, bytes(rgb))
+        busy = [shimmer(f) for f in still]
+        t, q = rv.adaptive_threshold(*busy, lay.ring, lay.box, PARAMS)
+        self.assertEqual(t, 12)
+        self.assertGreater(q, 12)
 
 
 class VerdictTests(unittest.TestCase):
@@ -274,6 +292,54 @@ class VerdictTests(unittest.TestCase):
         r = self.measure([a, png.Image(b.width, b.height, bytes(rgb)), a2])
         self.assertEqual(r['verdict'], 'indeterminate')
         self.assertIn('scene_busy', r['reason'])
+
+    def test_low_contrast_player_in_a_still_room_is_visible(self):
+        """p55-oracle-hide-O2 mare-on-h0: a dark-clad player on a dim floor differs by 8-12 levels. Version 2
+        (fixed threshold 12 above luminance 28) under-read it; version 3 lowers the threshold to the scene noise."""
+        dim = Scene(dim=True)
+        cal = calibration()
+        r = rv.measure(triple(dim), view(), cal, view(), PARAMS)
+        self.assertFalse(r['stats']['dark'])
+        self.assertEqual(r['stats']['threshold'], 3)
+        self.assertEqual(r['verdict'], 'visible', r['points'])
+        fixed = dict(PARAMS, min_threshold=12)  # the version 2 threshold for a box this bright
+        self.assertNotEqual(rv.measure(triple(dim), view(), cal, view(), fixed)['verdict'], 'visible')
+
+    def test_low_threshold_does_not_invent_a_hidden_player(self):
+        """At the lowest threshold an occluded player still reads not visible (bfb0-h0, stable-h0 in O2)."""
+        dim = Scene(dim=True)
+        wall = ((80, 20, 120, 95), (34, 33, 35), 1.0)  # an occluder the colour of the floor
+        r = rv.measure(triple(dim, [wall]), view(), calibration(), view(), PARAMS)
+        self.assertEqual(r['stats']['threshold'], 3)
+        self.assertEqual(r['verdict'], 'not_visible')
+        legs = ((80, 60, 120, 95), (34, 33, 35), 1.0)
+        r = rv.measure(triple(dim, [legs]), view(), calibration(), view(), PARAMS)
+        self.assertEqual(r['points']['feet']['verdict'], 'not_visible')
+        self.assertEqual(r['points']['head']['verdict'], 'visible')
+
+    def test_player_shadow_in_the_ring_is_not_noise(self):
+        """p55-oracle-seed0-O2 hall-h2: the player's long shadow on the carpet leaves the box; version 2 counted
+        it as ring noise (0.145, scene_busy). Version 3 sets shadow-like pixels aside and reports them."""
+        scene = Scene()
+        scene.shadow = (108, 60, 158, 118)  # long, far into the ring (but not past it)
+        r = self.measure(triple(scene))
+        self.assertEqual(r['verdict'], 'visible', r['reason'])
+        self.assertGreater(r['stats']['ring_shadow'], 0.10)
+        self.assertLess(r['stats']['noise'], 0.01)
+        v2 = rv.mask_stats(*triple(scene), r['stats']['ring'], 12, exclude=r['stats']['box'])
+        self.assertGreater(v2.share('mask'), PARAMS['noise_max'])  # what version 2 called scene_busy
+
+    def test_lighting_change_with_b_is_indeterminate(self):
+        """B brighter than A and A2 everywhere looks like a shadow in the ring; the frame-wide guard refuses it."""
+        a, b, a2 = triple(self.scene)
+        rgb = bytearray(b.rgb)
+        for y in range(TITLE, b.height - BORDER):
+            for x in range(BORDER, b.width - BORDER):
+                i = (y * b.width + x) * 3
+                rgb[i:i + 3] = bytes(min(255, c + 10) for c in rgb[i:i + 3])
+        r = self.measure([a, png.Image(b.width, b.height, bytes(rgb)), a2])
+        self.assertEqual(r['verdict'], 'indeterminate')
+        self.assertIn('lighting_changed', r['reason'])
 
     def test_player_verdict_from_points(self):
         def pts(*verdicts):
@@ -373,7 +439,7 @@ class VerdictTests(unittest.TestCase):
         dark = Scene(dark=True)
         r = self.measure(triple(dark))
         self.assertTrue(r['stats']['dark'])
-        self.assertLess(r['stats']['threshold'], 12)
+        self.assertEqual(r['stats']['threshold'], 3)
         self.assertEqual(r['verdict'], 'visible')
 
     def test_dark_box_without_signal_is_never_not_visible(self):
@@ -484,6 +550,55 @@ class OracleExt1Tests(unittest.TestCase):
         r = self.run_tag('stable-h0', self.cal)
         self.assertEqual(r['verdict'], 'not_visible', r['reason'])
         self.assertIsNone(r['restored'])  # nothing to restore on screen: unprovable, not failed
+
+
+def _o2_present():
+    return all((ORACLE_RUNS / f'p55-oracle-{r}-O2/collected/report.json').is_file() for r in ('ext', 'seed0', 'seed1', 'hide'))
+
+
+@unittest.skipUnless(_o2_present(), 'batch O2 records not on this host')
+class OracleO2Tests(unittest.TestCase):
+    """Batch O2 (four routes, spike stage 744609f + probe aeaccbd). Version 3 was set on these frames, so this
+    guards the re-evaluation; it is not independent evidence."""
+    cals = {}
+
+    @classmethod
+    def run_tag(cls, route, tag):
+        collected = ORACLE_RUNS / f'p55-oracle-{route}-O2/collected'
+        report = json.loads((collected / 'report.json').read_text())
+        shots = {s['name']: s['path'] for s in report['screenshots'] if s.get('ok')}
+        frames = rv.load_frames([shots.get(tag + s) for s in ('-a', '-b', '-a2')])
+        slice_path = collected / 'probe-slice.jsonl'
+        v, after = rv.view_from_slice(slice_path, tag), rv.view_from_slice(slice_path, tag + '-post')
+        if tag == 'cal-h0':
+            return rv.calibrate(frames, v, after)
+        if route not in cls.cals:
+            cls.cals[route] = cls.run_tag(route, 'cal-h0')
+            assert cls.cals[route]['confirmed'], cls.cals[route]['reason']
+        return rv.measure(frames, v, cls.cals[route], after)
+
+    def test_low_contrast_player_at_the_hearth_is_visible(self):
+        r = self.run_tag('hide', 'mare-on-h0')  # version 2: partly (head 0.49, shoulder_r 0.29)
+        self.assertEqual(r['verdict'], 'visible', r['points'])
+        self.assertLess(r['stats']['threshold'], 12)
+
+    def test_player_shadow_on_the_carpet_is_not_scene_noise(self):
+        r = self.run_tag('seed0', 'hall-h2')  # version 2: scene_busy 0.145
+        self.assertEqual(r['verdict'], 'visible', r['reason'])
+        self.assertGreater(r['stats']['ring_shadow'], 0.10)
+        self.assertLess(r['stats']['noise'], 0.02)
+
+    def test_hidden_player_still_reads_not_visible(self):
+        self.assertEqual(self.run_tag('ext', 'stable-h0')['verdict'], 'not_visible')
+        r = self.run_tag('seed0', 'bfb0-h0')
+        self.assertEqual(r['stats']['threshold'], 3)  # the lowest threshold, and still nothing
+        self.assertEqual(r['verdict'], 'not_visible')
+        self.assertEqual(self.run_tag('ext', 'open-h2')['points']['feet']['verdict'], 'not_visible')
+
+    def test_dark_rock_stays_indeterminate(self):
+        r = self.run_tag('hide', 'cave-h0')
+        self.assertEqual(r['verdict'], 'indeterminate')
+        self.assertIn('dark', r['reason'])
 
 
 if __name__ == '__main__':

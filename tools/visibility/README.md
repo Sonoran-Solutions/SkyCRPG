@@ -1,7 +1,9 @@
 # Rendered visibility from runner screenshots (P5.5-01, DYL-216)
 
-**Status: measure version 2; one in-game run (`p55-oracle-ext-1`) re-evaluated offline, 3 of 3 fixtures PASS
-(see "First in-game evidence"); the rest of the checkpoint is NOT_RUN.** The probe's geometric clearance rays
+**Status: measure version 3. Batch O2 (four routes) ran on version 2: 7 of 9 fixtures PASS, `mare-on-h0`
+FAIL (a low-contrast under-read), `hall-h2` and `cave-h0` indeterminate. Version 3 was made from those frames;
+re-evaluated offline it gives 8 PASS and `cave-h0` NOT_RUN (dark). That re-evaluation is not independent
+evidence (see "Batch O2"). Fade and clip rows are NOT_RUN (no build).** The probe's geometric clearance rays
 (`view_sample` `ray.status`) are diagnostic only. In wave 1 they disagreed with the rendered frames exactly where
 it matters (below). This tool measures what reaches the screen instead. It is the final-image technique
 ("candidate b") of `docs/evidence/p5.5/visibility-instrument.md`. It runs outside the game, uses only the Python
@@ -11,7 +13,7 @@ standard library, and needs no probe change.
 | --- | --- |
 | `png.py` | PNG reader/writer: 8-bit RGB, RGBA and greyscale, non-interlaced, all five row filters, CRC checked. Anything else (palette, 16-bit, interlaced) is refused, not guessed. |
 | `rendered_visibility.py` | Window geometry, box mapping, the A/B/A2 measure, calibration, verdicts, overlay crops; CLI. |
-| `../tests/test_visibility.py` | 38 unit tests. Synthetic frames (with idle animation between A and A2 and a player shadow), plus wave 1 captures and the `p55-oracle-ext-1` frames when they are on the host. |
+| `../tests/test_visibility.py` | 46 unit tests. Synthetic frames (idle animation between A and A2, a player shadow, a dim low-contrast scene, stacked fades, a lighting change), plus wave 1 captures, the `p55-oracle-ext-1` frames and the batch O2 frames when they are on the host. |
 
 ## Measurement procedure (runner steps only)
 
@@ -66,13 +68,16 @@ Checked on wave 1 frames by eye in zoomed crops:
 - `a-open-h0` (p55-a-open-1): head point (962,648) at the helmet/neck, feet point (964,742) at the boots (rendered 748).
 - `c-hall-h2` (p55-c-hall-seed0-A): head point (965,654) on the face, but the rendered boots sit near y 766, 24 px below the feet point. So the box extends 0.35 player heights below the feet point (and above the head point, and to each side).
 
-## Measure, noise floor and verdicts (version 2)
+## Measure, noise floor and verdicts (version 3)
 
 All thresholds are in `PARAMS` and are starting points (D55-6 belongs to the owner).
 
-- **Change:** per-pixel max channel difference >= 12, scaled down with box luminance below 28 (minimum 3). A player in a dark room is dark too.
-- **Player mask:** pixels where |A-B| and |A2-B| both pass the change test. **Signal** = mask share of a region.
-- **Noise floor:** the mask share of the ring (the box grown by one player height on each side, box excluded). Wind, TAA shimmer and flicker that happen to differ in B from both A and A2 land there as well as in the box.
+- **Change:** per-pixel max channel difference against a per-pixel threshold = max(scene threshold, min(12, 0.10 x luminance of B at that pixel)).
+  - *Scene threshold:* in the ring, set the shadow-like pixels aside; the 99th percentile of min(|A-B|, |A2-B|) over the rest, plus 1, clamped to 3..12. A busy exterior (thatch shimmer, wind) keeps 12; a still interior goes down to 3-6.
+  - *Contrast floor:* a change must also be at least 10 % of what is behind it (Weber contrast). It keeps 12 wherever B is brighter than 120, and stops a faint trace through stacked fades from counting as visible in a still scene.
+- **Player mask:** pixels where |A-B| and |A2-B| both pass. **Signal** = mask share of a region.
+- **Shadow-like pixel:** in the mask, with A and A2 both darker than B in every channel and A closer to A2 than to B. In the ring that is the player's shadow (B removes it too); it is reported as `ring_shadow` and kept out of the noise floor and out of the ring A-B control. A dark-clad player is shadow-like as well (darker than the floor), so the test is **not** applied in the box or the point windows.
+- **Noise floor:** the non-shadow-like mask share of the ring (the box grown by one player height on each side, box excluded).
 - **Restore:** `true` when A2-B is at least half of A-B in the box; `false` when A2 still looks like B; `null` when A-B is below 0.05 (a hidden player: restore not provable from these frames).
 - **Calibration:** a triple at an unobstructed pose with the same rig. The fixed rig keeps the player's screen size constant (761.7 units at pitch 55). It is confirmed only if the box mask minus noise is >= 0.08 and at least 3 of 5 point windows show a mask minus noise >= 0.40, the scene is stable, the player was restored and the box is not dark. Calibration records carry the measure version; a record of another version is refused.
 - **Point ratio** = (point mask - noise) / calibration point mask, over a window of 0.07 player heights around each point: >= 0.60 `visible`, >= 0.15 `partly`, otherwise `not_visible`. A dark box (luminance < 28) never returns `not_visible`; a weak signal there is `indeterminate` ("dark").
@@ -82,13 +87,28 @@ All thresholds are in `PARAMS` and are starting points (D55-6 belongs to the own
   - a frame is missing, unreadable or of a different size;
   - the view sample is unavailable, or the camera moved or turned between the two view samples (> 2 units / 2 degrees);
   - the head or feet point is off screen, or the box leaves the client;
-  - the frame outside the ring changed by more than 0.12 between A and B or A and A2 (camera or scene moved);
-  - the ring changed by more than 0.30 (A-B) or 0.20 (A-A2);
-  - the ring's mask share is above 0.10 (`scene_busy`: no trustworthy noise floor);
+  - the frame outside the ring changed by more than 0.12 between A and B or A and A2 at threshold 12 (camera or scene moved);
+  - more than 0.10 of the frame outside the ring is shadow-like (`lighting_changed`: B was lit differently, which would pass for a shadow in the ring; batch O2 frames show at most 0.02);
+  - the ring changed by more than 0.30 (A-B, shadow-like pixels aside) or 0.20 (A-A2);
+  - the ring's non-shadow mask share is above 0.10 (`scene_busy`: no trustworthy noise floor);
   - the player's height differs from calibration by more than 25 %;
   - A2 still looks like B (`restored: false`);
   - fewer than 4 points measurable;
   - the calibration is unconfirmed or of another measure version.
+
+### What changed from version 2, and why (batch O2)
+
+| Rule | Version 2 | Version 3 | Why |
+| --- | --- | --- | --- |
+| Per-pixel threshold | 12, scaled down only when the box luminance is below 28 | scene threshold from the ring noise (3-12) and a 10 % contrast floor per pixel | `mare-on-h0`: a dark-clad player on a dark floor at box luminance 49 differs from the floor by only 1-12 levels over much of the head and right shoulder; at 12 the head read 0.49 and shoulder_r 0.29 (`partly`, FAIL). The ring there has noise 99th percentile 5, so 6 is safe. |
+| Luminance-scaled threshold | yes | removed | Replaced by the two rules above, which cover dark rooms too (`bfb1-h0`: threshold 3). The dark rule itself (dark box never `not_visible`) stays. |
+| Ring noise | all mask pixels in the ring | shadow-like pixels set aside, reported as `ring_shadow` | `hall-h2`: the player's long shadow on the carpet covers 0.156 of the ring; version 2 called it noise (0.145, `scene_busy`). Without it the ring noise is 0.003. |
+| Ring A-B control | all changed pixels | shadow-like pixels set aside | Same cause: a long shadow is not a scene change. |
+| `lighting_changed` | none | refuse when > 0.10 of the frame outside the ring is shadow-like | A lighting change that came with B would look like a shadow in the ring and escape the noise floor. |
+| Everything else | | unchanged | Mask, calibration, point ratios, 4-of-5 player verdict, restore proof, pose/scale/frame checks. |
+
+The calibration triple is taken in daylight at a scene threshold of 8-10; its point masks are 0.90-1.00 at
+every threshold from 3 to 12, so comparing a fixture at a lower threshold against it does not inflate the ratio.
 
 ### What changed from version 1, and why
 
@@ -138,7 +158,55 @@ scenes (other routes, NOT_RUN); repeatability (one run); or an independent test 
 after looking at these frames (thresholds unchanged, expected answers written before the run). A fresh run of
 `p55-oracle-ext` is the independent check. Silhouette sheets: `reeval/p55-oracle-ext-1-v2/*-masks.png`.
 
-**What it cannot see:** frames between captures (no per-frame claim, no "zero blank frames"); a player whose colours match the background (less signal, so a lower ratio); anything `saa` itself changes. It measures how much of the player shows, not why the rest is hidden.
+Version 2 results; version 3 gives the same verdicts on these frames (`reeval/O2-v3/ext-1/`).
+
+## Batch O2: version 2 in game, version 3 from its frames
+
+Four routes, runner labels `batch-p55-oracle-{ext,seed1,hide,seed0}-O2-00` (records
+`session-p55/oracle/runs/p55-oracle-*-O2/`, aggregate `runs/checkpoint-O2.md`), spike stage 744609f, probe
+aeaccbd, measure version 2, calibration confirmed in every route, postflight ok.
+
+What O2 showed about version 2 (independent of the frames it was designed on):
+- `p55-oracle-ext-O2`: open-h3 visible, open-h2 visible with feet not visible, stable-h0 not visible: all PASS. This confirms version 2 on a fresh run.
+- `bfb0-h0` (undrawn room) not visible, `mare-off-h0` and `bfb1-h0` partly: PASS.
+- **Failure:** `mare-on-h0` read partly (head 0.49, shoulder_r 0.29) for a player the frames show fully unobstructed. The player is dark on a dark floor in dim light, so many player pixels differ by less than 12. A measure that under-reads dim interiors fails exactly the places this phase is about.
+- `hall-h2` indeterminate: `scene_busy`, 0.145 of the ring passed the mask test. The frames show this is the player's own shadow on the carpet (it leaves the box toward the upper left, and goes with the player in B); A-A2 changes stay on the figure.
+- `cave-h0` indeterminate (dark, box luminance 4.0), as predicted.
+
+Version 3, re-evaluated offline on the same frames (`session-p55/oracle/reeval/O2-v3/`). **Re-evaluation, not
+independent evidence: version 3 was set on these frames.**
+
+| Run | Fixture | Version 2 (in game) | Version 3 (re-evaluation) | Threshold, ring noise, ring shadow | Point ratios (head, chest, feet, shoulder_l, shoulder_r) |
+| --- | --- | --- | --- | --- | --- |
+| ext-O2 | open-h3 | visible, PASS | visible, PASS | 11, 0.007, 0.032 | 0.90, 1.03, 1.00, 1.00, 0.98 |
+| ext-O2 | open-h2 | visible, PASS | visible, PASS | 12, 0.008, 0.001 | 0.99, 0.97, **0.00**, 1.00, 1.01 |
+| ext-O2 | stable-h0 | not visible, PASS | not visible, PASS | 12, 0.029, 0.007 | 0.00, 0.04, 0.00, 0.00, 0.00 |
+| seed0-O2 | mare-off-h0 | partly, PASS | visible, PASS | 5, 0.005, 0.058 | 0.82, 0.61, 1.00, 0.96, 0.76 |
+| seed0-O2 | bfb0-h0 | not visible, PASS | not visible, PASS | **3**, 0.000, 0.000 | 0.00, 0.00, 0.00, 0.00, 0.00 |
+| seed0-O2 | hall-h2 | indeterminate (scene_busy), NOT_RUN | visible, PASS | 4, 0.003, 0.156 | 0.90, 0.96, 1.00, 0.93, 0.99 |
+| seed1-O2 | bfb1-h0 | partly, PASS | visible, PASS | 3, 0.009, 0.006 | 0.25, 0.94, 0.89, 0.92, 0.90 |
+| hide-O2 | mare-on-h0 | partly, **FAIL** | visible, PASS | 6, 0.006, 0.060 | 0.72, 1.00, 1.00, 0.99, 0.65 |
+| hide-O2 | cave-h0 | indeterminate (dark), NOT_RUN | indeterminate (dark), NOT_RUN | 3, 0.000, 0.000 | 0.00 x 5 |
+
+Not-visible readings hold. `stable-h0` keeps threshold 12 (thatch shimmer), and `open-h2` feet read 0.00.
+`bfb0-h0` is measured at the lowest threshold, 3, and still reads 0.00 everywhere: a lower threshold does not
+invent a player where none is drawn. `mare-off-h0` and `bfb1-h0` move from partly to visible, by the 4-of-5
+rule; both allow either answer. The rafter over the chest still reads 0.61 at `mare-off-h0`, and the beam over
+the head 0.25 at `bfb1-h0`. `mare-on-h0`'s shoulder_r at 0.65 is close to the 0.60 line.
+
+## Limits
+
+- **Frames between captures** are not measured: no per-frame claim, and no "zero blank frames".
+- **Colours that match the background:** a player whose colours match the background within the contrast floor (10 % of the background's luminance) or the scene noise is not seen there. Version 3 narrows this in still scenes but does not remove it.
+- **Shadow-like pixels:** the test cannot be used on the body. A hidden player whose shadow falls on a visible surface right where a body point projects would count as visible there. That needs the shadow to land on the camera side of the occluder. None of the O2 fixtures does this.
+- **Lighting changes** in B affecting less than 10 % of the frame outside the ring are not caught by `lighting_changed`.
+- **Other side effects of `saa`:** anything `saa` changes besides the player (screen-space ambient occlusion around the player, reflections) counts like the player.
+- **Dark but undrawn vs dark but visible:** at box luminance 4 (`cave-h0`) every pixel moves by at most 1-2 levels between A and B. A player of rock-like albedo in that light could not differ by more than a few levels either, so "no signal" cannot say "occluded". `bfb1-h0` at luminance 13 was measurable because the lit player differed by up to 20 levels. Two changes would make the dark case decidable; both are route/protocol changes, not made here:
+  1. a **dark calibration**: a triple at a known-unobstructed pose in the same dark cell. If it shows a confirmed signal, zero signal at the fixture means not visible.
+  2. a **self-lit marker**: an emissive effect shader on the player for the A/A2 frames (`player.pms` with a bright EFSH, the fallback named above). The player is then drawn bright regardless of scene light; a dark-but-visible player gives a strong signal, and an occluded one gives none.
+  Until then a dark box with no signal stays `indeterminate`.
+
+It measures how much of the player shows, not why the rest is hidden.
 
 ## Commands
 

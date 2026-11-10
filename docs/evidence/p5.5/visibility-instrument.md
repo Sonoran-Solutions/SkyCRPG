@@ -8,6 +8,8 @@
 
 **Update, first in-game run of the check (`p55-oracle-ext-1`):** the marker technique works on 1.7.104, but measure version 1 refused its calibration because it took A-A2 as the noise floor and the restored player is in a different idle-animation pose. Measure version 2 (player mask = B differs from both A and A2; noise from the ring around the box; player verdict from the points) re-evaluated the same frames offline: calibration confirmed, `open-h3`, `open-h2` and `stable-h0` PASS. Version 2 was designed after looking at these frames, so a fresh run is the independent check. See "First in-game run" below.
 
+**Update, batch O2 (four oracle routes, measure version 2):** calibration confirmed in every route. The fresh exterior run confirmed version 2 independently: open-h3, open-h2 and stable-h0 PASS. Also PASS: bfb0-h0, mare-off-h0 and bfb1-h0. **FAIL:** `mare-on-h0` read partly for a plainly visible, dark-clad player on a dark floor (low-contrast under-read). `hall-h2` was indeterminate (`scene_busy`: the player's own shadow on the carpet) and `cave-h0` indeterminate (dark). Measure version 3 (scene-adaptive threshold with a contrast floor; shadow kept out of the ring noise) re-evaluates the O2 frames to 8 PASS and cave-h0 NOT_RUN. That is a re-evaluation on the frames version 3 was made from, not independent evidence. See "Batch O2" below.
+
 Worktree `p55-instrument`, branch `phase5.5/p55-01-visibility-instrument`, base `da16672`. Pinned host: SkyrimSE.exe 1.7.104 SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`, Address Library 13 (`versionlib-1-7-104-0.bin`, format 5, SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842`), CommonLibSSE-NG 7.2.0 at `7a60f4de794095d7b0f8928d1b930a52e9a7da83`.
 
 ## Wave 2: rendered-visibility check
@@ -37,10 +39,10 @@ The rays fail exactly where the engine does not draw geometry that still has col
 | `tools/visibility/png.py` | PNG reader/writer: 8-bit RGB/RGBA/greyscale, non-interlaced, all five filters, CRC checked; other formats refused |
 | `tools/visibility/rendered_visibility.py` | xwd window geometry, box mapping, A/B/A2 measure, calibration, verdicts, overlay; CLI |
 | `tools/visibility/README.md` | Procedure, `saa` binary check, geometry, thresholds and their source, limits |
-| `tools/tests/test_visibility.py` | 38 tests (synthetic scenes with idle animation and a shadow; wave 1 captures and the `p55-oracle-ext-1` frames when present) |
+| `tools/tests/test_visibility.py` | 46 tests (synthetic scenes with idle animation, a shadow, a dim low-contrast scene, stacked fades, a lighting change; wave 1 captures, the `p55-oracle-ext-1` and batch O2 frames when present) |
 | `session-p55/oracle/` | `write_oracle_routes.py`, `gen/routes` + `gen/specs` (4 routes), `run_oracle_route.sh`, `evaluate_oracle.py`, `mask_sheet.py` (silhouette sheets), `test_oracle.py` (16 tests), README; `reeval/p55-oracle-ext-1-v2/` (version 2 re-evaluation of the first run) |
 
-**Procedure:** at a settled pose the route takes frame A after a `player.saa 1` round trip, frame B after `player.saa 0`, and frame A2 after `player.saa 1`, each 2.5 s after its console command, with a view sample before A and after A2. Measure version 2: pixels where B differs from both A and A2 are player pixels on screen, through any mechanism (the player mask). The same mask test in the ring around the box is the noise floor. A2 is the restore proof (it must differ from B the way A does). A calibration triple at the unobstructed open-ground pose gives the full-visibility signal; the fixed rig keeps the player's screen size constant. Verdicts per point and for the player (4 of 5 points): visible / partly / not visible / indeterminate; a box ratio is reported beside them as a diagnostic (thresholds and indeterminate rules: tools/visibility/README.md). Version 1 used A-B for the signal and A-A2 in the box as the noise floor; the first in-game run disproved that (below).
+**Procedure:** at a settled pose the route takes frame A after a `player.saa 1` round trip, frame B after `player.saa 0`, and frame A2 after `player.saa 1`, each 2.5 s after its console command, with a view sample before A and after A2. Measure version 3: pixels where B differs from both A and A2 are player pixels on screen, through any mechanism (the player mask). The per-pixel threshold comes from the scene's own noise in the ring (3-12) with a floor of 10 % of B's luminance. The same mask test in the ring, with the player's shadow set aside, is the noise floor. A2 is the restore proof (it must differ from B the way A does). A calibration triple at the unobstructed open-ground pose gives the full-visibility signal; the fixed rig keeps the player's screen size constant. Verdicts per point and for the player (4 of 5 points): visible / partly / not visible / indeterminate; a box ratio is reported beside them as a diagnostic (thresholds and indeterminate rules: tools/visibility/README.md). Version 1 used A-B for the signal and A-A2 in the box as the noise floor; the first in-game run disproved that (below). Version 2 used a fixed threshold of 12 and counted the player's shadow in the ring as noise; batch O2 disproved that (below).
 
 **`player.saa` in the binary:** script command entry at .data 2084760 (`SetActorAlpha`, short `SAA`, params Float + optional Int), handler 35E010 (ID 22391). It needs an actor with a process, clamps to [0, 1], adds 2.0 when the optional int is absent, and stores through ID 39961 at `[[process+8]+2C8h]`, then calls actor virtual +700h. Observed in `p55-oracle-ext-1` (Source: frames): `saa 0` removes the player, the weapon and the player's shadow within 2.5 s, and `saa 1` brings them back in the same silhouette, in a later idle-animation pose. That the stored alpha + 2 has no lasting effect is still a **Hypothesis**. Restoration is proven per triple (A2 differs from B as A does), repeated in a final `restore` section, and no save is written.
 
@@ -80,23 +82,72 @@ Run record `session-p55/oracle/runs/p55-oracle-ext-1/` (runner label `batch-p55-
 
 **What it does not show:** independence: version 2 was written after looking at these frames (thresholds unchanged, expected answers set before the run), so a fresh `p55-oracle-ext` run is the real check. Repeatability (one run). Any interior, dark scene, undrawn room, back-face-culled roof, hide, fade or clip fixture (routes seed0, seed1, hide not run; no fade or clip build). The `plainly visible` row also needs `hall-h2`.
 
-**In-game validation of the technique:** one exterior run, re-evaluated; the remaining checkpoint rows NOT_RUN.
+### Batch O2: version 2 in game, version 3 from its frames
+
+Records (read only): `session-p55/oracle/runs/p55-oracle-{ext,seed1,hide,seed0}-O2/`, runner labels `batch-p55-oracle-{ext,seed1,hide,seed0}-O2-00`, aggregate `runs/checkpoint-O2.md`. Spike stage 744609f, probe aeaccbd, measure version 2. Runner PASS for every route, postflight ok; wrapper exits 0, 0, 1 (hide: the FAIL) and 2 (seed0: hall-h2 NOT_RUN).
+
+**What O2 showed about version 2:**
+- `p55-oracle-ext-O2` reproduced the expected exterior answers on fresh frames: open-h3 visible, open-h2 head visible and feet not, stable-h0 not visible. This is the independent confirmation that ext-1 could not give.
+- The undrawn room (`bfb0-h0`) read not visible, and both back-face-culled roof fixtures read partly: PASS, with rays 5/5 blocked at all three.
+- **Failure at `mare-on-h0`** (Bannered Mare hearth, hide on): partly (head 0.49, shoulder_r 0.29) for a player who is unobstructed in A and A2 and absent in B (orchestrator's crops; my zoomed crops agree). The player is dark brown on a dark floor in dim light (box luminance 49). Over much of the head the player differs from the floor by 1-9 levels, below the fixed threshold of 12. The ring's own noise there is small (99th percentile 5), so the threshold, not the scene, made the under-read.
+- **`hall-h2` scene_busy (0.145):** the frames show the player's long shadow on the carpet, leaving the box toward the upper left and gone in B. In A and A2 it is darker than B in every channel, and A matches A2 there. It was not NPCs or fire: the non-shadow part of the ring mask is 0.003.
+- **`cave-h0`:** dark (luminance 4.0). Every pixel moves by at most 1-2 levels between A and B.
+
+**Version 3** (tools/visibility/README.md, "What changed from version 2"):
+- The per-pixel threshold is the ring's non-shadow noise (99th percentile + 1, clamped to 3..12), with a per-pixel floor of 10 % of B's luminance. The luminance-scaled threshold of versions 1-2 is gone; the dark rule stays.
+- Shadow-like ring pixels (A and A2 both darker than B in every channel, A closer to A2 than to B) are reported as `ring_shadow` and kept out of the noise floor and the ring A-B control. They are not discounted on the body, because a dark-clad player passes the same test.
+- New `lighting_changed`: more than 0.10 of the frame outside the ring shadow-like (O2 maximum 0.02).
+
+**Version 3 re-evaluation** (`session-p55/oracle/reeval/O2-v3/`; **re-evaluation, not independent evidence**):
+
+| Run | Fixture | Version 2 in game | Version 3 re-evaluated | Threshold / ring noise / ring shadow |
+| --- | --- | --- | --- | --- |
+| ext-O2 | open-h3 | visible PASS | visible PASS | 11 / 0.007 / 0.032 |
+| ext-O2 | open-h2 | visible PASS (feet not) | visible PASS (feet 0.00) | 12 / 0.008 / 0.001 |
+| ext-O2 | stable-h0 | not visible PASS | not visible PASS (points ≤ 0.04) | 12 / 0.029 / 0.007 |
+| seed0-O2 | mare-off-h0 | partly PASS | visible PASS (chest 0.61 under a rafter) | 5 / 0.005 / 0.058 |
+| seed0-O2 | bfb0-h0 | not visible PASS | not visible PASS (0.00 at threshold 3) | 3 / 0.000 / 0.000 |
+| seed0-O2 | hall-h2 | indeterminate (scene_busy) | visible PASS | 4 / 0.003 / 0.156 |
+| seed1-O2 | bfb1-h0 | partly PASS | visible PASS (head 0.25) | 3 / 0.009 / 0.006 |
+| hide-O2 | mare-on-h0 | partly **FAIL** | visible PASS (head 0.72, shoulder_r 0.65) | 6 / 0.006 / 0.060 |
+| hide-O2 | cave-h0 | indeterminate (dark) | indeterminate (dark) | 3 / 0.000 / 0.000 |
+| ext-1 | open-h3, open-h2, stable-h0 | (v1 NOT_RUN; v2 re-eval PASS) | PASS, PASS, PASS | 10-12 |
+
+**No false visibility, checked on the frames:**
+- stable-h0 keeps threshold 12 (thatch shimmer) and reads ≤ 0.04.
+- open-h2 feet read 0.00.
+- bfb0-h0 is measured at the lowest threshold, 3, and reads 0.00 at every point.
+- A synthetic floor-coloured wall at threshold 3 reads not visible.
+- A synthetic player behind eight stacked 0.35 fades reads not visible; this is the contrast floor's job, and without it the trace would count.
+
+**Limits:**
+- **Shadow on a body point:** a hidden player's shadow landing on a visible surface exactly at a body point would count there.
+- **Small lighting changes:** a lighting change in B covering less than 10 % of the frame is not refused.
+- **Close to the line:** mare-on-h0 shoulder_r (0.65) sits near the 0.60 line.
+- **Dark cases:** dark-but-occluded cannot be told from dark-but-visible by the `saa` triple. Either of two route changes, not made here, would decide it:
+  - a dark calibration triple at a known-unobstructed pose in the same cell;
+  - an emissive marker (`player.pms` with a bright effect shader) so the player is drawn bright regardless of scene light.
+
+**In-game validation of the technique:**
+- Version 2: one independent exterior confirmation (ext-O2), one interior FAIL (mare-on-h0), two NOT_RUN.
+- Version 3: offline re-evaluation only; the next fresh batch is its independent check.
+- Fade and clip rows NOT_RUN.
 
 ### Checkpoint as it stands
 
-Run with `session-p55/oracle/run_oracle_route.sh` (exact commands in session-p55/oracle/README.md). Expected answers are the orchestrator's reading of wave 1 frames, not owner judgments. "PASS (re-eval)" = `p55-oracle-ext-1` re-evaluated with measure version 2, not yet confirmed by a fresh run.
+Run with `session-p55/oracle/run_oracle_route.sh` (exact commands in session-p55/oracle/README.md). Expected answers are the orchestrator's reading of wave 1 frames, not owner judgments. "O2 (v2)" is the in-game batch O2 judged by measure version 2; "re-eval (v3)" is the same frames judged offline by version 3, which was made from them.
 
-| Mechanism | Fixture (route) | Expected | Status |
-| --- | --- | --- | --- |
-| plainly visible | open-h3 (ext), hall-h2 (seed0) | visible, all points visible | NOT_RUN (open-h3 PASS (re-eval); hall-h2 NOT_RUN) |
-| partly occluded | open-h2 (ext) | partly or visible; head visible, feet not visible | PASS (re-eval) |
-| plainly blocked | stable-h0 (ext) | not visible | PASS (re-eval) |
-| undrawn room | bfb0-h0 (seed0) | not visible | NOT_RUN |
-| drawn through a back-face-culled roof/ceiling | mare-off-h0 (seed0), bfb1-h0 (seed1, dark) | visible or partly | NOT_RUN |
-| hidden geometry | mare-on-h0 (hide) | visible | NOT_RUN |
-| one-piece mesh, camera inside rock | cave-h0 (hide) | not visible; likely indeterminate (dark, luminance 4) | NOT_RUN |
-| single fade, stacked fades | none: build 744609f has no fade mechanism | | NOT_RUN |
-| clipped geometry | none: wave 2 clip package not built | | NOT_RUN |
+| Mechanism | Fixture (route) | Expected | O2 (v2) | re-eval (v3) |
+| --- | --- | --- | --- | --- |
+| plainly visible | open-h3 (ext), hall-h2 (seed0) | visible, all points visible | NOT_RUN (open-h3 PASS; hall-h2 scene_busy) | PASS |
+| partly occluded | open-h2 (ext) | partly or visible; head visible, feet not visible | PASS | PASS |
+| plainly blocked | stable-h0 (ext) | not visible | PASS | PASS |
+| undrawn room | bfb0-h0 (seed0) | not visible | PASS | PASS |
+| drawn through a back-face-culled roof/ceiling | mare-off-h0 (seed0), bfb1-h0 (seed1, dark) | visible or partly | PASS | PASS |
+| hidden geometry | mare-on-h0 (hide) | visible | **FAIL** (partly) | PASS |
+| one-piece mesh, camera inside rock | cave-h0 (hide) | not visible; likely indeterminate (dark, luminance 4) | NOT_RUN (dark) | NOT_RUN (dark) |
+| single fade, stacked fades | none: build 744609f has no fade mechanism | | NOT_RUN | NOT_RUN |
+| clipped geometry | none: wave 2 clip package not built | | NOT_RUN | NOT_RUN |
 
 ## What was built (wave 1a)
 
@@ -206,7 +257,7 @@ Probe history (Source: `session-p4/autotest/runs/*/evidence/probe-slice.jsonl`, 
 | MSVC `/W4 /WX` build | `61610d9`: CI run 42719928362 **success**. `5cb2d16` (wave 2b): CI run 42723206076 **success**. Wave 2c changes: NOT_RUN in CI; g++ stub check only (not a CommonLib compile). |
 | Any `view_sample` in game (pose, projection against screenshots, rays, treatments, merging, landscape/volume classification, thread distribution, guards passing live, `sample_ms`) | NOT_RUN |
 | Rig hold, player visible, surroundings visible, room drawn measures | NOT_RUN; diagnostic only until the checkpoint |
-| Rendered-visibility check (measure version 2) | one exterior run (`p55-oracle-ext-1`) re-evaluated offline, 3 of 3 PASS; not independent of the design; every other route NOT_RUN |
+| Rendered-visibility check | version 2 in game (batch O2): 7 PASS, 1 FAIL (mare-on-h0), 2 NOT_RUN. Version 3: offline re-evaluation of O2 only (8 PASS, cave-h0 NOT_RUN), not independent; fade and clip NOT_RUN |
 | Per-sample CPU cost and frame-time impact | NOT_RUN |
 | Hypotheses marked above (frame counter cadence, frustum tangents, camera X axis, UI job concurrency, alpha bit 0, ESM layer matrix = runtime filter for a group-0 layer-41 ray, triangle two-sidedness, pick budget meaning, the volume-layer list) | Unverified |
 | Also not claimed (reviewer could not verify either): that job lists run strictly in table order; whether SmoothCam or TDM detour any of the seven guarded entries (a detour would give `guard_binary`, not a crash) | Unverified |
@@ -321,5 +372,9 @@ A `view_sample` is one moment in one frame (`frame`). It says nothing about the 
 | Measure v2: `cd session-p55/oracle && python3 -B test_oracle.py` | 16 tests OK (includes the re-evaluation of `p55-oracle-ext-1` and a held-lock refusal) |
 | Measure v2: `python3 -B evaluate_oracle.py runs/p55-oracle-ext-1/collected --json reeval/p55-oracle-ext-1-v2/oracle.json` | exit 0: calibration confirmed; open-h3, open-h2, stable-h0 PASS |
 | Measure v2: `python3 -B mask_sheet.py runs/p55-oracle-ext-1/collected reeval/p55-oracle-ext-1-v2` | silhouette sheets and `silhouettes.json` (numbers above) |
+| Measure v3: `python3 -B -I -m unittest discover -s tools/tests -p "test_visibility*.py"` | 46 tests OK (includes 4 on `p55-oracle-ext-1` and 4 on batch O2 frames) |
+| Measure v3: `cd session-p55/oracle && python3 -B test_oracle.py` | 16 tests OK |
+| Measure v3: `evaluate_oracle.py runs/p55-oracle-<run>/collected` for ext-O2, seed0-O2, seed1-O2, hide-O2, ext-1 into `reeval/O2-v3/<run>/` | exits 0, 0, 0, 2 (cave-h0 NOT_RUN), 0; table above |
+| Measure v3: `evaluate_oracle.py --aggregate reeval/O2-v3/*/oracle.json` | exit 2: every mechanism with a fixture PASS except camera inside rock (NOT_RUN); fade, clip NOT_RUN |
 | Wave 2: `python3 -B write_oracle_routes.py --replace` | 4 routes `ready`, runner schema valid, tightest section margins 289/135/376/280 s |
 | Wave 2: `run_batch.py <4 oracle routes with sandbox paths> --simulate success` (output in /tmp) | executor runs setup and steps up to the first `request_view`, which the simulator's fake probe does not answer (BLOCKED there); control flow only, not evidence |

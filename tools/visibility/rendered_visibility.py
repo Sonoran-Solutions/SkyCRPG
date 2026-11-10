@@ -8,6 +8,14 @@ differs from BOTH A and A2: player pixels that reached the screen. A and A2 are 
 other inside the box: the first in-game run (p55-oracle-ext-1) showed the restored player in the same
 silhouette but with idle animation, so A-A2 differs over 25-37 % of the box and cannot be a noise floor.
 The noise floor is the same mask test in the ring around the box, where nothing changes but the scene.
+
+Version 3 (batch O2): the per-pixel threshold is no longer fixed at 12. It is the ring's own scene noise
+(99th percentile of min(|A-B|, |A2-B|) + 1, clamped to 3..12) and, per pixel, at least 10 % of B's
+luminance (capped at 12). A still, dim interior thus counts a dark-clad player 8-12 levels off a dark floor
+(mare-on-h0), while a busy exterior keeps 12 and a faint trace through stacked fades stays below the
+contrast floor. Shadow-like ring pixels (A and A2 both darker than B in every channel, A closer to A2 than
+to B) are the player's shadow, which B removes too: they are reported, not counted as noise (hall-h2). A
+frame-wide guard refuses a lighting change that came with B (it would look like a shadow).
 A2 is the restore proof: it must differ from B the way A does. A calibration triple taken the same way at
 an unobstructed pose with the same rig gives the signal a fully visible player produces. The player verdict
 comes from the five point windows on the body (acceptance asks for 4 of 5 points); the box ratio is
@@ -35,17 +43,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import png  # noqa: E402
 
 POINTS = ("head", "chest", "feet", "shoulder_l", "shoulder_r")
-VERSION = 2
+VERSION = 3
 
 # Thresholds. Scene-noise limits come from wave 1 frame pairs at the same pose (exterior wind: ring
 # 0.08-0.10, frame 0.05-0.06; interiors: ring <= 0.01, frame <= 0.025) and from p55-oracle-ext-1 (ring
 # A-B 0.02-0.04, A-A2 0.02-0.04; frame <= 0.06). Mask and ratio limits are checked against p55-oracle-ext-1
 # (calibration point masks 0.92-1.00, box 0.51; player under a roof: points <= 0.03, box 0.017); they are
-# starting points, D55-6 belongs to the owner.
+# starting points, D55-6 belongs to the owner. Version 3 values (noise quantile, contrast floor, global
+# shadow limit) are set on batch O2 (thresholds 3-12; ring noise <= 0.03; frame shadow-like <= 0.02).
 PARAMS = {
     "client": (1920, 1080),        # Skyrim.INI iSize W/H the runner deploys (report.json "resolution")
-    "change_threshold": 12,        # per-pixel max channel |A-B| counted as changed (8-bit)
-    "min_threshold": 3,            # floor of the threshold in a dark box (scaled with luminance below)
+    "change_threshold": 12,        # per-pixel change threshold ceiling (8-bit max channel), and the threshold
+                                   # of the global scene-change checks
+    "min_threshold": 3,            # floor of the scene-adaptive threshold
+    "noise_quantile": 0.99,        # quantile of the ring's non-shadow mask values taken as scene noise
+    "threshold_margin": 1,         # threshold = that quantile + margin, clamped to [min, change_threshold]
+    "min_contrast": 0.10,          # and per pixel at least this share of B's luminance (capped at
+                                   # change_threshold): a faint trace through stacked fades is not "visible"
     "dark_luminance": 28.0,        # mean box luminance (0..255) below which the box counts as dark
     "box_side": 0.35,              # box margin left/right of the points, in player heights
     "box_top": 0.35,               # above the head point (the head bone sits at the neck)
@@ -54,8 +68,10 @@ PARAMS = {
     "ring": 1.0,                   # control ring around the box, in player heights
     "min_height_px": 12,           # head-to-feet height below which the box is too small to measure
     "control_max": 0.20,           # changed fraction allowed in the control ring between A and A2
-    "control_max_ab": 0.30,        # between A and B (looser: the player's own shadow may leave the ring)
+    "control_max_ab": 0.30,        # between A and B, shadow-like pixels set aside
     "global_max": 0.12,            # changed fraction allowed over the client outside the ring (A-B and A-A2)
+    "global_shadow_max": 0.10,     # darker-than-B mask share allowed over the client outside the ring
+                                   # (else a lighting change came with B: lighting_changed)
     "noise_max": 0.10,             # mask false-positive rate allowed in the ring (else the scene is too busy)
     "restore_min_signal": 0.05,    # A-B box signal needed before A2 can prove the player came back
     "restore_ratio": 0.5,          # A2 must differ from B at least this much relative to A
@@ -218,21 +234,24 @@ def load_frames(paths):
 
 @dataclass
 class MaskStats:
-    """Counts over one region of a triple: A-B, A2-B, A-A2 changes and the player mask (A-B and A2-B)."""
+    """Counts over one region of a triple: A-B, A2-B, A-A2 changes, the player mask (A-B and A2-B) and the
+    part of the mask that looks like a shadow (A and A2 both darker than B in every channel, A close to A2)."""
     pixels: int = 0
     ab: int = 0
     a2b: int = 0
     aa2: int = 0
     mask: int = 0
+    shadow: int = 0
 
     def share(self, field_name: str) -> float:
         return getattr(self, field_name) / self.pixels if self.pixels else 0.0
 
 
-def mask_stats(a: png.Image, b: png.Image, a2: png.Image, rect, threshold: int, exclude=None, step: int = 1) -> MaskStats:
+def _rows(a: png.Image, b: png.Image, a2: png.Image, rect, exclude=None, step: int = 1):
+    """Per pixel (|A-B|, |A2-B|, |A-A2|, min(|A-B|, |A2-B|), shadow-like, luminance of B) over a rectangle,
+    minus an excluded one."""
     x0, y0, x1, y1 = rect
     x0, y0, x1, y1 = max(0, x0), max(0, y0), min(a.width, x1), min(a.height, y1)
-    out = MaskStats()
     w = a.width
     for y in range(y0, y1, step):
         lo, hi = (y * w + x0) * 3, (y * w + x1) * 3
@@ -242,13 +261,56 @@ def mask_stats(a: png.Image, b: png.Image, a2: png.Image, rect, threshold: int, 
             x = x0 + k
             if exclude and exclude[0] <= x < exclude[2] and exclude[1] <= y < exclude[3]:
                 continue
-            out.pixels += 1
-            ab, a2b = d_ab[k] >= threshold, d_a2b[k] >= threshold
-            out.ab += ab
-            out.a2b += a2b
-            out.aa2 += d_aa2[k] >= threshold
-            out.mask += ab and a2b
+            i = k * 3
+            m = min(d_ab[k], d_a2b[k])
+            dark = (m > d_aa2[k] and ra[i] < rb[i] and ra[i + 1] < rb[i + 1] and ra[i + 2] < rb[i + 2]
+                    and ra2[i] < rb[i] and ra2[i + 1] < rb[i + 1] and ra2[i + 2] < rb[i + 2])
+            yield d_ab[k], d_a2b[k], d_aa2[k], m, dark, 0.299 * rb[i] + 0.587 * rb[i + 1] + 0.114 * rb[i + 2]
+
+
+def mask_stats(a: png.Image, b: png.Image, a2: png.Image, rect, threshold: int, exclude=None, step: int = 1,
+               contrast=None) -> MaskStats:
+    """Counts at a fixed threshold, or with ``contrast=(k, cap)`` at max(threshold, min(cap, k x luminance of
+    B)) per pixel: a change must also be a visible contrast against what is behind the player."""
+    out = MaskStats()
+    for ab, a2b, aa2, m, dark, lum in _rows(a, b, a2, rect, exclude, step):
+        t = threshold if contrast is None else max(threshold, min(contrast[1], int(contrast[0] * lum + 0.5)))
+        out.pixels += 1
+        out.ab += ab >= t
+        out.a2b += a2b >= t
+        out.aa2 += aa2 >= t
+        if m >= t:
+            out.mask += 1
+            out.shadow += dark
     return out
+
+
+def adaptive_threshold(a, b, a2, ring, box, params=PARAMS):
+    """Per-pixel change threshold from the scene's own noise (version 3).
+
+    The ring around the box holds no player. Its shadow-like pixels are set aside (the player's shadow, which
+    B removes too); in the rest, the mask value min(|A-B|, |A2-B|) is scene noise: wind, TAA shimmer,
+    flicker. The threshold is that noise's noise_quantile plus threshold_margin, clamped to
+    [min_threshold, change_threshold]. A busy exterior keeps 12; a still, dim interior goes down to 3-6,
+    so a dark-clad player on a dark floor is not under-read (p55-oracle-hide-O2 mare-on-h0).
+    """
+    counts = [0] * 256
+    shadow = n = 0
+    for _, _, _, m, dark, _ in _rows(a, b, a2, ring, box):
+        n += 1
+        if dark:
+            shadow += 1
+            continue
+        counts[m] += 1
+    rest = n - shadow
+    target, seen, q = params["noise_quantile"] * rest, 0, 0
+    for value, c in enumerate(counts):
+        seen += c
+        if seen >= target:
+            q = value
+            break
+    t = max(params["min_threshold"], min(params["change_threshold"], q + params["threshold_margin"]))
+    return t, q
 
 
 def pose_change(before: dict, after: dict, params=PARAMS):
@@ -266,18 +328,6 @@ def pose_change(before: dict, after: dict, params=PARAMS):
     return None
 
 
-def change_threshold(luminance: float, params=PARAMS) -> int:
-    """Per-pixel change threshold: fixed in a lit box, scaled down with luminance in a dark one.
-
-    A player drawn in a dark room is dark too, so the difference it makes is small; a fixed threshold would
-    report it as not visible. The threshold falls in proportion to the box luminance below dark_luminance,
-    to min_threshold at most.
-    """
-    if luminance >= params["dark_luminance"]:
-        return params["change_threshold"]
-    return max(params["min_threshold"], int(round(params["change_threshold"] * luminance / params["dark_luminance"])))
-
-
 def analyse(frames, view: dict, view_after=None, params=PARAMS) -> dict:
     """Mask and scene statistics for one A/B/A2 triple; raises Indeterminate for unusable input."""
     a, b, a2 = frames
@@ -288,29 +338,35 @@ def analyse(frames, view: dict, view_after=None, params=PARAMS) -> dict:
     lay = layout(view, geometry, params)
     luminance = region_stats(a, b, lay.box, 256).luminance
     dark = luminance < params["dark_luminance"]
-    t = change_threshold(luminance, params)
-    box = mask_stats(a, b, a2, lay.box, t)
-    ring = mask_stats(a, b, a2, lay.ring, t, exclude=lay.box)
+    t, noise_q = adaptive_threshold(a, b, a2, lay.ring, lay.box, params)
+    contrast = (params["min_contrast"], params["change_threshold"])
+    box = mask_stats(a, b, a2, lay.box, t, contrast=contrast)
+    ring = mask_stats(a, b, a2, lay.ring, t, exclude=lay.box, contrast=contrast)
     client = (geometry.origin[0], geometry.origin[1], geometry.origin[0] + geometry.client[0], geometry.origin[1] + geometry.client[1])
     glob = mask_stats(a, b, a2, client, params["change_threshold"], exclude=lay.ring, step=4)
-    noise = ring.share("mask")
+    glob_t = mask_stats(a, b, a2, client, t, exclude=lay.ring, step=4) if t != params["change_threshold"] else glob
+    noise = (ring.mask - ring.shadow) / ring.pixels if ring.pixels else 0.0
     points = {}
     for name in POINTS:
         rect = lay.windows.get(name)
         if rect is None:
             points[name] = None
             continue
-        w = mask_stats(a, b, a2, rect, t)
-        points[name] = {"signal": w.share("mask"), "ab": w.share("ab"), "aa2": w.share("aa2"), "rect": rect}
+        w = mask_stats(a, b, a2, rect, t, contrast=contrast)
+        points[name] = {"signal": w.share("mask"), "shadow_like": w.share("shadow"), "ab": w.share("ab"),
+                        "aa2": w.share("aa2"), "rect": rect}
     return {
         "geometry": {"origin": geometry.origin, "client": geometry.client},
         "box": lay.box, "ring": lay.ring, "height_px": lay.height, "off_screen": lay.off_screen,
-        "luminance": luminance, "dark": dark, "threshold": t,
+        "luminance": luminance, "dark": dark, "threshold": t, "ring_noise_q": noise_q,
         "box_pixels": box.pixels, "mask_px": box.mask, "signal": box.share("mask"), "noise": noise,
+        "ring_shadow": ring.share("shadow"),  # the player's shadow in the ring: reported, not noise
         "ab": box.share("ab"), "a2b": box.share("a2b"),
         "player_change": box.share("aa2"),  # A-A2 inside the box: idle animation; reported, not used
-        "control": {"ring_ab": ring.share("ab"), "ring_aa2": ring.share("aa2"),
-                    "global_ab": glob.share("ab"), "global_aa2": glob.share("aa2")},
+        # ring A-B change without the shadow-like part: the player's own shadow is not a scene change
+        "control": {"ring_ab": (ring.ab - ring.shadow) / ring.pixels if ring.pixels else 0.0, "ring_aa2": ring.share("aa2"),
+                    "global_ab": glob.share("ab"), "global_aa2": glob.share("aa2"),
+                    "global_mask": glob_t.share("mask"), "global_shadow": glob_t.share("shadow")},
         "points": points,
     }
 
@@ -319,10 +375,16 @@ def stability_problem(stats: dict, params=PARAMS):
     c = stats["control"]
     if c["global_ab"] > params["global_max"] or c["global_aa2"] > params["global_max"]:
         return "scene_changed: %.3f / %.3f of the frame changed outside the ring" % (c["global_ab"], c["global_aa2"])
+    if c["global_shadow"] > params["global_shadow_max"]:
+        # B brighter than both A and A2 over much of the frame: a lighting change (flicker, a door) came with
+        # B. In the ring it would pass for the player's shadow and escape the noise floor, so refuse here.
+        # Moving NPCs and stepped sun shadows also pass the mask outside the ring (0.03-0.06 of the frame in
+        # batch O2) but are not darker-than-B in a consistent way; they are not refused.
+        return "lighting_changed: %.3f of the frame outside the ring is darker in A and A2 than in B" % c["global_shadow"]
     if c["ring_ab"] > params["control_max_ab"] or c["ring_aa2"] > params["control_max"]:
         return "scene_changed: %.3f / %.3f of the ring around the player changed" % (c["ring_ab"], c["ring_aa2"])
     if stats["noise"] > params["noise_max"]:
-        return "scene_busy: %.3f of the ring passes the player-mask test" % stats["noise"]
+        return "scene_busy: %.3f of the ring passes the player-mask test (shadow excluded)" % stats["noise"]
     return None
 
 
