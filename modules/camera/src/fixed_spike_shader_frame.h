@@ -6,12 +6,14 @@
 // the shader cut's commit after every cut guard (so ENB and Community Shaders
 // refuse it with the cut, FCS-67).
 //
-// The one code change is the displacement of the `call` at RVA 656A78 in the
-// frame function ID 36555 (normal play's call of the main world render, ID
-// 36558): it lands on a 14-byte relay (jmp [rip]) in memory of our own, which
-// jumps to hookMainView. hookMainView calls ID 36558 exactly once with every
-// argument register passed on, then, on the main thread and only while the
-// cut is active, draws one full-screen triangle into the main colour target
+// The one code change is the displacement of the `call` at RVA 153ADE7 in ID
+// 107148 (the end of the main world render; its call of the image-space chain,
+// ID 105674, after the scene composite ID 105675 has left the HDR scene in
+// target 1): it lands on a 14-byte relay (jmp [rip]) in memory of our own,
+// which jumps to hookImageSpace. hookImageSpace first draws, on the main
+// thread, for the normal-play destination 0 only and only while the cut is
+// active, then calls ID 105674 exactly once with every argument register
+// passed on. The draw is one full-screen triangle into the main colour target
 // (renderer target 1) reading the main depth (renderer depth 0) through the
 // engine's own shader-resource view of it. The depth-stencil view is not bound
 // while that view is read. Every piece of device state the draw changes is
@@ -20,11 +22,12 @@
 // include/fixed_spike_shader_frame_policy.h.
 
 namespace skycrpg::camera::fixed::shader {
-// ID 36558 as the call at 656A78 makes it: (rcx, edx); every register argument is passed on and RAX returned.
-using MainViewFunction = std::uintptr_t(*)(void*,std::uintptr_t,std::uintptr_t,std::uintptr_t);
+// ID 105674 as the call at 153ADE7 makes it: (manager, source 1, destination, 1); every register argument is
+// passed on and RAX returned.
+using ImageChainFunction = std::uintptr_t(*)(void*,std::uintptr_t,std::uintptr_t,std::uintptr_t);
 struct FrameRuntime {
     Feature state{Feature::pending};
-    MainViewFunction mainView{}; // ID 36558; set before the call site is redirected
+    ImageChainFunction imageChain{}; // ID 105674; set before the call site is redirected
     const std::uint8_t* renderer{};
     void* vertexShader{};
     void* pixelShader{};
@@ -33,7 +36,7 @@ struct FrameRuntime {
     void* rasterizer{};
     std::atomic<unsigned long long> offMain{};
     // Main thread only from here on.
-    bool captured{};   // a pass of the published view was drawn in this render (FrameCapture filled)
+    bool captured{};   // a pass of the published view was drawn in this frame's render (FrameCapture filled)
     bool broken{};     // the constant buffer could not be mapped: off for the rest of the session
     FrameCapture capture{};
     const void* checkedColour{};
@@ -154,7 +157,32 @@ inline bool restoredAsSaved(void* c,const SavedState& s) {
     for (void* object : {target[0],depthStencil,pixel}) releaseObject(object);
     return same;
 }
-// After ID 36558 returned: the main world is drawn into target 1 with depth 0, image space has not run.
+// True when any of `count` views holds `texture`; every reference read is released.
+inline bool viewsHold(std::size_t getter,std::uint32_t count,const void* texture) {
+    std::array<void*,computeResourceSlots> views{};
+    invoke<void>(runtime->context,getter,0u,count,views.data());
+    bool held = false;
+    for (std::uint32_t i = 0;i < count;++i) {
+        if (!views[i]) continue;
+        void* resource = nullptr;
+        invoke<void>(views[i],frame_method::viewResource,&resource);
+        held = held || resource == texture;
+        releaseObject(resource);
+        releaseObject(views[i]);
+    }
+    return held;
+}
+// A view of the main colour texture bound to the compute or vertex stage (MINOR 1 of the review of 32605a5):
+// binding the texture as a render target would make the runtime unbind it there, which the engine's shadow
+// state would not know. Pixel-stage views are saved and set back after the targets (restore), so they are fine.
+inline bool colourShared() {
+    const void* texture = peek<void*>(runtime->framePass->renderer,frame_offset::mainTexture);
+    return viewsHold(frame_method::csGetShaderResources,computeResourceSlots,texture) ||
+        viewsHold(frame_method::csGetUnorderedAccessViews,computeViewSlots,texture) ||
+        viewsHold(frame_method::vsGetShaderResources,vertexResourceSlots,texture);
+}
+// Inside ID 107148, before the image-space chain: the main world and the scene composite are in target 1,
+// depth 0 holds the scene's depth, nothing of the effects, the HDR tonemap or TAA has run.
 inline void drawFrame() {
     auto& r = *runtime;
     auto& f = *r.framePass;
@@ -169,6 +197,7 @@ inline void drawFrame() {
     void* colourView = nullptr;
     void* depthView = nullptr;
     if (skip == FrameSkip::none && !targetsReady(colourView,depthView)) skip = FrameSkip::targets;
+    if (skip == FrameSkip::none && colourShared()) skip = FrameSkip::shared;
     BandState band{};
     float bandFloor{};
     const bool kitCell = styled() && r.style->cellStyle == CellStyle::kit;
@@ -178,8 +207,6 @@ inline void drawFrame() {
         if (!constants) skip = FrameSkip::matrix;
     }
     if (skip != FrameSkip::none) { ++w.skips[static_cast<std::size_t>(skip)]; return; }
-    // Informative: the state's view-projection at this point is not the one the main view was drawn with.
-    if (peek<Matrix>(r.state,frame_offset::viewProjection).m != f.capture.viewProjection.m) ++w.moved;
     MappedBuffer mapped{};
     const std::int32_t answer = invoke<std::int32_t>(r.context,method::map,f.constants,0u,mapWriteDiscard,0u,&mapped);
     if (answer < 0 || !mapped.data) {
@@ -218,16 +245,18 @@ inline void drawFrame() {
     w.haveDrawn = true; w.band = band; w.bandFloor = bandFloor; w.planeZ = r.view.planeZ;
     if (r.config.trace) w.seconds += thin::seconds()-now;
 }
-// The relay's target, where the frame function called ID 36558 in normal play. Any thread.
-inline std::uintptr_t hookMainView(void* self,std::uintptr_t flags,std::uintptr_t third,std::uintptr_t fourth) {
-    const auto result = runtime->framePass->mainView(self,flags,third,fourth);
-    drawFrame();
-    return result;
+// The relay's target, where ID 107148 called the image-space chain. Any thread. The draw comes first (the
+// chain reads target 1), and only for the normal-play destination.
+inline std::uintptr_t hookImageSpace(void* manager,std::uintptr_t source,std::uintptr_t destination,std::uintptr_t flags) {
+    if (static_cast<std::uint32_t>(destination) == playDestination && static_cast<std::uint32_t>(source) == chainSource) drawFrame();
+    return runtime->framePass->imageChain(manager,source,destination,flags);
 }
 // Main thread, from frameStart.
 inline void frameStartFrame() {
-    if (runtime->framePass && runtime->framePass->offMain.load(std::memory_order_relaxed))
-        refuse(Refusal::frameThread,"the main world render returned off the main thread; those frames were not touched");
+    if (!runtime->framePass) return;
+    runtime->framePass->captured = false; // each frame's render captures its own main view
+    if (runtime->framePass->offMain.load(std::memory_order_relaxed))
+        refuse(Refusal::frameThread,"the image-space chain was called off the main thread; those frames were not touched");
 }
 // Main thread, from commit, after every earlier pass. Every check and every device object comes before
 // the one write to engine code; the relay is sealed execute-read before the call can reach it.
@@ -238,12 +267,12 @@ inline void installFrame(std::uintptr_t base) {
     f.state = Feature::refused;
     char text[256]{};
     const std::uintptr_t site = base+frameCallRva;
-    const std::uintptr_t mainView = REL::ID(mainViewAddress.id).address();
+    const std::uintptr_t imageChain = REL::ID(imageChainAddress.id).address();
     const std::uintptr_t renderer = REL::ID(rendererAddress.id).address();
     const auto image = [base](std::uintptr_t rva) { return reinterpret_cast<const std::uint8_t*>(base+rva); };
-    if (const unsigned failed = frameSiteCheck(base,REL::ID(frameFunctionAddress.id).address(),mainView,renderer,
-            reinterpret_cast<const std::uint8_t*>(site-frameGuardedBefore),reinterpret_cast<const std::uint8_t*>(mainView),image)) {
-        std::snprintf(text,sizeof(text),"check=%u: the main world render's call (ID 36555 +4C8), ID 36558 or the renderer code the frame pass "
+    if (const unsigned failed = frameSiteCheck(base,REL::ID(postWorldAddress.id).address(),imageChain,renderer,
+            reinterpret_cast<const std::uint8_t*>(site-frameGuardedBefore),reinterpret_cast<const std::uint8_t*>(imageChain),image)) {
+        std::snprintf(text,sizeof(text),"check=%u: the image-space chain's call (ID 107148 +1E7), ID 105674 or the renderer code the frame pass "
             "relies on differ (another module or another build); no frame pass, the cut is unchanged",failed);
         refuse(Refusal::frameSite,text); return;
     }
@@ -291,7 +320,7 @@ inline void installFrame(std::uintptr_t base) {
     unsigned cause = page ? 0u : 1u;
     if (page) {
         displacement = callDisplacement(site,reinterpret_cast<std::uintptr_t>(page));
-        const auto bytes = relay(reinterpret_cast<std::uintptr_t>(&hookMainView));
+        const auto bytes = relay(reinterpret_cast<std::uintptr_t>(&hookImageSpace));
         std::memcpy(page,bytes.data(),bytes.size());
         DWORD previous{};
         if (!displacement || !VirtualProtect(page,relaySize,PAGE_EXECUTE_READ,&previous)) {
@@ -301,14 +330,14 @@ inline void installFrame(std::uintptr_t base) {
     }
     if (cause) {
         for (void* made : {vertex,pixel,constants,blend,rasterizer}) releaseObject(made);
-        std::snprintf(text,sizeof(text),"cause=%u: no relay for the main world render's call; no frame pass, the cut is unchanged",cause);
+        std::snprintf(text,sizeof(text),"cause=%u: no relay for the image-space chain's call; no frame pass, the cut is unchanged",cause);
         refuse(Refusal::frameMemory,text); return;
     }
     FlushInstructionCache(GetCurrentProcess(),page,relaySize);
     // Published before the call site changes: the hook uses them at once.
     f.vertexShader = vertex; f.pixelShader = pixel; f.constants = constants; f.blend = blend; f.rasterizer = rasterizer;
     f.renderer = reinterpret_cast<const std::uint8_t*>(renderer);
-    f.mainView = reinterpret_cast<MainViewFunction>(mainView);
+    f.imageChain = reinterpret_cast<ImageChainFunction>(imageChain);
     f.state = Feature::installed;
     const std::int32_t value = *displacement;
     REL::safe_write(site+1u,&value,sizeof(value));

@@ -631,25 +631,29 @@ capture = frame_body("inline void captureFrame(Vec eye) {", "// The engine's mai
 assert "if (!r.framePass || r.framePass->captured || r.framePass->state != Feature::installed) return;" in capture and \
     "c.viewFrame = r.view.frame;" in capture and "peek<Matrix>(r.state,frame_offset::viewProjection)" in capture
 install_frame = frame_body("inline void installFrame(std::uintptr_t base) {", "inline Feature frameState()")
-order = ["if (!r.framePass) return;", "frameSiteCheck(base,REL::ID(frameFunctionAddress.id).address(),mainView,renderer,", "Refusal::frameSite",
+order = ["if (!r.framePass) return;", "frameSiteCheck(base,REL::ID(postWorldAddress.id).address(),imageChain,renderer,", "Refusal::frameSite",
          "method::createVertexShader", "frame_method::createPixelShader", "method::createBuffer", "frame_method::createBlendState",
-         "frame_method::createRasterizerState", "Refusal::frameDevice", "relayPage(site)", "relay(reinterpret_cast<std::uintptr_t>(&hookMainView))",
+         "frame_method::createRasterizerState", "Refusal::frameDevice", "relayPage(site)", "relay(reinterpret_cast<std::uintptr_t>(&hookImageSpace))",
          "VirtualProtect(page,relaySize,PAGE_EXECUTE_READ,&previous)", "Refusal::frameMemory", "FlushInstructionCache(GetCurrentProcess(),page,relaySize);",
-         "f.mainView = reinterpret_cast<MainViewFunction>(mainView);", "f.state = Feature::installed;", "REL::safe_write(site+1u,&value,sizeof(value));",
+         "f.imageChain = reinterpret_cast<ImageChainFunction>(imageChain);", "f.state = Feature::installed;", "REL::safe_write(site+1u,&value,sizeof(value));",
          "FlushInstructionCache(GetCurrentProcess(),reinterpret_cast<void*>(site),5);"]
 assert all(install_frame.index(a) < install_frame.index(b) for a, b in zip(order, order[1:]))
 assert install_frame.count("return;") == 4 and "const std::uintptr_t site = base+frameCallRva;" in install_frame and frame.count("safe_write(") == 1
 for forbidden in ("write_vfunc", "write_call", "write_branch", "AllocTrampoline", "GetTrampoline", "PAGE_EXECUTE_READWRITE", "GetSingleton", "AddTask(",
                   "BSFixedString", "SetAppCulled", "ClearState", "_ReturnAddress"):
     assert forbidden not in frame, forbidden
-# The hook: ID 36558 exactly once, every register argument passed on, then the draw.
-hook_main = frame_body("inline std::uintptr_t hookMainView(", "// Main thread, from frameStart.")
-assert frame.count("->mainView(") == 1 and hook_main.index("runtime->framePass->mainView(self,flags,third,fourth);") < hook_main.index("drawFrame();")
+# The hook (fix pass after the review of 32605a5): inside ID 107148, the draw first and only for the normal-play destination
+# 0 from target 1, then ID 105674 exactly once with every register argument passed on.
+hook_chain = frame_body("inline std::uintptr_t hookImageSpace(", "// Main thread, from frameStart.")
+assert frame.count("->imageChain(") == 1 and frame.count("drawFrame();") == 1 and \
+    hook_chain.index("if (static_cast<std::uint32_t>(destination) == playDestination && static_cast<std::uint32_t>(source) == chainSource) drawFrame();") < \
+    hook_chain.index("return runtime->framePass->imageChain(manager,source,destination,flags);")
+assert "hookMainView" not in frame and "constexpr std::uintptr_t playDestination = 0, chainSource = 1;" in frame_policy
 # The draw: thread, gate, targets, constants, map before anything is bound; the depth-stencil view is unbound before the depth
 # is bound for reading; everything saved is set back and released; nothing is allocated.
 draw = frame_body("inline void drawFrame() {", "// The relay's target")
 order = ["if (!thin::onMain()) { f.offMain.fetch_add(1ull,std::memory_order_relaxed); return; }", "f.captured = false;", "frameGate(",
-         "targetsReady(colourView,depthView)", "frameConstants(r.config.frame,", "method::map,f.constants,", "refuseRun(text); return;",
+         "targetsReady(colourView,depthView)", "if (skip == FrameSkip::none && colourShared()) skip = FrameSkip::shared;", "frameConstants(r.config.frame,", "method::map,f.constants,", "refuseRun(text); return;",
          "std::memcpy(mapped.data,&*constants,sizeof(FrameConstants));", "method::unmap,f.constants,", "save(c,saved);",
          "frame_method::omSetRenderTargets,1u,static_cast<void* const*>(targets),static_cast<void*>(nullptr));",
          "frame_method::psSetShaderResources,0u,1u,static_cast<void* const*>(resources));", "frame_method::draw,3u,0u);", "restore(c,saved);",
@@ -673,11 +677,18 @@ release_fn = frame_body("inline void releaseSaved(SavedState& s) {", "// A cheap
 for field in ("s.targets", "s.resources", "s.depthStencil", "s.blend", "s.rasterizer", "s.layout", "s.vertexShader", "s.pixelShader", "s.pixelConstants"):
     assert field in release_fn, field
 assert frame_start.index("Refusal::voidThread") < frame_start.index("frameStartFrame();") < frame_start.index("Refusal::context")
+assert "runtime->framePass->captured = false; // each frame's render captures its own main view" in frame_body("inline void frameStartFrame() {", "// Main thread, from commit")
+shared_fn = frame_body("inline bool colourShared() {", "// Inside ID 107148")
+for getter in ("csGetShaderResources", "csGetUnorderedAccessViews", "vsGetShaderResources"):
+    assert "frame_method::" + getter in shared_fn, getter
+holds = frame_body("inline bool viewsHold(", "// A view of the main colour texture")
+assert holds.index("frame_method::viewResource,&resource") < holds.index("releaseObject(resource);") < holds.index("releaseObject(views[i]);")
 assert trace_body.index("traceStyle(now,voids.window);") < trace_body.index("traceFrame(now);")
 assert "LineBudget shaderFrameLines{shader::traceLines};" in spike
 # The audited facts the pass stands on.
-for constant in ("constexpr Address frameFunctionAddress{36555,0x6565b0};", "constexpr Address rendererAddress{411393,0x3331f40};",
-                 "constexpr std::uintptr_t frameCallRva = 0x656a78;", "constexpr std::size_t frameGuardedBefore = 0x18;",
+for constant in ("constexpr Address postWorldAddress{107148,0x153ac00};", "constexpr Address imageChainAddress{105674,0x14edbf0};",
+                 "constexpr Address rendererAddress{411393,0x3331f40};",
+                 "constexpr std::uintptr_t frameCallRva = 0x153ade7;", "constexpr std::size_t frameGuardedBefore = 0x2b;",
                  "constexpr std::size_t targets = 0xa58, targetStride = 0x30, targetView = 0x10;",
                  "constexpr std::size_t depths = 0x2018, depthStride = 0x98, depthResource = 0x88;",
                  "constexpr std::size_t mainTarget = 1, mainDepth = 0;", "constexpr std::size_t viewport = 0x70, viewProjection = 0x430, depthRange = 0x5c0;",
@@ -691,6 +702,7 @@ for key, default in (("bFramePass", "1"), ("fFrameBand", "96"), ("fFrameBandHead
 assert (Path(__file__).resolve().parents[1] / "shaders/fixed_spike_frame_vs.hlsl").exists() and \
     (Path(__file__).resolve().parents[1] / "shaders/fixed_spike_frame_ps.hlsl").exists()
 print("PASS shader fifth-pass wiring: frame runtime only with bFramePass=1; installed after every earlier pass, every guard and device "
-      "object before the one 4-byte call write; ID 36558 called once per hook; main thread and active cut only; targets, constants and "
+      "object before the one 4-byte call write; drawn inside ID 107148 before ID 105674, which is called once per hook; main thread, "
+      "normal-play destination and active cut only; no view of the colour target on other stages; targets, constants and "
       "map before any bind; depth-stencil view unbound before the depth is read; all touched state saved, set back and released; "
       "no allocation per frame; one site per FCS-93..97")

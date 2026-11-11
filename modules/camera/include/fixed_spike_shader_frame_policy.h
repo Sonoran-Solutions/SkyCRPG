@@ -3,9 +3,13 @@
 // Included at the end of fixed_spike_shader_policy.h. P5.5-02 wave 2 package
 // "shader", fifth pass (owner go 2026-11-11, "Start Stage 2"): Stage 2 of the
 // seamless cutaway, the frame pass. While the cut is active, one full-screen
-// triangle of our own is drawn over the finished HDR scene, after the main
-// world render (ID 36558) returns inside the frame function (ID 36555) and
-// before image space runs. Its pixel shader reads the main depth and moves
+// triangle of our own is drawn over the finished HDR scene inside ID 107148
+// (the end of the main world render), after the scene composite (ID 105675:
+// its stages and the copy back into target 1) and immediately before the
+// image-space chain (ID 105674: effects, HDR tonemap, TAA, into the frame
+// buffer). Fix pass after the binary review of 32605a5: the first version
+// drew at the return of ID 36558, after that chain had already composed the
+// frame into target 0. Its pixel shader reads the main depth and moves
 // each pixel towards the void colour by
 //   band     soft cut edge: smoothstep over the last N units under the plane
 //   falloff  radial: smoothstep(R1, R2, ground distance to the player's feet)
@@ -19,27 +23,40 @@
 
 namespace skycrpg::camera::fixed::shader {
 // ---- audited engine facts (SkyrimSE.exe 1.7.104) ----------------------------
-// The frame function and the main world render. In ID 36555 the call at
-// 656834 runs only while a menu with a frozen background is on the stack
-// (ID 82075 tests IMenu flag 0x20 over the menu stack, and that path renders
-// once behind the flag at 32303B2); the call at 656A78 is the other branch,
-// normal play. Only 656A78 is redirected. ID 36557 (the third caller) is not.
-constexpr Address frameFunctionAddress{36555,0x6565b0};
+// ID 107148 (RVA 153AC00, its one caller ID 36559 at 6578D1) ends the main
+// world render: render-target slots 0..3 and the depth target to none
+// (153ACBE..153AD33), the volumetric-lighting stages, 152EA20 (depth 0 kept,
+// mode 3), ID 105675 (14EDFD0: three image-space stages from target 1, then an
+// ISCopy back into target 1), and at 153ADE7 ID 105674 (14EDBF0) with
+// (manager, source 1, destination, 1): image-space effects 0..7, HDR (0x1E) or
+// ISCopy (0x22), TAA (manager +0x1F0), the rest, into the destination. The
+// destination is ID 36558's second argument, passed down unchanged (36558:
+// esi = edx, 36559: [rax+0x10] = edx = [rbp+0x6F] -> ecx of 107148 -> ebp ->
+// r8d): 0 in normal play (656A78), 0xE behind a frozen menu background
+// (656834). Only the call at 153ADE7 is redirected; the pass draws only for
+// destination 0. ID 105674's other caller (98A179) is not touched.
+constexpr Address postWorldAddress{107148,0x153ac00};
+constexpr Address imageChainAddress{105674,0x14edbf0};
 constexpr Address rendererAddress{411393,0x3331f40}; // BSGraphics::Renderer: render-target and depth-target tables
-constexpr std::uintptr_t frameCallRva = 0x656a78;
-constexpr std::size_t frameGuardedBefore = 0x18; // the guarded bytes start at 656A60
-constexpr std::array<std::uint8_t,0x1d> frameSiteBytes{
-    0x48,0x8b,0x0d,0xd9,0x9c,0xbd,0x02,       // mov rcx,[3230740]
-    0x48,0x8b,0x89,0x28,0x01,0x00,0x00,       // mov rcx,[rcx+128]
-    0xe8,0x3d,0xf5,0x2d,0x00,                 // call 935FB0
-    0x33,0xd2,                                // xor edx,edx      (the normal-play argument)
-    0x48,0x8b,0xcd,                           // mov rcx,rbp
-    0xe8,0x93,0x02,0x00,0x00};                // call 656D10      ID 36558, the main world render
+constexpr std::uintptr_t frameCallRva = 0x153ade7;
+constexpr std::size_t frameGuardedBefore = 0x2b; // the guarded bytes start at 153ADBC
+constexpr std::array<std::uint8_t,0x30> frameSiteBytes{
+    0xe8,0x5f,0x3c,0xff,0xff,                 // call 152EA20
+    0xba,0x01,0x00,0x00,0x00,                 // mov edx,1
+    0x44,0x8b,0xc2,                           // mov r8d,edx
+    0x48,0x8b,0x0d,0xd0,0x92,0xe9,0x01,       // mov rcx,[33D40A0]   ImageSpaceManager
+    0xe8,0xfb,0x31,0xfb,0xff,                 // call 14EDFD0        ID 105675: the scene composite into target 1
+    0x41,0xb1,0x01,                           // mov r9b,1
+    0x44,0x8b,0xc5,                           // mov r8d,ebp         the destination
+    0xba,0x01,0x00,0x00,0x00,                 // mov edx,1           the source: target 1
+    0x48,0x8b,0x0d,0xb9,0x92,0xe9,0x01,       // mov rcx,[33D40A0]
+    0xe8,0x04,0x2e,0xfb,0xff};                // call 14EDBF0        ID 105674: the image-space chain
 static_assert(frameGuardedBefore+5u == frameSiteBytes.size());
-// ID 36558's first 16 bytes: a detour of the function itself is refused. Its
-// void-colour call site (656DAA, the second pass) is further in and not read.
-constexpr std::array<std::uint8_t,16> mainViewPrologue{
-    0x40,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x40,0x48,0xc7,0x44,0x24,0x30,0xfe};
+// ID 105674's first 16 bytes: a detour of the chain itself is refused.
+constexpr std::array<std::uint8_t,16> imageChainPrologue{
+    0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x20,0x44};
+// The pass draws for this destination only (normal play).
+constexpr std::uintptr_t playDestination = 0, chainSource = 1;
 // Code whose operands are the offsets and indices the pass relies on. Each is
 // compared byte for byte at install; any difference refuses (FCS-93 check 10+i).
 struct Evidence { const char* what; std::uintptr_t rva; const std::uint8_t* bytes; std::size_t size; };
@@ -64,7 +81,8 @@ constexpr std::array<std::uint8_t,47> createTargetBytes{
 constexpr std::array<std::uint8_t,31> createDepthViewBytes{
     0x48,0x8b,0x0d,0x50,0x56,0x32,0x02,0x4d,0x8d,0x8d,0xa0,0x20,0x00,0x00,0x49,0x8b,0x95,0x18,0x20,0x00,0x00,0x4c,0x8d,0x45,
     0xb7,0x48,0x8b,0x01,0xff,0x50,0x38};
-// ID 77343 (RVA 100F8B0): the engine binds that view as a pixel-shader texture from +0x20A0+index*0x98.
+// ID 77343 (RVA 100F8B0): the engine binds that view from +0x20A0+index*0x98 as a compute-shader resource
+// (state +0x240, flushed with CSSetShaderResources at 1011497).
 constexpr std::array<std::uint8_t,18> bindDepthViewBytes{
     0x49,0x63,0xc0,0x4c,0x69,0xc0,0x98,0x00,0x00,0x00,0x49,0x8b,0x84,0x08,0xa0,0x20,0x00,0x00};
 // Per-frame upload ID 77258: rows 8..11 of the per-frame constant buffer (the view-projection every
@@ -79,10 +97,19 @@ constexpr std::array<std::uint8_t,91> viewProjectionBytes{
 constexpr std::array<std::uint8_t,28> viewportBytes{
     0x48,0x8b,0x0d,0x4c,0x0e,0x32,0x02,0x4c,0x8d,0x05,0x85,0xeb,0x0b,0x01,0xba,0x01,0x00,0x00,0x00,0x48,0x8b,0x01,0xff,0x90,
     0x60,0x01,0x00,0x00};
+// The destination's way down (see above): ID 36558 `mov esi,edx` (656D32) and `mov edx,esi; mov rcx,rbp;
+// call 656E60` (656E28); ID 36559's entry `mov rax,rsp; mov [rax+0x10],edx; ...; lea rbp,[rax-0x5F]`
+// (656E60..656E74) and `mov ecx,[rbp+0x6F]; call 153AC00` (6578CE); ID 107148 `mov ebp,ecx` (153AC24).
+constexpr std::array<std::uint8_t,2> destinationKeptBytes{0x8b,0xf2};
+constexpr std::array<std::uint8_t,10> destinationPassedBytes{0x8b,0xd6,0x48,0x8b,0xcd,0xe8,0x2e,0x00,0x00,0x00};
+constexpr std::array<std::uint8_t,21> destinationStoredBytes{
+    0x48,0x8b,0xc4,0x89,0x50,0x10,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0x68,0xa1};
+constexpr std::array<std::uint8_t,8> destinationLoadedBytes{0x8b,0x4d,0x6f,0xe8,0x2a,0x33,0xee,0x00};
+constexpr std::array<std::uint8_t,2> destinationHeldBytes{0x8b,0xe9};
 constexpr std::array<std::uint8_t,27> depthRangeBytes{
     0xf3,0x0f,0x10,0x15,0x4c,0xf1,0x0b,0x01,0xf3,0x0f,0x10,0x05,0x04,0xec,0x0b,0x01,0x0f,0x2e,0xc2,0xf3,0x0f,0x10,0x0d,0x3d,
     0xf1,0x0b,0x01};
-constexpr std::array<Evidence,8> frameEvidence{{
+constexpr std::array<Evidence,14> frameEvidence{{
     {"main targets (ID 107131)",0x1537f60,mainTargetsBytes.data(),mainTargetsBytes.size()},
     {"main depth index (ID 77457)",0x1015790,mainDepthIndexBytes.data(),mainDepthIndexBytes.size()},
     {"target views (ID 77386)",0x1010ea0,flushTargetBytes.data(),flushTargetBytes.size()},
@@ -90,8 +117,13 @@ constexpr std::array<Evidence,8> frameEvidence{{
     {"depth view creation",0x100ab39,createDepthViewBytes.data(),createDepthViewBytes.size()},
     {"depth view bind (ID 77343)",0x100f8b0,bindDepthViewBytes.data(),bindDepthViewBytes.size()},
     {"view-projection rows (ID 77258)",0x100af47,viewProjectionBytes.data(),viewProjectionBytes.size()},
-    {"viewport (ID 77386)",0x10110dd,viewportBytes.data(),viewportBytes.size()}}};
-constexpr Evidence depthRangeEvidence{"viewport depth range (ID 77386)",0x101106c,depthRangeBytes.data(),depthRangeBytes.size()};
+    {"viewport (ID 77386)",0x10110dd,viewportBytes.data(),viewportBytes.size()},
+    {"viewport depth range (ID 77386)",0x101106c,depthRangeBytes.data(),depthRangeBytes.size()},
+    {"destination kept (ID 36558)",0x656d32,destinationKeptBytes.data(),destinationKeptBytes.size()},
+    {"destination passed (ID 36558)",0x656e28,destinationPassedBytes.data(),destinationPassedBytes.size()},
+    {"destination stored (ID 36559)",0x656e60,destinationStoredBytes.data(),destinationStoredBytes.size()},
+    {"destination loaded (ID 36559)",0x6578ce,destinationLoadedBytes.data(),destinationLoadedBytes.size()},
+    {"destination held (ID 107148)",0x153ac24,destinationHeldBytes.data(),destinationHeldBytes.size()}}};
 namespace frame_offset {
 // BSGraphics::Renderer (ID 411393): RenderTargetData[index] at +0xA58, 0x30 each: texture +0x00,
 // render target view +0x10; DepthStencilData[index] at +0x2018, 0x98 each: texture +0x00, shader
@@ -125,6 +157,8 @@ constexpr std::size_t omSetBlendState = 0x118, rsSetState = 0x158, rsSetViewport
 constexpr std::size_t psGetShaderResources = 0x248, psGetShader = 0x250, vsGetShader = 0x260, psGetConstantBuffers = 0x268; // (ABI)
 constexpr std::size_t iaGetInputLayout = 0x270, iaGetPrimitiveTopology = 0x298, omGetRenderTargets = 0x2c8;                 // (ABI)
 constexpr std::size_t omGetBlendState = 0x2d8, rsGetState = 0x2f0, rsGetViewports = 0x2f8;                                  // (ABI)
+constexpr std::size_t vsGetShaderResources = 0x2a0, csGetShaderResources = 0x348, csGetUnorderedAccessViews = 0x350;        // (ABI)
+constexpr std::size_t viewResource = 0x38;                                                     // ID3D11View::GetResource (ABI)
 }
 // ---- D3D11 structures, as the ABI lays them out ------------------------------
 struct Viewport { float x{},y{},width{},height{},minDepth{},maxDepth{}; };
@@ -152,6 +186,12 @@ constexpr BlendDescription frameBlend() {
 // SOLID (3), no culling (1), depth clip on, no scissor, no multisample.
 constexpr RasterizerDescription frameRasterizer() { return {3u,1u,0u,0,0.0f,0.0f,1u,0u,0u,0u}; }
 constexpr std::uint32_t triangleList = 4, pixelSlots = 16, viewportSlots = 16, renderTargetSlots = 8;
+// Other stages that could hold a view of the main colour texture: the engine's shadow state has 16
+// compute-shader resources (state +0x240, flushed with CSSetShaderResources at 1011497) and 8 compute
+// UAVs (state +0x300, CSSetUnorderedAccessViews at 101134C); it binds no vertex-shader resource through
+// its context (no VSSetShaderResources call). Binding the colour target would make the runtime unbind
+// such a view behind the engine's back, so a frame with one is skipped (FrameSkip::shared).
+constexpr std::uint32_t computeResourceSlots = 16, computeViewSlots = 8, vertexResourceSlots = 16;
 constexpr std::uint32_t bindShaderResource = 0x8;
 
 // ---- the frame's constants -------------------------------------------------
@@ -284,8 +324,8 @@ constexpr float blended(float scene,float voidChannel,float alpha) { return void
 // ---- gate, targets, install checks -------------------------------------------
 // One call of the main world render in normal play. The pass draws only when every answer is yes;
 // otherwise the frame is counted under the first reason.
-enum class FrameSkip : unsigned { none, latched, inactive, stale, capture, targets, matrix, count };
-constexpr std::array frameSkipNames{"none","latched","inactive","stale","capture","targets","matrix"};
+enum class FrameSkip : unsigned { none, latched, inactive, stale, capture, targets, matrix, shared, count };
+constexpr std::array frameSkipNames{"none","latched","inactive","stale","capture","targets","matrix","shared"};
 static_assert(frameSkipNames.size() == static_cast<std::size_t>(FrameSkip::count));
 // `active` is the cut's own published flag (an eligible third-person frame in an interior with the cut
 // installed and no latch; every lifecycle exit clears it at once). `captured` means a pass of the
@@ -306,28 +346,27 @@ inline unsigned targetCheck(bool pointers,const TextureDescription& colour,const
         view.x+view.width > static_cast<float>(depth.width)+.5f || view.y+view.height > static_cast<float>(depth.height)+.5f) return 5;
     return 0;
 }
-// 0 = the call site, its callee and every evidence window are the audited ones. Otherwise: 1 ID 36555,
-// 2 ID 36558, 3 the renderer ID 411393, 4 the 29 bytes before and of the call, 5 the call does not go to
-// ID 36558, 6 ID 36558's first 16 bytes, 10+i evidence window i (frameEvidence, then 18 the depth range).
+// 0 = the call site, its callee and every evidence window are the audited ones. Otherwise: 1 ID 107148,
+// 2 ID 105674, 3 the renderer ID 411393, 4 the 48 bytes before and of the call, 5 the call does not go to
+// ID 105674, 6 ID 105674's first 16 bytes, 10+i evidence window i (frameEvidence).
 // `at(rva)` gives the image's bytes at an RVA (the loaded module natively, a test image in the tests).
 template<class Image>
-unsigned frameSiteCheck(std::uintptr_t base,std::uintptr_t frameFunction,std::uintptr_t mainView,std::uintptr_t renderer,
+unsigned frameSiteCheck(std::uintptr_t base,std::uintptr_t postWorld,std::uintptr_t imageChain,std::uintptr_t renderer,
     const std::uint8_t* window,const std::uint8_t* callee,const Image& at) {
-    if (frameFunction != base+frameFunctionAddress.rva) return 1;
-    if (mainView != base+mainViewAddress.rva) return 2;
+    if (postWorld != base+postWorldAddress.rva) return 1;
+    if (imageChain != base+imageChainAddress.rva) return 2;
     if (renderer != base+rendererAddress.rva) return 3;
     if (std::memcmp(window,frameSiteBytes.data(),frameSiteBytes.size()) != 0) return 4;
-    if (callTarget(base+frameCallRva,window+frameGuardedBefore) != mainView) return 5;
-    if (std::memcmp(callee,mainViewPrologue.data(),mainViewPrologue.size()) != 0) return 6;
+    if (callTarget(base+frameCallRva,window+frameGuardedBefore) != imageChain) return 5;
+    if (std::memcmp(callee,imageChainPrologue.data(),imageChainPrologue.size()) != 0) return 6;
     for (std::size_t i = 0;i < frameEvidence.size();++i)
         if (std::memcmp(at(frameEvidence[i].rva),frameEvidence[i].bytes,frameEvidence[i].size) != 0) return 10u+static_cast<unsigned>(i);
-    if (std::memcmp(at(depthRangeEvidence.rva),depthRangeEvidence.bytes,depthRangeEvidence.size) != 0) return 18u;
     return 0;
 }
 
 // ---- trace ------------------------------------------------------------------
 struct FrameWindow {
-    unsigned long long calls{},drawn{},moved{};
+    unsigned long long calls{},drawn{};
     std::array<unsigned long long,static_cast<std::size_t>(FrameSkip::count)> skips{};
     double seconds{};
     bool haveDrawn{};
@@ -349,14 +388,14 @@ inline bool formatFrame(char* out,std::size_t size,const FrameSample& s) {
     const bool banded = w.haveDrawn && w.band == BandState::on;
     const int written = std::snprintf(out,size,
         "FixedShaderFrame t=%.3f frame=%llu pass=%s calls=%llu drawn=%llu skipLatched=%llu skipInactive=%llu skipStale=%llu skipCapture=%llu "
-        "skipTargets=%llu skipMatrix=%llu offMain=%llu band=%s bandN=%.1f headroom=%.1f bandFrom=%.2f planeZ=%.2f falloff=%s radii=%.1f,%.1f "
-        "vignette=%.3f depth=%s target=%ux%u formats=%u,%u moved=%llu mismatch=%llu micros=%.1f sample=window",
+        "skipTargets=%llu skipMatrix=%llu skipShared=%llu offMain=%llu band=%s bandN=%.1f headroom=%.1f bandFrom=%.2f planeZ=%.2f falloff=%s radii=%.1f,%.1f "
+        "vignette=%.3f depth=%s target=%ux%u formats=%u,%u mismatch=%llu micros=%.1f sample=window",
         s.seconds,s.frame,featureNames[static_cast<std::size_t>(s.state)],w.calls,w.drawn,skip(FrameSkip::latched),skip(FrameSkip::inactive),
-        skip(FrameSkip::stale),skip(FrameSkip::capture),skip(FrameSkip::targets),skip(FrameSkip::matrix),s.offMain,
+        skip(FrameSkip::stale),skip(FrameSkip::capture),skip(FrameSkip::targets),skip(FrameSkip::matrix),skip(FrameSkip::shared),s.offMain,
         w.haveDrawn ? bandNames[static_cast<std::size_t>(w.band)] : "none",static_cast<double>(s.config.band),static_cast<double>(s.config.headroom),
         banded ? static_cast<double>(w.bandFloor) : none,w.haveDrawn ? static_cast<double>(w.planeZ) : none,
         falloffOn(s.config) ? "on" : "off",static_cast<double>(s.config.radiusInner),static_cast<double>(s.config.radiusOuter),
-        static_cast<double>(s.config.vignette),w.drawn ? "read" : "none",s.depth.width,s.depth.height,s.colour.format,s.depth.format,w.moved,
+        static_cast<double>(s.config.vignette),w.drawn ? "read" : "none",s.depth.width,s.depth.height,s.colour.format,s.depth.format,
         s.mismatch,w.seconds*1e6);
     return written > 0 && static_cast<std::size_t>(written) < size;
 }

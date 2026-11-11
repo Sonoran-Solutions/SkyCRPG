@@ -22,7 +22,8 @@ void codes() {
     constexpr std::array frame{Refusal::frameSite,Refusal::frameMemory,Refusal::frameDevice,Refusal::frameThread,Refusal::frameRun};
     for (std::size_t i = 0;i < frame.size();++i) assert(static_cast<unsigned>(frame[i]) == 93u+i);
     assert(lastRefusal == 97 && lastRefusal-firstRefusal == 31 && refusalBit(Refusal::frameRun) == 0x80000000u);
-    assert(frameSkipNames.size() == 7 && std::string(frameSkipNames[static_cast<std::size_t>(FrameSkip::capture)]) == "capture");
+    assert(frameSkipNames.size() == 8 && std::string(frameSkipNames[static_cast<std::size_t>(FrameSkip::capture)]) == "capture" &&
+        std::string(frameSkipNames[static_cast<std::size_t>(FrameSkip::shared)]) == "shared");
     assert(std::string(bandNames[static_cast<std::size_t>(BandState::kit)]) == "kit");
 }
 
@@ -302,8 +303,20 @@ std::uintptr_t ripTarget(std::uintptr_t rva,const std::uint8_t* bytes,std::size_
 }
 void site() {
     // The evidence windows encode exactly the offsets and indices the pass uses.
-    assert(callTarget(frameCallRva,frameSiteBytes.data()+frameGuardedBefore) == mainViewAddress.rva);
-    assert(frameSiteBytes[frameGuardedBefore-5] == 0x33 && frameSiteBytes[frameGuardedBefore-4] == 0xd2); // xor edx,edx: normal play's argument
+    // The site: ID 107148 calls the scene composite (ID 105675), then the image-space chain (ID 105674) with
+    // (manager, source 1, destination ebp, 1).
+    assert(callTarget(frameCallRva,frameSiteBytes.data()+frameGuardedBefore) == imageChainAddress.rva);
+    assert(callTarget(0x153adbc,frameSiteBytes.data()) == 0x152ea20 && callTarget(0x153add0,frameSiteBytes.data()+0x14) == 0x14edfd0);
+    assert(ripTarget(0x153adc9,frameSiteBytes.data()+0x0d,3,7) == 0x33d40a0 && ripTarget(0x153ade0,frameSiteBytes.data()+0x24,3,7) == 0x33d40a0);
+    assert(frameSiteBytes[0x1c] == 0x44 && frameSiteBytes[0x1d] == 0x8b && frameSiteBytes[0x1e] == 0xc5); // mov r8d,ebp: the destination
+    assert(frameSiteBytes[0x1f] == 0xba && displacementAt(frameSiteBytes.data()+0x20) == static_cast<std::int32_t>(chainSource));
+    assert(playDestination == 0 && imageChainPrologue[0] == 0x48 && imageChainPrologue[15] == 0x44);
+    // The destination's way down: 36558 esi = edx, edx = esi into 36559, stored at [rax+0x10], rbp = rax-0x5F,
+    // ecx = [rbp+0x6F] = [rax+0x10] into 107148 (the call at 6578D1 goes to 153AC00), ebp = ecx there.
+    assert(destinationKeptBytes == (std::array<std::uint8_t,2>{0x8b,0xf2}) && destinationHeldBytes == (std::array<std::uint8_t,2>{0x8b,0xe9}));
+    assert(destinationStoredBytes[3] == 0x89 && destinationStoredBytes[5] == 0x10 && static_cast<std::int8_t>(destinationStoredBytes[20]) == -0x5f);
+    assert(destinationLoadedBytes[2] == 0x6f && -0x5f+0x6f == 0x10 && callTarget(0x6578d1,destinationLoadedBytes.data()+3) == postWorldAddress.rva);
+    assert(callTarget(0x656e2d,destinationPassedBytes.data()+5) == 0x656e60 && destinationPassedBytes[0] == 0x8b && destinationPassedBytes[1] == 0xd6);
     assert(callTarget(0x1537f7b,mainTargetsBytes.data()+0x1b) == 0x10155b0 && mainTargetsBytes[0x17] == 0x45 && mainTargetsBytes[0x1a] == 0x01 &&
         mainTargetsBytes[0x0e] == 0x33 && mainTargetsBytes[0x0f] == 0xd2); // SetRenderTarget(slot 0, target r9+1 = 1)
     assert(callTarget(0x1537f97,mainTargetsBytes.data()+0x37) == 0x1015790 && callTarget(0x1537fb0,mainTargetsBytes.data()+0x50) == 0x1015670);
@@ -328,14 +341,13 @@ void site() {
     for (const std::uintptr_t base : {std::uintptr_t{0x140000000},std::uintptr_t{0x7ff6a0000000},std::uintptr_t{0x10000}}) {
         std::map<std::uintptr_t,std::vector<std::uint8_t>> image;
         for (const auto& e : frameEvidence) image[e.rva].assign(e.bytes,e.bytes+e.size);
-        image[depthRangeEvidence.rva].assign(depthRangeEvidence.bytes,depthRangeEvidence.bytes+depthRangeEvidence.size);
         std::vector<std::uint8_t> window(frameSiteBytes.begin(),frameSiteBytes.end());
-        std::vector<std::uint8_t> callee(mainViewPrologue.begin(),mainViewPrologue.end());
+        std::vector<std::uint8_t> callee(imageChainPrologue.begin(),imageChainPrologue.end());
         const auto at = [&](std::uintptr_t rva) { return image.at(rva).data(); };
         const auto check = [&](std::uintptr_t function,std::uintptr_t main,std::uintptr_t renderer) {
             return frameSiteCheck(base,function,main,renderer,window.data(),callee.data(),at);
         };
-        const std::uintptr_t f = base+frameFunctionAddress.rva,m = base+mainViewAddress.rva,rd = base+rendererAddress.rva;
+        const std::uintptr_t f = base+postWorldAddress.rva,m = base+imageChainAddress.rva,rd = base+rendererAddress.rva;
         assert(check(f,m,rd) == 0);
         assert(check(f+1,m,rd) == 1 && check(f,m+16,rd) == 2 && check(f,m,rd+8) == 3);
         for (std::size_t i = 0;i < window.size();++i) { window[i] ^= 0x01; assert(check(f,m,rd) == 4); window[i] ^= 0x01; }
@@ -345,14 +357,13 @@ void site() {
             for (std::size_t i = 0;i < e.size;++i) { image[e.rva][i] ^= 0x10; assert(check(f,m,rd) == 10+index); image[e.rva][i] ^= 0x10; }
             ++index;
         }
-        for (std::size_t i = 0;i < depthRangeEvidence.size;++i) {
-            image[depthRangeEvidence.rva][i] ^= 0x04; assert(check(f,m,rd) == 18); image[depthRangeEvidence.rva][i] ^= 0x04;
-        }
         assert(check(f,m,rd) == 0);
     }
-    assert(frameEvidence.size() == 8 && std::string(frameEvidence[0].what).find("107131") != std::string::npos);
-    assert(frameFunctionAddress.id == 36555 && frameFunctionAddress.rva == 0x6565b0 && rendererAddress.id == 411393 && rendererAddress.rva == 0x3331f40);
-    assert(frameCallRva == 0x656a78 && frameCallRva != voidCallRva && sizeof(Viewport) == 24 && sizeof(TextureDescription) == 44);
+    assert(frameEvidence.size() == 14 && std::string(frameEvidence[0].what).find("107131") != std::string::npos);
+    assert(postWorldAddress.id == 107148 && postWorldAddress.rva == 0x153ac00 && imageChainAddress.id == 105674 && imageChainAddress.rva == 0x14edbf0);
+    assert(rendererAddress.id == 411393 && rendererAddress.rva == 0x3331f40);
+    assert(frameCallRva == 0x153ade7 && frameCallRva != voidCallRva && sizeof(Viewport) == 24 && sizeof(TextureDescription) == 44);
+    assert(computeResourceSlots == 16 && computeViewSlots == 8 && vertexResourceSlots == 16);
 }
 
 // ---- the embedded shaders against their sources ---------------------------------
@@ -420,14 +431,14 @@ void shaders() {
 void trace() {
     FrameSample s;
     s.seconds = 1234.5; s.frame = 99; s.offMain = 0; s.mismatch = 0; s.state = Feature::installed;
-    s.window.calls = 6; s.window.drawn = 5; s.window.skips[static_cast<std::size_t>(FrameSkip::capture)] = 1; s.window.moved = 0;
+    s.window.calls = 6; s.window.drawn = 5; s.window.skips[static_cast<std::size_t>(FrameSkip::capture)] = 1;
     s.window.haveDrawn = true; s.window.band = BandState::on; s.window.bandFloor = 9396.25f; s.window.planeZ = 9420.25f; s.window.seconds = 31e-6;
     s.colour.format = 10; s.depth = {1920,1080,1,1,44,1,0,0,0x48,0,0};
     char line[sizeof(skycrpg::camera::fixed::TraceRow)]{};
     assert(formatFrame(line,sizeof(line),s));
     assert(std::string(line) == "FixedShaderFrame t=1234.500 frame=99 pass=installed calls=6 drawn=5 skipLatched=0 skipInactive=0 skipStale=0 "
-        "skipCapture=1 skipTargets=0 skipMatrix=0 offMain=0 band=on bandN=96.0 headroom=136.0 bandFrom=9396.25 planeZ=9420.25 falloff=on "
-        "radii=900.0,1400.0 vignette=0.250 depth=read target=1920x1080 formats=10,44 moved=0 mismatch=0 micros=31.0 sample=window");
+        "skipCapture=1 skipTargets=0 skipMatrix=0 skipShared=0 offMain=0 band=on bandN=96.0 headroom=136.0 bandFrom=9396.25 planeZ=9420.25 falloff=on "
+        "radii=900.0,1400.0 vignette=0.250 depth=read target=1920x1080 formats=10,44 mismatch=0 micros=31.0 sample=window");
     // Nothing drawn: no band, no heights, depth not read.
     FrameSample idle;
     idle.state = Feature::pending; idle.window.calls = 6; idle.window.skips[static_cast<std::size_t>(FrameSkip::inactive)] = 6;
@@ -443,7 +454,7 @@ void trace() {
     FrameSample wide;
     wide.seconds = 1e9; wide.frame = ~0ull; wide.offMain = ~0ull; wide.mismatch = ~0ull; wide.state = Feature::installed;
     wide.config.band = 512; wide.config.headroom = 512; wide.config.radiusInner = 16384; wide.config.radiusOuter = 16384; wide.config.vignette = 1;
-    wide.window.calls = wide.window.drawn = wide.window.moved = ~0ull;
+    wide.window.calls = wide.window.drawn = ~0ull;
     for (auto& v : wide.window.skips) v = ~0ull;
     wide.window.haveDrawn = true; wide.window.band = BandState::on; wide.window.bandFloor = -1e9f; wide.window.planeZ = -1e9f; wide.window.seconds = 1e3;
     wide.colour = {~0u,~0u,0,0,~0u,0,0,0,0,0,0}; wide.depth = wide.colour;
