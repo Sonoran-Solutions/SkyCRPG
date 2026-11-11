@@ -550,6 +550,17 @@ assert "if (c.style > stageOneStyle) c.style = stageOneStyle;" in cut_policy and
 assert "if (!f.kitCell) return {Treat::flat,Bucket::flat};" in style_policy and "constexpr Constant removeConstant{-1.0f,-1.0e9f,0.0f,0.0f};" in style_policy
 # Review MINOR-3 of 8f1248f: an Effect pass is clipped whole only when its bound lies wholly above the feet.
 assert "bound.centre.z-bound.radius > view.feet.z;" in sky_policy
+# Fix pass after the review of 30503e0.
+assert shadow.index("if (!shadowAudited()) { ++s.window.shadowSkips; return; }") < shadow.index("shaderFor(0)")  # MINOR-7: no FCS-75 from a shadow pass
+audit_fn = style_body("inline bool shadowAudited() {", "// A Utility pass of another view")
+assert "refuse(" not in audit_fn and "auditedFor(0,codeHash(object+offset::shaderCode,size))" in audit_fn and "size <= largestBlob" in audit_fn
+assert "immutable.usage = 1; immutable.access = 0;" in install_style and "static_cast<const BufferDescription*>(&immutable),static_cast<const void*>(&initial),&remove)" in install_style
+assert "sideOf(sphereBox(bound.centre,bound.radius),e->thin,r.view.feet,r.view.eye,sideExit) != Side::back)" in pass_fn  # MINOR-3
+decide_fn = style_policy[style_policy.index("constexpr Decision decide(const Facts& f) {"):style_policy.index("// The height a slicing treatment cuts at.")]
+assert decide_fn.index("const Decision d = rules(f);") < decide_fn.index("if (f.floor) return {Treat::flat,Bucket::fallback};") < \
+    decide_fn.index("if (f.interact) return {Treat::flat,Bucket::interactCut};")  # MINOR-4, MINOR-5
+assert "f.interact = kind == Kind::object && base && base->GetFormType() != RE::FormType::Tree;" in style
+assert '"shadowSkips=%llu fxFloorKept=%llu fxWholeRadius=%.1f interactCut=%llu sample=window",' in style_policy
 print("PASS shader fourth-pass wiring: style runtime only with iCutStyle=1; per-reference buffer choice inside the existing hooks after the "
       "flat cut's own selection; audited bytecode and budget before any bind; remove buffer never Mapped; shadow rule on Utility other-view "
       "passes of removed geometry only; no new hook or engine write; one site per FCS-91..92")

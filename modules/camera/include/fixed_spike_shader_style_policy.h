@@ -128,10 +128,12 @@ inline Thin thinAxis(const Box& b) {
     return Thin::none;
 }
 // `obnd`: the box came from the base OBND (otherwise from the bound sphere).
+// An object without a usable box (no 3D, no OBND and a zero bound) cannot be
+// placed either: flat (review of 30503e0, MINOR-1).
 inline Piece pieceOf(Kind kind,Family family,const Box& box,bool obnd) {
-    if (kind == Kind::object) return Piece::object;
+    if (kind == Kind::object) return box.valid ? Piece::object : Piece::flat;
     if (kind != Kind::architecture) return Piece::flat;
-    if (family == Family::clutter || family == Family::furniture) return Piece::object;
+    if (family == Family::clutter || family == Family::furniture) return box.valid ? Piece::object : Piece::flat;
     if (family != Family::architecture || !box.valid || !obnd) return Piece::flat;
     return memberShape(box) ? Piece::member : Piece::kit;
 }
@@ -193,29 +195,64 @@ inline Side settledSide(const Box& b,Thin thin,Vec feet,Vec eye,Side previous,bo
 }
 
 // ---- the lane from the camera to the player ----------------------------------------
-// Two segments, from 20 and from 120 units above the feet (shins and head) to
-// the eye; a box grown by `grow` that a segment enters is in the lane. Enter
-// at 48, leave at 112 (hysteresis while the player walks).
-constexpr float laneEnter = 48.0f, laneExit = 112.0f, laneLow = 20.0f, laneHigh = 120.0f;
+// Two segments, at 20 and at 120 units above the feet (shins and head), each
+// starting where the sightline leaves the player's body (24 units from the
+// feet toward the camera in the ground plane) and ending at the eye. A box
+// grown sideways only (x and y, never z) by `grow` that a segment enters is in
+// the lane: enter at 24, stay at 48 (hysteresis while the player walks).
+// Review of 30503e0, MAJOR-1: the earlier lane started in the player's own
+// column and grew boxes by 48/112 on every axis, so pieces beside the player
+// (a stool, a bench, a pillar walked past sideways) counted as in the lane.
+constexpr float laneEnter = 24.0f, laneExit = 48.0f, laneLow = 20.0f, laneHigh = 120.0f, laneStart = 24.0f;
+// Ground-plane distance from (x, y) to the box's footprint.
+inline float footprintDistance(float x,float y,const Box& b) {
+    return std::hypot((std::max)({b.low.x-x,0.0f,x-b.high.x}),(std::max)({b.low.y-y,0.0f,y-b.high.y}));
+}
+// Ground-plane distance from the point (px, py) to the segment (ax, ay)-(bx, by).
+inline float pointSegment(float px,float py,float ax,float ay,float bx,float by) {
+    const float dx = bx-ax,dy = by-ay,length = dx*dx+dy*dy;
+    const float t = length > 0.0f ? std::clamp(((px-ax)*dx+(py-ay)*dy)/length,0.0f,1.0f) : 0.0f;
+    return std::hypot(px-(ax+t*dx),py-(ay+t*dy));
+}
+// The part of the segment whose height is within the box's height range comes
+// within `grow` of the box's footprint in the ground plane (a sideways margin
+// only: never above or below the box).
 inline bool segmentHitsBox(Vec from,Vec to,const Box& b,float grow) {
     if (!b.valid || !finite(from) || !finite(to) || !std::isfinite(grow)) return false;
-    const std::array<float,3> a{from.x,from.y,from.z},d{to.x-from.x,to.y-from.y,to.z-from.z};
-    const std::array<float,3> lo{b.low.x-grow,b.low.y-grow,b.low.z-grow},hi{b.high.x+grow,b.high.y+grow,b.high.z+grow};
-    float enter = 0.0f,leave = 1.0f;
-    for (std::size_t i = 0;i < 3;++i) {
-        if (std::abs(d[i]) < 1.0e-6f) {
-            if (a[i] < lo[i] || a[i] > hi[i]) return false;
-            continue;
-        }
-        float t0 = (lo[i]-a[i])/d[i],t1 = (hi[i]-a[i])/d[i];
-        if (t0 > t1) std::swap(t0,t1);
-        enter = (std::max)(enter,t0); leave = (std::min)(leave,t1);
-        if (enter > leave) return false;
+    float t0 = 0.0f,t1 = 1.0f;
+    const float dz = to.z-from.z;
+    if (std::abs(dz) < 1.0e-6f) {
+        if (from.z < b.low.z || from.z > b.high.z) return false;
+    } else {
+        float a = (b.low.z-from.z)/dz,c = (b.high.z-from.z)/dz;
+        if (a > c) std::swap(a,c);
+        t0 = (std::max)(t0,a); t1 = (std::min)(t1,c);
+        if (t0 > t1) return false;
     }
-    return true;
+    const float ax = from.x+(to.x-from.x)*t0,ay = from.y+(to.y-from.y)*t0,bx = from.x+(to.x-from.x)*t1,by = from.y+(to.y-from.y)*t1;
+    // Crossing the footprint (2D slab test), else the nearest of endpoints and corners.
+    float enter = 0.0f,leave = 1.0f;
+    bool crosses = true;
+    const std::array<float,2> start{ax,ay},delta{bx-ax,by-ay},lo{b.low.x,b.low.y},hi{b.high.x,b.high.y};
+    for (std::size_t i = 0;i < 2 && crosses;++i) {
+        if (std::abs(delta[i]) < 1.0e-6f) { crosses = start[i] >= lo[i] && start[i] <= hi[i]; continue; }
+        float u = (lo[i]-start[i])/delta[i],v = (hi[i]-start[i])/delta[i];
+        if (u > v) std::swap(u,v);
+        enter = (std::max)(enter,u); leave = (std::min)(leave,v);
+        crosses = enter <= leave;
+    }
+    if (crosses) return true;
+    float nearest = (std::min)(footprintDistance(ax,ay,b),footprintDistance(bx,by,b));
+    for (const float x : {b.low.x,b.high.x})
+        for (const float y : {b.low.y,b.high.y}) nearest = (std::min)(nearest,pointSegment(x,y,ax,ay,bx,by));
+    return nearest <= grow;
 }
 inline bool inLane(const Box& b,Vec feet,Vec eye,float grow) {
-    return segmentHitsBox({feet.x,feet.y,feet.z+laneLow},eye,b,grow) || segmentHitsBox({feet.x,feet.y,feet.z+laneHigh},eye,b,grow);
+    float dx = eye.x-feet.x,dy = eye.y-feet.y;
+    const float length = std::hypot(dx,dy);
+    if (!std::isfinite(length) || length <= laneStart) return false;
+    dx *= laneStart/length; dy *= laneStart/length;
+    return segmentHitsBox({feet.x+dx,feet.y+dy,feet.z+laneLow},eye,b,grow) || segmentHitsBox({feet.x+dx,feet.y+dy,feet.z+laneHigh},eye,b,grow);
 }
 inline bool settledLane(const Box& b,Vec feet,Vec eye,bool previous) { return inLane(b,feet,eye,previous ? laneExit : laneEnter); }
 
@@ -277,7 +314,8 @@ enum class Treat : unsigned { flat, keep, slice, low, remove, count };
 constexpr std::array treatNames{"flat","keep","slice","low","remove"};
 static_assert(treatNames.size() == static_cast<std::size_t>(Treat::count));
 // Trace counters by decision (counted per pass).
-enum class Bucket : unsigned { flat, fallback, keptFar, keptObject, keptMember, keptGallery, slicedNear, slicedSpan, removedWhole, removedObject, count };
+enum class Bucket : unsigned { flat, fallback, keptFar, keptObject, keptMember, keptGallery, slicedNear, slicedSpan, removedWhole, removedObject,
+    interactCut, aroundCut, count };
 struct Facts {
     Piece piece{Piece::flat};
     Side side{Side::across};
@@ -285,6 +323,9 @@ struct Facts {
     bool above{};     // box bottom at or above the storey line (less aboveTolerance)
     bool overhead{};  // box bottom at or above the held feet height + storeyHeadroom
     bool around{};    // the box contains the feet in the ground plane (the player stands in or under it)
+    bool low{};       // the box's top is at most feet + laneHigh (a hearth, a rug, a bench: not a cabinet)
+    bool floor{};     // around, and the top within floorTop of the feet: the floor the player stands on
+    bool interact{};  // an interactable reference (door, container, activator, furniture, flora, an item): never removed whole
     bool gallery{};   // bCutKeepFarGallery
     bool kitCell{};   // the cell's census says kit building
 };
@@ -294,31 +335,48 @@ struct Decision { Treat treat{Treat::flat}; Bucket bucket{Bucket::flat}; };
 //   a piece this policy cannot place     flat, counted as a fallback
 //   the storey above (above, or a member overhead): removed whole; with the
 //     gallery switch its back-side pieces are kept whole
-//   object or member around the player (a hearth, a rug, a bench the player stands in): kept whole,
-//     unless overhead (a lamp hanging over the player): removed whole
+//   object or member around the player: removed whole when overhead (a lamp hanging over the
+//     player); kept whole when its top is at most head height (a hearth, a rug, a bench the player
+//     stands in); taller and not overhead (a hearth fire's flame and smoke bound): the flat cut at the
+//     plane, as the flat cut drew it, never the lane rule, since such a box is mostly empty volume
+//     around the player (orchestrator decision after the fix pass; counted with fallback on the row)
 //   object or member: removed whole when not on the back side and in the lane, else kept whole
+// and over all of these (review of 30503e0):
+//   the floor under the player (around, top within 32 of the feet) is never removed (MINOR-4): it
+//     keeps the flat cut, which does not reach it
+//   an interactable reference is never removed whole (it would stay solid and clickable while
+//     invisible): it gets the flat cut at the plane instead, counted as interactCut (MINOR-5)
 //   kit piece on the back side: kept whole
 //   kit piece on the front side: sliced at the plane, as the flat cut does (rule 3: near walls "as now";
 //     single-sided kit walls are not drawn from outside anyway, and a double-sided partition on the camera
 //     side stays as low as it was)
 //   kit piece across: sliced, at the plane in the lane, at the storey line otherwise (the remaining slices)
-constexpr Decision decide(const Facts& f) {
-    if (!f.kitCell) return {Treat::flat,Bucket::flat};
-    if (f.piece == Piece::flat) return {Treat::flat,Bucket::fallback};
+constexpr float floorTop = 32.0f;
+constexpr Decision rules(const Facts& f) {
     const bool object = f.piece == Piece::object;
     if (f.above || (f.piece == Piece::member && f.overhead)) {
         if (f.gallery && f.side == Side::back) return {Treat::keep,Bucket::keptGallery};
         return {Treat::remove,object ? Bucket::removedObject : Bucket::removedWhole};
     }
     if (object || f.piece == Piece::member) {
-        if (f.around) return f.overhead ? Decision{Treat::remove,object ? Bucket::removedObject : Bucket::removedWhole} :
-            Decision{Treat::keep,object ? Bucket::keptObject : Bucket::keptMember};
+        if (f.around && f.overhead) return {Treat::remove,object ? Bucket::removedObject : Bucket::removedWhole};
+        if (f.around && f.low) return {Treat::keep,object ? Bucket::keptObject : Bucket::keptMember};
+        if (f.around) return {Treat::flat,Bucket::aroundCut};
         if (f.side != Side::back && f.lane) return {Treat::remove,object ? Bucket::removedObject : Bucket::removedWhole};
         return {Treat::keep,object ? Bucket::keptObject : Bucket::keptMember};
     }
     if (f.side == Side::back) return {Treat::keep,Bucket::keptFar};
     if (f.side == Side::front) return {Treat::low,Bucket::slicedNear};
     return {f.lane ? Treat::low : Treat::slice,Bucket::slicedSpan};
+}
+constexpr Decision decide(const Facts& f) {
+    if (!f.kitCell) return {Treat::flat,Bucket::flat};
+    if (f.piece == Piece::flat) return {Treat::flat,Bucket::fallback};
+    const Decision d = rules(f);
+    if (d.treat != Treat::remove) return d;
+    if (f.floor) return {Treat::flat,Bucket::fallback};
+    if (f.interact) return {Treat::flat,Bucket::interactCut};
+    return d;
 }
 // The height a slicing treatment cuts at.
 inline float sliceHeight(Treat treat,float planeZ,float lineZ) {
@@ -371,14 +429,14 @@ inline bool formatStyle(char* out,std::size_t size,const StyleSample& s) {
         "storeyZ=%.2f relStorey=%.2f lineZ=%.2f keptFar=%llu keptObjects=%llu keptMembers=%llu keptGallery=%llu underLine=%llu "
         "slicedNear=%llu slicedSpan=%llu slicedLow=%llu slicedFar=%llu slicedObjects=%llu removedWhole=%llu removedObjects=%llu "
         "flat=%llu fallback=%llu refs=%u tableFull=%llu storeyMoves=%llu storeyMaps=%llu shadowPasses=%llu shadowRemoved=%llu "
-        "shadowSkips=%llu fxFloorKept=%llu fxWholeRadius=%.1f sample=window",
+        "shadowSkips=%llu fxFloorKept=%llu fxWholeRadius=%.1f interactCut=%llu sample=window",
         s.seconds,s.frame,s.style,featureNames[static_cast<std::size_t>(s.state)],cellNames[static_cast<std::size_t>(s.cell)],s.census.kit,
         s.census.dungeon,static_cast<unsigned>(s.gallery),static_cast<unsigned>(s.shadows),w.frames,storey ? static_cast<double>(s.storeyZ) : none,
         storey ? static_cast<double>(s.storeyZ-s.base) : none,s.haveView ? static_cast<double>(s.lineZ) : none,bucket(Bucket::keptFar),
         bucket(Bucket::keptObject),bucket(Bucket::keptMember),bucket(Bucket::keptGallery),w.underLine,bucket(Bucket::slicedNear),
         bucket(Bucket::slicedSpan),w.slicedLow,w.slicedFar,w.slicedObjects,bucket(Bucket::removedWhole),bucket(Bucket::removedObject),
-        bucket(Bucket::flat),bucket(Bucket::fallback),s.refs,w.tableFull,s.moves,w.storeyUploads,w.shadowPasses,w.shadowRemoved,w.shadowSkips,s.fxFloorKept,
-        static_cast<double>(s.fxWholeRadius));
+        bucket(Bucket::flat),bucket(Bucket::fallback)+bucket(Bucket::aroundCut),s.refs,w.tableFull,s.moves,w.storeyUploads,w.shadowPasses,w.shadowRemoved,w.shadowSkips,s.fxFloorKept,
+        static_cast<double>(s.fxWholeRadius),bucket(Bucket::interactCut));
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 } // namespace skycrpg::camera::fixed::shader

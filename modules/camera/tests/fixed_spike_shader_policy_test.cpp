@@ -863,7 +863,9 @@ void styleRules() {
     assert(pieceOf(Kind::architecture,Family::architecture,wall,true) == Piece::kit);
     assert(pieceOf(Kind::architecture,Family::architecture,box({-31,-37,-32},{31,36,260}),true) == Piece::member);
     assert(pieceOf(Kind::architecture,Family::clutter,wall,true) == Piece::object && pieceOf(Kind::architecture,Family::furniture,wall,true) == Piece::object);
-    assert(pieceOf(Kind::object,Family::other,Box{},false) == Piece::object && pieceOf(Kind::excluded,Family::architecture,wall,true) == Piece::flat);
+    assert(pieceOf(Kind::object,Family::other,box({0,0,0},{1,1,1}),false) == Piece::object && pieceOf(Kind::excluded,Family::architecture,wall,true) == Piece::flat);
+    // No usable box (no 3D, zero bound): the flat cut, never a whole-object decision (review of 30503e0, MINOR-1).
+    assert(pieceOf(Kind::object,Family::other,Box{},false) == Piece::flat && pieceOf(Kind::architecture,Family::clutter,Box{},false) == Piece::flat);
     for (const Family f : {Family::dungeons,Family::landscape,Family::effects,Family::other}) assert(pieceOf(Kind::architecture,f,wall,true) == Piece::flat);
     assert(pieceOf(Kind::architecture,Family::architecture,wall,false) == Piece::flat && pieceOf(Kind::architecture,Family::architecture,Box{},true) == Piece::flat);
 
@@ -918,18 +920,51 @@ void styleRules() {
     assert(settledSide(south,Thin::y,at(-1100),eyeFor(at(-1100)),Side::front,false) == Side::across); // a snap starts without memory
     assert(settledSide(south,Thin::y,at(-1180),eyeFor(at(-1180)),Side::across,true) == Side::back);   // crossed to the other side
     assert(settledSide(north,Thin::y,hearth,eye0,Side::front,true) == Side::back);                    // a stale class is never kept
-    // The lane: enter at 48, leave at 112.
+    // The lane: from 24 units toward the camera, boxes grown sideways only, enter at 24, stay at 48.
     const Box post = box({-200,-760,32},{-150,-710,320}); // a pillar between the player and the camera at heading 45
     assert(inLane(post,hearth,eye0,laneEnter) && !inLane(post,hearth,eyeAt(hearth,2),0.0f) && sideOf(post,Thin::none,hearth,eyeAt(hearth,2),sideEnter) == Side::back);
-    const Box beside = box({-117.1f+70.0f,-700,32},{-117.1f+120.0f,-650,320}); // 70 units east of the lane
+    const Box beside = box({-117.1f+15.0f,-700,32},{-117.1f+65.0f,-650,320}); // 32 units east of where the lane leaves the body
     assert(!inLane(beside,hearth,eye0,laneEnter) && settledLane(beside,hearth,eye0,true) && !settledLane(beside,hearth,eye0,false));
     assert(segmentHitsBox({0,0,0},{10,0,0},box({4,-1,-1},{6,1,1}),0) && !segmentHitsBox({0,0,0},{10,0,0},box({4,2,-1},{6,3,1}),0) &&
         segmentHitsBox({0,0,0},{10,0,0},box({4,2,-1},{6,3,1}),2.5f) && !segmentHitsBox({0,0,0},{10,0,0},Box{},100));
+    assert(!segmentHitsBox({0,0,0},{10,0,0},box({4,-1,2},{6,1,3}),2.5f)); // never grown in z
+    // Review of 30503e0, MAJOR-1: a low stool (30 x 30 x 45) and a tall cabinet (60 x 40 x 200) beside the player, their
+    // near faces 30 and 60 units from the feet along both diagonals perpendicular to the view, are not in the lane at any
+    // heading (at 30 they would only stay in it if already in it), so they are kept whole; the same pieces between camera and
+    // player are removed.
+    const auto rule0 = [](Side side,bool lane) { Facts f; f.piece = Piece::object; f.side = side; f.lane = lane; f.kitCell = true; return decide(f); };
+    for (unsigned h = 0;h < 4;++h) {
+        const Vec eye = eyeAt(hearth,h);
+        const float cx = (eye.x-hearth.x)/335.6f,cy = (eye.y-hearth.y)/335.6f; // unit camera direction in the ground plane
+        for (const Vec size : {Vec{30,30,45},Vec{60,40,200}})
+            for (const float gap : {30.0f,60.0f})
+                for (const float turn : {-1.0f,1.0f}) {
+                    const float px = -cy*turn,py = cx*turn,reachOut = gap+size.x*.5f*std::abs(px)+size.y*.5f*std::abs(py);
+                    const Vec centre{hearth.x+px*reachOut,hearth.y+py*reachOut,hearth.z};
+                    const Box piece = box({centre.x-size.x*.5f,centre.y-size.y*.5f,hearth.z},{centre.x+size.x*.5f,centre.y+size.y*.5f,hearth.z+size.z});
+                    // Never enters; one already in the lane (it was walked into) leaves it beyond 48.
+                    assert(!inLane(piece,hearth,eye,laneEnter) && inLane(piece,hearth,eye,laneExit) == (gap < laneExit));
+                    const Decision d = rule0(sideOf(piece,thinAxis(piece),hearth,eye,sideEnter),settledLane(piece,hearth,eye,false));
+                    assert(d.treat == Treat::keep && d.bucket == Bucket::keptObject);
+                }
+        // Between: the stool 40 units toward the camera, the cabinet 100.
+        for (const auto& [size,distance] : {std::pair{Vec{30,30,45},40.0f},std::pair{Vec{60,40,200},100.0f}}) {
+            const Vec centre{hearth.x+cx*distance,hearth.y+cy*distance,hearth.z};
+            const Box piece = box({centre.x-size.x*.5f,centre.y-size.y*.5f,hearth.z},{centre.x+size.x*.5f,centre.y+size.y*.5f,hearth.z+size.z});
+            assert(inLane(piece,hearth,eye,laneEnter));
+            const Decision d = rule0(sideOf(piece,thinAxis(piece),hearth,eye,sideEnter),true);
+            assert(d.treat == Treat::remove && d.bucket == Bucket::removedObject);
+        }
+        // The stool 100 units toward the camera is under the sightline (the camera is 684 up): not in the lane.
+        const Vec far100{hearth.x+cx*100,hearth.y+cy*100,hearth.z};
+        assert(!inLane(box({far100.x-15,far100.y-15,hearth.z},{far100.x+15,far100.y+15,hearth.z+45}),hearth,eye,laneEnter));
+    }
 
     // Decisions. Objects on each side; members; kit pieces; the storey above; the gallery switch; not a kit cell.
-    const auto rule = [](Piece piece,Side side,bool lane,bool above,bool overhead,bool gallery,bool kit = true,bool around = false) {
+    const auto rule = [](Piece piece,Side side,bool lane,bool above,bool overhead,bool gallery,bool kit = true,bool around = false,bool low = false,
+        bool floor = false,bool interact = false) {
         Facts f; f.piece = piece; f.side = side; f.lane = lane; f.above = above; f.overhead = overhead; f.gallery = gallery; f.kitCell = kit;
-        f.around = around;
+        f.around = around; f.low = low; f.floor = floor; f.interact = interact;
         return decide(f);
     };
     const auto is = [](Decision d,Treat t,Bucket b) { return d.treat == t && d.bucket == b; };
@@ -945,9 +980,45 @@ void styleRules() {
                 if (piece == Piece::flat) assert(is(k,Treat::flat,Bucket::fallback));
             }
     assert(is(rule(Piece::object,Side::front,true,false,false,false),Treat::remove,Bucket::removedObject));
-    // The Mare hearth fire (Campfire01Burning, a clutter static whose box 580 x 601 x 502 contains the hearth pose) stays;
-    // a lamp hanging over the player goes.
-    assert(is(rule(Piece::object,Side::across,true,false,false,false,true,true),Treat::keep,Bucket::keptObject));
+    // Around the player (review of 30503e0, MINOR-2): a low piece (a rug, a bench, a brazier: top at most feet + 120) is kept;
+    // a tall one follows the lane rule (the Mare hearth fire, Campfire01Burning, box 580 x 601 x 502 around the hearth pose,
+    // is removed while its box meets the lane); a lamp hanging over the player goes.
+    assert(is(rule(Piece::object,Side::across,true,false,false,false,true,true,true),Treat::keep,Bucket::keptObject));
+    assert(is(rule(Piece::object,Side::across,true,false,false,false,true,true,false),Treat::flat,Bucket::aroundCut)); // tall, around: flat cut
+    // Campfire01Burning at the hearth pose (OBND -140..140 x -196..140 x -97..267 scaled to its Skyrim.esm box 580 x 601 x 502):
+    // around the feet, taller than 120 above them, bottom below feet + 128: the flat cut at all four headings, never removed.
+    {
+        const Box fire = box({-433,-717,-101},{147,-116,401});
+        for (unsigned h = 0;h < 4;++h) {
+            const Vec eye = eyeAt(hearth,h);
+            Facts f; f.kitCell = true; f.piece = Piece::object; f.side = sideOf(fire,thinAxis(fire),hearth,eye,sideEnter);
+            f.lane = settledLane(fire,hearth,eye,false); f.around = true; f.low = fire.high.z <= hearth.z+laneHigh;
+            f.overhead = fire.low.z >= hearth.z+storeyHeadroom; f.above = fire.low.z >= 310.0f-aboveTolerance;
+            const Decision d = decide(f);
+            assert(f.lane && !f.low && !f.overhead && d.treat == Treat::flat && d.bucket == Bucket::aroundCut);
+        }
+    }
+    assert(is(rule(Piece::object,Side::across,false,false,false,false,true,true,false),Treat::flat,Bucket::aroundCut)); // in the lane or not
+    assert(is(rule(Piece::member,Side::across,true,false,false,false,true,true,true),Treat::keep,Bucket::keptMember));
+    // The floor under the player (MINOR-4: arriving on the loft, its floor is above the old storey line until the base
+    // moves) is never removed: the flat cut, which does not reach it.
+    assert(is(rule(Piece::kit,Side::across,false,true,false,false,true,true,true,true),Treat::flat,Bucket::fallback));
+    assert(is(rule(Piece::kit,Side::across,false,true,false,false,true,true,true,false),Treat::remove,Bucket::removedWhole));
+    // Interactables are never removed whole (MINOR-5): the flat cut at the plane instead, counted apart; kept stays kept.
+    assert(is(rule(Piece::object,Side::front,true,false,false,false,true,false,false,false,true),Treat::flat,Bucket::interactCut));
+    assert(is(rule(Piece::object,Side::back,false,true,false,false,true,false,false,false,true),Treat::flat,Bucket::interactCut));
+    assert(is(rule(Piece::object,Side::front,false,false,false,false,true,false,false,false,true),Treat::keep,Bucket::keptObject));
+    assert(is(rule(Piece::object,Side::back,false,true,false,true,true,false,false,false,true),Treat::keep,Bucket::keptGallery));
+    // Never removed when interactable or the floor, whatever else holds.
+    for (unsigned bits = 0;bits < 512;++bits) {
+        Facts f; f.kitCell = true; f.piece = (bits & 1u) ? Piece::object : (bits & 2u) ? Piece::member : Piece::kit;
+        f.side = (bits & 4u) ? Side::front : (bits & 8u) ? Side::back : Side::across;
+        f.lane = bits & 16u; f.above = bits & 32u; f.overhead = bits & 64u; f.around = bits & 128u; f.low = bits & 256u;
+        for (const bool interact : {false,true}) for (const bool floor : {false,true}) {
+            f.interact = interact; f.floor = floor;
+            if (interact || floor) assert(decide(f).treat != Treat::remove);
+        }
+    }
     assert(is(rule(Piece::object,Side::across,true,false,true,false,true,true),Treat::remove,Bucket::removedObject));
     assert(is(rule(Piece::object,Side::across,false,true,false,false,true,true),Treat::remove,Bucket::removedObject)); // upper floor wins
     assert(is(rule(Piece::object,Side::across,true,false,false,false),Treat::remove,Bucket::removedObject));
@@ -1026,16 +1097,17 @@ void styleRules() {
     const std::string row = line;
     for (const char* field : {"FixedShaderStyle t=1234.500 frame=99 style=1 state=installed cell=kit kit=212 dungeon=0 gallery=0 shadows=1 frames=6 ",
         "storeyZ=310.00 relStorey=242.00 lineZ=310.00 keptFar=40 keptObjects=0 ","slicedFar=0 slicedObjects=0 removedWhole=300 removedObjects=0 ",
-        "refs=180 ","storeyMoves=2 ","shadowRemoved=12 ","fxFloorKept=1 fxWholeRadius=120.2 sample=window"})
+        "refs=180 ","storeyMoves=2 ","shadowRemoved=12 ","fxFloorKept=1 fxWholeRadius=120.2 interactCut=0 sample=window"})
         assert(row.find(field) != std::string::npos);
     StyleSample idle; idle.state = Feature::refused;
     assert(formatStyle(line,sizeof(line),idle) && std::string(line).find("state=refused cell=unknown") != std::string::npos &&
         std::string(line).find("storeyZ=nan relStorey=nan lineZ=nan ") != std::string::npos);
-    // As the FixedShader row's longest: ten-digit window counters (a 0.1 s window), the widest values of the rest.
+    // As the FixedShader row's longest: ten-digit window counters (a 0.1 s window), the widest values of the rest, except
+    // the census (at most a cell's references: five digits) and refs (at most the 4,096 table slots).
     const unsigned long long most = 9999999999ull;
-    StyleSample big; big.seconds = 1e7; big.frame = ~0ull; big.style = 1; big.census = {~0u,~0u,~0u}; big.haveView = big.storeyKnown = true;
+    StyleSample big; big.seconds = 1e7; big.frame = ~0ull; big.style = 1; big.census = {99999u,99999u,99999u}; big.haveView = big.storeyKnown = true;
     big.state = Feature::installed; big.cell = CellStyle::unknown; big.gallery = big.shadows = true;
-    big.storeyZ = big.lineZ = -1e7f; big.base = 1e7f; big.refs = ~0u; big.moves = most; big.fxFloorKept = most; big.fxWholeRadius = 1e7f;
+    big.storeyZ = big.lineZ = -1e7f; big.base = 1e7f; big.refs = 4096u; big.moves = most; big.fxFloorKept = most; big.fxWholeRadius = 1e7f;
     for (auto& value : big.window.buckets) value = most;
     big.window.frames = big.window.underLine = big.window.slicedLow = big.window.slicedFar = big.window.slicedObjects = big.window.tableFull = most;
     big.window.storeyUploads = big.window.shadowPasses = big.window.shadowRemoved = big.window.shadowSkips = most;

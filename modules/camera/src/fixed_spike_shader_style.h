@@ -55,6 +55,9 @@ struct StyleRuntime {
     int quadrant{-1};
     unsigned long long lastFrame{};
     Budget shadowBudget;
+    // Vertex shader objects of shadow passes whose bytecode is not on the audited list: skipped
+    // without preparing them, so no FCS-75 line comes from a shadow pass (review of 30503e0, MINOR-7).
+    std::array<const std::uint8_t*,64> shadowRejected{},shadowAccepted{};
     std::array<StyleEntry,styleEntries> entries{};
     std::array<std::array<const void*,removedSlots>,2> removed{}; // geometry removed whole: [current] this frame, the other the last
     std::size_t current{};
@@ -135,6 +138,10 @@ inline void refresh(StyleEntry& e,RE::TESObjectREFR* ref,Kind kind) {
     f.above = box.valid && box.low.z >= s.lineZ-aboveTolerance;
     f.overhead = box.valid && box.low.z >= s.base+storeyHeadroom;
     f.around = box.valid && feet.x >= box.low.x && feet.x <= box.high.x && feet.y >= box.low.y && feet.y <= box.high.y;
+    f.low = box.valid && box.high.z <= feet.z+laneHigh;
+    f.floor = f.around && box.high.z <= feet.z+floorTop;
+    // Every object form type the cursor can activate (all of kindOf's objects but Tree).
+    f.interact = kind == Kind::object && base && base->GetFormType() != RE::FormType::Tree;
     e.decision = decide(f);
     e.frame = r.frame;
     ++s.refsNow;
@@ -203,6 +210,11 @@ inline void styledPass(void* pass,std::size_t shaderClass,Vec eye) {
     else {
         if (e->frame != r.frame) refresh(*e,ref,kind);
         d = e->decision;
+        // A back-side keep rests on the base OBND; this pass's own bound must be on the back side
+        // too (a geometry larger than its OBND), otherwise the flat cut (review of 30503e0, MINOR-3).
+        if ((d.bucket == Bucket::keptFar || d.bucket == Bucket::keptGallery) &&
+            sideOf(sphereBox(bound.centre,bound.radius),e->thin,r.view.feet,r.view.eye,sideExit) != Side::back)
+            d = {Treat::flat,Bucket::fallback};
     }
     if (below && d.treat != Treat::remove) { skipped(Skip::below); return; }
     const bool sliced = d.treat == Treat::flat || d.treat == Treat::slice || d.treat == Treat::low;
@@ -220,10 +232,28 @@ inline void styledPass(void* pass,std::size_t shaderClass,Vec eye) {
     }
     if (d.treat == Treat::low) ++sw.slicedLow;
     if (e ? e->side == Side::back : false) ++sw.slicedFar;
-    if (e ? e->piece == Piece::object : kind == Kind::object) ++sw.slicedObjects;
+    // An interactable given the flat cut instead of a removal is counted on interactCut only.
+    // ... and a tall object around the player given the flat cut, on fallback (aroundCut).
+    if (d.bucket != Bucket::interactCut && d.bucket != Bucket::aroundCut && (e ? e->piece == Piece::object : kind == Kind::object)) ++sw.slicedObjects;
     if (height == r.view.planeZ) { apply(*entry,plane,shaderClass); return; } // the plane buffer: the flat cut itself
     if (!uploadStorey(cutConstant(height,eye.z))) return;
     bindStyle(*entry,s.storeyBuffer,shaderClass,true);
+}
+// The vertex shader current for a shadow pass is on the Lighting/Utility audited
+// list (checked once per shader object, 64 remembered each way; beyond that the
+// pass is skipped). Only then may shaderFor prepare it.
+inline bool shadowAudited() {
+    auto& r = *runtime;
+    auto& s = *r.style;
+    const auto object = peek<const std::uint8_t*>(r.state,offset::currentVertexShader);
+    if (!object) return false;
+    for (const auto known : s.shadowAccepted) if (known == object) return true;
+    for (const auto known : s.shadowRejected) if (known == object) return false;
+    const std::uint32_t size = peek<std::uint32_t>(object,offset::shaderCodeSize);
+    const bool ok = size >= containerHeader && size <= largestBlob && auditedFor(0,codeHash(object+offset::shaderCode,size));
+    auto& list = ok ? s.shadowAccepted : s.shadowRejected;
+    for (auto& slot : list) if (!slot) { slot = object; break; }
+    return ok;
 }
 // A Utility pass of another view (shadow maps among them): a geometry the main
 // view removed whole this frame or the last casts nothing either.
@@ -234,6 +264,7 @@ inline void shadowPass(void* pass,std::size_t shaderClass) {
     const auto geometry = peek<const std::uint8_t*>(pass,offset::passGeometry);
     if (!geometry || !wasRemoved(geometry)) return;
     ++s.window.shadowPasses;
+    if (!shadowAudited()) { ++s.window.shadowSkips; return; }
     const Entry* entry = shaderFor(0);
     if (!entry || !entry->patched || !s.shadowBudget.take()) { ++s.window.shadowSkips; return; }
     ++s.window.shadowRemoved;
@@ -303,12 +334,15 @@ inline void installStyle() {
     BufferDescription description;
     description.bytes = static_cast<std::uint32_t>(sizeof(Constant));
     const InitialData initial{&removeConstant,0u,0u};
+    // The remove buffer never changes: immutable (usage 1), no CPU access (review of 30503e0, MINOR-7 option).
+    BufferDescription immutable = description;
+    immutable.usage = 1; immutable.access = 0;
     void* storey = nullptr;
     void* remove = nullptr;
     const std::int32_t first = invoke<std::int32_t>(r.device,method::createBuffer,static_cast<const BufferDescription*>(&description),
         static_cast<const void*>(nullptr),&storey);
     const std::int32_t second = first >= 0 && storey ? invoke<std::int32_t>(r.device,method::createBuffer,
-        static_cast<const BufferDescription*>(&description),static_cast<const void*>(&initial),&remove) : -1;
+        static_cast<const BufferDescription*>(&immutable),static_cast<const void*>(&initial),&remove) : -1;
     if (first < 0 || !storey || second < 0 || !remove) {
         s.state = Feature::refused;
         char text[224]{};
