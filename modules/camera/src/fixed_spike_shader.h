@@ -14,11 +14,19 @@
 // start of every frame (RVA 1009E72).
 //
 // Threads. The camera frame service publishes the plane on Main::threadID.
-// The hooks (BSShader slots 6 and 7 of Lighting and Utility) are expected on
-// the same thread, because the engine draws through one immediate device
-// context; that is checked on every call. A call on another thread touches
-// nothing and stays native (FCS-71, logged once). Other threads only clear
-// `active`.
+// The hooks (BSShader slots 6 and 7 of Lighting, Utility and Effect, and the
+// void colour's call site) are expected on the same thread, because the
+// engine draws through one immediate device context; that is checked on
+// every call. A call on another thread touches nothing and stays native
+// (FCS-71 Lighting/Utility, FCS-88 Effect, FCS-83 void; logged once). Other
+// threads only clear `active`.
+//
+// Second pass (owner decision 2026-11-10): Effect passes are cut exactly like
+// Lighting passes but counted apart (group 1, the FixedShaderLook row), and
+// while the cut is active the main view clears to the configured colour
+// (fixed_spike_shader_void.h). Both stay native whenever the cut is inactive.
+// The void colour is this mode's only change to engine code: the displacement
+// of one call, made once at install; nothing in this file writes code.
 #include "fixed_spike_shader_policy.h"
 #include <cwchar>
 
@@ -33,18 +41,26 @@ using PassFunction = std::uintptr_t(*)(void*,void*,std::uintptr_t,std::uintptr_t
 // A vertex shader object the engine has had current for a selected pass, and
 // the patched device shader made from its bytecode (null: drawn natively).
 struct Entry { const std::uint8_t* object{}; void* patched{}; };
+// SetClearColor, ID 77249: (renderer, r, g, b, a), as the call at 656DAA passes them.
+using ClearColor = void(*)(void*,float,float,float,float);
+// Patched, rejected (FCS-73/74/78 or 84/85/87) and unaudited (FCS-75/86) shaders of one group.
+struct Made { unsigned patched{},rejected{},unaudited{}; };
 struct Runtime {
     Config config;
     void (*logger)(const char*){};
     void (*emitter)(const char*){};
+    void (*lookEmitter)(const char*){};
     std::atomic<std::uint32_t> refusals{};
     std::atomic_bool pending{};  // hooks to be installed by the next main-thread camera frame
     std::atomic_bool active{};   // a snapshot is published
     std::atomic_bool latched{};  // a run-time refusal: native for the rest of the session
     std::atomic_bool opened{};   // a pass is being drawn cut
-    std::atomic<unsigned long long> offMain{};
+    std::array<std::atomic<unsigned long long>,2> offMain{}; // hook calls off the main thread, per group
+    std::atomic<unsigned long long> voidOffMain{};
     // Main thread only from here on.
     bool installed{},haveView{},haveUploaded{},haveOther{};
+    Feature voidState{},effectState{};
+    ClearColor clearColor{}; // the engine's SetClearColor; set before the call site is redirected
     std::uintptr_t base{};
     const std::uint8_t* state{};
     void* device{};
@@ -55,11 +71,12 @@ struct Runtime {
     CutPlane plane;
     const std::uint8_t* openObject{}; // the engine's vertex shader object our copy stands in for
     Constant uploaded{};
-    std::array<Entry,1024> shaders{};
-    unsigned patched{},rejected{},unaudited{};
+    std::array<Entry,2048> shaders{}; // 1,072 vertex shader objects in the three classes
+    std::array<Made,2> made{};
     Vec otherEye{},otherDirection{};
-    Budget budget;
-    Window window;
+    std::array<Budget,2> budgets{};
+    std::array<Window,2> windows{};
+    LookWindow look{};
     unsigned long long frame{},published{},framePasses{},frameMatched{};
     unsigned missFrames{},tick{};
     double clock{},nextTrace{};
@@ -107,53 +124,58 @@ inline bool finish() {
 inline void fault(Fault where) {
     if (runtime->opened.load(std::memory_order_acquire)) static_cast<void>(finish());
     latch();
-    ++runtime->window.unbalanced;
+    ++runtime->windows[0].unbalanced;
     char text[256]{};
     std::snprintf(text,sizeof(text),"cause=%u: a cut pass was still open at %s; it was closed, native rendering for the rest of the session",
         static_cast<unsigned>(where),faultName(where));
     refuse(Refusal::bracket,text);
 }
 // The patched device shader for a vertex shader object, made once. Only
-// bytecode on the audited list is patched; anything else stays native.
-inline void prepare(Entry& entry) {
+// bytecode on its group's audited list is patched; anything else stays native.
+inline void prepare(Entry& entry,std::size_t group) {
     auto& r = *runtime;
+    auto& made = r.made[group];
+    const PrepareCodes& codes = prepareCodes[group];
+    const char* what = group ? "an Effect" : "a";
     char text[256]{};
     const std::uint32_t size = peek<std::uint32_t>(entry.object,offset::shaderCodeSize);
     const std::uint8_t* code = entry.object+offset::shaderCode;
     if (size < containerHeader || size > largestBlob || !peek<void*>(entry.object,offset::shaderObject)) {
-        ++r.rejected;
-        std::snprintf(text,sizeof(text),"a current vertex shader object has no device shader or an impossible bytecode size (%u); such passes are drawn natively",size);
-        refuse(Refusal::object,text); return;
+        ++made.rejected;
+        std::snprintf(text,sizeof(text),"%s current vertex shader object has no device shader or an impossible bytecode size (%u); such passes are drawn natively",
+            what,size);
+        refuse(codes.object,text); return;
     }
     const std::uint64_t hash = codeHash(code,size);
-    if (!audited(hash)) {
-        ++r.unaudited;
-        std::snprintf(text,sizeof(text),"a selected pass used vertex shader bytecode that is not on the audited list (hash %016llx, %u bytes); "
-            "such passes are drawn natively",static_cast<unsigned long long>(hash),size);
-        refuse(Refusal::unaudited,text); return;
+    if (!auditedFor(group,hash)) {
+        ++made.unaudited;
+        std::snprintf(text,sizeof(text),"%s selected pass used vertex shader bytecode that is not on its audited list (hash %016llx, %u bytes); "
+            "such passes are drawn natively",what,static_cast<unsigned long long>(hash),size);
+        refuse(codes.unaudited,text); return;
     }
-    const Patched made = patchVertexShader(code,size);
-    if (made.result != Patch::ok) {
-        ++r.rejected;
+    const Patched patched = patchVertexShader(code,size);
+    if (patched.result != Patch::ok) {
+        ++made.rejected;
         std::snprintf(text,sizeof(text),"audited bytecode %016llx was not patched (%s); such passes are drawn natively",
-            static_cast<unsigned long long>(hash),patchNames[static_cast<std::size_t>(made.result)]);
-        refuse(Refusal::patch,text); return;
+            static_cast<unsigned long long>(hash),patchNames[static_cast<std::size_t>(patched.result)]);
+        refuse(codes.patch,text); return;
     }
     void* created = nullptr;
-    const std::int32_t answer = invoke<std::int32_t>(r.device,method::createVertexShader,static_cast<const void*>(made.code.data()),
-        made.code.size(),static_cast<void*>(nullptr),&created);
+    const std::int32_t answer = invoke<std::int32_t>(r.device,method::createVertexShader,static_cast<const void*>(patched.code.data()),
+        patched.code.size(),static_cast<void*>(nullptr),&created);
     if (answer < 0 || !created) {
-        ++r.rejected;
+        ++made.rejected;
         std::snprintf(text,sizeof(text),"the device refused a patched vertex shader (hash %016llx, result %08X); such passes are drawn natively",
             static_cast<unsigned long long>(hash),static_cast<unsigned>(answer));
-        refuse(Refusal::create,text); return;
+        refuse(codes.create,text); return;
     }
     entry.patched = created;
-    ++r.patched; ++r.window.created;
+    ++made.patched; ++r.windows[group].created;
 }
 // The vertex shader the engine bound for this pass's technique, by object
-// (they live for the session). Null when the table is crowded: native.
-inline Entry* shaderFor() {
+// (they live for the session; each belongs to one class). Null when the
+// table is crowded: native.
+inline Entry* shaderFor(std::size_t group) {
     auto& r = *runtime;
     const auto object = peek<const std::uint8_t*>(r.state,offset::currentVertexShader);
     if (!object) return nullptr;
@@ -161,7 +183,7 @@ inline Entry* shaderFor() {
     for (std::size_t probe = 0;probe < 16;++probe) {
         auto& entry = r.shaders[(first+probe) % r.shaders.size()];
         if (entry.object == object) return &entry;
-        if (!entry.object) { entry.object = object; prepare(entry); return &entry; }
+        if (!entry.object) { entry.object = object; prepare(entry,group); return &entry; }
     }
     return nullptr;
 }
@@ -204,31 +226,36 @@ inline void apply(const Entry& entry,Constant wanted,std::size_t shaderClass) {
         std::memcpy(mapped.data,&wanted,sizeof(wanted));
         invoke<void>(r.context,method::unmap,r.buffer,0u);
         r.uploaded = wanted; r.haveUploaded = true;
-        ++r.window.uploads;
+        ++r.windows[groupOf(shaderClass)].uploads;
     }
     void* buffers[1]{r.buffer};
     invoke<void>(r.context,method::vsSetConstantBuffers,cutBuffer,1u,static_cast<void* const*>(buffers));
     invoke<void>(r.context,method::vsSetShader,entry.patched,static_cast<void* const*>(nullptr),0u);
     r.openObject = entry.object;
     r.opened.store(true,std::memory_order_release);
-    ++r.window.cut; ++r.window.byClass[shaderClass];
+    auto& w = r.windows[groupOf(shaderClass)];
+    ++w.cut; ++w.byClass[shaderClass];
 }
 // A pass of a hooked shader class, after its SetupGeometry. Main thread.
+// Effect passes take the same path with their own counters, budget and
+// audited list; they do not feed the FCS-76 view check.
 inline void consider(void* pass,std::size_t shaderClass) {
     auto& r = *runtime;
     if (r.latched.load(std::memory_order_relaxed)) return;
-    if (!thin::onMain()) { r.offMain.fetch_add(1ull,std::memory_order_relaxed); return; }
-    ++r.window.passes; ++r.framePasses;
+    const std::size_t group = groupOf(shaderClass);
+    if (!thin::onMain()) { r.offMain[group].fetch_add(1ull,std::memory_order_relaxed); return; }
+    auto& w = r.windows[group];
+    ++w.passes; if (!group) ++r.framePasses;
     if (r.opened.load(std::memory_order_relaxed)) return; // a nested SetupGeometry: never two cuts at once
     if (!(r.tick++ & 63u)) r.clock = thin::seconds();
-    if (!r.haveView || !fresh(r.view,r.clock)) { ++r.window.stale; return; }
+    if (!r.haveView || !fresh(r.view,r.clock)) { ++w.stale; return; }
     const Vec eye = peek<Vec>(r.state,offset::posAdjust),direction = peek<Vec>(r.state,offset::viewDirection);
     if (!sameView(r.view,eye,direction)) {
-        ++r.window.otherView;
-        r.otherEye = eye; r.otherDirection = direction; r.haveOther = true;
+        ++w.otherView;
+        if (!group) { r.otherEye = eye; r.otherDirection = direction; r.haveOther = true; }
         return;
     }
-    ++r.frameMatched;
+    if (!group) ++r.frameMatched;
     const auto geometry = peek<const std::uint8_t*>(pass,offset::passGeometry);
     const Constant wanted = cutConstant(r.view.planeZ,eye.z);
     Skip skip = Skip::noBound;
@@ -237,10 +264,10 @@ inline void consider(void* pass,std::size_t shaderClass) {
         skip = reach(r.view,bound,peek<const void*>(geometry,offset::geometrySkin) != nullptr);
         if (skip == Skip::none) skip = ownerSkip(geometry);
     }
-    const Entry* entry = skip == Skip::none ? shaderFor() : nullptr;
+    const Entry* entry = skip == Skip::none ? shaderFor(group) : nullptr;
     if (skip == Skip::none && (!entry || !entry->patched)) skip = Skip::shader;
-    if (skip == Skip::none && !r.budget.take()) skip = Skip::cap;
-    if (skip != Skip::none) { ++r.window.skips[static_cast<std::size_t>(skip)]; return; }
+    if (skip == Skip::none && !r.budgets[group].take()) skip = Skip::cap;
+    if (skip != Skip::none) { ++w.skips[static_cast<std::size_t>(skip)]; return; }
     apply(*entry,wanted,shaderClass);
 }
 
@@ -253,7 +280,7 @@ std::uintptr_t hookSetup(void* self,void* pass,std::uintptr_t flags,std::uintptr
     if (pass && r.active.load(std::memory_order_acquire)) {
         const double started = r.config.trace ? thin::seconds() : 0.0;
         consider(pass,Index);
-        if (r.config.trace && thin::onMain()) r.window.seconds += thin::seconds()-started;
+        if (r.config.trace && thin::onMain()) r.windows[groupOf(Index)].seconds += thin::seconds()-started;
     }
     return result;
 }
@@ -262,7 +289,7 @@ std::uintptr_t hookRestore(void* self,void* pass,std::uintptr_t flags,std::uintp
     auto& r = *runtime;
     const auto result = r.restore[Index](self,pass,flags,extra);
     if (r.opened.load(std::memory_order_acquire)) {
-        if (!thin::onMain()) r.offMain.fetch_add(1ull,std::memory_order_relaxed);
+        if (!thin::onMain()) r.offMain[groupOf(Index)].fetch_add(1ull,std::memory_order_relaxed);
         else if (!finish()) fault(Fault::shaderChanged);
     }
     return result;
@@ -284,34 +311,47 @@ inline const char* foreignRenderer() {
     return nullptr;
 }
 // 0 = every ID resolves to the audited RVA. 1-3 state, device, context;
-// 10-11 the lighting and utility vtables.
+// 10-11 the lighting and utility vtables (Effect: effectGuard).
 inline unsigned addressGuard(std::uintptr_t base) {
     constexpr std::array<Address,3> data{stateAddress,deviceAddress,contextAddress};
     for (unsigned i = 0;i < data.size();++i)
         if (REL::ID(data[i].id).address() != base+data[i].rva) return 1u+i;
-    for (unsigned i = 0;i < shaderClasses.size();++i)
+    for (unsigned i = 0;i < mainClasses;++i)
         if (REL::ID(shaderClasses[i].table.id).address() != base+shaderClasses[i].table.rva) return 10u+i;
     return 0;
 }
-// 0 = slots 6 and 7 of every enabled class hold the audited functions with the
-// audited first bytes. Otherwise 10 * (class + 1) + 1 setup slot, 2 restore
-// slot, 3 setup bytes, 4 restore bytes: another module owns the slot or patched it.
+// 0 = slots 6 and 7 of the class hold the audited functions with the audited
+// first bytes. Otherwise 1 setup slot, 2 restore slot, 3 setup bytes, 4
+// restore bytes: another module owns the slot or patched it.
+inline unsigned slotGuard(std::uintptr_t base,std::size_t index) {
+    const auto& c = shaderClasses[index];
+    const auto slots = reinterpret_cast<const std::uintptr_t*>(base+c.table.rva);
+    if (slots[setupSlot] != base+c.setupRva) return 1u;
+    if (slots[restoreSlot] != base+c.restoreRva) return 2u;
+    if (std::memcmp(reinterpret_cast<const void*>(slots[setupSlot]),c.setupBytes.data(),c.setupBytes.size()) != 0) return 3u;
+    if (std::memcmp(reinterpret_cast<const void*>(slots[restoreSlot]),c.restoreBytes.data(),c.restoreBytes.size()) != 0) return 4u;
+    return 0;
+}
+// Lighting and Utility, as enabled: 0, or 10 * (class + 1) + the slot check.
 inline unsigned tableGuard(std::uintptr_t base,unsigned mask) {
-    for (unsigned i = 0;i < shaderClasses.size();++i) {
+    for (unsigned i = 0;i < mainClasses;++i) {
         if (!shaderEnabled(mask,i)) continue;
-        const auto& c = shaderClasses[i];
-        const auto slots = reinterpret_cast<const std::uintptr_t*>(base+c.table.rva);
-        if (slots[setupSlot] != base+c.setupRva) return 10u*(i+1u)+1u;
-        if (slots[restoreSlot] != base+c.restoreRva) return 10u*(i+1u)+2u;
-        if (std::memcmp(reinterpret_cast<const void*>(slots[setupSlot]),c.setupBytes.data(),c.setupBytes.size()) != 0) return 10u*(i+1u)+3u;
-        if (std::memcmp(reinterpret_cast<const void*>(slots[restoreSlot]),c.restoreBytes.data(),c.restoreBytes.size()) != 0) return 10u*(i+1u)+4u;
+        if (const unsigned failed = slotGuard(base,i)) return 10u*(i+1u)+failed;
     }
     return 0;
+}
+// Effect: 0, 1 its vtable ID, or 1 + the slot check. A failure leaves the
+// Lighting/Utility cut as it is (FCS-80).
+inline unsigned effectGuard(std::uintptr_t base) {
+    const auto& c = shaderClasses[effectClass];
+    if (REL::ID(c.table.id).address() != base+c.table.rva) return 1u;
+    const unsigned failed = slotGuard(base,effectClass);
+    return failed ? 1u+failed : 0u;
 }
 template<std::size_t Index>
 void hookClass() {
     auto& r = *runtime;
-    if (!shaderEnabled(r.config.shaders,Index)) return;
+    if (!classEnabled(r.config,Index)) return;
     REL::Relocation<std::uintptr_t> table{REL::ID(shaderClasses[Index].table.id)};
     const auto slots = reinterpret_cast<const std::uintptr_t*>(table.address());
     // Published before the slots change; restore first, so a setup hook never runs without it.
@@ -319,6 +359,23 @@ void hookClass() {
     r.restore[Index] = reinterpret_cast<PassFunction>(slots[restoreSlot]);
     static_cast<void>(table.write_vfunc(restoreSlot,&hookRestore<Index>));
     static_cast<void>(table.write_vfunc(setupSlot,&hookSetup<Index>));
+}
+// fixed_spike_shader_void.h (included at the end of this file).
+inline void installVoid(std::uintptr_t base);
+// Main thread, from commit, after the Lighting/Utility hooks. The Effect class
+// is hooked only with bShaderCutEffect=1 and when its own guard passes.
+inline void installEffect(std::uintptr_t base) {
+    auto& r = *runtime;
+    if (!r.config.effect) { r.effectState = Feature::off; return; }
+    if (const unsigned failed = effectGuard(base)) {
+        r.effectState = Feature::refused;
+        char text[224]{};
+        std::snprintf(text,sizeof(text),"check=%u: the Effect vtable ID, slot or first bytes differ; Effect passes are drawn natively, "
+            "the Lighting/Utility cut is unchanged",failed);
+        refuse(Refusal::effectTable,text); return;
+    }
+    hookClass<effectClass>();
+    r.effectState = Feature::installed;
 }
 // Main thread, inside the camera frame service. Every guard and the one
 // device object the mode needs up front come before the first slot is written.
@@ -360,6 +417,14 @@ inline void commit() {
         r.config.shaders,static_cast<double>(r.config.height),static_cast<double>(r.config.radius),r.config.maxPerFrame,
         static_cast<unsigned>(r.config.trace),static_cast<unsigned>(auditedVertexShaders.size()));
     r.logger(text);
+    // Second pass. Each refuses on its own and leaves the cut as it is.
+    installEffect(base);
+    installVoid(base);
+    std::snprintf(text,sizeof(text),"FixedCameraSpike shader look installed void=%s color=%.3f,%.3f,%.3f effect=%s effectAudited=%u",
+        featureNames[static_cast<std::size_t>(r.voidState)],static_cast<double>(r.config.color.red),static_cast<double>(r.config.color.green),
+        static_cast<double>(r.config.color.blue),featureNames[static_cast<std::size_t>(r.effectState)],
+        static_cast<unsigned>(auditedEffectVertexShaders.size()));
+    r.logger(text);
 }
 
 // ---- called by the spike's frame bracket ------------------------------------
@@ -380,8 +445,12 @@ inline void frameStart() {
     if (r.pending.exchange(false,std::memory_order_acq_rel)) commit();
     if (!r.installed) return;
     if (r.opened.load(std::memory_order_acquire)) fault(Fault::frame);
-    if (r.offMain.load(std::memory_order_relaxed))
+    if (r.offMain[0].load(std::memory_order_relaxed))
         refuse(Refusal::thread,"a render hook ran off the main thread; such calls touch nothing and are drawn natively");
+    if (r.offMain[1].load(std::memory_order_relaxed))
+        refuse(Refusal::effectThread,"an Effect render hook ran off the main thread; such calls touch nothing and are drawn natively");
+    if (r.voidOffMain.load(std::memory_order_relaxed))
+        refuse(Refusal::voidThread,"the main view's clear colour was set off the main thread; those calls kept the engine's colour");
     if (!r.latched.load(std::memory_order_acquire) && peek<void*>(reinterpret_cast<const void*>(r.base+contextAddress.rva),0) != r.context) {
         latch();
         refuse(Refusal::context,"the engine's device context changed; native rendering for the rest of the session");
@@ -407,11 +476,11 @@ inline void publish(Vec eye,Vec forward,Vec feet,bool interiorCell,unsigned long
     // The plane's reference height starts again after any frame without a plane.
     if (r.published+1u != frame) r.plane.reset();
     std::optional<View> next;
-    if (r.installed && !r.latched.load(std::memory_order_acquire) && interiorCell && std::isfinite(feet.z))
+    if (publishes(r.installed,r.latched.load(std::memory_order_acquire),interiorCell,feet.z))
         next = makeView(r.config,eye,forward,feet,r.plane.update(feet.z,now),frame,now);
     if (!next) { r.active.store(false,std::memory_order_release); return; }
     r.view = *next; r.haveView = true; r.published = frame;
-    r.budget.frame();
+    for (auto& budget : r.budgets) budget.frame();
     r.active.store(true,std::memory_order_release);
 }
 inline void trace(double now) {
@@ -420,30 +489,42 @@ inline void trace(double now) {
     if (!r.config.trace || now < r.nextTrace) return;
     r.nextTrace = now+.1;
     Sample s;
-    s.seconds = now; s.frame = r.frame; s.offMain = r.offMain.load(std::memory_order_relaxed);
+    s.seconds = now; s.frame = r.frame; s.offMain = r.offMain[0].load(std::memory_order_relaxed);
     s.installed = r.installed;
     s.active = r.active.load(std::memory_order_acquire); s.latched = r.latched.load(std::memory_order_acquire);
     // The snapshot is reported only while it is in use; an inactive window reads nan.
     if (s.active && r.haveView) { s.haveView = true; s.view = r.view; }
     s.haveOther = r.haveOther; s.otherEye = r.otherEye; s.otherDirection = r.otherDirection;
     s.offset = r.uploaded.offset;
-    s.peak = r.budget.peak; s.cap = r.budget.limit;
-    s.patched = r.patched; s.rejected = r.rejected; s.unaudited = r.unaudited;
-    s.window = r.window;
-    r.budget.peak = 0; r.window = {}; r.haveOther = false;
+    s.peak = r.budgets[0].peak; s.cap = r.budgets[0].limit;
+    s.patched = r.made[0].patched; s.rejected = r.made[0].rejected; s.unaudited = r.made[0].unaudited;
+    s.window = r.windows[0];
+    LookSample look;
+    look.seconds = now; look.frame = r.frame;
+    look.voidOffMain = r.voidOffMain.load(std::memory_order_relaxed); look.effectOffMain = r.offMain[1].load(std::memory_order_relaxed);
+    look.voidState = r.voidState; look.effectState = r.effectState; look.color = r.config.color;
+    look.look = r.look; look.effect = r.windows[1];
+    look.peak = r.budgets[1].peak;
+    look.patched = r.made[1].patched; look.rejected = r.made[1].rejected; look.unaudited = r.made[1].unaudited;
+    for (auto& budget : r.budgets) budget.peak = 0;
+    r.windows = {}; r.look = {}; r.haveOther = false;
     char line[768]{};
     if (format(line,sizeof(line),s)) r.emitter(line);
+    if (formatLook(line,sizeof(line),look)) r.lookEmitter(line);
 }
 inline bool tracing() { return runtime && runtime->config.trace; }
 inline const char* status() { return !runtime ? "off" : runtime->installed ? "installed" : "pending"; }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1 and iSeeThroughMode=3.
-inline void configure(const Config& requested,void (*logger)(const char*),void (*emitter)(const char*)) {
+inline void configure(const Config& requested,void (*logger)(const char*),void (*emitter)(const char*),void (*lookEmitter)(const char*)) {
     runtime = new Runtime;
     auto& r = *runtime;
-    r.logger = logger; r.emitter = emitter;
+    r.logger = logger; r.emitter = emitter; r.lookEmitter = lookEmitter;
     bool adjusted = false;
     r.config = validate(requested,&adjusted);
-    r.budget.limit = r.config.maxPerFrame;
+    for (auto& budget : r.budgets) budget.limit = r.config.maxPerFrame;
+    r.voidState = r.config.voidColor ? Feature::pending : Feature::off;
+    r.effectState = r.config.effect ? Feature::pending : Feature::off;
     if (adjusted) refuse(Refusal::settings,"one or more shader-cut values were out of range; safe values applied");
 }
 } // namespace skycrpg::camera::fixed::shader
+#include "fixed_spike_shader_void.h" // second pass: the void colour

@@ -8,11 +8,17 @@
 // draw, depth-only passes included; no pixel shader is touched. No engine
 // headers, no engine pointers. The native adapter is src/fixed_spike_shader.h;
 // the audit behind every number here is docs/evidence/p5.5/spike-wave2-shader.md.
+// Second pass (owner decision 2026-11-10): the Effect class is cut too, and
+// the main view's clear colour (the void) is replaced while the cut is active.
 #include "fixed_spike_policy.h"
 #include "fixed_spike_shader_audit.h"
+#include "fixed_spike_shader_effect_audit.h"
 #include <algorithm>
 #include <bit>
+#include <charconv>
 #include <cstdint>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace skycrpg::camera::fixed::shader {
@@ -32,13 +38,23 @@ struct ShaderClass {
     std::uintptr_t setupRva{},restoreRva{};
     std::array<std::uint8_t,16> setupBytes{},restoreBytes{};
 };
-constexpr std::array<ShaderClass,2> shaderClasses{{
+// Lighting and Utility are the cut of the first pass (the FixedShader row);
+// Effect (fog cards, light shafts, effect-shader particles) is the second
+// pass's, guarded, counted and traced on its own (the FixedShaderLook row).
+constexpr std::array<ShaderClass,3> shaderClasses{{
     {"lighting",{255053,0x1b47420},0x1549550,0x154a900,
         {0x48,0x8b,0xc4,0x44,0x89,0x40,0x18,0x48,0x89,0x50,0x10,0x48,0x89,0x48,0x08,0x55},
         {0x80,0x7a,0x1c,0x0a,0x75,0x3a,0x83,0x3d,0x83,0x53,0xb8,0x00,0x00,0x75,0x0c,0x81}},
     {"utility",{255302,0x1b4ab58},0x15673f0,0x15689c0,
         {0x48,0x8b,0xc4,0x48,0x89,0x48,0x08,0x41,0x56,0x48,0x81,0xec,0x40,0x01,0x00,0x00},
-        {0x8b,0x81,0x90,0x00,0x00,0x00,0x45,0x33,0xc0,0x8b,0xc8,0x81,0xe1,0x00,0x12,0x00}}}};
+        {0x8b,0x81,0x90,0x00,0x00,0x00,0x45,0x33,0xc0,0x8b,0xc8,0x81,0xe1,0x00,0x12,0x00}},
+    {"effect",{255194,0x1b48ab0},0x1557090,0x1557f50,
+        {0x48,0x8b,0xc4,0x48,0x89,0x50,0x10,0x48,0x89,0x48,0x08,0x55,0x53,0x56,0x48,0x8d},
+        {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x48,0x89,0x7c,0x24,0x18,0x0f}}}};
+constexpr std::size_t mainClasses = 2, effectClass = 2;
+// Counters, budgets and refusal codes are kept per group: 0 Lighting and
+// Utility (exactly as in the first pass), 1 Effect.
+constexpr std::size_t groupOf(std::size_t shaderClass) { return shaderClass == effectClass ? 1u : 0u; }
 namespace offset {
 constexpr std::size_t currentVertexShader = 0x348, posAdjust = 0x35c, viewDirection = 0x3a0; // RendererShadowState
 constexpr std::size_t passGeometry = 0x10;                                 // BSRenderPass
@@ -57,23 +73,64 @@ constexpr std::size_t vsSetConstantBuffers = 0x38, vsSetShader = 0x58, map = 0x7
 struct BufferDescription { std::uint32_t bytes{},usage{2},bind{4},access{0x10000},misc{},stride{}; };
 struct MappedBuffer { void* data{}; std::uint32_t rowPitch{},depthPitch{}; };
 constexpr std::uint32_t mapWriteDiscard = 4;
+constexpr std::size_t relaySize = 14;
 constexpr unsigned maxOwnerHops = 32;
 constexpr std::uint32_t ammoForm = 0x2a; // the engine looks past an ammunition reference for the actor carrying it (RVA 2EED5E)
 
-// One code per refusal site; codes above 63 need their own once-mask.
+// One code per refusal site; codes above 63 need their own once-mask. 80..88
+// are the second pass's: the Effect class and the void colour.
 enum class Refusal : unsigned { settings = 66, foreign = 67, address = 68, table = 69, device = 70, thread = 71, bracket = 72,
-    create = 73, patch = 74, unaudited = 75, view = 76, map = 77, object = 78, context = 79 };
-constexpr unsigned firstRefusal = 66, lastRefusal = 79;
+    create = 73, patch = 74, unaudited = 75, view = 76, map = 77, object = 78, context = 79,
+    effectTable = 80, voidSite = 81, voidMemory = 82, voidThread = 83, effectCreate = 84, effectPatch = 85, effectUnaudited = 86,
+    effectObject = 87, effectThread = 88 };
+constexpr unsigned firstRefusal = 66, lastRefusal = 88;
+static_assert(lastRefusal-firstRefusal < 32);
+// The refusals a shader preparation can end in, per group.
+struct PrepareCodes { Refusal object,unaudited,patch,create; };
+constexpr std::array<PrepareCodes,2> prepareCodes{{{Refusal::object,Refusal::unaudited,Refusal::patch,Refusal::create},
+    {Refusal::effectObject,Refusal::effectUnaudited,Refusal::effectPatch,Refusal::effectCreate}}};
 constexpr std::uint32_t refusalBit(Refusal code) { return 1u << (static_cast<unsigned>(code)-firstRefusal); }
 
 // ---- [FixedCameraSpike] shader-cut keys ------------------------------------
 constexpr unsigned traceLines = 6000;
+// The colour the main view clears to while the cut is active (the void), as
+// SetClearColor takes it: linear, before image space, 0..1 per channel.
+struct Color { float red{},green{},blue{}; };
+// sVoidColor: three numbers 0..1 separated by commas ("0,0,0"), spaces allowed.
+enum class ColorText : unsigned { ok, clamped, invalid };
+inline ColorText parseColor(std::string_view text,Color& out) {
+    std::array<float,3> parts{};
+    std::size_t at = 0;
+    bool clamped = false;
+    for (std::size_t i = 0;i < parts.size();++i) {
+        while (at < text.size() && text[at] == ' ') ++at;
+        float value{};
+        const auto parsed = std::from_chars(text.data()+at,text.data()+text.size(),value);
+        if (parsed.ec != std::errc{} || !std::isfinite(value)) { out = {}; return ColorText::invalid; }
+        at = static_cast<std::size_t>(parsed.ptr-text.data());
+        while (at < text.size() && text[at] == ' ') ++at;
+        if (i+1u < parts.size()) {
+            if (at >= text.size() || text[at] != ',') { out = {}; return ColorText::invalid; }
+            ++at;
+        }
+        parts[i] = std::clamp(value,0.0f,1.0f);
+        clamped = clamped || parts[i] != value;
+    }
+    if (at != text.size()) { out = {}; return ColorText::invalid; }
+    out = {parts[0],parts[1],parts[2]};
+    return clamped ? ColorText::clamped : ColorText::ok;
+}
 struct Config {
     float height{160.0f};       // cut plane above the player's feet
     float radius{0.0f};         // 0 = every piece in view; otherwise only pieces reaching within this ground distance of the feet
-    unsigned maxPerFrame{4096}; // cut draws per frame
+    unsigned maxPerFrame{4096}; // cut draws per frame (each group has its own budget)
     unsigned shaders{3};        // bit 0 lighting, bit 1 utility (depth passes)
     bool trace{};
+    // Second pass. Read only in mode 3, where both default on.
+    bool effect{true};          // bShaderCutEffect: the Effect class is cut too
+    bool voidColor{true};       // bVoidColor: the main view clears to `color` while the cut is active
+    std::string colorText{"0,0,0"}; // sVoidColor as read
+    Color color{};              // parsed from colorText by validate
 };
 // The camera stands about 336 ground units from the feet, so a radius under
 // 384 could leave a piece between camera and player whole.
@@ -84,10 +141,15 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     c.radius = !std::isfinite(c.radius) || c.radius == 0.0f ? 0.0f : std::clamp(c.radius,minRadius,8192.0f);
     c.maxPerFrame = std::clamp(c.maxPerFrame,1u,16384u);
     if (!c.shaders || c.shaders > 3u) c.shaders = 3;
-    if (adjusted) *adjusted = c.height != in.height || c.radius != in.radius || c.maxPerFrame != in.maxPerFrame || c.shaders != in.shaders;
+    // Clamped or unreadable colours are reported once as FCS-66; unreadable is black.
+    const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;
+    if (adjusted) *adjusted = c.height != in.height || c.radius != in.radius || c.maxPerFrame != in.maxPerFrame || c.shaders != in.shaders ||
+        colorChanged;
     return c;
 }
-constexpr bool shaderEnabled(unsigned mask,std::size_t index) { return index < shaderClasses.size() && ((mask >> index) & 1u) != 0; }
+// iShaderCutShaders selects Lighting and Utility only; Effect has its own key.
+constexpr bool shaderEnabled(unsigned mask,std::size_t index) { return index < mainClasses && ((mask >> index) & 1u) != 0; }
+constexpr bool classEnabled(const Config& c,std::size_t index) { return index == effectClass ? c.effect : shaderEnabled(c.shaders,index); }
 constexpr bool shaderMode(unsigned seeThroughMode) { return seeThroughMode == 3; }
 
 // ---- published snapshot -----------------------------------------------------
@@ -117,6 +179,13 @@ inline std::optional<View> makeView(const Config& c,Vec eye,Vec forward,Vec feet
     return v;
 }
 constexpr bool fresh(const View& view,double now) { return now-view.seconds <= staleSeconds && now-view.seconds >= -staleSeconds; }
+// A snapshot is published only for an eligible camera frame (fixed_spike.h
+// endFrame: third person, rig on, no menu or other exit) in an interior,
+// with the hooks installed and no refusal latched. Every other frame and
+// every lifecycle exit clears it. Both second-pass features follow it.
+inline bool publishes(bool installed,bool latched,bool interiorCell,float feetZ) {
+    return installed && !latched && interiorCell && std::isfinite(feetZ);
+}
 // A pass belongs to the published view when the render state's eye (its
 // position adjustment, the NiCamera's world translation) and view direction
 // are the published ones. Shadow maps, reflections, the local map and the
@@ -254,6 +323,11 @@ inline std::uint64_t codeHash(const std::uint8_t* code,std::size_t size) {
     return hash;
 }
 inline bool audited(std::uint64_t hash) { return std::binary_search(auditedVertexShaders.begin(),auditedVertexShaders.end(),hash); }
+// Each group is patched only from its own list: an Effect pass never uses a
+// Lighting/Utility audit and the reverse.
+inline bool auditedFor(std::size_t group,std::uint64_t hash) {
+    return group ? std::binary_search(auditedEffectVertexShaders.begin(),auditedEffectVertexShaders.end(),hash) : audited(hash);
+}
 
 // What the patch adds, and where it may go. The shipped vertex shaders declare
 // constant buffers 0, 1, 2, 7-12 at most and the engine binds no other vertex
@@ -493,6 +567,80 @@ inline Patched patchVertexShader(const std::uint8_t* code,std::size_t size) {
     return out;
 }
 
+// ---- void colour (second pass) ----------------------------------------------
+// ID 36558 (RVA 656D10) starts the main world render. At 656D8B..656DAA it
+// loads the cell's fog colour from the global 3D3E70..78 (written only by IDs
+// 26229/26230, read only here) and calls SetClearColor, ID 77249 (RVA 100A3F0,
+// (renderer, r in xmm1, g in xmm2, b in xmm3, a on the stack)). The colour is
+// used once, by the clear of the main colour target at 65758A inside ID 36559,
+// and replaced by (0,0,0,0) at 6575E5 in the same call. The call at 656DAA is
+// redirected to a relay that calls hookClearColor, which calls SetClearColor
+// exactly once, with the engine's arguments unless the cut is active.
+constexpr Address mainViewAddress{36558,0x656d10};
+constexpr Address clearColorAddress{77249,0x100a3f0};
+constexpr std::uintptr_t voidCallRva = 0x656daa;
+constexpr std::size_t voidGuardedBefore = 0x1f; // the guarded bytes start at 656D8B
+constexpr std::array<std::uint8_t,0x24> voidSiteBytes{
+    0xf3,0x0f,0x10,0x1d,0xe5,0xd0,0xd7,0x02,  // movss xmm3,[3D3E78]  blue
+    0xf3,0x0f,0x10,0x15,0xd9,0xd0,0xd7,0x02,  // movss xmm2,[3D3E74]  green
+    0xf3,0x0f,0x10,0x0d,0xcd,0xd0,0xd7,0x02,  // movss xmm1,[3D3E70]  red
+    0x48,0x8d,0x0d,0x96,0xb1,0xcd,0x02,       // lea rcx,[3331F40]     the renderer
+    0xe8,0x41,0x36,0x9b,0x00};                // call 100A3F0          SetClearColor
+static_assert(voidGuardedBefore+5u == voidSiteBytes.size());
+constexpr std::array<std::uint8_t,16> clearColorPrologue{
+    0xf3,0x0f,0x10,0x81,0xd8,0x27,0x00,0x00,0x0f,0x28,0xeb,0xf3,0x0f,0x11,0x05,0x1d};
+// Where a `call rel32` at `site` goes.
+inline std::uintptr_t callTarget(std::uintptr_t site,const std::uint8_t* call) {
+    std::int32_t displacement{};
+    std::memcpy(&displacement,call+1,sizeof(displacement));
+    return static_cast<std::uintptr_t>(static_cast<std::intptr_t>(site+5u)+displacement);
+}
+// The rel32 a 5-byte call at `site` needs to reach `target`, if it can.
+inline std::optional<std::int32_t> callDisplacement(std::uintptr_t site,std::uintptr_t target) {
+    const auto difference = static_cast<std::int64_t>(target)-static_cast<std::int64_t>(site+5u);
+    if (difference < (std::numeric_limits<std::int32_t>::min)() || difference > (std::numeric_limits<std::int32_t>::max)()) return {};
+    return static_cast<std::int32_t>(difference);
+}
+// Lowest and highest page start a 5-byte call at `site` can reach with a
+// 14-byte relay, aligned to the allocation granularity.
+struct Reach { std::uintptr_t low{},high{}; };
+inline Reach relayReach(std::uintptr_t site,std::uintptr_t granularity) {
+    constexpr std::uintptr_t span = std::uintptr_t{0x7fff0000};
+    const std::uintptr_t from = site+5u;
+    const std::uintptr_t low = from > span ? (from-span+granularity-1u)/granularity*granularity : granularity;
+    const std::uintptr_t high = (from+span-relaySize)/granularity*granularity;
+    return {low,high};
+}
+// jmp [rip+0] followed by the absolute target: the relay the call lands on.
+inline std::array<std::uint8_t,14> relay(std::uintptr_t target) {
+    std::array<std::uint8_t,14> bytes{0xff,0x25,0,0,0,0};
+    std::memcpy(bytes.data()+6,&target,sizeof(target));
+    return bytes;
+}
+// 0 = the call site and its callee are the audited ones. Otherwise the check
+// that failed: 1 ID 36558, 2 ID 77249, 3 the 36 bytes before and of the call
+// (another module patched them, or another build), 4 the call does not go to
+// SetClearColor, 5 SetClearColor's first 16 bytes differ (detoured).
+inline unsigned voidSiteCheck(std::uintptr_t base,std::uintptr_t mainView,std::uintptr_t clearColor,const std::uint8_t* window,
+    const std::uint8_t* callee) {
+    if (mainView != base+mainViewAddress.rva) return 1;
+    if (clearColor != base+clearColorAddress.rva) return 2;
+    if (std::memcmp(window,voidSiteBytes.data(),voidSiteBytes.size()) != 0) return 3;
+    if (callTarget(base+voidCallRva,window+voidGuardedBefore) != clearColor) return 4;
+    if (std::memcmp(callee,clearColorPrologue.data(),clearColorPrologue.size()) != 0) return 5;
+    return 0;
+}
+// What the relay call does with one SetClearColor of the main view.
+enum class Look : unsigned { applied, inactive, latched, stale, offMain, count };
+constexpr std::array lookNames{"applied","inactive","latched","stale","off-main"};
+static_assert(lookNames.size() == static_cast<std::size_t>(Look::count));
+// `active` is the cut's own published flag, so outdoors, first person, the
+// rig off (F8), every ineligible state and every lifecycle exit are native.
+// Off the main thread nothing else is read.
+constexpr Look lookDecision(bool onMain,bool active,bool latched,bool freshView) {
+    return !onMain ? Look::offMain : latched ? Look::latched : !active ? Look::inactive : !freshView ? Look::stale : Look::applied;
+}
+
 // ---- trace ------------------------------------------------------------------
 struct Window {
     unsigned long long passes{},cut{},uploads{},otherView{},stale{},created{},unbalanced{};
@@ -529,6 +677,49 @@ inline bool format(char* out,std::size_t size,const Sample& s) {
         of(s.haveOther,s.otherDirection.x),of(s.haveOther,s.otherDirection.y),of(s.haveOther,s.otherDirection.z),w.stale,
         skip(Skip::skinned),skip(Skip::noBound),skip(Skip::below),skip(Skip::outside),skip(Skip::ownerless),skip(Skip::actor),
         skip(Skip::kind),skip(Skip::shader),skip(Skip::cap));
+    return written > 0 && static_cast<std::size_t>(written) < size;
+}
+// The second pass's row, written right after each FixedShader row with the
+// same t and frame. FixedShader keeps exactly the first pass's format and
+// counts (Lighting and Utility only); everything of the Effect class and of
+// the void colour is here.
+struct LookWindow {
+    std::array<unsigned long long,static_cast<std::size_t>(Look::count)> calls{}; // main-view SetClearColor calls by decision (offMain: cumulative)
+    bool haveNative{};
+    Color native{};  // the engine's own colour at the last call in the window
+};
+// off: its key is 0; pending: the cut has not installed (yet, or never: FCS-67..70);
+// installed; refused: its own guard failed (FCS-80, FCS-81/82).
+enum class Feature : unsigned { off, pending, installed, refused, count };
+constexpr std::array featureNames{"off","pending","installed","refused"};
+static_assert(featureNames.size() == static_cast<std::size_t>(Feature::count));
+struct LookSample {
+    double seconds{};
+    unsigned long long frame{},voidOffMain{},effectOffMain{};
+    Feature voidState{},effectState{};
+    Color color{};               // the configured void colour
+    LookWindow look{};
+    Window effect{};             // Effect passes, counted like the FixedShader row's
+    unsigned peak{},patched{},rejected{},unaudited{};
+};
+inline bool formatLook(char* out,std::size_t size,const LookSample& s) {
+    const auto& w = s.effect;
+    const auto skip = [&](Skip which) { return w.skips[static_cast<std::size_t>(which)]; };
+    const auto call = [&](Look which) { return s.look.calls[static_cast<std::size_t>(which)]; };
+    const double none = static_cast<double>(std::numeric_limits<float>::quiet_NaN());
+    const bool applied = call(Look::applied) != 0;
+    const auto of = [&](bool have,float value) { return have ? static_cast<double>(value) : none; };
+    const int written = std::snprintf(out,size,
+        "FixedShaderLook t=%.3f frame=%llu void=%s voidApplied=%llu voidInactive=%llu voidLatched=%llu voidStale=%llu voidOffMain=%llu "
+        "voidColor=%.3f,%.3f,%.3f nativeColor=%.3f,%.3f,%.3f effect=%s fxPasses=%llu fxCut=%llu fxPeak=%u fxShaders=%u,%u,%u fxCreated=%llu "
+        "fxMicros=%.1f fxOffMain=%llu fxOtherView=%llu fxStale=%llu fxSkipSkin=%llu fxSkipBound=%llu fxSkipBelow=%llu fxSkipOut=%llu fxSkipOwner=%llu "
+        "fxSkipActor=%llu fxSkipKind=%llu fxSkipShader=%llu fxSkipCap=%llu sample=window",
+        s.seconds,s.frame,featureNames[static_cast<std::size_t>(s.voidState)],call(Look::applied),call(Look::inactive),call(Look::latched),
+        call(Look::stale),s.voidOffMain,of(applied,s.color.red),of(applied,s.color.green),of(applied,s.color.blue),
+        of(s.look.haveNative,s.look.native.red),of(s.look.haveNative,s.look.native.green),of(s.look.haveNative,s.look.native.blue),
+        featureNames[static_cast<std::size_t>(s.effectState)],w.passes,w.cut,s.peak,s.patched,s.rejected,s.unaudited,w.created,
+        w.seconds*1e6,s.effectOffMain,w.otherView,w.stale,skip(Skip::skinned),skip(Skip::noBound),skip(Skip::below),skip(Skip::outside),
+        skip(Skip::ownerless),skip(Skip::actor),skip(Skip::kind),skip(Skip::shader),skip(Skip::cap));
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 } // namespace skycrpg::camera::fixed::shader

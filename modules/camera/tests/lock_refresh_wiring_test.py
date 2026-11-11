@@ -252,7 +252,8 @@ for helper in ("inline void install(std::uintptr_t base) {\n    if (!runtime) re
                "inline bool tracing() { return runtime && ",
                "inline const char* status() { return !runtime ? "):
     assert helper in cut, helper
-for key in ("fShaderCutHeight", "fShaderCutRadius", "iShaderCutMaxPerFrame", "iShaderCutShaders", "iShaderCutTrace"):
+for key in ("fShaderCutHeight", "fShaderCutRadius", "iShaderCutMaxPerFrame", "iShaderCutShaders", "iShaderCutTrace",
+            "bShaderCutEffect", "bVoidColor", "sVoidColor"):
     assert gate.count('"FixedCameraSpike","' + key + '"') == 1 and ("\n" + key + "=") in ini, key
 assert "\niSeeThroughMode=0\n" in ini and "\nfShaderCutHeight=160\n" in ini and "\nfShaderCutRadius=0\n" in ini and "\niShaderCutTrace=0\n" in ini
 # The spike's bracket drives it: any thread may only switch it off.
@@ -276,6 +277,9 @@ assert commit.index("foreignRenderer()") < commit.index("addressGuard(base)") < 
     commit.index("method::createBuffer") < commit.index("if (answer < 0 || !created) {") < commit.index("Refusal::device") < \
     commit.index("r.buffer = created;") < commit.index("hookClass<0>(); hookClass<1>();") < commit.index("r.installed = true;")
 assert commit.count("return;") == 4 and "device && context ? invoke<std::int32_t>(device,method::createBuffer," in commit
+# Second pass: Effect and the void colour only after the cut is installed and logged, each refusing on its own.
+assert commit.index('"FixedCameraSpike shader cut installed shaders=') < commit.index("installEffect(base);") < \
+    commit.index("installVoid(base);") < commit.index('"FixedCameraSpike shader look installed void=')
 foreign = cut_body("inline const char* foreignRenderer() {", "// 0 = every ID resolves")
 for needle in ('L"CommunityShaders.dll"', 'L"d3dcompiler_46e.dll"', 'GetModuleHandleW(L"d3d11.dll")', "GetSystemDirectoryW(", "_wcsnicmp(loaded,folder,prefix) != 0"):
     assert needle in foreign, needle
@@ -286,9 +290,13 @@ for forbidden in ("safe_write", "VirtualAlloc", "VirtualProtect", "AllocTrampoli
 hook_class = cut_body("template<std::size_t Index>\nvoid hookClass() {", "// Main thread, inside the camera frame service.")
 assert cut.count("write_vfunc(") == 2 and hook_class.index("r.setup[Index] = ") < hook_class.index("r.restore[Index] = ") < \
     hook_class.index("table.write_vfunc(restoreSlot,&hookRestore<Index>)") < hook_class.index("table.write_vfunc(setupSlot,&hookSetup<Index>)")
-table_guard = cut_body("inline unsigned tableGuard(", "template<std::size_t Index>\nvoid hookClass() {")
-assert "slots[setupSlot] != base+c.setupRva" in table_guard and "slots[restoreSlot] != base+c.restoreRva" in table_guard
-assert "c.setupBytes.size()) != 0" in table_guard and "c.restoreBytes.size()) != 0" in table_guard
+slot_guard = cut_body("inline unsigned slotGuard(", "// Lighting and Utility, as enabled")
+assert "slots[setupSlot] != base+c.setupRva" in slot_guard and "slots[restoreSlot] != base+c.restoreRva" in slot_guard
+assert "c.setupBytes.size()) != 0" in slot_guard and "c.restoreBytes.size()) != 0" in slot_guard
+table_guard = cut_body("inline unsigned tableGuard(", "// Effect: 0, 1 its vtable ID")
+assert "for (unsigned i = 0;i < mainClasses;++i) {" in table_guard and "slotGuard(base,i)" in table_guard
+effect_guard = cut_body("inline unsigned effectGuard(", "template<std::size_t Index>\nvoid hookClass() {")
+assert effect_guard.index("REL::ID(c.table.id).address() != base+c.table.rva") < effect_guard.index("slotGuard(base,effectClass)")
 assert "REL::ID(data[i].id).address() != base+data[i].rva" in cut and "REL::ID(shaderClasses[i].table.id).address() != base+shaderClasses[i].table.rva" in cut
 # Each hook calls the engine function exactly once; a pass is considered only after its own SetupGeometry.
 setup_hook = cut_body("std::uintptr_t hookSetup(", "template<std::size_t Index>\nstd::uintptr_t hookRestore(")
@@ -298,17 +306,20 @@ assert setup_hook.index("fault(Fault::setup)") < setup_hook.index("r.setup[Index
 restore_hook = cut_body("std::uintptr_t hookRestore(", "// ---- install")
 assert restore_hook.count("r.restore[Index](self,pass,flags,extra)") == 1 and cut.count("r.restore[Index](") == 1
 assert restore_hook.index("r.restore[Index](self,pass,flags,extra)") < restore_hook.index("r.opened.load(") < \
-    restore_hook.index("if (!thin::onMain()) r.offMain.fetch_add(") < restore_hook.index("else if (!finish()) fault(Fault::shaderChanged);")
+    restore_hook.index("if (!thin::onMain()) r.offMain[groupOf(Index)].fetch_add(") < restore_hook.index("else if (!finish()) fault(Fault::shaderChanged);")
 # Selection order, cheapest first; nothing is read from engine objects off the main thread or outside the published view.
 consider = cut_body("inline void consider(", "// ---- hooks")
-assert consider.index("r.latched.load(") < consider.index("if (!thin::onMain()) { r.offMain.fetch_add(1ull,std::memory_order_relaxed); return; }") < \
-    consider.index("++r.window.passes;") < consider.index("r.opened.load(") < consider.index("!fresh(r.view,r.clock)") < \
+assert consider.index("r.latched.load(") < consider.index("if (!thin::onMain()) { r.offMain[group].fetch_add(1ull,std::memory_order_relaxed); return; }") < \
+    consider.index("++w.passes;") < consider.index("r.opened.load(") < consider.index("!fresh(r.view,r.clock)") < \
     consider.index("peek<Vec>(r.state,offset::posAdjust)") < consider.index("if (!sameView(r.view,eye,direction)) {") < \
     consider.index("peek<const std::uint8_t*>(pass,offset::passGeometry)") < consider.index("skip = reach(r.view,bound,") < \
-    consider.index("skip = ownerSkip(geometry);") < consider.index("shaderFor()") < consider.index("!r.budget.take()") < \
+    consider.index("skip = ownerSkip(geometry);") < consider.index("shaderFor(group)") < consider.index("!r.budgets[group].take()") < \
     consider.index("apply(*entry,wanted,shaderClass);")
 assert "geometry && usable(wanted)" in consider and "offset::geometrySkin) != nullptr" in consider and cut.count("apply(*entry,") == 1
-off_thread = consider[consider.index("if (!thin::onMain())"):consider.index("++r.window.passes;")]
+# Effect passes take exactly this path (same view test, bound, owner rules, audited bytecode); they never feed the FCS-76 view check.
+assert "const std::size_t group = groupOf(shaderClass);" in consider and "if (!group) ++r.frameMatched;" in consider and \
+    "++w.passes; if (!group) ++r.framePasses;" in consider
+off_thread = consider[consider.index("if (!thin::onMain())"):consider.index("auto& w = r.windows[group];")]
 assert off_thread.count(";") == 2  # one counter, then return: nothing else is touched off the main thread
 # The owner is found as the engine finds it: a user only on a fade node, past carried ammunition; actors and excluded kinds stay.
 owner = cut_body("inline RE::TESObjectREFR* ownerOf(", "// The pass is drawn with the patched shader")
@@ -317,8 +328,8 @@ assert owner.index("offset::asFadeNode") < owner.index("peek<RE::TESObjectREFR*>
 assert "hop < maxOwnerHops" in owner and "RE::FormType::ActorCharacter" in owner and "kindOf(ref,ref->GetBaseObject())" in owner
 # Only audited bytecode is patched, and a shader is used only after the device accepted it.
 prepare = cut_body("inline void prepare(", "// The vertex shader the engine bound")
-assert prepare.index("size < containerHeader || size > largestBlob") < prepare.index("codeHash(code,size)") < prepare.index("if (!audited(hash)) {") < \
-    prepare.index("patchVertexShader(code,size)") < prepare.index("if (made.result != Patch::ok) {") < prepare.index("method::createVertexShader") < \
+assert prepare.index("size < containerHeader || size > largestBlob") < prepare.index("codeHash(code,size)") < prepare.index("if (!auditedFor(group,hash)) {") < \
+    prepare.index("patchVertexShader(code,size)") < prepare.index("if (patched.result != Patch::ok) {") < prepare.index("method::createVertexShader") < \
     prepare.index("if (answer < 0 || !created) {") < prepare.index("entry.patched = created;")
 assert prepare.count("return;") == 4 and cut.count("entry.patched = ") == 1 and cut.count("method::createVertexShader") == 1
 # A cut pass: the two calls that can fail come first; buffer, then shader; closed by the engine's own shader and an empty slot.
@@ -326,7 +337,7 @@ apply = cut_body("inline void apply(", "// A pass of a hooked shader class")
 assert apply.index("method::map") < apply.index("if (answer < 0 || !mapped.data) {") < apply.index("latch();") < apply.index("Refusal::map") < \
     apply.index("std::memcpy(mapped.data,&wanted,sizeof(wanted));") < apply.index("method::unmap") < \
     apply.index("method::vsSetConstantBuffers,cutBuffer,1u,") < apply.index("method::vsSetShader,entry.patched,") < \
-    apply.index("r.opened.store(true,") < apply.index("++r.window.cut;")
+    apply.index("r.opened.store(true,") < apply.index("++w.cut;")
 finish = cut_body("inline bool finish() {", "inline void fault(")
 assert finish.index("peek<const std::uint8_t*>(r.state,offset::currentVertexShader) == r.openObject") < \
     finish.index("if (same) invoke<void>(r.context,method::vsSetShader,peek<void*>(r.openObject,offset::shaderObject),") < \
@@ -336,14 +347,21 @@ assert cut.count("method::vsSetShader") == 2 and cut.count("method::vsSetConstan
 fault = cut_body("inline void fault(", "// The patched device shader")
 assert fault.index("finish()") < fault.index("latch();") < fault.index("Refusal::bracket")
 publish = cut_body("inline void publish(", "inline void trace(double now) {")
-assert publish.index("if (r.published+1u != frame) r.plane.reset();") < publish.index("interiorCell && std::isfinite(feet.z)") < \
+assert publish.index("if (r.published+1u != frame) r.plane.reset();") < \
+    publish.index("if (publishes(r.installed,r.latched.load(std::memory_order_acquire),interiorCell,feet.z))") < \
     publish.index("makeView(r.config,eye,forward,feet,r.plane.update(feet.z,now),frame,now)") < \
     publish.index("if (!next) { r.active.store(false,std::memory_order_release); return; }") < publish.index("r.active.store(true,")
-assert "!r.latched.load(" in publish and "r.installed &&" in publish
+assert "inline bool publishes(bool installed,bool latched,bool interiorCell,float feetZ) {\n    return installed && !latched && interiorCell && " \
+    "std::isfinite(feetZ);" in cut_policy
+void = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_void.h").read_text()
 cut_codes = dict(re.findall(r"(\w+) = (\d+)", cut_policy[cut_policy.index("enum class Refusal : unsigned {"):cut_policy.index("constexpr unsigned firstRefusal")]))
-assert len(cut_codes) == 14 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 80))
+assert len(cut_codes) == 23 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 89))
+prepare_table = cut_policy[cut_policy.index("constexpr std::array<PrepareCodes,2> prepareCodes{{"):cut_policy.index("// ---- [FixedCameraSpike] shader-cut keys")]
 for name in cut_codes:
-    assert cut.count("Refusal::" + name) == 1, name  # one site per code
+    sites = cut.count("Refusal::" + name) + void.count("Refusal::" + name) + prepare_table.count("Refusal::" + name)
+    assert sites == 1, name  # one site per code
+for field in ("object", "unaudited", "patch", "create"):
+    assert prepare.count("refuse(codes." + field + ",text); return;") == 1, field
 assert "std::uint32_t{1}" not in cut and "refusalBit(code)" in cut_body("inline void refuse(", "inline void latch()")  # own once-mask: codes above 63
 for constant in ("constexpr Address stateAddress{388819,0x20cfc00};", "constexpr Address deviceAddress{411348,0x3330190};",
                  "constexpr Address contextAddress{411391,0x3331f30};", '{"lighting",{255053,0x1b47420},0x1549550,0x154a900,',
@@ -352,7 +370,68 @@ for constant in ("constexpr Address stateAddress{388819,0x20cfc00};", "constexpr
                  "asFadeNode = 0x28;", "geometrySkin = 0x130;", "shaderObject = 0x08, shaderCodeSize = 0x10, shaderCode = 0x68;",
                  "createBuffer = 0x18, createVertexShader = 0x60;", "vsSetConstantBuffers = 0x38, vsSetShader = 0x58, map = 0x70, unmap = 0x78;",
                  "constexpr std::uint32_t cutBuffer = 13, cutRegister = 16;", "constexpr std::uint32_t mapWriteDiscard = 4;",
-                 "constexpr std::uint32_t ammoForm = 0x2a;"):
+                 "constexpr std::uint32_t ammoForm = 0x2a;", '{"effect",{255194,0x1b48ab0},0x1557090,0x1557f50,',
+                 "constexpr std::size_t mainClasses = 2, effectClass = 2;", "constexpr Address mainViewAddress{36558,0x656d10};",
+                 "constexpr Address clearColorAddress{77249,0x100a3f0};", "constexpr std::uintptr_t voidCallRva = 0x656daa;"):
     assert constant in cut_policy, constant
 print("PASS shader cut wiring: no runtime outside mode 3; main-thread install after every guard; no code or engine-state write; "
-      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..79")
+      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..88")
+
+# Wave 2 shader, second pass (owner decision 2026-11-10): the Effect class and
+# the void colour. Both exist only inside the shader runtime (mode 3), are
+# installed by its main-thread commit after every cut guard (so ENB and
+# Community Shaders refuse them with the cut, FCS-67), and are native whenever
+# the cut's snapshot is not published.
+assert cut.endswith('#include "fixed_spike_shader_void.h" // second pass: the void colour\n')
+assert "inline void installVoid(std::uintptr_t base);" in cut and cut.count("installVoid(base);") == 1 and cut.count("installEffect(base);") == 1
+assert void.count("inline void installVoid(std::uintptr_t base) {") == 1 and "runtime = " not in void
+install_effect = cut_body("inline void installEffect(std::uintptr_t base) {", "// Main thread, inside the camera frame service.")
+assert install_effect.index("if (!r.config.effect) { r.effectState = Feature::off; return; }") < install_effect.index("effectGuard(base)") < \
+    install_effect.index("Refusal::effectTable") < install_effect.index("hookClass<effectClass>();") < install_effect.index("Feature::installed")
+assert cut.count("hookClass<effectClass>();") == 1 and "if (!classEnabled(r.config,Index)) return;" in hook_class
+assert "constexpr bool shaderEnabled(unsigned mask,std::size_t index) { return index < mainClasses && " in cut_policy
+assert "constexpr bool classEnabled(const Config& c,std::size_t index) { return index == effectClass ? c.effect : shaderEnabled(c.shaders,index); }" in cut_policy
+assert "if (!r.config.effect)" not in consider  # the hooks decide; once hooked, Effect passes follow the same gate as Lighting
+# The void hook: the engine's SetClearColor exactly once on every path, with its own arguments unless the decision is `applied`.
+def void_body(start, end):
+    return void[void.index(start):void.index(end, void.index(start))]
+hook = void_body("inline void hookClearColor(", "// Committed read-write memory")
+assert hook.count("r.clearColor(") == 2 and \
+    "    if (decision == Look::applied) r.clearColor(renderer,r.config.color.red,r.config.color.green,r.config.color.blue,alpha);\n" \
+    "    else r.clearColor(renderer,red,green,blue,alpha);\n}" in hook
+assert hook.index("const bool onMainThread = thin::onMain();") < hook.index("if (!onMainThread) r.voidOffMain.fetch_add(") < \
+    hook.index("lookDecision(onMainThread,r.active.load(std::memory_order_acquire),r.latched.load(std::memory_order_acquire),") < \
+    hook.index("onMainThread && r.haveView && fresh(r.view,thin::seconds())") < hook.index("if (onMainThread) {")
+assert "constexpr Look lookDecision(bool onMain,bool active,bool latched,bool freshView) {\n    return !onMain ? Look::offMain : latched ? " \
+    "Look::latched : !active ? Look::inactive : !freshView ? Look::stale : Look::applied;" in cut_policy
+# One code write, after every check, to the call's displacement only; the relay is sealed execute-read first; nothing else is written.
+install_void = void_body("inline void installVoid(std::uintptr_t base) {", "} // namespace")
+assert install_void.index("if (!r.config.voidColor) { r.voidState = Feature::off; return; }") < install_void.index("voidSiteCheck(base,mainView,clearColor,") < \
+    install_void.index("Refusal::voidSite") < install_void.index("relayPage(site)") < install_void.index("relay(reinterpret_cast<std::uintptr_t>(&hookClearColor))") < \
+    install_void.index("VirtualProtect(page,relaySize,PAGE_EXECUTE_READ,&previous)") < install_void.index("Refusal::voidMemory") < \
+    install_void.index("FlushInstructionCache(GetCurrentProcess(),page,relaySize);") < install_void.index("r.clearColor = reinterpret_cast<ClearColor>(clearColor);") < \
+    install_void.index("REL::safe_write(site+1u,&value,sizeof(value));") < install_void.index("FlushInstructionCache(GetCurrentProcess(),reinterpret_cast<void*>(site),5);") < \
+    install_void.index("r.voidState = Feature::installed;")
+assert void.count("safe_write(") == 1 and "const std::int32_t value = *displacement;" in install_void and install_void.count("return;") == 3
+assert "const std::uintptr_t site = base+voidCallRva;" in install_void and "PAGE_EXECUTE_READWRITE" not in void
+for forbidden in ("write_call", "write_branch", "AllocTrampoline", "GetTrampoline", "write_vfunc", "0x3d3e7", "0x27d8", "BSFixedString", "AddTask("):
+    assert forbidden not in void, forbidden
+assert "0x3d3e7" not in cut_policy and "0x27d8" not in cut_policy and "0x27d8" not in cut
+page = void_body("inline std::uint8_t* relayPage(", "// Main thread, from commit.")
+assert "relayReach(site,granularity)" in page and "region.State == MEM_FREE" in page and "MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE" in page and \
+    "if (end <= at) return nullptr;" in page
+# The thread rule and the trace: each group reports its own off-main calls; FixedShader keeps the first pass's counts.
+assert frame_start.index("Refusal::thread") < frame_start.index("Refusal::effectThread") < frame_start.index("Refusal::voidThread")
+trace_body = cut_body("inline void trace(double now) {", "inline bool tracing()")
+assert "s.window = r.windows[0];" in trace_body and "look.effect = r.windows[1];" in trace_body and \
+    trace_body.index("if (format(line,sizeof(line),s)) r.emitter(line);") < trace_body.index("if (formatLook(line,sizeof(line),look)) r.lookEmitter(line);")
+assert '"relPlane=%.2f passes=%llu cut=%llu byClass=%llu,%llu peak=%u cap=%u uploads=%llu shaders=%u,%u,%u created=%llu open=%llu "' in cut_policy
+assert "LineBudget shaderLines{shader::traceLines},shaderLookLines{shader::traceLines};" in spike and \
+    "[](const char* text) { emit(runtime->shaderLookLines,text); });" in configure_spike and \
+    "(shader::tracing() ? 2u*shader::traceLines : 0u)" in configure_spike
+assert 'shaderCut.colorText = read("FixedCameraSpike","sVoidColor","0,0,0");' in gate and \
+    "const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;" in cut_policy
+assert "\nbShaderCutEffect=1\n" in ini and "\nbVoidColor=1\n" in ini and "\nsVoidColor=0,0,0\n" in ini
+print("PASS shader second-pass wiring: Effect and void only inside mode 3 after every cut guard; Effect through the cut's own path with its own "
+      "guard, list and counters; one engine call per void hook, engine colour unless applied; one 4-byte code write after every check; "
+      "FixedShader row unchanged")

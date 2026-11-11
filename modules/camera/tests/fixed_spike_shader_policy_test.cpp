@@ -121,7 +121,9 @@ Tokens tokensOf(const Bytes& blob) {
 
 void codes() {
     constexpr std::array all{Refusal::settings,Refusal::foreign,Refusal::address,Refusal::table,Refusal::device,Refusal::thread,
-        Refusal::bracket,Refusal::create,Refusal::patch,Refusal::unaudited,Refusal::view,Refusal::map,Refusal::object,Refusal::context};
+        Refusal::bracket,Refusal::create,Refusal::patch,Refusal::unaudited,Refusal::view,Refusal::map,Refusal::object,Refusal::context,
+        Refusal::effectTable,Refusal::voidSite,Refusal::voidMemory,Refusal::voidThread,Refusal::effectCreate,Refusal::effectPatch,
+        Refusal::effectUnaudited,Refusal::effectObject,Refusal::effectThread};
     std::uint32_t seen = 0;
     for (const auto code : all) {
         // The wave 1 once-mask holds codes below 64; these have their own.
@@ -129,8 +131,26 @@ void codes() {
         assert(refusalBit(code) != 0 && !(seen & refusalBit(code)));
         seen |= refusalBit(code);
     }
+    // 66..79 are the first pass's, unchanged; the second pass continues at 80 without a gap.
+    assert(all.size() == lastRefusal-firstRefusal+1u && static_cast<unsigned>(Refusal::context) == 79 && static_cast<unsigned>(Refusal::effectTable) == 80);
+    assert(seen == (std::uint32_t{1} << (lastRefusal-firstRefusal+1u))-1u);
+    // A shader preparation reports through its own group's codes.
+    for (std::size_t i = 0;i < 2;++i) {
+        const auto& c = prepareCodes[i];
+        assert(c.object != c.unaudited && c.unaudited != c.patch && c.patch != c.create && c.object != c.create);
+        for (const auto code : {c.object,c.unaudited,c.patch,c.create})
+            for (const auto other : {prepareCodes[1-i].object,prepareCodes[1-i].unaudited,prepareCodes[1-i].patch,prepareCodes[1-i].create})
+                assert(code != other);
+    }
+    assert(prepareCodes[0].unaudited == Refusal::unaudited && prepareCodes[1].unaudited == Refusal::effectUnaudited);
     assert(shaderClasses[0].table.id == 255053 && shaderClasses[0].table.rva == 0x1b47420 && shaderClasses[0].setupRva == 0x1549550);
     assert(shaderClasses[1].table.id == 255302 && shaderClasses[1].table.rva == 0x1b4ab58 && shaderClasses[1].restoreRva == 0x15689c0);
+    assert(shaderClasses.size() == 3 && effectClass == 2 && mainClasses == 2 && std::string(shaderClasses[effectClass].name) == "effect");
+    assert(shaderClasses[2].table.id == 255194 && shaderClasses[2].table.rva == 0x1b48ab0 && shaderClasses[2].setupRva == 0x1557090 &&
+        shaderClasses[2].restoreRva == 0x1557f50);
+    assert(shaderClasses[2].setupBytes[0] == 0x48 && shaderClasses[2].setupBytes[15] == 0x8d && shaderClasses[2].restoreBytes[0] == 0x48 &&
+        shaderClasses[2].restoreBytes[15] == 0x0f);
+    assert(groupOf(0) == 0 && groupOf(1) == 0 && groupOf(effectClass) == 1);
     assert(stateAddress.id == 388819 && stateAddress.rva == 0x20cfc00 && deviceAddress.rva == 0x3330190 && contextAddress.rva == 0x3331f30);
     assert(offset::viewDirection == 0x380+0x20 && offset::posAdjust == 0x35c && offset::currentVertexShader == 0x348);
     assert(setupSlot == 6 && restoreSlot == 7 && cutBuffer == 13 && cutRegister == 16);
@@ -140,6 +160,13 @@ void codes() {
     assert(std::is_sorted(auditedVertexShaders.begin(),auditedVertexShaders.end()));
     assert(std::adjacent_find(auditedVertexShaders.begin(),auditedVertexShaders.end()) == auditedVertexShaders.end());
     assert(auditedVertexShaders.size() == 84 && audited(auditedVertexShaders.front()) && audited(auditedVertexShaders.back()) && !audited(0) && !audited(1));
+    // The Effect list: sorted, unique, and disjoint from the Lighting/Utility list; each group patches only from its own.
+    assert(std::is_sorted(auditedEffectVertexShaders.begin(),auditedEffectVertexShaders.end()));
+    assert(std::adjacent_find(auditedEffectVertexShaders.begin(),auditedEffectVertexShaders.end()) == auditedEffectVertexShaders.end());
+    assert(auditedEffectVertexShaders.size() == 114);
+    for (const auto hash : auditedEffectVertexShaders) assert(!audited(hash) && auditedFor(1,hash) && !auditedFor(0,hash));
+    for (const auto hash : auditedVertexShaders) assert(auditedFor(0,hash) && !auditedFor(1,hash));
+    assert(!auditedFor(1,0) && !auditedFor(0,0));
 }
 
 void settings() {
@@ -161,6 +188,122 @@ void settings() {
     assert(!adjusted && c.radius == 1024.0f && c.shaders == 1 && c.trace);
     assert(shaderEnabled(3,0) && shaderEnabled(3,1) && !shaderEnabled(1,1) && !shaderEnabled(2,0) && !shaderEnabled(7,2));
     assert(shaderMode(3) && !shaderMode(0) && !shaderMode(1) && !shaderMode(2) && !shaderMode(4));
+    // Second pass: both on by default (the keys are read only in mode 3), black, and Effect has its own key.
+    assert(defaults.effect && defaults.voidColor && defaults.color.red == 0 && defaults.color.green == 0 && defaults.color.blue == 0);
+    assert(classEnabled(defaults,0) && classEnabled(defaults,1) && classEnabled(defaults,effectClass));
+    c = {}; c.effect = false; c.shaders = 1;
+    assert(classEnabled(c,0) && !classEnabled(c,1) && !classEnabled(c,effectClass) && !classEnabled(c,7));
+    c = {}; c.shaders = 7; assert(validate(c).shaders == 3); // iShaderCutShaders never reaches Effect
+    // sVoidColor as read: parsed by validate; clamped or unreadable is reported once as FCS-66 by configure.
+    c = {}; c.colorText = "0.25,1,0"; c = validate(c,&adjusted);
+    assert(!adjusted && c.color.red == .25f && c.color.green == 1.0f && c.color.blue == 0.0f);
+    c = {}; c.colorText = "-1,2,0.5"; c = validate(c,&adjusted);
+    assert(adjusted && c.color.red == 0.0f && c.color.green == 1.0f && c.color.blue == .5f);
+    c = {}; c.colorText = "grey"; c.color = {.5f,.5f,.5f}; c = validate(c,&adjusted);
+    assert(adjusted && c.color.red == 0.0f && c.color.green == 0.0f && c.color.blue == 0.0f);
+    c = {}; c.colorText = "nan,0,0"; assert(validate(c,&adjusted).color.red == 0.0f && adjusted);
+}
+
+void colours() {
+    Color out{9,9,9};
+    assert(parseColor("0,0,0",out) == ColorText::ok && out.red == 0 && out.green == 0 && out.blue == 0);
+    assert(parseColor("0.1,0.2,0.3",out) == ColorText::ok && out.red == .1f && out.green == .2f && out.blue == .3f);
+    assert(parseColor(" 1 , 0.5 ,0 ",out) == ColorText::ok && out.red == 1.0f && out.green == .5f && out.blue == 0.0f);
+    assert(parseColor("1e-1,1,0",out) == ColorText::ok && out.red == .1f);
+    // Clamped to 0..1, the others kept.
+    assert(parseColor("2,-1,0.5",out) == ColorText::clamped && out.red == 1.0f && out.green == 0.0f && out.blue == .5f);
+    assert(parseColor("255,128,0",out) == ColorText::clamped && out.red == 1.0f && out.green == 1.0f && out.blue == 0.0f);
+    // Unreadable: black, never a partial colour.
+    for (const char* bad : {"","0,0","0,0,0,0","a,b,c","0;0;0","0,,0","nan,0,0","inf,0,0","0,0,0x","1,1,","#000000","0 0 0",",0,0"}) {
+        out = {.5f,.5f,.5f};
+        assert(parseColor(bad,out) == ColorText::invalid && out.red == 0 && out.green == 0 && out.blue == 0);
+    }
+}
+
+// Every state the brief names: the cut's snapshot exists only for an eligible
+// camera frame in an interior with the hooks installed and nothing latched,
+// and the void colour and the Effect cut follow it. A pass is cut, and the
+// void replaced, only on the main thread and with a fresh snapshot.
+void gating() {
+    using skycrpg::camera::State;
+    using skycrpg::camera::fixed::Exit;
+    using skycrpg::camera::fixed::rigEligible;
+    constexpr std::array states{State::disabled,State::invalidWorld,State::special,State::menu,State::firstPerson,State::precision,
+        State::targeting,State::obstruction,State::normal,State::targetLock};
+    for (const State state : states)
+        for (const bool interior : {false,true})
+            for (const bool installed : {false,true})
+                for (const bool latched : {false,true}) {
+                    // endFrame publishes only for an eligible frame; any other frame deactivates.
+                    const bool active = rigEligible(true,state) && publishes(installed,latched,interior,100.0f);
+                    const bool expected = (state == State::normal || state == State::targetLock) && interior && installed && !latched;
+                    assert(active == expected);
+                    for (const bool main : {false,true})
+                        for (const bool freshView : {false,true}) {
+                            const Look look = lookDecision(main,active,latched,freshView);
+                            assert((look == Look::applied) == (expected && main && freshView));
+                            if (!main) assert(look == Look::offMain);
+                            else if (latched) assert(look == Look::latched);
+                            else if (!active) assert(look == Look::inactive);
+                        }
+                }
+    // The rig off (F8), first person and menus are ineligible states; outdoors never publishes.
+    assert(!rigEligible(true,State::disabled) && !rigEligible(true,State::firstPerson) && !rigEligible(true,State::menu) && !rigEligible(false,State::normal));
+    assert(!publishes(true,false,false,0.0f) && !publishes(true,false,true,nan) && !publishes(true,false,true,infinity) && publishes(true,false,true,-2556.0f));
+    // A lifecycle exit of any cause (Exit::disable .. Exit::evicted) clears `active` (fixed_spike.h lifecycle and endFrame, wiring
+    // audit), so the next main-view clear is the engine's, with a fresh view or not, until an eligible frame publishes again.
+    static_assert(static_cast<unsigned>(Exit::count) == 13);
+    assert(lookDecision(true,false,false,true) == Look::inactive && lookDecision(true,false,false,false) == Look::inactive);
+    assert(std::string(lookNames[static_cast<std::size_t>(Look::applied)]) == "applied" && lookNames.size() == 5);
+    assert(std::string(featureNames[static_cast<std::size_t>(Feature::pending)]) == "pending" && featureNames.size() == 4);
+}
+
+void voidSite() {
+    // The bytes as the binary has them (656D8B..656DAF) and SetClearColor's first 16.
+    for (const std::uintptr_t base : {std::uintptr_t{0x140000000},std::uintptr_t{0x7ff612340000},std::uintptr_t{0x10000}}) {
+        const std::uintptr_t site = base+voidCallRva,mainView = base+0x656d10,clearColor = base+0x100a3f0;
+        assert(site-mainView == 0x9a && site-voidGuardedBefore == base+0x656d8b);
+        assert(callTarget(site,voidSiteBytes.data()+voidGuardedBefore) == clearColor);
+        assert(voidSiteCheck(base,mainView,clearColor,voidSiteBytes.data(),clearColorPrologue.data()) == 0);
+        assert(voidSiteCheck(base,mainView+16,clearColor,voidSiteBytes.data(),clearColorPrologue.data()) == 1);
+        assert(voidSiteCheck(base,mainView,clearColor+16,voidSiteBytes.data(),clearColorPrologue.data()) == 2);
+        for (std::size_t i = 0;i < voidSiteBytes.size();++i) {
+            auto window = voidSiteBytes;
+            window[i] ^= 0x01;
+            assert(voidSiteCheck(base,mainView,clearColor,window.data(),clearColorPrologue.data()) == 3);
+        }
+        // Already redirected (by us or anyone): the displacement differs, refused.
+        auto redirected = voidSiteBytes;
+        const std::int32_t elsewhere = *callDisplacement(site,base+0x1000);
+        std::memcpy(redirected.data()+voidGuardedBefore+1,&elsewhere,sizeof(elsewhere));
+        assert(voidSiteCheck(base,mainView,clearColor,redirected.data(),clearColorPrologue.data()) == 3);
+        auto detoured = clearColorPrologue;
+        detoured[0] = 0xe9;
+        assert(voidSiteCheck(base,mainView,clearColor,voidSiteBytes.data(),detoured.data()) == 5);
+    }
+    // The call's own displacement is the binary's.
+    std::int32_t original{};
+    std::memcpy(&original,voidSiteBytes.data()+voidGuardedBefore+1,sizeof(original));
+    assert(voidSiteBytes[voidGuardedBefore] == 0xe8 && original == 0x009b3641 && *callDisplacement(0x140656daa,0x14100a3f0) == original);
+    // rel32 reach, both ways, and out of it.
+    const std::uintptr_t site = 0x140656daa;
+    assert(callDisplacement(site,site+5) == 0 && callDisplacement(site,site+5+0x7fffffff) && !callDisplacement(site,site+5+0x80000000ull));
+    assert(callDisplacement(site,site+5-0x80000000ull) && !callDisplacement(site,site+5-0x80000001ull));
+    for (const std::uintptr_t granularity : {std::uintptr_t{0x10000},std::uintptr_t{0x1000}}) {
+        const Reach reach = relayReach(site,granularity);
+        assert(reach.low % granularity == 0 && reach.high % granularity == 0 && reach.low < site && reach.high > site);
+        assert(callDisplacement(site,reach.low) && callDisplacement(site,reach.high) && callDisplacement(site,reach.high+relaySize-1));
+        assert(!callDisplacement(site,reach.low-0x80000000ull));
+        assert(reach.low >= site+5-0x7fff0000ull && reach.high <= site+5+0x7fff0000ull);
+    }
+    const Reach early = relayReach(0x20000,0x10000);
+    assert(early.low == 0x10000 && callDisplacement(0x20000,early.high));
+    // jmp [rip+0] and the absolute target.
+    const auto bytes = relay(0x7ff612345678ull);
+    assert(bytes.size() == relaySize && bytes[0] == 0xff && bytes[1] == 0x25 && bytes[2] == 0 && bytes[5] == 0);
+    std::uint64_t target{};
+    std::memcpy(&target,bytes.data()+6,sizeof(target));
+    assert(target == 0x7ff612345678ull);
 }
 
 void view() {
@@ -390,6 +533,42 @@ void traces() {
     assert(format(line,sizeof(line),big) && std::strlen(line) < sizeof(TraceRow));
     char tiny[64]{};
     assert(!format(tiny,sizeof(tiny),s));
+    // FixedShader keeps the first pass's fields and order: byClass is Lighting,Utility even with Effect counts present.
+    s.window.byClass = {20,11,5};
+    assert(format(line,sizeof(line),s) && std::string(line).find("byClass=20,11 peak=") != std::string::npos);
+
+    // FixedShaderLook: the void and the Effect cut, one row per window.
+    LookSample k;
+    k.seconds = 1234.5; k.frame = 99; k.voidState = Feature::installed; k.effectState = Feature::installed; k.color = {0,0,0};
+    k.look.calls = {6,0,0,0,0}; k.look.haveNative = true; k.look.native = {.3765f,.4392f,.4f};
+    k.effect.passes = 40; k.effect.cut = 7; k.effect.seconds = .000031; k.effect.created = 2; k.effect.otherView = 3; k.peak = 7; k.patched = 2; k.unaudited = 1;
+    k.effect.skips[static_cast<std::size_t>(Skip::below)] = 12; k.effect.skips[static_cast<std::size_t>(Skip::actor)] = 4;
+    assert(formatLook(line,sizeof(line),k));
+    const std::string look = line;
+    for (const char* field : {"FixedShaderLook t=1234.500 frame=99 void=installed ","voidApplied=6 voidInactive=0 voidLatched=0 voidStale=0 voidOffMain=0 ",
+        "voidColor=0.000,0.000,0.000 nativeColor=0.377,0.439,0.400 effect=installed fxPasses=40 fxCut=7 fxPeak=7 fxShaders=2,0,1 fxCreated=2 ",
+        "fxMicros=31.0 fxOffMain=0 fxOtherView=3 fxStale=0 fxSkipSkin=0 fxSkipBound=0 fxSkipBelow=12 fxSkipOut=0 fxSkipOwner=0 fxSkipActor=4 ",
+        "fxSkipKind=0 fxSkipShader=0 fxSkipCap=0 sample=window"})
+        assert(look.find(field) != std::string::npos);
+    // Every token is name=value with a name the checker can key on, t and frame first.
+    assert(look.find("  ") == std::string::npos && look.rfind("FixedShaderLook t=",0) == 0 && look.find(" frame=") < look.find(" void="));
+    // Nothing applied: the colour reads nan; no call at all: the engine's reads nan too.
+    LookSample quiet; quiet.voidState = Feature::off; quiet.effectState = Feature::pending; quiet.look.calls = {0,4,0,0,0};
+    assert(formatLook(line,sizeof(line),quiet));
+    assert(std::string(line).find("void=off voidApplied=0 voidInactive=4 ") != std::string::npos);
+    assert(std::string(line).find("voidColor=nan,nan,nan nativeColor=nan,nan,nan effect=pending ") != std::string::npos);
+    LookSample huge;
+    huge.seconds = 1e7; huge.frame = ~0ull; huge.voidOffMain = huge.effectOffMain = ~0ull; huge.voidState = huge.effectState = Feature::refused;
+    // Window counters as large as the FixedShader test allows; cumulative ones at their type's limit.
+    huge.look.calls = {9999999999ull,9999999999ull,9999999999ull,9999999999ull,9999999999ull};
+    huge.look.haveNative = true; huge.look.native = huge.color = {1,1,1};
+    huge.effect.passes = huge.effect.cut = huge.effect.created = huge.effect.otherView = huge.effect.stale = 9999999999ull;
+    for (auto& value : huge.effect.skips) value = 9999999999ull;
+    huge.effect.seconds = 9.9;
+    huge.peak = huge.patched = huge.rejected = huge.unaudited = ~0u;
+    assert(formatLook(line,sizeof(line),huge) && std::strlen(line) < sizeof(TraceRow));
+    std::printf("longest FixedShaderLook row: %zu of %zu bytes\n",std::strlen(line),sizeof(TraceRow));
+    assert(!formatLook(tiny,sizeof(tiny),k));
 }
 
 // ---- the shipped archive, when present --------------------------------------
@@ -401,10 +580,11 @@ bool archive() {
     const Bytes d((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
     assert(d.size() > 64 && std::memcmp(d.data(),"BSA",4) == 0);
     // Shaders are stored per class, vertex then pixel, in the order the engine loads the classes.
-    const std::array<unsigned,9> classSizes{2,4,18,6,9,606,127,339,2172}; // BloodSplatter .. Lighting, Utility, Water
+    const std::array<unsigned,9> classSizes{2,4,18,6,9,606,127,339,2172}; // BloodSplatter .. Effect, Lighting, Utility, Water
     std::array<std::array<unsigned,static_cast<std::size_t>(Patch::count)>,2> outcome{}; // lighting, utility
-    std::vector<std::uint64_t> hashes;
-    unsigned blobs = 0,sums = 0,vertex = 0,productAgrees = 0,temporaryAgrees = 0;
+    std::array<unsigned,static_cast<std::size_t>(Patch::count)> effectOutcome{};
+    std::vector<std::uint64_t> hashes,effectHashes;
+    unsigned blobs = 0,sums = 0,vertex = 0,productAgrees = 0,temporaryAgrees = 0,effectProducts = 0;
     std::size_t cls = 0,inClass = 0;
     for (std::size_t p = 0;p+containerHeader <= d.size();) {
         if (std::memcmp(&d[p],"DXBC",4) != 0) { ++p; continue; }
@@ -423,6 +603,27 @@ bool archive() {
             if (cls == 6 || cls == 7) {
                 ++outcome[cls-6][static_cast<std::size_t>(made.result)];
                 assert((made.result == Patch::ok) == audited(codeHash(&d[p],total)));
+            }
+            if (cls == 5) {
+                ++effectOutcome[static_cast<std::size_t>(made.result)];
+                assert((made.result == Patch::ok) == auditedFor(1,codeHash(&d[p],total)));
+                if (made.result == Patch::ok) {
+                    effectHashes.push_back(codeHash(&d[p],total));
+                    // Effect World is 3x4 in cb2[0..2], as in Lighting: the z row is cb2[2].
+                    assert(made.worldRow == 2);
+                    // Where the original itself takes dp4 cb2[2], rP (its world position) the patch's product is that one.
+                    const std::size_t at0 = p+word(&d[p+containerHeader+8]);
+                    Tokens original(word(&d[at0+4])/4);
+                    std::memcpy(original.data(),&d[at0+8],original.size()*4);
+                    Instruction step;
+                    bool own = false;
+                    for (std::size_t at = 2;at < original.size();at += step.length) {
+                        assert(decode(original,at,step));
+                        if ((original[at] & ~token::precise) == token::dot4Row && original[at+3] == token::row && original[at+4] == perGeometryBuffer &&
+                            original[at+5] == made.worldRow && original[at+6] == token::tempRead && original[at+7] == made.position) own = true;
+                    }
+                    if (own) ++effectProducts;
+                }
             }
             if (made.result == Patch::ok) {
                 if (cls == 6 || cls == 7) hashes.push_back(codeHash(&d[p],total));
@@ -462,6 +663,17 @@ bool archive() {
     std::sort(hashes.begin(),hashes.end());
     const std::size_t entries = hashes.size();
     hashes.erase(std::unique(hashes.begin(),hashes.end()),hashes.end());
+    std::sort(effectHashes.begin(),effectHashes.end());
+    const std::size_t effectEntries = effectHashes.size();
+    effectHashes.erase(std::unique(effectHashes.begin(),effectHashes.end()),effectHashes.end());
+    std::printf("archive: effect ok=%u pattern=%u skinned=%u; %zu patchable entries, %zu distinct bytecodes; world-z product of its own in %u\n",
+        effectOutcome[static_cast<std::size_t>(Patch::ok)],effectOutcome[static_cast<std::size_t>(Patch::pattern)],
+        effectOutcome[static_cast<std::size_t>(Patch::skinned)],effectEntries,effectHashes.size(),effectProducts);
+    assert(effectOutcome[static_cast<std::size_t>(Patch::ok)] == 332 && effectOutcome[static_cast<std::size_t>(Patch::skinned)] == 274 &&
+        effectOutcome[static_cast<std::size_t>(Patch::pattern)] == 0);
+    assert(effectEntries == 332 && effectHashes.size() == auditedEffectVertexShaders.size() &&
+        std::equal(effectHashes.begin(),effectHashes.end(),auditedEffectVertexShaders.begin()));
+    assert(effectProducts == 196);
     std::printf("archive: %u blobs, %u checksums reproduced, %u vertex shaders; lighting ok=%u pattern=%u skinned=%u; utility ok=%u pattern=%u skinned=%u; "
         "%zu patchable entries, %zu distinct bytecodes; world-z product confirmed in %u+%u lighting shaders\n",blobs,sums,vertex,
         outcome[0][static_cast<std::size_t>(Patch::ok)],outcome[0][static_cast<std::size_t>(Patch::pattern)],outcome[0][static_cast<std::size_t>(Patch::skinned)],
@@ -482,6 +694,9 @@ int main() {
     view();
     plane();
     selection();
+    colours();
+    gating();
+    voidSite();
     checksums();
     patchSynthetic();
     patchRejects();

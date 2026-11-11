@@ -348,6 +348,10 @@ void loadSettings() {
         shaderCut.maxPerFrame = number("FixedCameraSpike","iShaderCutMaxPerFrame",shaderCut.maxPerFrame);
         shaderCut.shaders = number("FixedCameraSpike","iShaderCutShaders",shaderCut.shaders);
         shaderCut.trace = flag("FixedCameraSpike","iShaderCutTrace",0);
+        // Second pass (owner decision 2026-11-10): on by default in mode 3.
+        shaderCut.effect = flag("FixedCameraSpike","bShaderCutEffect",1);
+        shaderCut.voidColor = flag("FixedCameraSpike","bVoidColor",1);
+        shaderCut.colorText = read("FixedCameraSpike","sVoidColor","0,0,0");
         fixed::configure(f,shaderCut,settings,cursorSettings.enabled ? cursorSettings.toggleKey : -1,
             std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera_FixedSpike.log",log,thinGoal,fixedPreCollision,fixedCause);
     }

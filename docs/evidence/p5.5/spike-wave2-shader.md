@@ -2,6 +2,8 @@
 
 2026-11-09. Worktree `p55-spike-shader`, branch `phase5.5/p55-02-spike-shader`, base `744609f9fb459aa1e50688b3ab590bb6cbbac05a`. **Disposable: never merged, nothing here enters the shipped Camera DLL.** Experimental scope of PHASE_5_5 (four official masters, Steam Skyrim SE 1.7.104, SKSE 2.3.1, SmoothCam 1.8.1, TDM 2.3.1).
 
+**Second pass (2026-11-10, base `4a3b722`).** Owner decision after batch W2S: void colour pure black to start, fog cards and light shafts above the cut removed, ENB or Community Shaders still refuse everything. Built: the void colour override and the Effect-class cut, both behind new keys that default on in `iSeeThroughMode=3` only. Everything about it is in **"Second pass: void colour and Effect-class cut"** below; the sections before it describe the first pass and stay valid except where that section says otherwise. Its game rows are **NOT_RUN**.
+
 **Status.** Source, portable tests, wiring audit, offline binary audit and offline shader-archive audit are complete and uncommitted. The Windows `/W4 /WX` build is **NOT_RUN** (no MSVC here). **Every in-game row is NOT_RUN**: nothing was launched, no shader was created on a device. The mode is default-off: with `iSeeThroughMode` absent or 0..2 no shader-cut runtime is allocated and no hook is installed.
 
 Each claim is marked **Source** (file:line, binary RVA, Address Library ID, the shipped shader archive, or a URL and revision) or **Hypothesis**. RVAs are relative to image base `0x140000000` of `SkyrimSE.exe`, SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`; IDs are resolved through `session-p4/stage-camera-rc1/Data/SKSE/Plugins/versionlib-1-7-104-0.bin`, SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842` (ID *n* at file offset `96 + 4n`). Shader archive: `Data/Skyrim - Shaders.bsa`, SHA-256 `fd1ba630f443353ed21ed4ca0380968f9c7091c8434518ea3cc79bc6d38c18e7`, one uncompressed file `shadersfx\shaders011.fxp` (67,768,128 bytes at archive offset 0x66). Disassembly: `objdump -d -M intel`. Scratch tools (ID resolver, PE reader, a scanner for vtable calls on a global COM object, a DXBC disassembler, a reference checksum, a ctypes wrapper for vkd3d-shader) stayed outside the worktree.
@@ -34,6 +36,7 @@ What is delivered and what is not:
 | `modules/camera/src/plugin.cpp` | Five keys read inside the existing `[FixedCameraSpike]` gate and passed to `fixed::configure`. |
 | `modules/camera/config/SkyCRPG_Camera.ini` | Keys at the end of `[FixedCameraSpike]`. |
 | `modules/camera/tests/fixed_spike_shader_policy_test.cpp` (new), `tests/fixed_spike_policy_test.cpp`, `tests/lock_refresh_wiring_test.py` | Portable tests; mode 3 in the spike's validation test; a sixth wiring section. |
+| Second pass | `src/fixed_spike_shader_void.h` (new), `include/fixed_spike_shader_effect_audit.h` (new, generated), and edits to the files above: see "Second pass". |
 
 No build file changed: the new headers are reached through `plugin.cpp` (`modules/camera/CMakeLists.txt:1`). No Windows header is added: device calls go through vtable byte offsets (below).
 
@@ -217,6 +220,7 @@ Nothing is left on any reference, node, material, shader object or state field. 
 | FCS-77 | `apply` | the plane buffer could not be mapped; mode off for the session |
 | FCS-78 | `prepare` | a current vertex shader object has no device shader or an impossible bytecode size; stays native |
 | FCS-79 | `frameStart` | the engine's context pointer changed; mode off for the session |
+| FCS-80..88 | | second pass: see "Second pass", Refusal codes |
 
 ENB and Community Shaders are absent from the game directory and from the staged spike profiles under `session-p55` (Source: directory listings, 2026-11-09: no `d3d11.dll`, `dxgi.dll`, `enb*` or `CommunityShaders*`). Under Proton the game's `d3d11.dll` is DXVK's in the prefix's `system32` (Source: `compatdata/489830/pfx/drive_c/windows/system32/d3d11.dll` exists); that the module path reported in the game equals the system directory is **Hypothesis**. If it does not, FCS-67 names it and nothing is installed.
 
@@ -230,6 +234,8 @@ ENB and Community Shaders are absent from the game directory and from the staged
 | `iShaderCutMaxPerFrame` | 4096 | 1-16384 | cap on cut draws per frame |
 | `iShaderCutShaders` | 3 | 1-3 | 1 Lighting, 2 Utility |
 | `iShaderCutTrace` | 0 | 0/1 | 6,000 `FixedShader` rows at about 10 Hz |
+
+Second-pass keys `bShaderCutEffect`, `bVoidColor`, `sVoidColor`: see "Second pass".
 
 ### Trace legend (`FixedShader`, one row per 0.1 s window, in `SkyCRPG_Camera_FixedSpike.log`)
 
@@ -360,6 +366,211 @@ Build name `shader`. Overrides common to every route: `iSeeThroughMode=3`, `iSha
 - `session-p55/routes`: a `shader` build with the overrides above; checker rows for the `FixedShader` assertions in the route plan; `FixedShader` lines are a new trace kind.
 - When the native packages are combined: `fixed_spike_policy.h` must accept modes 2 and 3 (`> 3` instead of this branch's `> 1 && != 3`); `fixed::configure` gains one settings parameter per package; the clip package and this one both write slots 6 and 7 of the Lighting and Utility vtables, which is safe because only the selected mode has a runtime and each guards the slot value before writing; `shader::publish` needs the same `viewer`/`position`/`parent` that `endFrame` already has.
 
+## Second pass: void colour and Effect-class cut (2026-11-10)
+
+Base `4a3b722`, same worktree and branch. Input: batch W2S on `4a3b722` (seven routes, all clean; the cut works in Embershard Mine, the Bannered Mare and Bleak Falls Barrow; frame cost +0.13% p95; orchestrator records under `session-p55`), the owner's look at `session-p55/results/wave2-full/shader-cave.png`, and the owner decision of 2026-11-10 ("I'll go with your recommendations to start and see how they look"): (1) void colour pure black to start; (2) fog cards and light shafts above the cut removed; (3) with ENB or Community Shaders present everything keeps being refused exactly as the cut is now. Specification: `session-p55/research/out-of-bounds-look.md`, options 1 (variant 1a only) and 6 (Effect class). Option 1b (Sky fog colour), the post pass and everything else in that memo are **not** built; what this work saw that bears on them is listed at the end of this section.
+
+### What was built
+
+| File | Change |
+| --- | --- |
+| `modules/camera/src/fixed_spike_shader_void.h` (new) | The void colour: `hookClearColor` (the relay's target), `relayPage` (memory for the relay within reach of the call), `installVoid` (guards, relay, the one 4-byte code write). Included at the end of `fixed_spike_shader.h`. |
+| `modules/camera/include/fixed_spike_shader_effect_audit.h` (new, generated) | 114 FNV-1a-64 hashes: the Effect vertex-shader bytecodes the patcher may touch. Hashes only. |
+| `modules/camera/include/fixed_spike_shader_policy.h` | Effect as a third shader class with its own guard values; groups (0 Lighting+Utility, 1 Effect); codes FCS-80..88 and the per-group preparation codes; `bShaderCutEffect`, `bVoidColor`, `sVoidColor` and the colour parser; `publishes` (the cut's activation rule, now one function); the void call site's audited bytes, `callTarget`, `callDisplacement`, `relayReach`, `relay`, `voidSiteCheck`; `Look` and `lookDecision`; the `FixedShaderLook` row. The `FixedShader` row's format string is unchanged. |
+| `modules/camera/src/fixed_spike_shader.h` | Per-group counters, budgets, off-thread counters and audited lists; `slotGuard`/`effectGuard`; `installEffect`; commit calls `installEffect` and `installVoid` after the cut is installed and logged; FCS-83/88 in `frameStart`; the look row in `trace`; 2048 shader-cache entries (1,072 vertex shader objects in the three classes). |
+| `modules/camera/src/fixed_spike.h` | One more line budget (`shaderLookLines`), the second emitter, writer rows ×2 for the shader trace. |
+| `modules/camera/src/plugin.cpp` | Three keys read inside the existing gate. |
+| `modules/camera/config/SkyCRPG_Camera.ini` | The three keys, documented. |
+| `modules/camera/tests/fixed_spike_shader_policy_test.cpp`, `tests/lock_refresh_wiring_test.py` | New rows below; a seventh wiring section. |
+
+**Off equals `4a3b722`.** Outside mode 3 there is no shader runtime, so nothing of the second pass exists (the keys are read and ignored). In mode 3 with `bShaderCutEffect=0` and `bVoidColor=0`: no Effect slot is written, the call site is not touched, the `FixedShader` row has the same format and the same counts as on `4a3b722` (Lighting and Utility only), and the only additions are one log line (`shader look installed void=off … effect=off`) and the `FixedShaderLook` rows when tracing. One behavioural difference exists even then: the Lighting/Utility shader cache has 2048 entries instead of 1024 (fewer `skipShader` from a crowded table; none were seen in W2S).
+
+### Re-verified in the binary (SkyrimSE.exe 1.7.104, same hashes and Address Library as above)
+
+Method: `objdump -d -M intel` over the whole image (scratch, deleted after use); IDs resolved forward and reverse through the Address Library file; function extents from the image's own `.pdata`; vtables, RTTI and bytes read with a small PE reader. The memo's "verified" list was used as leads; each fact below was re-derived.
+
+**Void colour**
+
+| Fact | Evidence |
+| --- | --- |
+| ID 36558 = RVA 656D10, ID 77249 = 100A3F0 (`SetClearColor`), 77250 = 100A460 (`RestoreClearColor`), 77251 = 100A4C0, 77247 = 100A050, 36559 = 656E60. | Source: Address Library. |
+| Bytes 656D8B..656DAF: `f30f101de5d0d702 f30f1015d9d0d702 f30f100dcdd0d702 488d0d96b1cd02 e841369b00` = `movss xmm3,[3D3E78]`, `movss xmm2,[3D3E74]`, `movss xmm1,[3D3E70]`, `lea rcx,[3331F40]` (renderer, ID 411393), `call 100A3F0`. Alpha: 656D7D..656D85 stores 1.0 (RVA 1B5BE28) to `[rsp+0x20]`. | Source. These 36 bytes are `voidSiteBytes`; the call's displacement `0x009B3641` is checked by test. |
+| `SetClearColor` (100A3F0..100A459): saves the old colour from `rcx+0x27D8..0x27E4` to 3331F20..2C, then stores `xmm1`, `xmm2`, `xmm3` (via `xmm5`) and `[rsp+0x28]` to `rcx+0x27D8..0x27E4`. So it is `void(Renderer*, float r, float g, float b, float a)` in the Windows x64 convention (fourth float in `xmm3`, fifth argument on the stack at `[rsp+0x28]` on entry), which is exactly how `hookClearColor` is declared and how it calls the original. First 16 bytes `f30f1081d8270000 0f28ebf30f11051d` (`clearColorPrologue`). | Source. |
+| The fog-colour global 3D3E70..78: writers 0FFB9E/0FFBA6 (initialisation), 41227F/41228B (ID 26229), 4126C5/4126D1 and 4127DE/4127EE (ID 26230); the **only** readers are 656D8B/656D93/656D9B. No other instruction in `.text` references 3D3E60..3D3E8F. | Source: every RIP-relative operand in the disassembly. Nothing here writes the global. |
+| ID 36558 has three callers: 656834 and 656A78 in ID 36555 (the frame function), 656CC8 in ID 36557. No absolute pointer to it exists in the image (only its `.pdata` entry). ID 36555's callers: ID 36564 (659319), IDs 19121/19122 (2C65DA, 2C6890) and 1A2B13 (function 1A28F0, no ID found). ID 36559 has one caller, 656E2D in ID 36558. | Source. |
+| **Where the colour goes.** Inside ID 36559, which 36558 calls right after the call at 656DAA: 65752C sets (0.5, 0.5, 0, 0), clears the target returned by 153C900 (ID 77251) and restores (657563) the colour back; 65757E binds render target 1 to slot 0 and **65758A clears it with the colour set at 656DAA** (77251 reads `renderer+0x27D8`); **6575E5 sets (0, 0, 0, 0)** (`xmm6` is zeroed at 657057 and not written again before) and nothing restores it in that call. No jump from before 657511 lands after it, and there is no `ret` in 656E60..657750. | Source. So the substituted colour is used by one explicit clear, of the main colour target, and does not outlive the call to 36559; that it is not also used by a pending-clear flush (ID 77247 reads `renderer+0x27D8` at 100A127 for slots set to clear) between 656DAA and 65752C is **Hypothesis**: the functions 36559 calls before 657511 were not all followed. |
+| Explicit render-target clears with the renderer's colour (ID 77251) are called only at 657557, 65758A, 657634 (ID 36559) and 153E7AA..153E826 (ID 107199, which sets and restores its own colour). | Source: call scan. |
+| `SetClearColor` has 32 call sites in 28 functions. 22 functions pair it with `RestoreClearColor` (they set their own colour and put the previous one back). Unpaired: ID 16335, ID 36555 (65697F, black, after the world render), ID 36558 (656DAA, ours), ID 36559 (6575E5, zero), ID 39039, ID 77484, ID 105674, and 1546853 (a chunk whose restore is in another chunk, 1546C0F). Each passes its own colour; none reads 3D3E70. | Source. |
+| Other views. The water reflections are rendered from 36559's first part through ID 107140 (65721A), which sets and restores its own colour. The local map, the inventory and magic-menu 3D scenes and loading screens are not rendered through ID 36558 (its callers above); while any menu is open the rig is ineligible, so the cut's `active` is false and the hook passes the engine's colour anyway. A save-game screenshot taken while the cut is active, if the engine renders it through 36555 (IDs 19121/19122 look like such a path), would show the black void the player sees. | Calls: Source. Which engine function draws each named view, and the screenshot path: **Hypothesis**. |
+| Thread. The call at 656DAA runs in ID 36558, inside the frame function ID 36555, from which the main view's Lighting/Utility passes are also drawn; in W2S every `FixedShader` row of the five traced routes (cave, cave-radius, mare, bfb-seed1, lifecycle; 3,933 rows) has `offMain=0`, and the clip build's Effect hooks ran with `offMain=0` (W2C). | W2S/W2C: Source (route logs). That the call runs on the same thread: **Hypothesis** with that support; checked on every call (FCS-83). |
+
+**Effect class**
+
+| Fact | Evidence |
+| --- | --- |
+| Effect vtable ID 255194 = RVA 1B48AB0; its complete-object locator (1C810C8, signature 1, offset 0) names `.?AVBSEffectShader@@`; slot 6 = 1557090 (ID 107527), slot 7 = 1557F50 (ID 107528); first 16 bytes `488bc44889501048894808555356488d` and `48895c2408488974241048897c24180f`. Lighting and Utility re-read the same way: values unchanged. | Source: `.rdata` and `.text`. |
+| Effect `SetupGeometry` builds the World matrix with 15170C0 (`translate − posAdjust`, first-pass audit 4) at 15572EF from the geometry's world transform (`+0x7C`), or at 155729D from the same transform with an origin offset (geometry `+0x110..0x118`) when shader flag bit 12 is set, and uploads it at 1557381 through 15A9C78; the previous-frame World at 155734F with the previous `posAdjust` swapped in. Flag bit 3 skips both (with skinned geometry: Hypothesis). | Source: 1557090..15573B6. So the World the Effect vertex shader positions with is relative to the same `posAdjust` the plane constant uses, whichever branch built it. |
+| Effect `RestoreGeometry` (1557F50..155814D) only updates render-state fields and dirty bits; it binds no shader and calls nothing. | Source. |
+| Archive: **606 Effect vertex shaders, 332 patch, 274 skinned, 0 rejected for shape; 114 distinct bytecodes**, none also on the Lighting/Utility list. World is 3×4 in `cb2[0..2]` in all 332 (World z row `cb2[2]`). In **196** of them the shader itself already computes `dp4 …, cb2[2], rP` with the same position register (a world-position output), the product the patch adds; the other 136 rest on the algebra, as Utility does. | Source: archive test. |
+| Effect pixel shaders: 3,216; highest input register 10; no clip or cull distance input anywhere. Register 16 (the patch's output) is above all of them. | Source: input signatures of every blob. |
+| vkd3d-shader (same library as the first pass): all 332 original and 332 patched Effect blobs compile to D3D assembly and SPIR-V without a message; `BuiltIn ClipDistance` is decorated in 332 of 332 patched and 0 originals; one flipped byte is refused with `E0003: Invalid DXBC checksum`. | **PASS** offline. Windows driver and DXVK: NOT_RUN, as in the first pass. |
+| In game the Effect slots 6/7 bracket held in the main view: the clip build `79297e1` with `iClipShaders=7` (route `p55-clip-cave-effect`, batch W2C) clipped 7 Effect passes per window at the Embershard arrival with no refusal and `offMain=0`. | Source: that run's log. |
+
+### Hook sites, with bytes
+
+| Site | Before | After | Guard |
+| --- | --- | --- | --- |
+| Call at RVA **656DAA** (ID 36558 +0x9A) | `e8 41 36 9b 00` (call 100A3F0) | `e8 <rel32>`: only the 4-byte displacement changes, to a 14-byte relay `ff 25 00 00 00 00 <hookClearColor>` in our own page (allocated free within ±2 GiB of the call, sealed `PAGE_EXECUTE_READ` before the write) | `voidSiteCheck`: ID 36558 → 656D10 (check 1), ID 77249 → 100A3F0 (2), 36 bytes 656D8B..656DAF exact (3), the call's target is `SetClearColor` (4), `SetClearColor`'s first 16 bytes (5); then FCS-82 if no relay page (cause 1) or the relay cannot be reached or sealed (cause 2). Any failure: FCS-81/82, the call site untouched, the cut unchanged. |
+| Effect vtable 1B48AB0, slot 6 | 1557090 | `hookSetup<2>` | `effectGuard`: ID 255194 → 1B48AB0 (check 1), slot values (2, 3), first 16 bytes (4, 5). Failure: FCS-80, Effect native, the cut unchanged. |
+| Effect vtable 1B48AB0, slot 7 | 1557F50 | `hookRestore<2>` | same |
+
+The relay and the call site are written once, in the main-thread `commit`, after every first-pass guard. They are never undone: when the cut is not active `hookClearColor` calls `SetClearColor` with the engine's own registers and stack argument, so the engine's behaviour is the same apart from one extra call frame.
+
+### How actor-attached effects and effects at or below the plane are kept
+
+1. **At or below the plane.** A clip distance removes only what lies above the plane: every vertex at or under it is kept by construction. A piece whose bound does not reach above the plane is not even touched (`fxSkipBelow`).
+2. **Owners.** Effect passes go through the same `consider` as Lighting passes: `ownerOf` walks up as `FindReferenceFor3D` does (first-pass audit 4). No owning reference (temporary hit and impact effects, detached particle systems, anything not under a reference's fade node) → never cut (`fxSkipOwner`). The owner is an actor, the player included (`ActorCharacter`) → never cut (`fxSkipActor`): spell art and shader effects attached to an actor, equipped weapons and their enchantment glows, a held torch, nocked or quivered ammunition (the walk looks past ammunition to the carrier). Only plain placed references (`FormType::Reference`) with the wave 1 kinds are cut; projectiles, explosions, hazards and lights (a wall torch, a candle or a brazier whose base is a Light, with whatever glow its model carries) are excluded kinds (`fxSkipKind`).
+3. **Skinned** geometry is never selected, and the 274 skinned Effect vertex shaders are refused by the patcher anyway.
+4. **Only the main view** (the render state's eye and direction equal the published camera): the inventory and magic-menu previews, the local map, reflections and shadow maps are other views (`fxOtherView`).
+5. **Only audited bytecode**: an Effect pass is patched only from the Effect list; anything else is drawn natively and counted (`fxShaders` third number, FCS-86 once).
+
+That spell art and enchantment glows are attached under the actor's 3D, and that a dropped torch is a Light reference, are engine behaviour known from modding practice, **Hypothesis** here. A spell effect on a placed object (for example a lit brazier activator, or a shrine's glow) is cut above the plane like that object's own meshes, so object and glow end at the same height.
+
+### Gating
+
+Both features follow the cut's `active` flag, which `publish` sets only through `publishes(installed, latched, interiorCell, feetZ)` on an eligible camera frame (third person with the rig on: `rigEligible`), and which every ineligible frame and every lifecycle exit clears (`deactivate`, unchanged). So outdoors, first person, the rig off (F8), every ineligible state (menus included), loads, cell changes, death and after any refusal latch (FCS-72, 77, 79) both are native. The void decision per call is `lookDecision(onMain, active, latched, freshView)`: off-main → engine colour (FCS-83); latched → engine colour; not active → engine colour; snapshot older than 0.25 s (the camera service stopped renewing it) → engine colour; otherwise the configured colour. Effect passes use exactly the Lighting gate (latched, thread, nested pass, stale, view, bound, owner, shader, cap). ENB and Community Shaders: `commit` refuses with FCS-67 before anything is installed, so neither feature exists (owner decision 3).
+
+### Settings (`[FixedCameraSpike]`, read only when `bEnabled=1`, used only in `iSeeThroughMode=3`)
+
+| Key | Default | Range | Meaning |
+| --- | --- | --- | --- |
+| `bShaderCutEffect` | 1 | 0/1 | also cut Effect-class passes (fog cards, light shafts, effect-shader particles), same rules |
+| `bVoidColor` | 1 | 0/1 | while the cut is active the main view clears to `sVoidColor` instead of the cell's fog colour |
+| `sVoidColor` | `0,0,0` | three numbers 0..1, comma separated, spaces allowed | linear colour before image space (tonemap and eye adaptation apply to anything but black). A value outside 0..1 is clamped; anything unreadable (two or four numbers, `#000000`, `nan`, words) is black; either is reported once as FCS-66 |
+
+`iShaderCutShaders` (1-3) still selects Lighting and Utility only; `iShaderCutMaxPerFrame` applies to each group separately.
+
+### Log line (once, after `shader cut installed`)
+
+```
+FixedCameraSpike shader look installed void=%s color=%.3f,%.3f,%.3f effect=%s effectAudited=%u
+```
+
+`void` and `effect`: `off` (key 0), `installed`, `refused` (FCS-80, or FCS-81/82). If the cut itself never installs (FCS-67..70) this line is not written and the look rows say `pending`. The `shader cut installed` line is byte-identical to `4a3b722`.
+
+### Trace: `FixedShader` unchanged, `FixedShaderLook` new
+
+`FixedShader` keeps the format string of `4a3b722` byte for byte (`byClass=L,U`, 35 fields in the same order) and now counts **Lighting and Utility only**, as on `4a3b722`: Effect passes are not in `passes`, `cut`, `byClass`, `peak`, `shaders`, `created`, `micros`, `offMain`, `stale`, `otherView` or any `skip*`. One nuance: `uploads` counts constant uploads made for Lighting/Utility passes, so after an Effect pass has uploaded the frame's constant a Lighting pass may not need to and the number can be lower than on `4a3b722`.
+
+New kind, written right after each `FixedShader` row (same `t` and `frame`, same 0.1 s window, its own budget of 6,000 lines):
+
+```
+FixedShaderLook t=%.3f frame=%llu void=%s voidApplied=%llu voidInactive=%llu voidLatched=%llu voidStale=%llu voidOffMain=%llu voidColor=%.3f,%.3f,%.3f nativeColor=%.3f,%.3f,%.3f effect=%s fxPasses=%llu fxCut=%llu fxPeak=%u fxShaders=%u,%u,%u fxCreated=%llu fxMicros=%.1f fxOffMain=%llu fxOtherView=%llu fxStale=%llu fxSkipSkin=%llu fxSkipBound=%llu fxSkipBelow=%llu fxSkipOut=%llu fxSkipOwner=%llu fxSkipActor=%llu fxSkipKind=%llu fxSkipShader=%llu fxSkipCap=%llu sample=window
+```
+
+Example (test row): `FixedShaderLook t=1234.500 frame=99 void=installed voidApplied=6 voidInactive=0 voidLatched=0 voidStale=0 voidOffMain=0 voidColor=0.000,0.000,0.000 nativeColor=0.377,0.439,0.400 effect=installed fxPasses=40 fxCut=7 fxPeak=7 fxShaders=2,0,1 fxCreated=2 fxMicros=31.0 fxOffMain=0 fxOtherView=3 fxStale=0 fxSkipSkin=0 fxSkipBound=0 fxSkipBelow=12 fxSkipOut=0 fxSkipOwner=0 fxSkipActor=4 fxSkipKind=0 fxSkipShader=0 fxSkipCap=0 sample=window`. Longest possible row 694 of 768 bytes (test).
+
+Legend: `void`, `effect`: `off`, `pending`, `installed`, `refused`. `voidApplied`: main-view clear-colour calls in the window that got the configured colour; `voidInactive`, `voidLatched`, `voidStale`: calls that kept the engine's colour and why; `voidOffMain`: calls off the main thread (cumulative). `voidColor`: the colour applied (nan if nothing was applied in the window). `nativeColor`: the engine's own colour at the last call in the window, whatever was decided (nan if no call): the cell's fog colour × 0.8333. `fx*`: the Effect group, each field with the meaning of the `FixedShader` field of the same name (`fxShaders` = patched, rejected, unaudited Effect shaders, cumulative; `fxPeak` = most Effect passes cut in one frame of the window). Every token is `name=value`; the colours are three comma-separated numbers or `nan,nan,nan`.
+
+For the checker (`session-p55/routes/check_spike_log.py`, not edited here): register `FixedShaderLook` in `OPTIONAL_KINDS` (the generic parser keeps the colour triples and the `fxShaders` triple as strings) and, if wanted, add `'FixedShaderLook': 6000` to `CAPS`. The existing `FixedShader` parser needs no change.
+
+### Refusal codes (second pass)
+
+| Code | Site | Meaning, and what stays in force |
+| --- | --- | --- |
+| FCS-80 `check=N` | `installEffect` | Effect vtable ID (1), slot 6/7 value (2, 3) or first bytes (4, 5) differ; Effect native, the cut unchanged |
+| FCS-81 `check=N` | `installVoid` | void call site: ID 36558 (1), ID 77249 (2), the 36 bytes (3), call target (4), `SetClearColor` prologue (5); call site untouched, engine colour, the cut unchanged |
+| FCS-82 `cause=N` | `installVoid` | no relay memory within reach (1), or the relay out of reach / not sealed (2); call site untouched |
+| FCS-83 | `frameStart` | the void hook ran off the main thread; those calls kept the engine's colour |
+| FCS-84 | `prepare` (Effect) | the device refused a patched Effect vertex shader; that shader native |
+| FCS-85 | `prepare` (Effect) | audited Effect bytecode not patched; native. Not expected |
+| FCS-86 | `prepare` (Effect) | an Effect pass used bytecode not on the Effect list; native. **Informative**, like FCS-75 |
+| FCS-87 | `prepare` (Effect) | an Effect vertex shader object with no device shader or an impossible size; native |
+| FCS-88 | `frameStart` | an Effect hook ran off the main thread; those calls touched nothing |
+
+FCS-72 (an open pass), FCS-76 (no view match) and the install guards FCS-66..70 are shared: an Effect pass left open latches the whole mode like a Lighting one. FCS-76 is computed from Lighting/Utility passes only, as before. All 23 codes 66..88 fit the shader runtime's own 32-bit once-mask.
+
+### Tests
+
+Commands as in "Tests" above, plus the archive run. Results on this host (g++ 15.2.0, Python 3.14.4):
+
+| Check | Result |
+| --- | --- |
+| 15 portable C++ tests | **PASS**, every test printed `… PASS` (`fixed_spike_shader_policy_test` prints `longest FixedShaderLook row: 694 of 768 bytes` and, without the archive, `archive rows skipped`) |
+| `fixed_spike_shader_policy_test` with `SKYCRPG_SHADER_ARCHIVE` | **PASS**: `archive: effect ok=332 pattern=0 skinned=274; 332 patchable entries, 114 distinct bytecodes; world-z product of its own in 196`, and the first-pass line unchanged (`lighting ok=70 … 84 distinct bytecodes; world-z product confirmed in 50+20 lighting shaders`) |
+| Wiring audit, seven sections | **PASS**, exit 0 (`shader cut wiring` now checks one site per FCS-66..88; new `shader second-pass wiring`) |
+| `git diff --check` and the new files | **PASS** (no whitespace errors) |
+| g++ `-fsyntax-only -Wall -Wextra -Werror -pedantic -Wshadow -Wconversion -Wsign-conversion -Wfloat-conversion -Wold-style-cast` of `fixed_spike_shader.h` (with the void header) against scratch stand-ins for the Windows, REL and RE declarations it uses | 0 warnings. Not an MSVC or CommonLib build. |
+| vkd3d-shader over 332 original and 332 patched Effect blobs | **PASS**, above |
+| Twelve hand mutations in a scratch copy (void colour applied unconditionally; snapshot read off the main thread; engine arguments changed on the native path; Effect/void install order; `bShaderCutEffect` ignored; Effect feeding the FCS-76 check; Effect patched from the Lighting list; latch ignored in `publishes`; decision order; code written before the original is published; relay sealed read-write-execute; Effect off-thread reported as FCS-71) | each failed the wiring audit |
+| Windows `/W4 /WX` build | **NOT_RUN** |
+
+New portable rows: codes 66..88 distinct and contiguous, per-group preparation codes disjoint; the Effect constants; the Effect list sorted, unique, 114, disjoint from the Lighting/Utility list, each group patched only from its own list; defaults (both on, black) and `classEnabled`; `sVoidColor` parsing (exact, spaces, exponent, clamped high and low, 13 unreadable forms all black) and its FCS-66 report; **the gating table**: every camera state × interior/exterior × installed × latched × thread × fresh snapshot, with the void applied exactly when the state is eligible (normal or target lock), interior, installed, not latched, on the main thread and fresh; outdoors, non-finite feet, F8 (disabled), first person and menus never publish; **the call-site check** at three image bases (exact bytes pass; each of the 36 bytes flipped, a redirected call, a moved ID 36558 or 77249, a detoured `SetClearColor` each refused with its check number; the displacement is the binary's `0x009B3641`); rel32 reach both ways and the relay window; the relay bytes; the `FixedShader` row still `byClass=L,U` with an Effect count present; the `FixedShaderLook` row's fields, nan forms and longest length; with the archive, every Effect number above.
+
+### First-run protocol (for the orchestrator; nothing here was run)
+
+Build `shader` at the commit of this pass. Route: the existing `p55-shader-cave` (EmbershardMine01 coc arrival, headings 45/135/225/315, the four screenshots `s-cave-h0..h3`) with `iSeeThroughMode=3`, `iShaderCutTrace=1`, `iRigTrace=1`, `iRoomSeedMode=0`, and the second-pass keys at their defaults (absent, or `bShaderCutEffect=1`, `bVoidColor=1`, `sVoidColor=0,0,0`). Compare each screenshot with `session-p55/results/wave2-full/shader-cave.png` (W2S, same pose).
+
+Expected log lines, in this order, once each:
+
+```
+FixedCameraSpike installed rig=1 … seeThrough=3 shaderCut=pending …
+FixedCameraSpike shader cut installed shaders=3 height=160.0 radius=0.0 cap=4096 trace=1 audited=84
+FixedCameraSpike shader look installed void=installed color=0.000,0.000,0.000 effect=installed effectAudited=114
+```
+
+No `code=FCS-66..88` line except FCS-75 or FCS-86 (informative: a LOD, wind or other variant in view). In the trace at each heading, after settling:
+
+- `FixedShader`: as in W2S at the same pose (`installed=1 active=1 latched=0`, `cut` about 308 and `byClass` about 189,119 at heading 45 in W2S, `open=0 offMain=0`). These rows must not change in kind; a large change means the Effect separation is wrong.
+- `FixedShaderLook`: `void=installed effect=installed`; `voidApplied` equal to the frames in the window (about 6 at the 60 fps cap) and `voidInactive=voidLatched=voidStale=voidOffMain=0`; `voidColor=0.000,0.000,0.000`; `nativeColor` the cell's grey-green fog colour (not black), the same at every heading; `fxCut>0` at least at heading 45 (the halo there; the clip build cut 7 Effect passes per window at this pose); `fxShaders` first number > 0 and second 0; `fxOffMain=0`; `fxSkipActor`/`fxSkipOwner` may be non-zero.
+- While ineligible (the lifecycle route, or any step that opens a menu): `voidApplied=0` and `voidInactive>0` in those windows, and the screenshot taken while ineligible shows the grey-green void (engine colour).
+
+What each screenshot should show: the floor, the player and the lit wooden structures on **black** where the grey-green void was; the cut edges of dark rock fading into the black so the paper-thin shells and dark slivers mostly stop showing; the **blue halo at heading 45 (h0) gone**; lit beams and posts **still ending sharply at the plane** (hard cut, no cap; that is expected); the translucent brown card at h2/h3 gone if it is an Effect mesh above the plane. Then, if the owner wants more evidence, the same keys on `p55-shader-mare`, `p55-shader-bfb-seed1` and `p55-shader-lifecycle`.
+
+### Possible side effects to look for
+
+| What | Why | How it shows |
+| --- | --- | --- |
+| A grey-green tint on distant geometry | Material fog: shaders still fade distant surfaces toward the cell's fog colour (the Effect vertex shader above computes its fog factor from clip-space distance and blends between two colours of its own constant buffer, `cb0[1]` and `cb0[2]`). Only the clear colour changed. | Far walls and floors greyish against black. Fix would be option 1b (not built). |
+| A brighter or darker exposure | Eye adaptation (`ISHDRDownSample*LightAdapt`) averages the frame; half the frame turning black lowers the average, so the scene is probably brightened | The cave looks brighter than in W2S at the same pose; possibly blown highlights on lit beams. Hypothesis. |
+| Bloom halo around lights on black | Bloom is image space, unchanged | Soft glows around torches remain, more visible on black. |
+| Effect meshes of placed objects cut at the plane | Same rule as their Lighting meshes | A glow or flame of a placed object above the plane ends at the plane with it. |
+| A black void in the save-game screenshot | If the save screenshot renders through ID 36555 while the cut is active | Only cosmetic. Hypothesis. |
+| First-use hitches | Up to 114 more patched shaders created on first use | `fxCreated` > 0 in the first windows. |
+
+### What this work saw that bears on 1b and the post pass (not built)
+
+- **1b.** The Effect vertex shaders take their fog colours from their own constant buffer 0 (`cb0[1]`, `cb0[2]`, blended by a factor from `cb0[0]` and the clip-space distance; Source: disassembly of the first patched Effect blob), not from the global 3D3E70, so changing the clear colour cannot reach material fog; 1b would have to change what fills those constants (the Sky's fog fields, per the memo; not re-checked). The global 3D3E70 is derived each frame by IDs 26229/26230 and read only for the clear colour, so overriding it would never have reached material fog either.
+- **Post pass.** The main colour target is cleared inside ID 36559 at 65758A and every later clear in that call uses (0, 0, 0, 0); a pass inserted after ID 36558 returns (656839 or 656A7D in ID 36555) runs after the whole world render, before image space (ID 105676 calls at 6568D9/6569F2), as the memo proposes. ID 36555 itself sets the clear colour to black at 65697F before an image-space pass in one branch. 65752C clears the target from 153C900 to (0.5, 0.5, 0, 0) before the main pass, which looks like a normal buffer's "no normal" value (Hypothesis): a post pass that wants surface orientation could read it.
+- With the void black, a "void as cap" in a post pass would draw over black, so the order of the two does not matter for the look.
+
+### What the reviewer must check
+
+1. `fixed_spike_shader_void.h`: the relay encoding (`ff 25 00000000` + 8-byte address), that only the 4 displacement bytes at 656DAB are written, that `r.clearColor` is published before the write, that the relay is sealed `PAGE_EXECUTE_READ` before the write, and `hookClearColor`'s signature against the call site (rcx, xmm1..3, `[rsp+0x28]`) and against `SetClearColor` at 100A3F0.
+2. `voidSiteBytes` against the binary at 656D8B..656DAF and `clearColorPrologue` at 100A3F0.
+3. That nothing else consumes the colour between 656DAA and 6575E5 (the Hypothesis row above): the calls in ID 36559 before 657511 (657C90, 657930, 658700, 1537FD0, 1539A70, 153A630, …).
+4. The Effect vtable values and bytes (1B48AB0, 1557090, 1557F50) and that Effect `SetupGeometry` uploads the World built by 15170C0 (15572EF, 155729D) to the slot the patched shader reads as `cb2[0..2]`.
+5. That `FixedShader` is unchanged: `format` in the policy is untouched, and only group-0 counters feed it.
+6. That `relayPage` cannot loop forever and never allocates outside the reach (`relayReach`, then `callDisplacement` checked again before the write).
+7. MSVC `/W4 /WX`: `std::array<std::atomic<unsigned long long>,2>` value-initialised, `std::from_chars` for `float`, no shadowing (`onMainThread`, `bytes`, `value`).
+
+### Unverified (NOT_RUN or Hypothesis)
+
+- Every game row: the hooks under Proton, DXVK accepting the patched Effect shaders, the look, the side effects, frame cost. **NOT_RUN.**
+- That the void pixels are exactly the clear colour (memo: strongly supported by the per-cell colours).
+- That nothing but the main colour target clear uses the substituted colour (see the table).
+- That the call at 656DAA runs on the main thread (checked at run time, FCS-83).
+- That `SKSE`'s other plugins on the pinned stack do not touch 656D8B..656DAF (the guard refuses if they do).
+- Which engine functions draw the local map, the 3D menus and loading screens.
+- That spell art and enchantment glows hang under the actor's 3D.
+- Windows `/W4 /WX` build and DLL hash.
+
+### Proposed shared-file changes (not made)
+
+- `session-p55/routes/check_spike_log.py`: `OPTIONAL_KINDS = frozenset({'FixedShaderLook'})`; optionally `CAPS['FixedShaderLook'] = 6000`.
+- `session-p55/routes/package_checks.py`: `shader_faults` should take FCS-71..88 except the informative FCS-75 and FCS-86; S1-like install checks should require exactly one `^FixedCameraSpike shader look installed void=installed .* effect=installed ` line and fail on FCS-80..82; new look rows: `voidApplied>0` and `voidInactive=0` in active windows, `voidApplied=0` in ineligible windows, `fxCut>0` at the cave heading 45, `fxShaders` second number 0.
+- `session-p55/routes`: route variants with `bShaderCutEffect=0`/`bVoidColor=0` reproduce `4a3b722` (A/B for the owner).
+
 ## Reproduce the offline checks
 
 ```sh
@@ -376,6 +587,14 @@ objdump -d -M intel --start-address=0x14101e560 --stop-address=0x14101eaf0 "$E" 
 objdump -d -M intel --start-address=0x1402eece0 --stop-address=0x1402eed80 "$E"   # FindReferenceFor3D: AsFadeNode, +0xF8, ammunition
 SKYCRPG_SHADER_ARCHIVE='/home/dq/.local/share/Steam/steamapps/common/Skyrim Special Edition/Data/Skyrim - Shaders.bsa' \
   "$RUNNER_TEMP/fixed_spike_shader_policy_test"                                    # every shader-archive number above
+# second pass
+objdump -d -M intel --start-address=0x140656d10 --stop-address=0x140656e57 "$E"   # ID 36558: fog global -> SetClearColor at 656DAA
+objdump -d -M intel --start-address=0x14100a3f0 --stop-address=0x14100a521 "$E"   # SetClearColor, RestoreClearColor, the RT clear 77251
+objdump -d -M intel --start-address=0x140657500 --stop-address=0x140657650 "$E"   # ID 36559: main target clear at 65758A, (0,0,0,0) at 6575E5
+objdump -d -M intel --start-address=0x1406565b0 --stop-address=0x140656c0e "$E"   # ID 36555: the calls to 36558, black at 65697F
+objdump -d -M intel --start-address=0x141557090 --stop-address=0x14155814d "$E"   # Effect SetupGeometry / RestoreGeometry
+objdump -d -M intel --no-show-raw-insn "$E" | grep -E '# 0x1433d3e[6-8]'          # every reference to the fog-colour global
+objdump -d -M intel --no-show-raw-insn "$E" | grep -E 'call +0x14100a(3f0|460|4c0)' # SetClearColor / Restore / RT-clear callers
 ```
 
 Sources read: the binary and Address Library above; `Data/Skyrim - Shaders.bsa` (read-only); `session-p55/research/shader-discard.md` and `p55-spike-clip` (`docs/evidence/p5.5/spike-wave2-clip.md`, `modules/camera/src/fixed_spike_clip.h`, `include/fixed_spike_clip_policy.h`, the wiring test) as leads, each fact used here re-derived except where marked; the coordinator's summary of the clip package's independent review; DXVK `src/dxbc/dxbc_compiler.cpp` at v2.7.1 (zlib/libpng licence) through a summarising fetch, for facts only; `libvkd3d-shader.so.1.19.0` (LGPL) of the Steam Linux Runtime as an offline validator, not linked or copied. No GPL source was opened and no code was copied from any third party. The MD5 block function is written from RFC 1321; the DXBC final-block rule is checked against the archive's own 16,044 stored checksums.
