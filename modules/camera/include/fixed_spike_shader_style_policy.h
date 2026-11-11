@@ -161,7 +161,11 @@ inline bool roofModel(const char* path) {
     if (!path) return false;
     const char* name = path;
     for (const char* at = path;*at;++at) if (*at == '\\' || *at == '/') name = at+1;
-    return (contains(name,"roof") || contains(name,"ceil")) && !contains(name,"wall");
+    // Review of 0b738ab: stairs are walked on (rifrmsmbaseceilingstairs01); columns, supports and beams
+    // (wrintcastleroofsupportbeam*, sovintcolumnroof01, slggcolceil01) are posts and beams, left to the
+    // member and overhead rules, so a floor-standing post is never removed by its name.
+    return (contains(name,"roof") || contains(name,"ceil")) && !contains(name,"wall") && !contains(name,"stair") &&
+        !contains(name,"column") && !contains(name,"support") && !contains(name,"beam");
 }
 // `obnd`: the box came from the base OBND (otherwise from the bound sphere).
 // An object without a usable box (no 3D, no OBND and a zero bound) cannot be
@@ -365,6 +369,7 @@ struct Facts {
     bool gallery{};   // bCutKeepFarGallery
     bool kitCell{};   // the cell's census says kit building
     bool roof{};      // roofModel: a roof or ceiling piece
+    bool walkable{};  // box top at most feet + floorTop: a surface at or below the player's feet (never removed by its name)
     bool standing{};  // box bottom at most feet + standSlack: it stands on the player's storey
     bool overCap{};   // box top above the back-side cap + capSlack
 };
@@ -397,7 +402,11 @@ constexpr float floorTop = 32.0f;
 constexpr Decision rules(const Facts& f) {
     const bool object = f.piece == Piece::object;
     // W5 (2026-11-11): roofs and ceilings are never kept, on any side.
-    if (f.roof && !object) return {Treat::remove,Bucket::removedWhole,Note::roof};
+    // Kit pieces only (members follow the member rules), and never a piece the player can be standing on or
+    // above (review of 0b738ab: rifrmsmbaseceiling01 is probably the upper storey's floor, wrintcastleroofflatstr01
+    // a walked-on roof). The floor of the storey above is removed while the player is below it (by this rule or
+    // the overhead rule) and drawn again once its top is within floorTop of the feet.
+    if (f.roof && f.piece == Piece::kit && !f.walkable) return {Treat::remove,Bucket::removedWhole,Note::roof};
     // W5: every architecture piece whose bottom is above head height belongs to the storey above,
     // at once and wherever the storey line is (the loft floor's edge over a player beside the hall).
     if (f.above || (!object && f.overhead)) {

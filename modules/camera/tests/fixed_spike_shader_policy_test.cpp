@@ -1150,6 +1150,11 @@ void styleRules() {
     for (const char* wall : {"Architecture\\WhiteRun\\WRInteriors\\WRIntRoofWall02.nif","Architecture\\WhiteRun\\WRInteriors\\WRIntLoftWallRoof01.nif",
         "Architecture\\WhiteRun\\WRInteriors\\WRIntWallStr01.nif","Architecture\\Roofs\\WRIntWallStr01.nif",""}) assert(!roofModel(wall));
     assert(!roofModel(nullptr));
+    // Review of 0b738ab: stairs, columns, supports and beams are never roofs by name.
+    for (const char* walk : {"Architecture\\Riften\\RifRmSmBaseCeilingStairs01.nif","Architecture\\Solitude\\SovIntColumnRoof01.nif",
+        "Architecture\\Whiterun\\WRIntCastleRoofSupportBeam01.nif"}) assert(!roofModel(walk));
+    assert(roofModel("Dungeons\\SlGG\\SlGGColCeil01.nif")); // a column by shape: the roof rule applies to kit pieces only (below)
+    assert(roofModel("Architecture\\Riften\\RifRmSmBaseCeiling01.nif") && roofModel("Architecture\\Whiterun\\WRIntCastleRoofFlatStr01.nif"));
     const auto w5 = [](Piece piece,Side side,bool roof,bool above,bool overhead,bool standing,bool overCap,bool gallery = false,bool lane = false) {
         Facts f; f.kitCell = true; f.piece = piece; f.side = side; f.roof = roof; f.above = above; f.overhead = overhead; f.standing = standing;
         f.overCap = overCap; f.gallery = gallery; f.lane = lane;
@@ -1162,6 +1167,25 @@ void styleRules() {
             assert(d.treat == Treat::remove && d.bucket == Bucket::removedWhole && d.note == Note::roof);
         }
     assert(w5(Piece::object,Side::back,true,false,false,true,false).treat == Treat::keep); // a roof-named object is an object
+    // Review of 0b738ab: never by its name a member (a floor-standing post keeps the member rules) or a walkable piece (top
+    // at most feet + 32: a ceiling-named upper floor or a flat roof the player stands on). On the way up a staircase the
+    // upper floor (named "ceiling", bottom 300, top 316 over a floor at 68) is removed while the feet are below 284 and
+    // drawn once they are at or above 284 (it then falls to the side rules; the overhead rule stops once the held base is
+    // above 172, which a climb reaches first: the base never lags the feet by more than 96).
+    {
+        Facts f; f.kitCell = true; f.piece = Piece::member; f.side = Side::back; f.roof = true; f.standing = true;
+        assert(decide(f).treat == Treat::keep && decide(f).bucket == Bucket::keptMember);
+        f.piece = Piece::kit; f.walkable = true;
+        assert(decide(f).note != Note::roof && decide(f).bucket == Bucket::keptFar);
+        const Box upper = box({-128,-128,300},{128,128,316});
+        for (float feetZ = 68.0f;feetZ <= 320.0f;feetZ += 4.0f) {
+            const float baseZ = (std::max)(68.0f,feetZ-96.0f); // the most the held base lags
+            Facts g; g.kitCell = true; g.piece = Piece::kit; g.side = Side::across; g.roof = true; g.standing = upper.low.z <= baseZ+standSlack;
+            g.walkable = upper.high.z <= feetZ+floorTop; g.overhead = upper.low.z >= baseZ+storeyHeadroom;
+            const Decision d = decide(g);
+            assert((d.treat == Treat::remove) == (feetZ < 284.0f));
+        }
+    }
     // Under the loft edge (pose 172.9,-708,68; storey line 320): the loft floor WRIntLoftMid01 (bottom 310) is under the
     // line less 8 but its bottom is above head height: removed on every side and lane state, kept only as a gallery back piece.
     {

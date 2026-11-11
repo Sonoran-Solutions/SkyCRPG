@@ -148,6 +148,7 @@ inline void refresh(StyleEntry& e,RE::TESObjectREFR* ref,Kind kind) {
     f.interact = kind == Kind::object && base && base->GetFormType() != RE::FormType::Tree;
     // W5 fixes: roofs and ceilings never kept; a back piece kept only standing on this storey and not far above its cap.
     f.roof = e.roof;
+    f.walkable = box.valid && box.high.z <= feet.z+floorTop;
     f.standing = box.valid && box.low.z <= s.base+standSlack;
     f.overCap = box.valid && box.high.z > s.capZ+capSlack;
     e.interact = f.interact; e.floor = f.floor;
@@ -224,7 +225,9 @@ inline void styledPass(void* pass,std::size_t shaderClass,Vec eye) {
         // W5 gallery fix: a gallery keep whose geometry exceeds its box is removed like the rest of the
         // storey above (an interactable gets the flat cut, the floor under the player stays), never
         // flat-cut as a fallback (that sliced gallery objects).
-        if (d.bucket == Bucket::keptFar && geometryExceeds(e->box,bound.centre,bound.radius)) d = {Treat::flat,Bucket::fallback};
+        // A back piece cut at its cap rests on the box as well (review of 0b738ab, MINOR-2).
+        if ((d.bucket == Bucket::keptFar || d.bucket == Bucket::cappedFar) && geometryExceeds(e->box,bound.centre,bound.radius))
+            d = {Treat::flat,Bucket::fallback};
         else if (d.bucket == Bucket::keptGallery && geometryExceeds(e->box,bound.centre,bound.radius)) {
             d = e->floor ? Decision{Treat::flat,Bucket::fallback} : e->interact ? Decision{Treat::flat,Bucket::interactCut} :
                 Decision{Treat::remove,e->piece == Piece::object ? Bucket::removedObject : Bucket::removedWhole};

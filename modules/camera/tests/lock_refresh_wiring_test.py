@@ -551,7 +551,10 @@ trace_style = style_body("inline void traceStyle(", "} // namespace")
 assert trace_style.index("if (formatStyle(line,sizeof(line),sample)) r.styleEmitter(line);") < trace_style.index("if (formatStyle2(line,sizeof(line),second)) r.style2Emitter(line);")
 assert '"FixedShaderStyle2 t=%.3f frame=%llu capZ=%.2f cappedFar=%llu roofRemoved=%llu overheadRemoved=%llu galleryRemoved=%llu sample=window",' in style_policy
 rules_fn = style_policy[style_policy.index("constexpr Decision rules(const Facts& f) {"):style_policy.index("constexpr Decision decide(const Facts& f) {")]
-assert rules_fn.index("if (f.roof && !object) return {Treat::remove,Bucket::removedWhole,Note::roof};") < rules_fn.index("if (f.above || (!object && f.overhead)) {")
+assert rules_fn.index("if (f.roof && f.piece == Piece::kit && !f.walkable) return {Treat::remove,Bucket::removedWhole,Note::roof};") < \
+    rules_fn.index("if (f.above || (!object && f.overhead)) {")
+assert "f.walkable = box.valid && box.high.z <= feet.z+floorTop;" in style
+assert "if ((d.bucket == Bucket::keptFar || d.bucket == Bucket::cappedFar) && geometryExceeds(e->box,bound.centre,bound.radius))" in pass_fn
 assert "f.standing && !f.overCap ? Decision{Treat::keep,Bucket::keptFar} : Decision{Treat::cap,Bucket::cappedFar,Note::cap};" in rules_fn
 assert "if (d.bucket != Bucket::cappedFar && (e ? e->side == Side::back : false)) ++sw.slicedFar;" in pass_fn
 assert "else if (d.bucket == Bucket::keptGallery && geometryExceeds(e->box,bound.centre,bound.radius)) {" in pass_fn and \

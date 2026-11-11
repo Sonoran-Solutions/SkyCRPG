@@ -917,6 +917,32 @@ Tests: 15 portable C++ tests PASS (CI loop from the repository root); wiring aud
 
 Still unverified: everything in game; that no Mare piece outside the kit (`clutter\`, `furniture\`) needs the roof rule; other kits' roof and ceiling names (Solitude, Windhelm, Riften, Markarth, farmhouses: not checked); the gallery pops; MSVC.
 
+### Fourth fix pass: delta review of 2f5d9f6..0b738ab (CHANGES 0 / 1 / 4)
+
+- **MAJOR-1, walkable roof-named pieces.** The name rule now (a) excludes names containing "stair" (`rifrmsmbaseceilingstairs01`), and (b) never applies to a piece whose box top is at most feet + 32 (`walkable`), wherever it is: a ceiling-named upper floor (`rifrmsmbaseceiling01`, Hypothesis) or a flat roof the player walks on (`wrintcastleroofflatstr01`) is drawn whenever the player could stand on it or above it. The Mare roof slopes (top 576) are still removed from the loft. **Stairs up to a roof/ceiling-named upper floor** (portable row: floor named "ceiling", bottom 300, top 316 over a storey at 68, feet climbing in steps of 4 with the held base lagging the most it can, 96): removed while the feet are below 284, drawn from 284 on, i.e. once its top is within 32 of the feet; the overhead rule has already let go by then because the held base cannot lag the feet by more than 96 (bottom 300 < base + 128 once the feet pass 268). The held base therefore does not delay it.
+- **MINOR-1, roof-named supports and columns.** Both measures: the name rule applies to kit pieces only (a member by shape, e.g. `slggcolceil01`, follows the member rules, so a floor-standing post is kept or removed by the lane like any post, and an overhead one by the overhead rule), and names containing "column", "support" or "beam" are not roofs (`wrintcastleroofsupportbeam*`, `sovintcolumnroof01`), so even a kit-shaped support is placed by the side rules. Why both: shape alone misses kit-shaped supports, names alone miss unnamed columns.
+- **MINOR-2.** `cappedFar` passes get the same geometry check as `keptFar`: a pass whose geometry the box does not account for gets the flat cut (`fallback`).
+- **MINOR-3 (note).** The total slack around the back-side decision is about 32 (side clearance 24 plus the 16-unit geometry slack applied to sphere centres, less what the OBND already covers) against the 24-unit side clearance alone; a geometry that pokes 16 units past its OBND toward the player is still kept whole. Hypothesis that this never shows; NOT_RUN.
+- **MINOR-4 (owner question).** With the overhead rule on the held base, a staircase, landing or mezzanine ahead of the player whose bottom is 128 or more above the held base is invisible until the player is within about 96 of its height (the held base follows the feet beyond 96 at once, within 96 after 0.6 s); and a long jump that lifts the feet more than 96 moves the base at once, so pieces 128-200 above the floor can be drawn for about 0.6 s and vanish again on landing. Is that acceptable, or should landings ahead be kept (for example kit pieces reachable by a stair the player is on)?
+
+**Wider check: the rules over other kit interiors** (Skyrim.esm placements read offline; the pose is the cell's `COCMarkerHeading` or, where there is none, the inner load door moved 96 units toward the statics' centre (Hypothesis for the in-game arrival); counts are placed references, per heading 45/135/225/315; reference-level model of this build's rules, not of what the engine draws):
+
+| Cell | Pose | Census | Storey line | Kept back | Removed above line / overhead / roof-named | Capped | Interactables flat-cut | Walkable removed |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| WhiterunBanneredMare (hearth) | given (−117, −640, 68) | kit 212 / 0 | 310 | 17 / 8 / 14 / 23 | 68 / 23 / 53 | 0 | 64 | none |
+| WhiterunBanneredMare (loft) | given (−656, −262, 322) | kit | 555 | 6 / 5 / 5 / 4 | 0 / 0 / 53 (16 of them roof slopes starting at the loft floor next to the player) | 0 | 0 | none |
+| WhiterunDragonsreach | COC (−448, −128, −320) | kit 707 / 0 | 192 | 23 / 8 / 11 / 27 | 302 / 219 / 109 | 1 / 0 / 0 / 1 | 83 | none |
+| RiftenBeeandBarb | COC (−183, −638, 64) | kit 148 / 0 | 314 | 16 / 8 / 4 / 11 | 92 / 0 / 0 | 1 / 0 / 0 / 0 | 43 | none |
+| SolitudeWinkingSkeever | load door + 96 (−199, −1468, 128) | kit 224 / 0 | 532 (1 candidate) | 14 / 3 / 0 / 9 | 4 / 65 / 0 | 0 | 0 | none |
+| WindhelmCandlehearthHall | load door + 96 (786, −3565, 158) | kit 345 / 0 | 306 | 10 / 19 / 36 / 28 | 197 / 0 / 38 (`whintwoodroofmidtop02`) | 0 | 52 | none |
+| RiverwoodSleepingGiantInn | COC (−265, −341, 0) | kit 16 / 0 (at the threshold) | none (top-storey cap 350) | 1 / 0 / 0 / 2 | 22 / 0 / 0 | 0 / 0 / 1 / 2 | 1-2 | none |
+| WhiterunBreezehome | COC (−384, −656, 63) | kit 76 / 0 | 310 | 8 / 3 / 4 / 9 | 50 / 10 / 12 | 0 | 54-58 | none |
+| MarkarthSilverBloodInn | COC (−5597, −2179, −8) | **flat** 3 / 219 (Dwemer `dungeons\` pieces) | — | flat cut, unchanged | — | — | — | — |
+
+Reading (Hypothesis until run): Breezehome, Candlehearth Hall and Bee and Barb look like the Mare (a storey line from an upper floor, roofs removed by name in Breezehome and Candlehearth, many back pieces kept); Dragonsreach removes most of the hall's upper structure (the COC is in the lower level, line 192); the Sleeping Giant sits exactly at the census threshold (16 architecture statics; much of it is probably other folders) and has no storey line at the COC, so it runs on the top-storey cap; Solitude's line comes from a single candidate. Markarth's Silver-Blood Inn is a flat cell (unchanged). No cell has a removed architecture piece whose top is at or below feet + 32. Roof-named statics per cell: Dragonsreach `wrintcastleroof*` and `wrdunintceilingmudstr01` (pieces of the castle roof and a mud ceiling), Candlehearth `whintwoodroofmidtop02` ×38, Breezehome `wrintroof*` ×10; none in Bee and Barb or the Winking Skeever.
+
+Tests: 15 portable C++ tests PASS; wiring audit nine sections PASS (the roof rule's kit-only and walkable guards, the walkable fact, the cap's geometry check); syntax check 0 warnings. New portable rows: stair/column/support/beam names are not roofs and the reviewer's three walkable names; a roof-named member keeps the member rules; a walkable roof-named kit piece falls to the side rules; the staircase climb (removed below 284, drawn from 284).
+
 ### Proposed shared-file changes (not made)
 
 None needed beyond this package's files.
