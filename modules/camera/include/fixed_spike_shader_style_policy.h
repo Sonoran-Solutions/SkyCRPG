@@ -127,6 +127,21 @@ inline Thin thinAxis(const Box& b) {
     if (s.y <= thinWall && s.x >= thinRatio*s.y) return Thin::y;
     return Thin::none;
 }
+// A drawn geometry the reference's world box does not account for: its bound
+// sphere's centre lies outside the box grown by `geometrySlack`, or its radius
+// exceeds the box's half-diagonal by more than that. Only then is a back-side
+// keep, which rests on the box, distrusted (review of 2f5d9f6, MAJOR-1: a
+// wall's own sphere, radius about its half-diagonal, always reaches across the
+// plane through the feet when the wall stands within ~190 units behind).
+constexpr float geometrySlack = 16.0f;
+inline bool geometryExceeds(const Box& b,Vec centre,float radius) {
+    if (!b.valid || !finite(centre) || !std::isfinite(radius)) return true;
+    const Spans s = spansOf(b);
+    const float halfDiagonal = .5f*std::sqrt(s.x*s.x+s.y*s.y+s.z*s.z);
+    return centre.x < b.low.x-geometrySlack || centre.x > b.high.x+geometrySlack || centre.y < b.low.y-geometrySlack ||
+        centre.y > b.high.y+geometrySlack || centre.z < b.low.z-geometrySlack || centre.z > b.high.z+geometrySlack ||
+        radius > halfDiagonal+geometrySlack;
+}
 // `obnd`: the box came from the base OBND (otherwise from the bound sphere).
 // An object without a usable box (no 3D, no OBND and a zero bound) cannot be
 // placed either: flat (review of 30503e0, MINOR-1).

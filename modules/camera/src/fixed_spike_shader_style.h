@@ -57,7 +57,7 @@ struct StyleRuntime {
     Budget shadowBudget;
     // Vertex shader objects of shadow passes whose bytecode is not on the audited list: skipped
     // without preparing them, so no FCS-75 line comes from a shadow pass (review of 30503e0, MINOR-7).
-    std::array<const std::uint8_t*,64> shadowRejected{},shadowAccepted{};
+    std::array<const std::uint8_t*,256> shadowRejected{},shadowAccepted{};
     std::array<StyleEntry,styleEntries> entries{};
     std::array<std::array<const void*,removedSlots>,2> removed{}; // geometry removed whole: [current] this frame, the other the last
     std::size_t current{};
@@ -210,10 +210,9 @@ inline void styledPass(void* pass,std::size_t shaderClass,Vec eye) {
     else {
         if (e->frame != r.frame) refresh(*e,ref,kind);
         d = e->decision;
-        // A back-side keep rests on the base OBND; this pass's own bound must be on the back side
-        // too (a geometry larger than its OBND), otherwise the flat cut (review of 30503e0, MINOR-3).
-        if ((d.bucket == Bucket::keptFar || d.bucket == Bucket::keptGallery) &&
-            sideOf(sphereBox(bound.centre,bound.radius),e->thin,r.view.feet,r.view.eye,sideExit) != Side::back)
+        // A back-side keep rests on the base OBND; a pass whose geometry the box does not account
+        // for gets the flat cut instead (review of 30503e0, MINOR-3, as corrected after 2f5d9f6, MAJOR-1).
+        if ((d.bucket == Bucket::keptFar || d.bucket == Bucket::keptGallery) && geometryExceeds(e->box,bound.centre,bound.radius))
             d = {Treat::flat,Bucket::fallback};
     }
     if (below && d.treat != Treat::remove) { skipped(Skip::below); return; }
@@ -240,8 +239,8 @@ inline void styledPass(void* pass,std::size_t shaderClass,Vec eye) {
     bindStyle(*entry,s.storeyBuffer,shaderClass,true);
 }
 // The vertex shader current for a shadow pass is on the Lighting/Utility audited
-// list (checked once per shader object, 64 remembered each way; beyond that the
-// pass is skipped). Only then may shaderFor prepare it.
+// list (checked once per shader object, 256 remembered each way; once both are
+// full an unknown one is skipped without hashing). Only then may shaderFor prepare it.
 inline bool shadowAudited() {
     auto& r = *runtime;
     auto& s = *r.style;
@@ -249,6 +248,8 @@ inline bool shadowAudited() {
     if (!object) return false;
     for (const auto known : s.shadowAccepted) if (known == object) return true;
     for (const auto known : s.shadowRejected) if (known == object) return false;
+    // Both caches full: skipped without hashing (counted on shadowSkips by the caller).
+    if (s.shadowAccepted.back() && s.shadowRejected.back()) return false;
     const std::uint32_t size = peek<std::uint32_t>(object,offset::shaderCodeSize);
     const bool ok = size >= containerHeader && size <= largestBlob && auditedFor(0,codeHash(object+offset::shaderCode,size));
     auto& list = ok ? s.shadowAccepted : s.shadowRejected;

@@ -555,7 +555,8 @@ assert shadow.index("if (!shadowAudited()) { ++s.window.shadowSkips; return; }")
 audit_fn = style_body("inline bool shadowAudited() {", "// A Utility pass of another view")
 assert "refuse(" not in audit_fn and "auditedFor(0,codeHash(object+offset::shaderCode,size))" in audit_fn and "size <= largestBlob" in audit_fn
 assert "immutable.usage = 1; immutable.access = 0;" in install_style and "static_cast<const BufferDescription*>(&immutable),static_cast<const void*>(&initial),&remove)" in install_style
-assert "sideOf(sphereBox(bound.centre,bound.radius),e->thin,r.view.feet,r.view.eye,sideExit) != Side::back)" in pass_fn  # MINOR-3
+assert "geometryExceeds(e->box,bound.centre,bound.radius))" in pass_fn  # MINOR-3 as corrected after 2f5d9f6
+assert "if (s.shadowAccepted.back() && s.shadowRejected.back()) return false;" in audit_fn and "std::array<const std::uint8_t*,256> shadowRejected{},shadowAccepted{};" in style
 decide_fn = style_policy[style_policy.index("constexpr Decision decide(const Facts& f) {"):style_policy.index("// The height a slicing treatment cuts at.")]
 assert decide_fn.index("const Decision d = rules(f);") < decide_fn.index("if (f.floor) return {Treat::flat,Bucket::fallback};") < \
     decide_fn.index("if (f.interact) return {Treat::flat,Bucket::interactCut};")  # MINOR-4, MINOR-5

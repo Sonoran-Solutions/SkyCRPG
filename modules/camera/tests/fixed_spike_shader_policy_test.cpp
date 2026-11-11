@@ -899,6 +899,29 @@ void styleRules() {
     // A piece spanning the player (a beam crossing over, the hearth's own floor alcove): across at every heading.
     const Box spanning = box({-512,-651,204},{256,-629,320});
     for (unsigned h = 0;h < 4;++h) assert(sideOf(spanning,thinAxis(spanning),hearth,eyeAt(hearth,h),sideEnter) == Side::across);
+    // Review of 2f5d9f6, MAJOR-1: a back wall (256 x 39 x 288) 60, 100, 150 and 200 units behind the player, at every heading,
+    // is back on its OBND and its own geometry (sphere at the box centre, radius the half-diagonal, ~194) does not exceed the
+    // box, so it is kept whole; a pass whose sphere centre lies outside the box, or whose radius is much larger, is not.
+    for (unsigned h = 0;h < 4;++h) {
+        const Vec eye = eyeAt(hearth,h);
+        const float sy = eye.y > hearth.y ? -1.0f : 1.0f; // the wall stands beyond the player on y, away from the camera
+        for (const float gap : {60.0f,100.0f,150.0f,200.0f}) {
+            const float nearY = hearth.y+sy*gap,farY = nearY+sy*39.0f;
+            const Box backWall = box({hearth.x-128,(std::min)(nearY,farY),hearth.z-32},{hearth.x+128,(std::max)(nearY,farY),hearth.z+256});
+            assert(thinAxis(backWall) == Thin::y && sideOf(backWall,Thin::y,hearth,eye,sideEnter) == Side::back);
+            const Vec centre{(backWall.low.x+backWall.high.x)*.5f,(backWall.low.y+backWall.high.y)*.5f,(backWall.low.z+backWall.high.z)*.5f};
+            const Spans w = spansOf(backWall);
+            const float half = .5f*std::sqrt(w.x*w.x+w.y*w.y+w.z*w.z);
+            assert(half > 190.0f && half < 200.0f);
+            assert(!geometryExceeds(backWall,centre,half) && !geometryExceeds(backWall,{centre.x+100,centre.y,centre.z},half+10));
+            Facts f; f.kitCell = true; f.piece = Piece::kit; f.side = Side::back;
+            assert(decide(f).bucket == Bucket::keptFar);
+            assert(geometryExceeds(backWall,{centre.x,centre.y-sy*80.0f,centre.z},50.0f));   // centre 60 units in front of the box
+            assert(geometryExceeds(backWall,centre,half+40.0f));                           // a geometry larger than its OBND
+            assert(geometryExceeds(backWall,{backWall.high.x+20,centre.y,centre.z},10.0f) && !geometryExceeds(backWall,{backWall.high.x+15,centre.y,centre.z},10.0f));
+        }
+    }
+    assert(geometryExceeds(Box{},{0,0,0},1) && geometryExceeds(box({0,0,0},{1,1,1}),{nan,0,0},1));
     // A wall in line with the player (the Mare's WRIntWallStr01WinA west of the hearth: its thin y range ends 8 units from
     // the feet) falls back to the diagonal: front at 45, back at 225.
     const Box inLine = box({-768,-632,32},{-512,-593,320});
