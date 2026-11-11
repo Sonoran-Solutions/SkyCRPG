@@ -59,21 +59,55 @@ constexpr bool fillWanted(unsigned mode,bool eligible,bool interior,bool ready) 
 // special states (mount, swim, beast, bleedout, furniture, killmove, scripted)
 // -> keep; first person, Camera off, F8, load, death, invalid world and a
 // hook-silent stretch past the grace -> off.
-// `menuPaused` (UI numPausesGame > 0): a menu that pauses the world (for
-// example the Tween Menu, Hypothesis) stops the ThirdPersonState update, so
-// its frames arrive hook-silent, not as State::menu (W2L t=44168.960: hide and
-// removal with cause hook-silent behind the Tween Menu). Such a menu is in the
-// hold set too; silence with nothing paused is still the watchdog exit (off).
+// `silenceHeld` (SilenceHold below): this hook-silent frame belongs to a menu,
+// not to a lost hook, so it is in the hold set too; any other silence past the
+// grace is still the watchdog exit (off).
 enum class FillDuty { off, keep, hold };
-constexpr FillDuty fillDuty(bool eligible,bool exiting,Exit cause,bool stateSeen,State state,bool menuPaused) {
+constexpr FillDuty fillDuty(bool eligible,bool exiting,Exit cause,bool stateSeen,State state,bool silenceHeld) {
     if (eligible) return FillDuty::keep;
     if (!exiting) return FillDuty::hold;
     if (cause == Exit::menu) return FillDuty::hold;
-    if (cause == Exit::hookSilent && menuPaused) return FillDuty::hold;
+    if (cause == Exit::hookSilent && silenceHeld) return FillDuty::hold;
     if (cause == Exit::special && stateSeen && (state == State::precision || state == State::targeting ||
         state == State::obstruction || state == State::special)) return FillDuty::keep;
     return FillDuty::off;
 }
+// What silences the camera hook (ThirdPersonState::Update, ID 50896, vtable
+// slot 3) is not pausing: PlayerCamera::Update calls only its current state's
+// Update, so the hook is silent whenever another camera state is current. The
+// console pauses the world (flags 0x807) but leaves ThirdPersonState current:
+// the hook keeps running and reports State::menu. The Tween Menu switches the
+// camera to TweenMenuCameraState (kTween, id 7, built by ID 50783 at 8F82C9)
+// on show (ID 52705 -> 50816 at 9880F3); its "StartCloseMenu" callback (ID
+// 52710 -> 50818 -> 50928) only marks the state as ending (+4C), and the state
+// eases its added FOV back first and pops itself afterwards (ID 50925 at
+// 8FF54E-8FF567 -> 50819), while the pause count is already zero: W3 frames
+// 4254-4263, 0.17 s, and probe rows camera_state=7 paused=false.
+// Held silence: a pausing menu is open (numPausesGame > 0); or the Tween camera
+// state is still current within tweenReleaseSeconds of the last paused frame;
+// or, after either, the wave 1 grace (the frame on which the engine pops the
+// Tween state back to third person is itself silent). Never held without a
+// pausing menu first in the same ineligible stretch, so a lost hook with the
+// camera in third person is still dropped after the usual grace.
+constexpr double tweenReleaseSeconds = .5;
+struct SilenceHold {
+    double pausedAt{-1.0};                 // last ineligible frame with a pausing menu; < 0 none in this stretch
+    unsigned sinceHeld{silentGraceFrames}; // ineligible frames since one was held for a reason; starts expired
+    // Eligible frame: the stretch is over.
+    void reset() { pausedAt = -1.0; sinceHeld = silentGraceFrames; }
+    // Once per ineligible frame (main thread); true = this frame's silence is held.
+    bool step(bool paused,bool tween,double now) {
+        if (paused) {
+            if (std::isfinite(now)) pausedAt = now;
+            sinceHeld = 0;
+            return true;
+        }
+        const bool recent = pausedAt >= 0.0 && std::isfinite(now) && now >= pausedAt && now-pausedAt <= tweenReleaseSeconds;
+        if (tween && recent) { sinceHeld = 0; return true; }
+        if (sinceHeld < silentGraceFrames) ++sinceHeld;
+        return sinceHeld < silentGraceFrames;
+    }
+};
 constexpr const char* dutyName(FillDuty d) { return d == FillDuty::keep ? "keep" : d == FillDuty::hold ? "hold" : "off"; }
 // A hold never survives a cell change: the first serviced frame after a load
 // door can be a menu frame (wave 1, p55-e-door-C frames 2536 -> 2537), and the

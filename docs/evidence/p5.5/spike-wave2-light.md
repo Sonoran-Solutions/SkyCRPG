@@ -121,7 +121,7 @@ A dynamic point light (no shadows, not portal-strict, no camera-distance fade, a
 | --- | --- | --- |
 | rig engaged (normal, target lock) | lit, follows | — |
 | menu or console (`menu`, any state) | **held**: as it was, no hide, no move, no removal timer | yes |
-| a menu that pauses the world (UI `numPausesGame` > 0; which menus carry the flag, for example the Tween Menu, is a Hypothesis): the camera update is silent, any length | held | yes |
+| a menu that pauses the world and takes the camera out of third person (UI `numPausesGame` > 0; the Tween Menu, flags `0xCC01`): the camera-state hook is silent, any length; then the Tween camera state easing back after the menu closed, at most 0.5 s after the last paused frame; then the three-frame grace (fifth fix pass) | held | yes |
 | a camera update skipped inside wave 1's three-frame grace | held | no |
 | any hold, on the first serviced frame after a cell change or a game load | off, cause `cell` / `load` | no |
 | precision aim, targeting, obstruction (`special` cause, state seen) | lit, follows | yes |
@@ -307,11 +307,11 @@ W2L itself (9 routes, all clean): stealth-neutral confirmed in game, frame cost 
 
 ### Finding 1: the light was hidden and removed behind the Tween Menu (hold step)
 
-What it really was (Source: the run log and `plugin.cpp` `fixedCause`): the menu step opens the Tween Menu (`TAB`). From t=44169.008 every `FixedRig` row reads `eligible=0 state=255`: the ThirdPersonState update hook did not run at all while the menu was open (`frameSeen` false), while the frame service (`endFrame`) kept running. `fixedCause` returns `hookSilent` whenever no state was seen, before it can test for a menu (`state == menu` needs the hook), so after the three-frame grace the duty table read "silent past the grace" → off: `event=hide cause=hook-silent` at t=44168.960 and `event=remove` 0.57 s later. The console held because it does not pause the world, so the hook kept running and reported `State::menu`. (The brief calls it the room hook; the silence that matters is the camera-state hook's. The room hook is irrelevant to the duty.)
+What it really was (Source: the run log and `plugin.cpp` `fixedCause`): the menu step opens the Tween Menu (`TAB`). From t=44169.008 every `FixedRig` row reads `eligible=0 state=255`: the ThirdPersonState update hook did not run at all while the menu was open (`frameSeen` false), while the frame service (`endFrame`) kept running. `fixedCause` returns `hookSilent` whenever no state was seen, before it can test for a menu (`state == menu` needs the hook), so after the three-frame grace the duty table read "silent past the grace" → off: `event=hide cause=hook-silent` at t=44168.960 and `event=remove` 0.57 s later. The console held because the hook kept running and reported `State::menu`. (Corrected in the fifth fix pass: the console does pause the world, flags `0x807`; it leaves the camera in third person, which is why the hook keeps running. Pausing is not what silences the hook.) (The brief calls it the room hook; the silence that matters is the camera-state hook's. The room hook is irrelevant to the duty.)
 
 Change: `fillDuty` takes `menuPaused`, read once per ineligible frame by `light::menuPaused()` from UI `+160` (`numPausesGame`, the count of open menus whose flags have bit 0, "pauses game"). A hook-silent frame with a pausing menu open is a hold for as long as the menu stays open; a hook-silent frame with nothing paused is still the watchdog exit (off after the grace). The read happens only with the light package configured; with it off the duty call is unreachable as before (`frameLight` returns first, and `menuPaused` returns false without touching the UI). The base spike's own exit (hide restore after the grace with cause `hook-silent`) is unchanged: this is the light's duty only.
 
-Binary (1.7.104, file bytes): UI singleton ID 400327 → RVA `219E5C0` (Address Library); ID 82082 (`1169D20`, `.pdata` extent to `116AA0A`) is called with `rcx = [219E5C0]` at `1A6639`, `653C9E`, `95FA08`, and keeps `rcx` in `r14` (`1169D48`); in it `116A552-116A559` read IMenu `+1C`, test bit 0 and `inc [r14+160]`; `116A0CA-116A0D1` the matching `dec`. So `+160` is the pause count and IMenu `+1C` bit 0 is "pauses game", as CommonLib 7.2.0 declares (`static_assert(offsetof(RE::UI,numPausesGame) == 0x160)` pins it). Not verified offline: that the Tween Menu carries that flag (Hypothesis, CommonLib's flag lists and the in-game silence: the world stopping is what silences the hook). If it does not, the hold still fails exactly as in W2L and the row shows it.
+Binary (1.7.104, file bytes): UI singleton ID 400327 → RVA `219E5C0` (Address Library); ID 82082 (`1169D20`, `.pdata` extent to `116AA0A`) is called with `rcx = [219E5C0]` at `1A6639`, `653C9E`, `95FA08`, and keeps `rcx` in `r14` (`1169D48`); in it `116A552-116A559` read IMenu `+1C`, test bit 0 and `inc [r14+160]`; `116A0CA-116A0D1` the matching `dec`. So `+160` is the pause count and IMenu `+1C` bit 0 is "pauses game", as CommonLib 7.2.0 declares (`static_assert(offsetof(RE::UI,numPausesGame) == 0x160)` pins it). The Tween Menu pause flag was verified by the binary review of `1e5d66f` (flags `0xCC01`). The guess written here at `1e5d66f`, that the world stopping is what silences the hook, was wrong: see the fifth fix pass.
 
 ### Finding 2: no removal recorded outdoors after door-out
 
@@ -345,3 +345,54 @@ Fixed in the same change. `endFrame` now hands every lifecycle request to `light
 | L4 rerun | **NOT_RUN** |
 
 Expected on an L4 rerun: menu step, no `event=` line at all while the Tween Menu is open; door-out, `event=hide` with cause `cell` (or `menu`/`load` if the cell change lands on a non-hold frame) then `event=remove cause=engine-gone presence=absent` 0.5–0.6 s later outdoors (or `cause=exterior presence=active` if the engine kept it); reload, the same with `engine-gone` after the load.
+
+## Fifth fix pass (after batch W3 on `1e5d66f`: L4 FAIL on a blink when the Tween Menu closes)
+
+Evidence: `session-p55/routes/runs/p55-light-lifecycle-W3/` (`check.md` row L4, `collected/SkyCRPG_Camera_FixedSpike.log`, `collected/probe-slice.jsonl`). Door-out and reload now record `event=remove cause=engine-gone` (the fourth pass works). The menu hold held for the whole Tween Menu, but when it closed the `FixedRig` rows stayed `eligible=0 state=255`, then `event=hide cause=hook-silent` at t=52771.871 (frame 4254) and `event=show cause=eligible` at t=52772.036 (frame 4264): a 0.17 s blink. This was the review's MINOR 2.
+
+### What silences the camera-state hook (Source: binary, 1.7.104 file bytes; Address Library `versionlib-1-7-104-0.bin`, format 5)
+
+Not pausing. The hook is `ThirdPersonState::Update` (vtable ID 205236 → `18ECC08`, slot 3 = `8FD590` = ID 50896). `TESCamera::Update` (ID 33025, `558E70`) calls only the current state's Update: `558E8C` loads `currentState` (`+28`), `558E99` tests `enabled` (`+30`), `558EB4` `call [rax+18]` (slot 3). `PlayerCamera::Update` (ID 50784) reaches it at `8F8826`. So the hook is silent whenever another camera state is current, paused or not. The console pauses (flags `0x807`, review of `1e5d66f`) and leaves `ThirdPersonState` current, so the hook keeps running and reports `State::menu` (W3: `eligible=0 state=3` rows, hook running, at the console steps).
+
+The Tween Menu changes the camera state:
+- Show: TweenMenu `ProcessMessage` (vtable ID 216145 → `19818B8`, slot 4 = `987C00` = ID 52705), message type 1 branch, calls ID 50816 (`8F9910`) at `9880F3` with `rcx = PlayerCamera` (ID 400802, `31A5478`). ID 50816: if `currentState` (`+28`) is not `cameraStates[kTween]` (`+F0`), push the current state (`8FC730`) and `SetState` (ID 33026, `558F90`) to the Tween state. ID 50816 has that one caller (call scan of `.text`).
+- `PlayerCamera +F0` is `cameraStates[7]`: the PlayerCamera constructor (ID 50783) builds a `TweenMenuCameraState` (ctor ID 50922 `8FF2A0`, the only reference to its vtable ID 214907 → `196E9E0`) with `r8d = 7` → `+18` (the state id) at `8F82C9-8F82D5` and stores it at `+F0` (`8F82F4`). So `currentState->id == kTween (7)` is the same test as the engine's pointer comparison.
+- Close: `TweenMenu::Accept` (ID 52707, slot 1) registers the Scaleform callback `"StartCloseMenu"` (string at `1981948`) as ID 52710 (`988480`, lea at `988357`), which tail-calls ID 50818 → ID 50928 (`8FF880`): if not already ending, set target rotation, `targetAddedFOV` (`+48`) = 0 and `endingState` (`+4C`) = 1. The hide message (type 3, `9880AF`) calls ID 50819 (`8F9A00`), which pops back to the previous state (ID 50879 then ID 33026) **only if the Tween state is current and not ending** (`8F9A16`).
+- So after a normal close the Tween state stays current: its Update (ID 50925, `8FF3A0`, slot 3 of `196E9E0`) eases `currentAddedFOV` (`+44`) towards the target by 25 × `[327560C]` per update (`8FF46A-8FF472`, constant `20BA780` = 25.0; that `327560C`, a `.bss` float, is the frame time is a Hypothesis), and only when it reaches it with `endingState` set (`8FF54E-8FF567`) clears the flag and calls ID 50819, which pops back to third person. The pause count is already zero during the ease.
+
+In game (W3, Source: `probe-slice.jsonl`): probe rows at t=126263-129267 read `camera_state 7, paused true` (menu open); at t=129449, right after the menu event, `camera_state 7, paused false`; at t=130270 `camera_state 9`. The camera log shows the same: frames 4254-4262 hook-silent with nothing paused, frame 4263 (rendered camera still at the Tween pose, offset −7.8, −7.8, 220.9) silent, frame 4264 eligible. Frame 4263 is the frame on which the Tween Update pops back to third person: the third-person Update runs only from the next frame.
+
+### Change
+
+`fillDuty`'s last input is now `silenceHeld` (was `menuPaused`), computed once per ineligible frame by `light::silenceHeld()` (main thread, `endFrame`, light package only) from two plain reads, UI `+160` (pause count) and `PlayerCamera->currentState->id == kTween`, through `SilenceHold::step` (`fixed_spike_light_policy.h`):
+1. a pausing menu is open: held (as at `1e5d66f`);
+2. else the Tween camera state is current **and** a paused frame was seen in this ineligible stretch at most `tweenReleaseSeconds` (0.5 s) ago: held;
+3. else held for the wave 1 grace after the last frame held by 1 or 2 (frames +1 and +2; the third is off). This covers the pop frame, and a frame or two between two pausing menus.
+An eligible frame ends the stretch (`SilenceHold::reset` at the top of `frameLight`). Without a pausing menu first in the stretch nothing is held beyond the grace, so a lost hook with the camera in third person is dropped exactly as before (two frames held, then off), and a Tween state that never pops is dropped 0.5 s plus two frames after the menu closed. A clock that is not finite or runs backwards gives the Tween state no hold (only 1 and 3 apply). The hold still applies only to cause `hook-silent`; load, cell, F8, first person, death and the rest stay off, and `settle` still ends any hold on the first serviced frame after a cell change or a load (cause `cell` / `load`).
+
+Why a cause-based rule and not a longer blanket grace: the silence is fully explained by the Tween camera state; a 0.5 s blanket grace would also hide a real hook loss for 0.5 s after every frame. The time bound applies only while the Tween state is current right after a paused menu.
+
+Static pins added in `fixed_spike_light.h`: `offsetof(RE::TESCamera,currentState) == 0x28`, `offsetof(RE::TESCameraState,id) == 0x18`, `RE::CameraState::kTween == 7` (each matches the binary as above). The base spike's own hide restore (`restoreNow`, cause `hook-silent` after three frames) is unchanged: with see-through hide on, hidden references are still restored behind the Tween Menu and re-hidden after it, as at `744609f`. This pass touches the light's duty only.
+
+Tween -> Inventory: not traced in any run. Whatever the Inventory Menu does with the camera, it pauses (review of `1e5d66f`), so rule 1 holds while it is open; a gap of up to two frames between the two menus is held by rule 3, and any gap while the Tween state stays current by rule 2. A menu closed by a load: the load frames have cause `load` (off), and a hold that reaches the first serviced frame after the load is settled off with cause `load` (or `cell` after a load door), as at `1e5d66f`.
+
+Text fix (review MINOR 1): the comment in `fixed_spike_light_policy.h` and the fourth-pass text above no longer say the console does not pause.
+
+### Trace formats
+
+Unchanged: no new line kind, field or cause value. `FixedLight` (state and event), `FixedLightLevel`, `FixedLightShadow`, `FixedRoomPass` are byte-identical to `1e5d66f`. A held frame writes nothing, as before.
+
+### Tests (this pass)
+
+| Check | Result |
+| --- | --- |
+| 15 portable Camera tests, CI command above, g++ 15.2.0 | **PASS**, all exit 0 |
+| New `silence()` in `fixed_spike_light_policy_test`, frame by frame through the base grace counter, `SilenceHold` and `fillDuty`: the W3 sequence (300 paused frames, 10 eased Tween frames with nothing paused, the silent pop frame) never off, and the `1e5d66f` rule shown to drop it; the 0.5 s bound (held at the bound, two grace frames past it, then off; 30-32 frames at 60 fps); real hook loss in third person (two frames held, then off), also right after a menu; a Tween state with no pause in the stretch, or after an eligible frame, not held; Tween -> second pausing menu with a 0-2 frame gap, Tween state current or not, then the second menu's `State::menu` frames, its close and the pop; a three-frame gap out of every menu is off; a menu closed by a load (`load` frames off, then `settle` gives `load`, or `cell` after a door); other exits off inside a held stretch; NaN, infinite and backwards clocks | **PASS**; five mutants (no Tween rule, no time bound, no grace after the hold, Tween held without a prior pause, the hold applied to any cause) each abort the test |
+| Light policy header under `-Wshadow -Wconversion -Wsign-conversion -Wfloat-conversion -Wold-style-cast` | **PASS**, 0 warnings in the header |
+| Wiring audit | **PASS**, six lines; the light line now checks the silence read (pause count and camera state id, no string or menu lookup, package-gated), one `step` and one `reset` site, the reset before `settle` in `frameLight`, and the three static pins |
+| Native adapter compiled against CommonLib; MSVC `/W4 /WX` | **NOT_RUN** (no CommonLib build here; CI) |
+| L4 rerun | **NOT_RUN** |
+
+Expected on an L4 rerun: no `event=` line from the Tween Menu's open to the first eligible frame after it (the W3 `hide cause=hook-silent` / `show cause=eligible` pair is gone); door-out and reload as in W3.
+
+Unverified: how long the Tween ease takes in other situations (W3: 0.17 s; if `327560C` is the frame time the FOV eases at 25 units/s whatever the frame rate, so 0.5 s covers an added FOV up to about 12 units; both Hypothesis); what the Inventory, Magic, Map and other menus opened from the Tween Menu do with the camera state (Hypothesis: covered by rule 1 while they are open); whether a load from inside the Tween Menu leaves the Tween state current after the load (the `settle` rule ends the hold whatever it does).

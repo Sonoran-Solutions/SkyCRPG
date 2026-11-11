@@ -241,7 +241,7 @@ for entry in ("inline void installLight(std::uintptr_t base) {\n    if (!lights)
               "inline RE::ShadowSceneNode* scene() {\n    if (!lights || !lights->ready) return nullptr;"):
     assert entry in light, entry
 assert spike.count("light::installLight(base);") == 1 and spike.count("light::frameLight(") == 2
-assert end_frame.index("light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState,light::menuPaused()),cause == Exit::load,parent,") < \
+assert end_frame.index("light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState,light::silenceHeld()),cause == Exit::load,parent,") < \
     end_frame.index("traceRig(false);") < end_frame.index("light::frameLight(true,light::FillDuty::keep,false,parent,")
 assert end_frame.index("if (!thin::onMain())") < end_frame.index("light::frameLight(")  # main thread only
 for forbidden in ("write_vfunc", "write_call", "write_branch", "AllocTrampoline", "PAGE_EXECUTE_READWRITE", "_ReturnAddress",
@@ -303,6 +303,8 @@ service = light_body("inline void serviceFill(", "// ---- entry points")
 assert service.index("if (!l.fillReady) { show(false,\"refused\"); return; }") < service.index("createFill()") < service.index("show(false,cause);") < \
     service.index("presenceNow(node)") < service.index("fillStep(wanted,l.presence,l.track,runtime->now)")
 frame_light = light_body("inline void frameLight(", "} // namespace")
+assert frame_light.index("auto& l = *lights;") < frame_light.index("if (eligible) l.silence.reset();") < \
+    frame_light.index("const auto settled = settle(")
 assert frame_light.index("serviceFill(node,wanted,feet,cause);") < frame_light.index("if (!l.config.trace || !node || !eligible")
 assert "fillWanted(l.config.fillMode,duty == FillDuty::keep && finite(feet),interior,l.fillReady && node != nullptr)" in frame_light
 assert "if (cellId != l.cell || loadExit) { l.cell = cellId; l.track.newCell(); }" in frame_light
@@ -318,11 +320,19 @@ assert light.count("loadPending = true") == 1 and "if (lights && (requests & exi
 assert end_frame.index("const unsigned requests = r.requests.exchange(0u,std::memory_order_acq_rel);") < \
     end_frame.index("if (requests) restoreAll(firstExit(requests));") < end_frame.index("light::noteExits(requests);") < \
     end_frame.index("light::frameLight(")
-assert spike.count("light::noteExits(") == 1 and spike.count("light::menuPaused()") == 1
-# The paused-menu read: no string, no GetMenu, main thread (endFrame), nothing when the package is off.
-paused = light_body("inline bool menuPaused() {", "// endFrame(), main thread, both eligible")
+assert spike.count("light::noteExits(") == 1 and spike.count("light::silenceHeld()") == 1 and "menuPaused" not in spike
+# The silence read: pause count and camera state id, no string, no GetMenu, main
+# thread (endFrame, ineligible frames only), nothing when the package is off;
+# the stretch ends on an eligible frame, before anything else in frameLight.
+paused = light_body("inline bool silenceHeld() {", "// endFrame(), main thread, both eligible")
 assert paused.index("if (!lights) return false;") < paused.index("RE::UI::GetSingleton()") and "ui->numPausesGame != 0u" in paused
+assert "camera->currentState->id == RE::CameraState::kTween" in paused and "lights->silence.step(paused,tween,runtime->now)" in paused
+assert "GetMenu" not in paused and "IsMenuOpen" not in paused and "BSFixedString" not in paused
+assert light.count("silence.step(") == 1 and light.count("silence.reset()") == 1
 assert "static_assert(offsetof(RE::UI,numPausesGame) == 0x160);" in light
+for pin in ("static_assert(offsetof(RE::TESCamera,currentState) == 0x28);", "static_assert(offsetof(RE::TESCameraState,id) == 0x18);",
+            "static_assert(RE::CameraState::kTween == 7);"):
+    assert pin in light, pin
 # Outdoors the exit is named for it.
 assert frame_light.index("const bool interior = parent && parent->IsInteriorCell();") < \
     frame_light.index('if (eligible && !interior) cause = "exterior";') < frame_light.index("serviceFill(node,wanted,feet,cause);")

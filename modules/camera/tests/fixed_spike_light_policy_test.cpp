@@ -104,6 +104,148 @@ void duty() {
     assert(withoutFill(.3f,nan) == .3f && std::isnan(withoutFill(nan,.2f)) && withoutFill(.3f,inf) == .3f);
 }
 
+// endFrame's ineligible path for the light, frame by frame: the base grace
+// counter, the silence hold, and the duty they give (fixed_spike.h).
+struct SilentFrames {
+    SilenceHold hold;
+    unsigned silent{};
+    double now{};
+    FillDuty frame(Exit cause,bool paused,bool tween,double dt = 1.0/60.0) {
+        now += dt;
+        silent = cause == Exit::hookSilent ? silent+1u : 0u;
+        const bool held = hold.step(paused,tween,now);
+        return fillDuty(false,restoreNow(cause,silent),cause,cause != Exit::hookSilent,State::menu,held);
+    }
+    void eligible(double dt = 1.0/60.0) { now += dt; silent = 0; hold.reset(); }
+};
+void silence() {
+    // W3 (1e5d66f) L4 menu step: the Tween Menu is open (paused, Tween camera
+    // state), it closes, the Tween state eases back for 10 frames (0.17 s) with
+    // nothing paused, pops to third person on a frame that is itself silent,
+    // and the next frame is eligible. No frame of it may be off (no hide).
+    {
+        SilentFrames f;
+        f.eligible();
+        for (int i = 0;i < 300;++i) assert(f.frame(Exit::hookSilent,true,true) == FillDuty::hold);
+        for (int i = 0;i < 10;++i) assert(f.frame(Exit::hookSilent,false,true) == FillDuty::hold);
+        assert(f.frame(Exit::hookSilent,false,false) == FillDuty::hold); // the pop frame
+        f.eligible();
+        // The rule before this pass (paused only) drops the light on the first
+        // eased frame: that is the W3 blink.
+        SilentFrames before;
+        for (int i = 0;i < 300;++i) static_cast<void>(before.frame(Exit::hookSilent,true,true));
+        const unsigned grace = before.silent;
+        assert(grace >= silentGraceFrames &&
+            fillDuty(false,restoreNow(Exit::hookSilent,grace+1u),Exit::hookSilent,false,State::menu,false) == FillDuty::off);
+    }
+    // The Tween hold is bounded: at most tweenReleaseSeconds after the last
+    // paused frame, then the wave 1 grace, then off (a Tween state that never
+    // pops is not held for ever).
+    {
+        SilenceHold h;
+        assert(h.step(true,true,100.0));
+        assert(h.step(false,true,100.0+tweenReleaseSeconds));        // the bound itself still holds
+        assert(h.step(false,true,100.0+tweenReleaseSeconds+.001));   // past it: grace frame 1
+        assert(h.step(false,true,100.0+tweenReleaseSeconds+.002));   // grace frame 2
+        assert(!h.step(false,true,100.0+tweenReleaseSeconds+.003));  // off
+        assert(!h.step(false,true,100.0+tweenReleaseSeconds+.004));
+        SilentFrames f;
+        f.eligible();
+        assert(f.frame(Exit::hookSilent,true,true) == FillDuty::hold);
+        unsigned heldFrames = 0;
+        FillDuty d = FillDuty::hold;
+        while ((d = f.frame(Exit::hookSilent,false,true)) == FillDuty::hold) ++heldFrames;
+        assert(d == FillDuty::off);
+        // 0.5 s at 60 fps (30 frames, the clock's last step may land either side) plus two grace frames.
+        assert(heldFrames >= 30 && heldFrames <= 32);
+    }
+    // Real hook loss with the camera in third person and nothing paused: the
+    // watchdog is unchanged (two silent frames held, the third off).
+    {
+        SilentFrames f;
+        f.eligible();
+        assert(f.frame(Exit::hookSilent,false,false) == FillDuty::hold);
+        assert(f.frame(Exit::hookSilent,false,false) == FillDuty::hold);
+        for (int i = 0;i < 100;++i) assert(f.frame(Exit::hookSilent,false,false) == FillDuty::off);
+        // And a Tween state with no pausing menu in this stretch is no reason either.
+        SilentFrames t;
+        t.eligible();
+        assert(t.frame(Exit::hookSilent,false,true) == FillDuty::hold);
+        assert(t.frame(Exit::hookSilent,false,true) == FillDuty::hold);
+        assert(t.frame(Exit::hookSilent,false,true) == FillDuty::off);
+        // An eligible frame ends the stretch: an old pause does not cover a later Tween state.
+        SilentFrames r;
+        assert(r.frame(Exit::hookSilent,true,true) == FillDuty::hold);
+        r.eligible();
+        for (int i = 0;i < 2;++i) assert(r.frame(Exit::hookSilent,false,true) == FillDuty::hold);
+        assert(r.frame(Exit::hookSilent,false,true) == FillDuty::off);
+    }
+    // Hook loss right after a menu: the grace after the menu, then off.
+    {
+        SilentFrames f;
+        for (int i = 0;i < 60;++i) assert(f.frame(Exit::hookSilent,true,true) == FillDuty::hold);
+        assert(f.frame(Exit::hookSilent,false,false) == FillDuty::hold);
+        assert(f.frame(Exit::hookSilent,false,false) == FillDuty::hold);
+        for (int i = 0;i < 100;++i) assert(f.frame(Exit::hookSilent,false,false) == FillDuty::off);
+    }
+    // One pausing menu closed straight into another (Tween -> Inventory): a gap
+    // of up to two frames with nothing paused and the camera already out of the
+    // Tween state, or any gap while the Tween state stays current, is held.
+    for (bool tweenInGap : {false,true})
+        for (int gap : {0,1,2}) {
+            SilentFrames f;
+            f.eligible();
+            for (int i = 0;i < 30;++i) assert(f.frame(Exit::hookSilent,true,true) == FillDuty::hold);
+            for (int i = 0;i < gap;++i) assert(f.frame(Exit::hookSilent,false,tweenInGap) == FillDuty::hold);
+            for (int i = 0;i < 30;++i) assert(f.frame(Exit::hookSilent,true,tweenInGap) == FillDuty::hold);
+            // The second menu with the hook running (State::menu) holds as before.
+            for (int i = 0;i < 5;++i) assert(f.frame(Exit::menu,true,false) == FillDuty::hold);
+            for (int i = 0;i < 10;++i) assert(f.frame(Exit::hookSilent,false,true) == FillDuty::hold);
+            assert(f.frame(Exit::hookSilent,false,false) == FillDuty::hold);
+        }
+    {
+        // A gap of three frames out of every menu and out of the Tween state is a lost hook.
+        SilentFrames f;
+        for (int i = 0;i < 30;++i) static_cast<void>(f.frame(Exit::hookSilent,true,true));
+        assert(f.frame(Exit::hookSilent,false,false) == FillDuty::hold);
+        assert(f.frame(Exit::hookSilent,false,false) == FillDuty::hold);
+        assert(f.frame(Exit::hookSilent,false,false) == FillDuty::off);
+    }
+    // A menu closed by a load: the load frames are off whatever the silence
+    // says, and a hold that reaches the first serviced frame after the load is
+    // settled off with cause "load" (or "cell" after a load door).
+    {
+        SilentFrames f;
+        for (int i = 0;i < 30;++i) assert(f.frame(Exit::hookSilent,true,true) == FillDuty::hold);
+        for (int i = 0;i < 5;++i) assert(f.frame(Exit::load,true,false) == FillDuty::off);
+        const FillDuty held = f.frame(Exit::hookSilent,true,false);
+        assert(held == FillDuty::hold);
+        const auto loaded = settle(held,false,true,"hook-silent");
+        assert(loaded.duty == FillDuty::off && std::string(loaded.cause) == "load");
+        const auto door = settle(f.frame(Exit::hookSilent,false,true),true,false,"hook-silent");
+        assert(door.duty == FillDuty::off && std::string(door.cause) == "cell");
+        // Death and the other exits stay off in the middle of a held stretch.
+        for (const auto cause : {Exit::firstPerson,Exit::disable,Exit::f8,Exit::death,Exit::cell,Exit::unload})
+            assert(f.frame(cause,true,true) == FillDuty::off);
+    }
+    // A broken clock: a pausing menu still holds; the Tween state alone does not
+    // (no time to bound it), so only the grace follows; a clock that runs back
+    // is not "recent" either.
+    {
+        SilenceHold h;
+        assert(h.step(true,true,std::numeric_limits<double>::quiet_NaN()) && h.pausedAt < 0.0);
+        assert(h.step(false,true,5.0) && h.step(false,true,5.0) && !h.step(false,true,5.0));
+        SilenceHold b;
+        assert(b.step(true,false,10.0) && b.pausedAt == 10.0);
+        assert(b.step(false,true,9.0) && b.step(false,true,9.0) && !b.step(false,true,9.0));
+        assert(!b.step(false,true,std::numeric_limits<double>::infinity()));
+        SilenceHold fresh;
+        assert(!fresh.step(false,false,1.0) && !fresh.step(false,true,1.0)); // nothing before: never held
+        fresh.reset();
+        assert(fresh.pausedAt < 0.0 && fresh.sinceHeld == silentGraceFrames);
+    }
+}
+
 void presence() {
     assert(presenceOf(false,false,false) == Presence::absent);
     assert(presenceOf(true,false,false) == Presence::active);
@@ -389,6 +531,7 @@ int main() {
     settings();
     wanted();
     duty();
+    silence();
     presence();
     steps();
     rooms();

@@ -67,6 +67,13 @@ static_assert(offsetof(RE::ShadowSceneNode::LIGHT_CREATE_PARAMS,lensFlareData) =
 // incremented at 116A552-116A559, decremented at 116A0CA-116A0D1. Read on the
 // main thread, which opens and closes menus; a plain counter, no string.
 static_assert(offsetof(RE::UI,numPausesGame) == 0x160);
+// PlayerCamera (ID 400802, 31A5478) +28 is the current camera state (ID 50819
+// compares it with cameraStates[kTween] at +F0, 8F9A06-8F9A10); a state's id is
+// at +18 (ID 50816 reads it at 8F9948) and the Tween state is built with id 7
+// (ID 50783, 8F82C9-8F82F4). Read on the main thread; no string.
+static_assert(offsetof(RE::TESCamera,currentState) == 0x28);
+static_assert(offsetof(RE::TESCameraState,id) == 0x18);
+static_assert(RE::CameraState::kTween == 7);
 
 // ID 106362: (scene node, position, light count out, sun term out, ambient term
 // out, exclude light, shadow-light mask) -> sum of ID 108292 (726414-726423 sets
@@ -102,6 +109,7 @@ struct LightRuntime {
     unsigned adds{},removes{};
     RE::FormID cell{};
     bool loadPending{}; // a game load was signalled since the last serviced frame
+    SilenceHold silence; // which hook-silent frames belong to a menu (fillDuty)
     double nextCheck{},nextTrace{},nextShadows{},nextLevel{};
     LineBudget lines{lightTraceLines},levelLines{lightLevelTraceLines};
 };
@@ -405,11 +413,16 @@ inline void installLight(std::uintptr_t base) {
 inline void noteExits(unsigned requests) {
     if (lights && (requests & exitBit(Exit::load))) lights->loadPending = true;
 }
-// endFrame(), main thread: a menu that pauses the world is open (fillDuty).
-inline bool menuPaused() {
+// endFrame(), main thread, once per ineligible frame: is this frame's hook
+// silence a menu's (fillDuty, SilenceHold)? A pausing menu is open, or the
+// Tween camera state is still easing back after one.
+inline bool silenceHeld() {
     if (!lights) return false;
     const auto ui = RE::UI::GetSingleton();
-    return ui && ui->numPausesGame != 0u;
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    const bool paused = ui && ui->numPausesGame != 0u;
+    const bool tween = camera && camera->currentState && camera->currentState->id == RE::CameraState::kTween;
+    return lights->silence.step(paused,tween,runtime->now);
 }
 // endFrame(), main thread, both eligible and ineligible frames. `at` is the
 // census point (feet + eyeLift), `camera` the rendered camera position.
@@ -418,6 +431,7 @@ inline bool menuPaused() {
 inline void frameLight(bool eligible,FillDuty duty,bool loadExit,RE::TESObjectCELL* parent,Vec feet,Vec at,Vec camera,const char* cause) {
     if (!lights) return;
     auto& l = *lights;
+    if (eligible) l.silence.reset();
     const RE::FormID cellId = parent ? parent->GetFormID() : 0u;
     const auto settled = settle(duty,cellId != l.cell,l.loadPending,cause);
     duty = settled.duty; cause = settled.cause;

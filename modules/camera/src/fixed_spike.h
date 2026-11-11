@@ -652,7 +652,7 @@ inline void endFrame() {
         const bool exiting = restoreNow(cause,r.silentFrames);
         if (exiting) restoreAll(cause);
         const auto at = player && parent ? player->GetPosition() : RE::NiPoint3{};
-        light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState,light::menuPaused()),cause == Exit::load,parent,
+        light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState,light::silenceHeld()),cause == Exit::load,parent,
             player && parent ? Vec{at.x,at.y,at.z} : Vec{},{},{},exitNames[static_cast<std::size_t>(cause)]);
         traceRig(false);
         r.previousEligible = false;
