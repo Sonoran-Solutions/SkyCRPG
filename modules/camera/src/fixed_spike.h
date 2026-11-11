@@ -19,6 +19,9 @@ enum class Refusal : unsigned {
     fadeSetting = 15,
     snapMapped = 40, snapUnbound = 41,
     traceWriter = 50,
+    // Wave 2 package "light" (FCS-51..59; 50 was already the trace writer).
+    lightSettings = 51, lightScene = 52, sceneReplaced = 53, fillFunctions = 54, fillCreate = 55, fillDropped = 56, fillStuck = 57,
+    stealthGuard = 58, stealthMemory = 59,
     restoreConflict = 60, offMain = 61
 };
 struct Hidden {
@@ -93,6 +96,9 @@ struct Runtime {
     double nextFade{};
     LineBudget fadeLines{fadeTraceLines};
     double nextRig{},nextRoom{};
+    LineBudget roomPassLines{roomPassTraceLines};
+    RoomPassSample roomPass;
+    double nextRoomPass{};
 };
 // Process lifetime, like the thin runtime: hidden roots and the trace worker
 // must never be torn down under the loader lock.
@@ -487,7 +493,10 @@ inline bool hookRoom(RE::BSMultiBoundRoom* room,const RE::NiPoint3& point) {
     const auto view = r.view.load(std::memory_order_acquire);
     const Vec asked{point.x,point.y,point.z};
     if (!view || !viewerQuery(*view,asked)) return vanilla;
-    if (caller != RoomCaller::culling) { r.counters.gatedNear.fetch_add(1ull,std::memory_order_relaxed); return vanilla; }
+    if (caller != RoomCaller::camera) {
+        (caller == RoomCaller::light ? r.counters.lightNear : r.counters.gatedNear).fetch_add(1ull,std::memory_order_relaxed);
+        return vanilla;
+    }
     r.counters.viewerCalls.fetch_add(1ull,std::memory_order_relaxed);
     if (vanilla) { r.counters.vanillaTrue.fetch_add(1ull,std::memory_order_relaxed); return true; }
     const auto& bound = room->worldBound;
@@ -538,7 +547,8 @@ inline void traceRoom(RE::TESObjectCELL* parent,Vec viewer,Vec eye) {
         }
     }
     s.calls = r.counters.calls.exchange(0ull,std::memory_order_relaxed);
-    s.culling = r.counters.culling.exchange(0ull,std::memory_order_relaxed);
+    s.cameraPass = r.counters.cameraPass.exchange(0ull,std::memory_order_relaxed);
+    s.lightPass = r.counters.lightPass.exchange(0ull,std::memory_order_relaxed);
     s.attach = r.counters.attach.exchange(0ull,std::memory_order_relaxed);
     s.water = r.counters.water.exchange(0ull,std::memory_order_relaxed);
     s.other = r.counters.other.exchange(0ull,std::memory_order_relaxed);
@@ -548,8 +558,21 @@ inline void traceRoom(RE::TESObjectCELL* parent,Vec viewer,Vec eye) {
     s.claims = r.counters.claims.exchange(0ull,std::memory_order_relaxed);
     char line[640]{};
     if (formatRoom(line,sizeof(line),s)) emit(r.roomLines,line);
+    r.roomPass.add(s,r.counters.lightNear.exchange(0ull,std::memory_order_relaxed));
+    if (r.now < r.nextRoomPass) return;
+    r.nextRoomPass = r.now+1.0;
+    r.roomPass.seconds = r.now; r.roomPass.frame = r.frame;
+    if (formatRoomPass(line,sizeof(line),r.roomPass)) emit(r.roomPassLines,line);
+    r.roomPass = {};
 }
 
+} // namespace skycrpg::camera::fixed
+
+// ---- light (wave 2 package, DYL-217): after the room helpers, whose vanilla
+// room test (within) the light census uses -------------------------------------
+#include "fixed_spike_light.h"
+
+namespace skycrpg::camera::fixed {
 // ---- rig --------------------------------------------------------------------
 // Main thread, eligible look call: consume snap presses, return the yaw request.
 inline float yawInput(bool slide,float rawX,float playerHeading,float freeRotationX,float gain,float dt,bool home) {
@@ -685,7 +708,9 @@ inline void endFrame() {
     r.now = thin::seconds();
     const bool eligible = r.frameEligible;
     r.frameEligible = false; // a cast outside the bracket is always native
-    if (const unsigned requests = r.requests.exchange(0u,std::memory_order_acq_rel)) restoreAll(firstExit(requests));
+    const unsigned requests = r.requests.exchange(0u,std::memory_order_acq_rel);
+    if (requests) restoreAll(firstExit(requests));
+    light::noteExits(requests);
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto parent = player ? player->GetParentCell() : nullptr;
     const RE::FormID cellId = parent ? parent->GetFormID() : 0u;
@@ -698,7 +723,11 @@ inline void endFrame() {
         shader::deactivate(); shader::trace(r.now); // wave 2 shader
         observeFade(); settleFade(false); traceFade(); // base rig: the engine's player fade back to its own value
         dropSnaps();
-        if (restoreNow(cause,r.silentFrames)) restoreAll(cause);
+        const bool exiting = restoreNow(cause,r.silentFrames);
+        if (exiting) restoreAll(cause);
+        const auto at = player && parent ? player->GetPosition() : RE::NiPoint3{};
+        light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState,light::silenceHeld()),cause == Exit::load,parent,
+            player && parent ? Vec{at.x,at.y,at.z} : Vec{},{},{},exitNames[static_cast<std::size_t>(cause)]);
         traceRig(false);
         r.previousEligible = false;
         return;
@@ -719,7 +748,10 @@ inline void endFrame() {
     shader::noteCell(parent); // wave 2 shader, fourth pass: the census of a newly entered cell (iCutStyle=1 only)
     shader::publish(viewer,{facing[0][1],facing[1][1],facing[2][1]},{position.x,position.y,position.z},parent->IsInteriorCell(),r.frame,r.now);
     shader::trace(r.now);
-    observeFade(); settleFade(true); traceFade(); // base rig: no player fade for the engine's own camera point next frame
+    // wave 2 light (combined build, wave 3): after the rig has decided this frame is eligible and after the
+    // shader has published its plane (no data flows between the two); a no-op unless a light key is on.
+    light::frameLight(true,light::FillDuty::keep,false,parent,{position.x,position.y,position.z},eye,viewer,"eligible");
+    observeFade(); settleFade(true); traceFade(); // base rig: no player fade for the engine's own camera point next frame (last)
 }
 
 // ---- install ----------------------------------------------------------------
@@ -813,13 +845,22 @@ inline void install(bool prerequisites,bool service) {
     if (r.config.roomSeedMode) installRoomHook(base);
     shader::install(base); // wave 2 shader: a no-op unless iSeeThroughMode=3
     installFade(base); // base rig: bHoldPlayerFade (FCS-15 on a failed check)
+    light::installLight(base); // wave 2 light: a no-op unless iLightFillMode=1 or iLightTrace=1 (FCS-51..59)
     r.active.store(true,std::memory_order_release);
-    char line[256]{};
-    std::snprintf(line,sizeof(line),"installed rig=1 caster=%s rooms=%s seeThrough=%u shaderCut=%s heading=%.3f zoom=%.3f snapKeys=%d,%d traces=%u,%u,%u",
+    char line[320]{};
+    // The shader build's line; the light fields are appended only when the light package is configured,
+    // so with the light keys off this line is byte-identical to shader 3528e92.
+    const int written = std::snprintf(line,sizeof(line),
+        "installed rig=1 caster=%s rooms=%s seeThrough=%u shaderCut=%s heading=%.3f zoom=%.3f snapKeys=%d,%d traces=%u,%u,%u",
         !r.castReady ? "native" : r.castChained ? "thin-chain" : "own-detour",
         !r.config.roomSeedMode ? "vanilla" : r.roomHook ? "hooked" : "refused",r.config.seeThroughMode,shader::status(),
         static_cast<double>(r.config.heading),static_cast<double>(r.config.zoom),r.config.snapLeftKey,r.config.snapRightKey,
         static_cast<unsigned>(r.config.rigTrace),static_cast<unsigned>(r.config.roomTrace),static_cast<unsigned>(r.config.hideTrace));
+    if (light::lights && written > 0 && static_cast<std::size_t>(written) < sizeof(line))
+        std::snprintf(line+written,sizeof(line)-static_cast<std::size_t>(written)," light=%s fill=%s lightTrace=%u",
+            light::lights->ready ? "ready" : "refused",
+            !light::lights->config.fillMode ? "off" : light::lights->fillReady ? "ready" : "refused",
+            static_cast<unsigned>(light::lights->config.trace));
     note(line);
     std::snprintf(line,sizeof(line),"player fade hold=%s setting=%llu holdValue=%.1f engineValue=%.1f",
         fadeFeatureNames[static_cast<std::size_t>(r.fadeState)],static_cast<unsigned long long>(fadeSettingId),static_cast<double>(fadeHoldValue),
@@ -827,9 +868,9 @@ inline void install(bool prerequisites,bool service) {
     note(line);
 }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1.
-inline void configure(const Config& requested,const shader::Config& shaderRequested,const Settings& base,int cursorKey,
-    const std::filesystem::path& tracePath,void (*logger)(const char*),RE::NiPoint3 (*goalNow)(),RE::NiPoint3 (*preCollisionNow)(),
-    unsigned (*causeNow)(int)) {
+inline void configure(const Config& requested,const shader::Config& shaderRequested,const light::Config& lightRequested,const Settings& base,
+    int cursorKey,const std::filesystem::path& tracePath,void (*logger)(const char*),RE::NiPoint3 (*goalNow)(),
+    RE::NiPoint3 (*preCollisionNow)(),unsigned (*causeNow)(int)) {
     runtime = new Runtime;
     auto& r = *runtime;
     r.logger = logger; r.goalNow = goalNow; r.preCollisionNow = preCollisionNow; r.causeNow = causeNow;
@@ -843,10 +884,14 @@ inline void configure(const Config& requested,const shader::Config& shaderReques
         shader::configure(shaderRequested,logger,[](const char* text) { emit(runtime->shaderLines,text); },
             [](const char* text) { emit(runtime->shaderLookLines,text); },[](const char* text) { emit(runtime->shaderVoidLines,text); },
             [](const char* text) { emit(runtime->shaderStyleLines,text); },[](const char* text) { emit(runtime->shaderStyle2Lines,text); });
-    if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace || shader::tracing()) {
-        const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines : 0u)+
+    // wave 2 light: its runtime exists only with iLightFillMode=1 or iLightTrace=1.
+    light::configureLight(lightRequested);
+    const bool lightTrace = light::lights && light::lights->config.trace;
+    // Writer capacity: the sum of every line budget that can write (combined build: shader + fade + light + room pass).
+    if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace || shader::tracing() || lightTrace) {
+        const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines+roomPassTraceLines : 0u)+
             (r.config.hideTrace ? hideTraceLines : 0u)+(shader::tracing() ? shader::traceKinds()*shader::traceLines : 0u)+
-            (r.config.holdFade ? fadeTraceLines : 0u);
+            (r.config.holdFade ? fadeTraceLines : 0u)+(lightTrace ? light::lightTraceLines+light::lightLevelTraceLines : 0u);
         r.traceReady = r.writer.start(tracePath,rows);
         if (!r.traceReady) refuse(Refusal::traceWriter,"trace writer did not start; traces off, behaviour unchanged");
     }

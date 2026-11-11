@@ -187,30 +187,30 @@ void rooms() {
     const auto inside = [](float low,float high) { return [=](Vec p) { return p.z >= low && p.z <= high; }; };
     const Vec asked{0,0,490}; // camera + near * forward
     // Mode 0 never claims; neither does an unknown mode.
-    for (const unsigned mode : {0u,4u,99u}) { view.mode = mode; assert(!seedClaim(RoomCaller::culling,view,asked,{},0,inside(-1e9f,1e9f))); }
+    for (const unsigned mode : {0u,4u,99u}) { view.mode = mode; assert(!seedClaim(RoomCaller::camera,view,asked,{},0,inside(-1e9f,1e9f))); }
     // Mode 1: only the room that holds the player.
     view.mode = 1;
-    assert(seedClaim(RoomCaller::culling,view,asked,{},0,inside(0,128)) && !seedClaim(RoomCaller::culling,view,asked,{},0,inside(200,300)));
+    assert(seedClaim(RoomCaller::camera,view,asked,{},0,inside(0,128)) && !seedClaim(RoomCaller::camera,view,asked,{},0,inside(200,300)));
     // Mode 2: any room crossed by the sightline samples (eye, .75, .5, .25).
     view.mode = 2;
-    assert(seedClaim(RoomCaller::culling,view,asked,{},0,inside(0,128)));     // player end
-    assert(seedClaim(RoomCaller::culling,view,asked,{},0,inside(250,300)));   // midpoint 277
-    assert(seedClaim(RoomCaller::culling,view,asked,{},0,inside(380,390)));   // quarter point 383.5
-    assert(!seedClaim(RoomCaller::culling,view,asked,{},0,inside(400,480)));  // between samples and the camera
+    assert(seedClaim(RoomCaller::camera,view,asked,{},0,inside(0,128)));     // player end
+    assert(seedClaim(RoomCaller::camera,view,asked,{},0,inside(250,300)));   // midpoint 277
+    assert(seedClaim(RoomCaller::camera,view,asked,{},0,inside(380,390)));   // quarter point 383.5
+    assert(!seedClaim(RoomCaller::camera,view,asked,{},0,inside(400,480)));  // between samples and the camera
     std::vector<float> order;
-    assert(!seedClaim(RoomCaller::culling,view,asked,{},0,[&](Vec p) { order.push_back(p.z); return false; }));
+    assert(!seedClaim(RoomCaller::camera,view,asked,{},0,[&](Vec p) { order.push_back(p.z); return false; }));
     assert(order.size() == 4 && near(order[0],64) && order[1] < order[2] && order[2] < order[3] && near(order[3],383.5f));
     // Mode 3: rooms whose bound reaches within the radius of the player.
     view.mode = 3;
     const auto never = [](Vec) { return false; };
-    assert(seedClaim(RoomCaller::culling,view,asked,{0,350,64},100,never) && !seedClaim(RoomCaller::culling,view,asked,{0,450,64},100,never));
-    assert(!seedClaim(RoomCaller::culling,view,asked,{nan,0,0},100,never) && !seedClaim(RoomCaller::culling,view,asked,{0,0,0},nan,never));
+    assert(seedClaim(RoomCaller::camera,view,asked,{0,350,64},100,never) && !seedClaim(RoomCaller::camera,view,asked,{0,450,64},100,never));
+    assert(!seedClaim(RoomCaller::camera,view,asked,{nan,0,0},100,never) && !seedClaim(RoomCaller::camera,view,asked,{0,0,0},nan,never));
     // Queries that are not the main view (reference-to-room attach, other
     // cameras) keep the vanilla answer in every mode.
     for (const unsigned mode : {1u,2u,3u}) {
         view.mode = mode;
-        assert(!seedClaim(RoomCaller::culling,view,{0,0,64},{0,0,64},1e6f,inside(-1e9f,1e9f)));
-        assert(!seedClaim(RoomCaller::culling,view,{nan,0,0},{0,0,64},1e6f,inside(-1e9f,1e9f)));
+        assert(!seedClaim(RoomCaller::camera,view,{0,0,64},{0,0,64},1e6f,inside(-1e9f,1e9f)));
+        assert(!seedClaim(RoomCaller::camera,view,{nan,0,0},{0,0,64},1e6f,inside(-1e9f,1e9f)));
     }
     assert(viewerQuery(view,{0,0,500+viewerTolerance}) && !viewerQuery(view,{0,0,500+viewerTolerance+1}));
     // The caller gate: only the three culling passes may ever be claimed for,
@@ -220,17 +220,25 @@ void rooms() {
         view.mode = mode;
         for (const auto caller : {RoomCaller::attach,RoomCaller::water,RoomCaller::other})
             assert(!seedClaim(caller,view,view.viewer,{0,0,64},1e6f,inside(-1e9f,1e9f)));
-        assert(seedClaim(RoomCaller::culling,view,view.viewer,{0,0,64},1e6f,inside(-1e9f,1e9f)));
+        assert(seedClaim(RoomCaller::camera,view,view.viewer,{0,0,64},1e6f,inside(-1e9f,1e9f)));
     }
     const std::uintptr_t image = 0x140000000ull;
     const RoomCallers callers = roomCallersAt(image);
     // The six audited return addresses are inside the .pdata extents.
-    for (const auto site : cullingReturnRvas) assert(roomCaller(callers,image+site) == RoomCaller::culling);
+    // Only ID 13408's two sites are the camera pass; the other four are light passes.
+    assert(roomCaller(callers,image+cullingReturnRvas[0]) == RoomCaller::camera && roomCaller(callers,image+cullingReturnRvas[1]) == RoomCaller::camera);
+    for (std::size_t i = 2;i < cullingReturnRvas.size();++i) assert(roomCaller(callers,image+cullingReturnRvas[i]) == RoomCaller::light);
+    // A light pass at the camera is never claimed for, in any mode.
+    for (const unsigned mode : {1u,2u,3u}) {
+        RoomView lightView = view; lightView.mode = mode; lightView.radius = 1e6f;
+        assert(!seedClaim(RoomCaller::light,lightView,lightView.viewer,{0,0,64},1e6f,inside(-1e9f,1e9f)));
+    }
     assert(roomCaller(callers,image+0x2c9e4e) == RoomCaller::attach && roomCaller(callers,image+0x2bf079) == RoomCaller::water);
     // Extents are half-open, and anything else is "other".
-    assert(roomCaller(callers,image+0x1a97b0) == RoomCaller::culling && roomCaller(callers,image+0x1a9de6) == RoomCaller::culling);
+    assert(roomCaller(callers,image+0x1a97b0) == RoomCaller::camera && roomCaller(callers,image+0x1a9de6) == RoomCaller::camera);
     assert(roomCaller(callers,image+0x1a9de7) == RoomCaller::other && roomCaller(callers,image+0x1a97af) == RoomCaller::other);
-    assert(roomCaller(callers,image+0x151328c) == RoomCaller::other && roomCaller(callers,image+0x1513290) == RoomCaller::culling);
+    assert(roomCaller(callers,image+0x151328c) == RoomCaller::other && roomCaller(callers,image+0x1513290) == RoomCaller::light);
+    assert(roomCaller(callers,image+0x1512540) == RoomCaller::light && roomCaller(callers,image+0x151328b) == RoomCaller::light);
     assert(roomCaller(callers,image+0x1513fbe) == RoomCaller::other && roomCaller(callers,0) == RoomCaller::other);
     assert(roomCaller(callers,0x1a9981) == RoomCaller::other); // an RVA is not an address
     // A hook wrapped by someone else returns into their module: never culling.
@@ -238,22 +246,45 @@ void rooms() {
     // An unverified attach or water extent only loses its name.
     const RoomCallers partial = roomCallersAt(image,false,false);
     assert(roomCaller(partial,image+0x2c9e4e) == RoomCaller::other && roomCaller(partial,image+0x2bf079) == RoomCaller::other);
-    assert(roomCaller(partial,image+0x151293c) == RoomCaller::culling);
+    assert(roomCaller(partial,image+0x151293c) == RoomCaller::light && roomCaller(partial,image+0x1a9a0e) == RoomCaller::camera);
     assert(roomCaller(RoomCallers{},image+0x151293c) == RoomCaller::other); // nothing installed, nothing claimed
     RoomCounters counters;
-    for (const auto caller : {RoomCaller::culling,RoomCaller::culling,RoomCaller::attach,RoomCaller::water,RoomCaller::other}) counters.count(caller);
-    assert(counters.calls == 5 && counters.culling == 2 && counters.attach == 1 && counters.water == 1 && counters.other == 1);
+    for (const auto caller : {RoomCaller::camera,RoomCaller::camera,RoomCaller::light,RoomCaller::attach,RoomCaller::water,RoomCaller::other}) counters.count(caller);
+    assert(counters.calls == 6 && counters.cameraPass == 2 && counters.lightPass == 1 && counters.attach == 1 && counters.water == 1 && counters.other == 1);
     view.mode = 1; view.eye = {nan,0,0};
-    assert(!seedClaim(RoomCaller::culling,view,asked,{},0,inside(-1e9f,1e9f)));
+    assert(!seedClaim(RoomCaller::camera,view,asked,{},0,inside(-1e9f,1e9f)));
     RoomSample s;
     s.mode = 2; s.hook = s.active = s.graph = true; s.rooms = 14; s.playerRoom = 3; s.cell = 0x1605E; s.claims = 9; s.viewerCalls = 28;
-    s.calls = 40; s.culling = 30; s.attach = 6; s.water = 3; s.other = 1; s.gatedNear = 2;
+    s.calls = 40; s.cameraPass = 22; s.lightPass = 8; s.attach = 6; s.water = 3; s.other = 1; s.gatedNear = 2;
     char line[640]{};
     assert(formatRoom(line,sizeof(line),s));
     const std::string text = line;
     for (const char* field : {"mode=2","hook=1","active=1","cell=0001605E","graph=1","rooms=14","playerRoom=3","cameraRoom=-1",
         "calls=40","cullCalls=30","attachCalls=6","waterCalls=3","otherCalls=1","viewerCalls=28","gatedNear=2","claims=9"})
         assert(text.find(field) != std::string::npos);
+    // FixedRoom keeps the 744609f field list exactly: the route checker parses
+    // an exact list (session-p55/routes/check_spike_log.py ROOM_FIELDS).
+    std::string keys;
+    for (std::size_t at = text.find(' ');at != std::string::npos;at = text.find(' ',at+1)) {
+        const auto eq = text.find('=',at);
+        if (eq != std::string::npos) keys += text.substr(at+1,eq-at-1)+",";
+    }
+    assert(text.rfind("FixedRoom ",0) == 0);
+    assert(keys == "t,frame,mode,hook,active,cell,graph,rooms,capped,playerRoom,cameraRoom,eyeRooms,cameraRooms,calls,cullCalls,"
+        "attachCalls,waterCalls,otherCalls,viewerCalls,gatedNear,vanillaTrue,claims,sample,");
+    // The pass split rides on its own line kind, accumulated over a second.
+    RoomPassSample pass;
+    pass.add(s,3); pass.add(s,1);
+    pass.seconds = 2.5; pass.frame = 99;
+    assert(pass.cameraPass == 44 && pass.lightPass == 16 && pass.lightNear == 4);
+    assert(formatRoomPass(line,sizeof(line),pass));
+    assert(std::string(line) == "FixedRoomPass t=2.500 frame=99 cameraPassCalls=44 lightPassCalls=16 lightPassNear=4 sample=second");
+    char tiny[12]{};
+    assert(!formatRoomPass(tiny,sizeof(tiny),pass));
+    RoomCounters counted; // not "near": a Windows macro
+    counted.lightNear.fetch_add(2ull); counted.gatedNear.fetch_add(1ull);
+    assert(counted.lightNear.load() == 2 && counted.gatedNear.load() == 1);
+    assert(roomPassTraceLines > 0 && roomPassTraceLines < roomTraceLines);
 }
 
 void hide() {

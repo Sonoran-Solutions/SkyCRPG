@@ -97,6 +97,7 @@ import re
 
 spike = (Path(__file__).resolve().parents[1] / "src/fixed_spike.h").read_text()
 thin = (Path(__file__).resolve().parents[1] / "src/thin_occluder.h").read_text()
+light = (Path(__file__).resolve().parents[1] / "src/fixed_spike_light.h").read_text()
 
 
 def spike_body(start, end):
@@ -116,7 +117,7 @@ for helper in ("inline bool engaged() { return runtime && ",
                "inline void install(bool prerequisites,bool service) {\n    if (!runtime) return;"):
     assert helper in spike, helper
 unguarded = ("fixed::engaged()", "fixed::dropSnaps()", "fixed::lifecycle(", "fixed::install(", "fixed::Exit::", "fixed::Config f;",
-             "fixed::configure(", "fixed::runtime", "fixed::shader::Config shaderCut;")
+             "fixed::configure(", "fixed::runtime", "fixed::shader::Config shaderCut;", "fixed::light::Config l;")
 guarded_blocks = (body("    if (rig) {", "    previousLook(state,filtered);"),
                   body("        if (fixed::engaged()) {", "        // Deliberate F6 can return from its OWN first-person request"))
 for line in source.splitlines():
@@ -193,7 +194,7 @@ hook_room = spike_body("inline bool hookRoom(", "inline bool within(")
 assert hook_room.index("r.originalRoom(room,point)") < hook_room.index("r.roomActive.load(") < hook_room.index("viewerQuery(*view,asked)") < \
     hook_room.index("seedClaim(")
 assert hook_room.index("roomCaller(runtime->callers,reinterpret_cast<std::uintptr_t>(_ReturnAddress()))") < hook_room.index("r.originalRoom(room,point)")
-assert hook_room.index("if (caller != RoomCaller::culling) {") < hook_room.index("r.counters.viewerCalls") < hook_room.index("seedClaim(caller,*view,asked,")
+assert hook_room.index("if (caller != RoomCaller::camera) {") < hook_room.index("r.counters.viewerCalls") < hook_room.index("seedClaim(caller,*view,asked,")
 assert hook_room.count("return true;") == 1 and "vanillaTrue" in hook_room[:hook_room.index("return true;")]  # true only repeats a vanilla true
 for engine in ("RE::PlayerCharacter", "RE::PlayerCamera", "RE::TESObjectCELL", "GetAppCulled", "logger", "emit("):
     assert engine not in hook_room, engine  # culling thread: the published copy and atomics only
@@ -214,9 +215,10 @@ assert "slots[0x33] != REL::Module::get().base()+0x104be80" in spike
 for forbidden in ("BSFixedString", "GetMenu(", "IsMenuOpen(", "RequestCameraControl", "AddTask("):
     assert forbidden not in spike, forbidden
 codes = dict(re.findall(r"(\w+) = (\d+)", spike_body("enum class Refusal : unsigned {", "};")))
-assert len(codes) == 20 and len(set(codes.values())) == len(codes) and codes["fadeSetting"] == "15"
+# Base 19 + the fade hold's FCS-15 (shader branch) + the light package's FCS-51..59 (light branch) = 29.
+assert len(codes) == 29 and len(set(codes.values())) == len(codes) and codes["fadeSetting"] == "15"
 for name in codes:
-    assert (spike + source).count("Refusal::" + name) == 1, name  # one site per code
+    assert (spike + light + source).count("Refusal::" + name) == 1, name  # one site per code
 print("PASS spike on wiring: frame-scoped suppression; shared caster detour; sealed gateway; caller-gated room hook; hook-thread isolation; "
       "interior-only radius-bounded nearest-first hide; one site per refusal code")
 
@@ -261,7 +263,8 @@ assert "shader::deactivate(); // wave 2 shader" in spike_body("inline void lifec
 begin_frame = spike_body("inline void beginFrame() {", "inline void clearFrame() {")
 assert begin_frame.index("!thin::onMain()) return;") < begin_frame.index("shader::frameStart();")
 assert end_frame.index("shader::deactivate(); shader::trace(r.now);") < end_frame.index("r.previousEligible = false;") < \
-    end_frame.index("publishView(viewer,eye);") < end_frame.index("shader::publish(viewer,") < end_frame.index("shader::trace(r.now);\n    observeFade(); settleFade(true); traceFade();")
+    end_frame.index("publishView(viewer,eye);") < end_frame.index("shader::publish(viewer,") < end_frame.rindex("shader::trace(r.now);") < \
+    end_frame.index("observeFade(); settleFade(true); traceFade();")  # combined build: the light's frameLight sits between (wave 3 section)
 assert "parent->IsInteriorCell(),r.frame,r.now);" in end_frame[end_frame.index("shader::publish(viewer,"):]
 assert spike.count("shader::publish(") == 1 and spike.count("shader::frameStart(") == 1 and spike.count("shader::install(") == 1
 install_spike = spike_body("inline void install(bool prerequisites,bool service) {", "// loadSettings, only when")
@@ -606,3 +609,201 @@ for forbidden in ("write_call", "write_branch", "safe_write(", "VirtualProtect")
     assert forbidden not in install_fade + settle_fade, forbidden
 print("PASS player fade hold: one Setting found by ID, checked by address and name, held only while the rig holds, put back on the first "
       "frame it does not and on every main-thread lifecycle exit; no code written; FCS-15")
+
+# Wave 2 package "light" (DYL-217). Off unless a light key is on; no hook at
+# all; engine light arrays read only under their lock; the fill light is a
+# plain AddLight/RemoveLight client, hidden at once on every ineligible frame.
+def light_body(start, end):
+    return light[light.index(start):light.index(end, light.index(start))]
+
+
+assert spike.count('#include "fixed_spike_light.h"') == 1
+assert light.count("lights = new LightRuntime;") == 1
+configure_light = light_body("inline void configureLight(", "inline void installLight(")
+assert configure_light.index("if (!configured(requested)) return;") < configure_light.index("lights = new LightRuntime;")
+configure = spike_body("inline void configure(", "} // namespace")
+assert configure.index("runtime = new Runtime;") < configure.index("light::configureLight(lightRequested);") < configure.index("r.writer.start(")
+assert "fixed::configure(f,shaderCut,l,settings," in loader  # combined build: shader then light
+for entry in ("inline void installLight(std::uintptr_t base) {\n    if (!lights) return;",
+              "inline void frameLight(bool eligible,FillDuty duty,bool loadExit,RE::TESObjectCELL* parent,Vec feet,Vec at,Vec camera,const char* cause) {\n"
+              "    if (!lights) return;",
+              "inline RE::ShadowSceneNode* scene() {\n    if (!lights || !lights->ready) return nullptr;"):
+    assert entry in light, entry
+assert spike.count("light::installLight(base);") == 1 and spike.count("light::frameLight(") == 2
+assert end_frame.index("light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState,light::silenceHeld()),cause == Exit::load,parent,") < \
+    end_frame.index("traceRig(false);") < end_frame.index("light::frameLight(true,light::FillDuty::keep,false,parent,")
+assert end_frame.index("if (!thin::onMain())") < end_frame.index("light::frameLight(")  # main thread only
+for forbidden in ("write_vfunc", "write_call", "write_branch", "AllocTrampoline", "PAGE_EXECUTE_READWRITE", "_ReturnAddress",
+                  "BSFixedString", "GetMenu(", "IsMenuOpen(", "AddTask(", "RequestCameraControl"):
+    assert forbidden not in light, forbidden
+# The one code patch: the two light-level summers, from installStealth only,
+# after every guard, through gateways sealed execute-read before any write.
+install_stealth = light_body("inline bool installStealth(std::uintptr_t base) {", "// ---- fill light")
+assert light.count("REL::safe_write(") == 1 and light.count("VirtualProtect(") == 1 and light.count("VirtualAlloc(") == 1
+for check in ("REL::ID(106362).address() != base+playerLevelRva", "REL::ID(107776).address() != base+listLevelRva",
+              "REL::ID(108292).address() != base+lightTermRva", "!sameBytes(base+playerLevelRva,levelPrologue)",
+              "!sameBytes(base+listLevelRva,levelPrologue)", "!sameBytes(base+lightTermRva,lightTermPrologue)",
+              "!callsTo(playerLevelCallRva,playerLevelRva)", "!callsTo(listLevelCallRva,listLevelRva)"):
+    assert install_stealth.index(check) < install_stealth.index("Refusal::stealthGuard") < install_stealth.index("VirtualAlloc("), check
+assert install_stealth.index("VirtualAlloc(nullptr,128,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE)") < \
+    install_stealth.index("VirtualProtect(gateway,128,PAGE_EXECUTE_READ,&previous)") < install_stealth.index("Refusal::stealthMemory") < \
+    install_stealth.index("stealth.player = reinterpret_cast<PlayerLevel>(gateway);") < install_stealth.index("stealth.neutral = ") < \
+    install_stealth.index("REL::safe_write(") < install_stealth.index("stealth.installed = true;")
+assert "AllocTrampoline" not in spike + light  # never a second trampoline: it could release the camera-call relay
+# The wrappers run on whatever thread runs ID 39946: the original first, then
+# only atomics, values fixed before patching and the lists the engine just read.
+for name, end in (("inline float hookPlayerLevel(", "inline float hookListLevel("), ("inline float hookListLevel(", "// installLight(), kDataLoaded")):
+    hook = light_body(name, end)
+    assert hook.index("stealth.player(" if "Player" in name else "stealth.list(") < hook.index("stealth.fill.load(std::memory_order_acquire)")
+    for unsafe in ("lights->", "runtime->", "GetSingleton", "emit", "refuse(", "BSSpinLockGuard", "RemoveLight", "AddLight"):
+        assert unsafe not in hook, (name, unsafe)
+    assert "return stealth.neutral ? " in hook
+install_light_body = light_body("inline void installLight(", "// endFrame(), main thread")
+assert install_light_body.index("!sameBytes(base+removeLightRva,removeLightPrologue)") < \
+    install_light_body.index("if (!installStealth(base) && l.config.stealthNeutral) return;") < install_light_body.index("l.fillReady = true;")
+assert light.count("installStealth(base)") == 1
+create = light_body("inline bool createFill() {", "inline void place(")
+assert create.index("l.fill.reset(created);") < create.index("stealth.fill.store(created,std::memory_order_release);")
+assert "l.stealthNeutral = flag(\"FixedCameraSpike\",\"bLightFillStealthNeutral\",1);" in gate
+install_light = light_body("inline void installLight(", "// endFrame(), main thread")
+assert install_light.index("REL::ID(390951).address() != base+stateRva") < install_light.index("l.ready = true;") < \
+    install_light.index("REL::ID(106326).address() != base+addLightRva") < install_light.index("l.fillReady = true;")
+for check in ("REL::ID(70967).address() != base+pointCtorRva", "REL::ID(237259).address() != base+pointVtableRva",
+              "REL::ID(106331).address() != base+removeLightRva", "!sameBytes(base+pointCtorRva,pointCtorPrologue)",
+              "!sameBytes(base+addLightRva,addLightPrologue)", "!sameBytes(base+removeLightRva,removeLightPrologue)"):
+    assert install_light.index(check) < install_light.index("l.fillReady = true;"), check
+scene = light_body("inline RE::ShadowSceneNode* scene() {", "inline LightView view(")
+assert "base()+sceneVtableRva" in scene and "Refusal::sceneReplaced" in scene
+# Engine light arrays: read only under the light lock, with no engine call while held.
+for name, end in (("inline Presence presenceNow(", "inline void census("), ("inline void census(", "// ---- light level")):
+    reader = light_body(name, end)
+    assert "RE::BSSpinLockGuard guard(data.lightQueueLock);" in reader
+    assert reader.index("RE::BSSpinLockGuard guard(data.lightQueueLock);") < reader.index("data.active")
+    assert not any(call in reader for call in ("AddLight(", "RemoveLight(", "SetAppCulled(", "emit", "refuse("))
+assert light.count("RE::BSSpinLockGuard") == 2
+assert light.count("->AddLight(") == 1 and "->AddLight(" in light_body("inline void addFill(", "// Main thread, every frame")
+assert light.count("->RemoveLight(") == 1 and "->RemoveLight(" in light_body("inline void serviceFill(", "// ---- entry points")
+add_fill = light_body("inline void addFill(", "// Main thread, every frame")
+for param in ("params.dynamic = true;", "params.shadowLight = false;", "params.portalStrict = false;", "params.neverFades = false;",
+              "params.restrictedNode = nullptr;"):
+    assert param in add_fill, param
+assert light.count("SetAppCulled(") == 2  # created hidden; show() is the only other writer
+service = light_body("inline void serviceFill(", "// ---- entry points")
+assert service.index("if (!l.fillReady) { show(false,\"refused\"); return; }") < service.index("createFill()") < service.index("show(false,cause);") < \
+    service.index("presenceNow(node)") < service.index("fillStep(wanted,l.presence,l.track,runtime->now)")
+frame_light = light_body("inline void frameLight(", "} // namespace")
+assert frame_light.index("auto& l = *lights;") < frame_light.index("if (eligible) l.silence.reset();") < \
+    frame_light.index("const auto settled = settle(")
+assert frame_light.index("serviceFill(node,wanted,feet,cause);") < frame_light.index("if (!l.config.trace || !node || !eligible")
+assert "fillWanted(l.config.fillMode,duty == FillDuty::keep && finite(feet),interior,l.fillReady && node != nullptr)" in frame_light
+assert "if (cellId != l.cell || loadExit) { l.cell = cellId; l.track.newCell(); }" in frame_light
+# A hold never survives a cell change or a game load; it is settled (with its
+# exit cause) before anything else uses the duty, and the load flag is consumed
+# only on a serviced frame.
+assert frame_light.index("const auto settled = settle(duty,cellId != l.cell,l.loadPending,cause);") < \
+    frame_light.index("duty = settled.duty; cause = settled.cause;") < frame_light.index("if (duty == FillDuty::hold) return;") < \
+    frame_light.index("loadExit = loadExit || l.loadPending;") < frame_light.index("l.loadPending = false;") < \
+    frame_light.index("if (cellId != l.cell || loadExit)")
+assert light.count("loadPending = true") == 1 and "if (lights && (requests & exitBit(Exit::load))) lights->loadPending = true;" in light
+# Every lifecycle request reaches the light, after the restore it always drove.
+assert end_frame.index("const unsigned requests = r.requests.exchange(0u,std::memory_order_acq_rel);") < \
+    end_frame.index("if (requests) restoreAll(firstExit(requests));") < end_frame.index("light::noteExits(requests);") < \
+    end_frame.index("light::frameLight(")
+assert spike.count("light::noteExits(") == 1 and spike.count("light::silenceHeld()") == 1 and "menuPaused" not in spike
+# The silence read: pause count and camera state id, no string, no GetMenu, main
+# thread (endFrame, ineligible frames only), nothing when the package is off;
+# the stretch ends on an eligible frame, before anything else in frameLight.
+paused = light_body("inline bool silenceHeld() {", "// endFrame(), main thread, both eligible")
+assert paused.index("if (!lights) return false;") < paused.index("RE::UI::GetSingleton()") and "ui->numPausesGame != 0u" in paused
+assert "camera->currentState->id == RE::CameraState::kTween" in paused and "lights->silence.step(paused,tween,runtime->now)" in paused
+assert "GetMenu" not in paused and "IsMenuOpen" not in paused and "BSFixedString" not in paused
+assert light.count("silence.step(") == 1 and light.count("silence.reset()") == 1
+assert "static_assert(offsetof(RE::UI,numPausesGame) == 0x160);" in light
+for pin in ("static_assert(offsetof(RE::TESCamera,currentState) == 0x28);", "static_assert(offsetof(RE::TESCameraState,id) == 0x18);",
+            "static_assert(RE::CameraState::kTween == 7);"):
+    assert pin in light, pin
+# Outdoors the exit is named for it.
+assert frame_light.index("const bool interior = parent && parent->IsInteriorCell();") < \
+    frame_light.index('if (eligible && !interior) cause = "exterior";') < frame_light.index("serviceFill(node,wanted,feet,cause);")
+# Light level on its own line kind and budget; FixedLight carries none of it.
+assert "formatLightLevel(line,sizeof(line),s.seconds,s.frame,level)) emit(l.levelLines,line);" in frame_light
+assert "light::lightTraceLines+light::lightLevelTraceLines" in configure
+# Hook-silent frames inside wave 1's grace hold the fill light as it is.
+assert end_frame.index("const bool exiting = restoreNow(cause,r.silentFrames);") < end_frame.index("if (exiting) restoreAll(cause);") < \
+    end_frame.index("light::frameLight(false,light::fillDuty(false,exiting,")
+# The census include follows the vanilla room test it uses; player rooms are
+# found before the light lock, and the census itself never runs a room query.
+assert spike.index("inline bool within(") < spike.index('#include "fixed_spike_light.h"') < spike.index("inline void endFrame() {")
+census_body = light_body("inline void census(", "// ---- light level")
+assert "within(" not in census_body and "playerRooms(" not in census_body
+assert frame_light.index("const PlayerRooms player = playerRooms(parent,at);") < frame_light.index("census(node,player,at,s,shadows);")
+assert "fillStep(wanted,l.presence,l.track,runtime->now)" in service
+# A light the engine already let go is recorded after the delay, with no engine
+# call; the idle shortcut cannot skip a light still owed its record.
+assert "case FillAction::gone: fillEvent(\"remove\",goneCause); break;" in service
+assert "if (!wanted && !l.track.requested && !l.track.owned && l.presence == Presence::absent && !changed) return;" in service
+print("PASS light wiring: off unless configured; one guarded code patch (light-level summers, sealed gateways, no trampoline); "
+      "audited IDs and prologues before use; locked read-only census; one AddLight/RemoveLight site; duty by ineligibility cause; "
+      "thread-agnostic stealth wrappers; one site per refusal code")
+
+# Wave 3 combined build (shader 3528e92 + light 0279999 in one DLL). Both
+# packages install at kDataLoaded, in a fixed order, before the spike turns
+# active; the frame order is: rig decision and room trace, the shader's plane,
+# the fill light, the fade hold last; refusal numbers never collide.
+assert install_spike.index("Refusal::service") < install_spike.index("installCaster(base);") < \
+    install_spike.index("if (r.config.roomSeedMode) installRoomHook(base);") < install_spike.index("shader::install(base);") < \
+    install_spike.index("installFade(base);") < install_spike.index("light::installLight(base);") < install_spike.index("r.active.store(true,")
+assert spike.count("shader::install(base);") == 1 and spike.count("installFade(base);") == 1 and spike.count("light::installLight(base);") == 1
+# The installed line is the shader build's; light fields are appended only when the light package exists.
+assert '"installed rig=1 caster=%s rooms=%s seeThrough=%u shaderCut=%s heading=%.3f zoom=%.3f snapKeys=%d,%d traces=%u,%u,%u",' in install_spike
+assert install_spike.index("note(line);") > install_spike.index('if (light::lights && written > 0') > install_spike.index("shaderCut=%s")
+assert '" light=%s fill=%s lightTrace=%u"' in install_spike
+# Eligible frame.
+assert end_frame.index("publishView(viewer,eye);") < end_frame.index("traceRoom(parent,viewer,eye);") < \
+    end_frame.index("shader::noteCell(parent);") < end_frame.index("shader::publish(viewer,") < end_frame.rindex("shader::trace(r.now);") < \
+    end_frame.index("light::frameLight(true,light::FillDuty::keep,false,parent,") < end_frame.index("observeFade(); settleFade(true); traceFade();")
+eligible_tail = end_frame[end_frame.index("observeFade(); settleFade(true); traceFade();"):]
+assert "light::" not in eligible_tail and "shader::" not in eligible_tail  # the fade hold is the last thing an eligible frame does
+# Ineligible frame: the shader switches off and the fade is put back first (shader order unchanged), then the
+# hide restore, then the fill light's duty, then the rig trace.
+assert end_frame.index("light::noteExits(requests);") < end_frame.index("shader::deactivate(); shader::trace(r.now);") < \
+    end_frame.index("observeFade(); settleFade(false); traceFade();") < end_frame.index("if (exiting) restoreAll(cause);") < \
+    end_frame.index("light::frameLight(false,") < end_frame.index("traceRig(false);") < end_frame.index("r.previousEligible = false;")
+# configure: both package runtimes before the writer starts; its capacity is the sum of every budget that can write.
+assert configure.index("shader::configure(shaderRequested,") < configure.index("light::configureLight(lightRequested);") < \
+    configure.index("r.writer.start(tracePath,rows);")
+assert "r.config.rigTrace || r.config.roomTrace || r.config.hideTrace || shader::tracing() || lightTrace" in configure
+rows_expr = configure[configure.index("const unsigned rows ="):configure.index("r.traceReady = r.writer.start(")]
+for term in ("rigTraceLines", "roomTraceLines+roomPassTraceLines", "hideTraceLines", "shader::traceKinds()*shader::traceLines",
+             "fadeTraceLines", "light::lightTraceLines+light::lightLevelTraceLines"):
+    assert rows_expr.count(term) == 1, term
+# Every LineBudget of both runtimes is sized by one of the terms above (shader: traceKinds() counts its 3 or 5 budgets).
+runtime_struct = spike_body("struct Runtime {", "inline Runtime* runtime")
+light_struct = light_body("struct LightRuntime {", "inline LightRuntime* lights")
+budget_sizes = re.findall(r"(\w+)\{(\w+(?:::\w+)?)\}", "".join(l for l in (runtime_struct + light_struct).splitlines(True) if "LineBudget " in l))
+assert sorted(budget_sizes) == sorted([("rigLines", "rigTraceLines"), ("roomLines", "roomTraceLines"), ("hideLines", "hideTraceLines"),
+    ("shaderLines", "shader::traceLines"), ("shaderLookLines", "shader::traceLines"), ("shaderVoidLines", "shader::traceLines"),
+    ("shaderStyleLines", "shader::traceLines"), ("shaderStyle2Lines", "shader::traceLines"), ("fadeLines", "fadeTraceLines"),
+    ("roomPassLines", "roomPassTraceLines"), ("lines", "lightTraceLines"), ("levelLines", "lightLevelTraceLines")]), budget_sizes
+# Refusal numbers: the spike's enum (base, FCS-15 fade, FCS-51..59 light) and the shader's own enum (FCS-66..92,
+# its own once-mask) are disjoint, and every number fits the mask that logs it.
+shader_codes = dict(re.findall(r"(\w+) = (\d+)", cut_policy[cut_policy.index("enum class Refusal : unsigned {"):cut_policy.index("};", cut_policy.index("enum class Refusal : unsigned {"))]))
+spike_numbers = {int(v) for v in codes.values()}
+shader_numbers = {int(v) for v in shader_codes.values()}
+assert len(shader_numbers) == len(shader_codes) and not spike_numbers & shader_numbers, spike_numbers & shader_numbers
+assert max(spike_numbers) < 64 and "std::uint64_t{1} << static_cast<unsigned>(code)" in spike
+assert min(shader_numbers) == 66 and max(shader_numbers) == 92 and "constexpr unsigned firstRefusal = 66, lastRefusal = 92;" in cut_policy
+assert {n for n in spike_numbers if 51 <= n <= 59} == set(range(51, 60)) and 15 in spike_numbers
+# INI: one [FixedCameraSpike] section, every key of both sides once, defaults as on each branch.
+section = ini[ini.index("[FixedCameraSpike]"):]
+assert ini.count("[FixedCameraSpike]") == 1 and "\n[" not in section[1:]
+for key, value in (("iSeeThroughMode", "0"), ("iRoomSeedMode", "0"), ("bHoldPlayerFade", "1"), ("fShaderCutHeight", "160"),
+                   ("bShaderCutEffect", "1"), ("bVoidColor", "1"), ("sVoidColor", "0,0,0"), ("bVoidHideSky", "1"),
+                   ("bShaderCutEffectWhole", "1"), ("iCutStyle", "1"), ("bCutKeepFarGallery", "0"), ("bCutStyleShadows", "1"),
+                   ("iShaderCutTrace", "0"), ("iLightFillMode", "0"), ("fLightFillHeight", "192"), ("fLightFillRadius", "640"),
+                   ("fLightFillFade", "0.6"), ("bLightFillStealthNeutral", "1"), ("iLightTrace", "0")):
+    assert section.count("\n" + key + "=") == 1 and ("\n" + key + "=" + value + "\n") in section, key
+assert not any(marker in text for text in (spike, source, ini, light) for marker in ("<<<<<<<", ">>>>>>>", "\n=======\n"))
+print("PASS combined wiring: shader, fade hold and light all installed at kDataLoaded before activation; eligible frame rig -> room -> "
+      "shader plane -> fill light -> fade hold; ineligible shader off -> fade back -> restore -> fill duty; writer capacity sums every "
+      "budget; spike codes (base, FCS-15, FCS-51..59) and shader codes (FCS-66..92) disjoint; one INI section with both key sets")
