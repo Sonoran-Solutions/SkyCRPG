@@ -360,6 +360,13 @@ void loadSettings() {
         shaderCut.style = number("FixedCameraSpike","iCutStyle",shaderCut.style);
         shaderCut.keepFarGallery = flag("FixedCameraSpike","bCutKeepFarGallery",0);
         shaderCut.styleShadows = flag("FixedCameraSpike","bCutStyleShadows",1);
+        // Fifth pass (owner go 2026-11-11, Stage 2 of the seamless cutaway): the frame pass, on by default in mode 3.
+        shaderCut.frame.enabled = flag("FixedCameraSpike","bFramePass",1);
+        shaderCut.frame.band = number("FixedCameraSpike","fFrameBand",shaderCut.frame.band);
+        shaderCut.frame.headroom = number("FixedCameraSpike","fFrameBandHeadroom",shaderCut.frame.headroom);
+        shaderCut.frame.radiusInner = number("FixedCameraSpike","fFrameRadiusInner",shaderCut.frame.radiusInner);
+        shaderCut.frame.radiusOuter = number("FixedCameraSpike","fFrameRadiusOuter",shaderCut.frame.radiusOuter);
+        shaderCut.frame.vignette = number("FixedCameraSpike","fFrameVignette",shaderCut.frame.vignette);
         // Wave 2 package "light": default off; with both modes 0 nothing is allocated.
         fixed::light::Config l;
         l.fillMode = number("FixedCameraSpike","iLightFillMode",l.fillMode);

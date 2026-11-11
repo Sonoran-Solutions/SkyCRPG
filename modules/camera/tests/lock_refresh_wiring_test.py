@@ -358,15 +358,17 @@ assert "inline bool publishes(bool installed,bool latched,bool interiorCell,floa
     "std::isfinite(feetZ);" in cut_policy
 void = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_void.h").read_text()
 cut_codes = dict(re.findall(r"(\w+) = (\d+)", cut_policy[cut_policy.index("enum class Refusal : unsigned {"):cut_policy.index("constexpr unsigned firstRefusal")]))
-assert len(cut_codes) == 27 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 93))
+assert len(cut_codes) == 32 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 98))
 sky = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_sky.h").read_text()
 sky_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_sky_policy.h").read_text()
 style = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_style.h").read_text()
 style_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_style_policy.h").read_text()
+frame = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_frame.h").read_text()
+frame_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_frame_policy.h").read_text()
 prepare_table = cut_policy[cut_policy.index("constexpr std::array<PrepareCodes,2> prepareCodes{{"):cut_policy.index("// ---- [FixedCameraSpike] shader-cut keys")]
 for name in cut_codes:
     sites = cut.count("Refusal::" + name) + void.count("Refusal::" + name) + sky.count("Refusal::" + name) + style.count("Refusal::" + name) + \
-        prepare_table.count("Refusal::" + name)
+        frame.count("Refusal::" + name) + prepare_table.count("Refusal::" + name)
     assert sites == 1, name  # one site per code
 for field in ("object", "unaudited", "patch", "create"):
     assert prepare.count("refuse(codes." + field + ",text); return;") == 1, field
@@ -383,7 +385,7 @@ for constant in ("constexpr Address stateAddress{388819,0x20cfc00};", "constexpr
                  "constexpr Address clearColorAddress{77249,0x100a3f0};", "constexpr std::uintptr_t voidCallRva = 0x656daa;"):
     assert constant in cut_policy, constant
 print("PASS shader cut wiring: no runtime outside mode 3; main-thread install after every guard; no code or engine-state write; "
-      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..92")
+      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..97")
 
 # Wave 2 shader, second pass (owner decision 2026-11-10): the Effect class and
 # the void colour. Both exist only inside the shader runtime (mode 3), are
@@ -392,7 +394,8 @@ print("PASS shader cut wiring: no runtime outside mode 3; main-thread install af
 # the cut's snapshot is not published.
 assert cut.endswith('#include "fixed_spike_shader_void.h" // second pass: the void colour\n'
                     '#include "fixed_spike_shader_sky.h"  // third pass: the sky dome over the void\n'
-                    '#include "fixed_spike_shader_style.h" // fourth pass: Stage 1 of the seamless cutaway\n')
+                    '#include "fixed_spike_shader_style.h" // fourth pass: Stage 1 of the seamless cutaway\n'
+                    '#include "fixed_spike_shader_frame.h" // fifth pass: Stage 2, the frame pass\n')
 assert "inline void installVoid(std::uintptr_t base);" in cut and cut.count("installVoid(base);") == 1 and cut.count("installEffect(base);") == 1
 assert void.count("inline void installVoid(std::uintptr_t base) {") == 1 and "runtime = " not in void
 install_effect = cut_body("inline void installEffect(std::uintptr_t base) {", "// Main thread, inside the camera frame service.")
@@ -438,8 +441,8 @@ assert "s.window = r.windows[0];" in trace_body and "look.effect = r.windows[1];
 assert '"relPlane=%.2f passes=%llu cut=%llu byClass=%llu,%llu peak=%u cap=%u uploads=%llu shaders=%u,%u,%u created=%llu open=%llu "' in cut_policy
 assert "LineBudget shaderLines{shader::traceLines},shaderLookLines{shader::traceLines};" in spike and \
     "[](const char* text) { emit(runtime->shaderLookLines,text); },[](const char* text) { emit(runtime->shaderVoidLines,text); },\n" \
-    "            [](const char* text) { emit(runtime->shaderStyleLines,text); },[](const char* text) { emit(runtime->shaderStyle2Lines,text); });" \
-    in configure_spike and \
+    "            [](const char* text) { emit(runtime->shaderStyleLines,text); },[](const char* text) { emit(runtime->shaderStyle2Lines,text); },\n" \
+    "            [](const char* text) { emit(runtime->shaderFrameLines,text); });" in configure_spike and \
     "(shader::tracing() ? shader::traceKinds()*shader::traceLines : 0u)" in configure_spike
 assert 'shaderCut.colorText = read("FixedCameraSpike","sVoidColor","0,0,0");' in gate and \
     "const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;" in cut_policy
@@ -545,7 +548,7 @@ assert "if (!runtime || !runtime->style || !cell || !thin::onMain()) return;" in
 assert trace_body.index("if (formatVoid(line,sizeof(line),voids)) r.voidEmitter(line);") < trace_body.index("traceStyle(now,voids.window);")
 assert "if (!r.style) return;" in style_body("inline void traceStyle(", "} // namespace")
 assert "LineBudget shaderStyleLines{shader::traceLines};" in spike
-assert "inline unsigned traceKinds() { return runtime && runtime->config.style == stageOneStyle ? 5u : 3u; }" in cut
+assert "inline unsigned traceKinds() { return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u); }" in cut
 assert "LineBudget shaderStyle2Lines{shader::traceLines};" in spike
 # W5 fixes: FixedShaderStyle2 after FixedShaderStyle; the style row's format is unchanged; roofs never kept; kit overhead removed;
 # back pieces kept only standing and within the cap, else cut at the cap and not counted as slicedFar; gallery keeps that exceed
@@ -609,6 +612,103 @@ for forbidden in ("write_call", "write_branch", "safe_write(", "VirtualProtect")
     assert forbidden not in install_fade + settle_fade, forbidden
 print("PASS player fade hold: one Setting found by ID, checked by address and name, held only while the rig holds, put back on the first "
       "frame it does not and on every main-thread lifecycle exit; no code written; FCS-15")
+
+# Wave 2 shader, fifth pass (owner go 2026-11-11): Stage 2 of the seamless cutaway, the frame pass
+# (bFramePass=1). Its runtime exists only with the key; it is installed by the cut's main-thread commit after
+# every earlier pass; the only engine write is the displacement of the call at 656A78, after every check and
+# every device object; the hook calls ID 36558 exactly once; the draw happens only on the main thread while the
+# cut is active, and every piece of device state it changes is read before and set back after.
+def frame_body(start, end):
+    return frame[frame.index(start):frame.index(end, frame.index(start))]
+assert "inline void installFrame(std::uintptr_t base);" in cut and cut.count("installFrame(base);") == 1 and \
+    "inline void captureFrame(Vec eye);" in cut and cut.count("configureFrame();") == 2 and cut.count("frameStartFrame();") == 2 and \
+    cut.count("traceFrame(now);") == 1 and "inline void traceFrame(double now);" in cut
+assert commit.index('"FixedCameraSpike shader style installed style=%u state=%s gallery=%u shadows=%u"') < commit.index("if (r.framePass) {") < \
+    commit.index("installFrame(base);") < commit.index('"FixedCameraSpike shader frame installed pass=%s band=%.1f headroom=%.1f radii=%.1f,%.1f vignette=%.3f "')
+configure_frame = frame_body("inline void configureFrame() {", "inline void traceFrame(")
+assert "if (r.config.frame.enabled) r.framePass = new FrameRuntime;" in configure_frame and frame.count("new FrameRuntime") == 1 and "runtime = " not in frame
+# Captured during a pass of the published view, before the style branch, once per render, only when installed.
+assert consider.index("if (!group) ++r.frameMatched;") < consider.index("if (!group) captureFrame(eye);") < \
+    consider.index("if (!group && styled()) { styledPass(pass,shaderClass,eye); return; }")
+capture = frame_body("inline void captureFrame(Vec eye) {", "// The engine's main colour target")
+assert "if (!r.framePass || r.framePass->captured || r.framePass->state != Feature::installed) return;" in capture and \
+    "c.viewFrame = r.view.frame;" in capture and "peek<Matrix>(r.state,frame_offset::viewProjection)" in capture
+install_frame = frame_body("inline void installFrame(std::uintptr_t base) {", "inline Feature frameState()")
+order = ["if (!r.framePass) return;", "frameSiteCheck(base,REL::ID(postWorldAddress.id).address(),imageChain,renderer,", "Refusal::frameSite",
+         "method::createVertexShader", "frame_method::createPixelShader", "method::createBuffer", "frame_method::createBlendState",
+         "frame_method::createRasterizerState", "Refusal::frameDevice", "relayPage(site)", "relay(reinterpret_cast<std::uintptr_t>(&hookImageSpace))",
+         "VirtualProtect(page,relaySize,PAGE_EXECUTE_READ,&previous)", "Refusal::frameMemory", "FlushInstructionCache(GetCurrentProcess(),page,relaySize);",
+         "f.imageChain = reinterpret_cast<ImageChainFunction>(imageChain);", "f.state = Feature::installed;", "REL::safe_write(site+1u,&value,sizeof(value));",
+         "FlushInstructionCache(GetCurrentProcess(),reinterpret_cast<void*>(site),5);"]
+assert all(install_frame.index(a) < install_frame.index(b) for a, b in zip(order, order[1:]))
+assert install_frame.count("return;") == 4 and "const std::uintptr_t site = base+frameCallRva;" in install_frame and frame.count("safe_write(") == 1
+for forbidden in ("write_vfunc", "write_call", "write_branch", "AllocTrampoline", "GetTrampoline", "PAGE_EXECUTE_READWRITE", "GetSingleton", "AddTask(",
+                  "BSFixedString", "SetAppCulled", "ClearState", "_ReturnAddress"):
+    assert forbidden not in frame, forbidden
+# The hook (fix pass after the review of 32605a5): inside ID 107148, the draw first and only for the normal-play destination
+# 0 from target 1, then ID 105674 exactly once with every register argument passed on.
+hook_chain = frame_body("inline std::uintptr_t hookImageSpace(", "// Main thread, from frameStart.")
+assert frame.count("->imageChain(") == 1 and frame.count("drawFrame();") == 1 and \
+    hook_chain.index("if (static_cast<std::uint32_t>(destination) == playDestination && static_cast<std::uint32_t>(source) == chainSource) drawFrame();") < \
+    hook_chain.index("return runtime->framePass->imageChain(manager,source,destination,flags);")
+assert "hookMainView" not in frame and "constexpr std::uintptr_t playDestination = 0, chainSource = 1;" in frame_policy
+# The draw: thread, gate, targets, constants, map before anything is bound; the depth-stencil view is unbound before the depth
+# is bound for reading; everything saved is set back and released; nothing is allocated.
+draw = frame_body("inline void drawFrame() {", "// The relay's target")
+order = ["if (!thin::onMain()) { f.offMain.fetch_add(1ull,std::memory_order_relaxed); return; }", "f.captured = false;", "frameGate(",
+         "targetsReady(colourView,depthView)", "if (skip == FrameSkip::none && colourShared()) skip = FrameSkip::shared;", "frameConstants(r.config.frame,", "method::map,f.constants,", "refuseRun(text); return;",
+         "std::memcpy(mapped.data,&*constants,sizeof(FrameConstants));", "method::unmap,f.constants,", "save(c,saved);",
+         "frame_method::omSetRenderTargets,1u,static_cast<void* const*>(targets),static_cast<void*>(nullptr));",
+         "frame_method::psSetShaderResources,0u,1u,static_cast<void* const*>(resources));", "frame_method::draw,3u,0u);", "restore(c,saved);",
+         "restoredAsSaved(c,saved)", "releaseSaved(saved);", "++w.drawn;"]
+assert all(draw.index(a) < draw.index(b) for a, b in zip(order, order[1:]))
+for forbidden in ("new ", "std::vector", "malloc", "make_unique", "std::string"):
+    assert forbidden not in draw and forbidden not in frame_body("inline void save(", "// A cheap read-back"), forbidden
+assert "const bool kitCell = styled() && r.style->cellStyle == CellStyle::kit;" in draw and "r.active.load(std::memory_order_acquire)" in draw
+restore_fn = frame_body("inline void restore(void* c,const SavedState& s) {", "inline void releaseSaved(")
+assert restore_fn.index("frame_method::psSetShaderResources,0u,1u,static_cast<void* const*>(none));") < \
+    restore_fn.index("frame_method::omSetRenderTargets,renderTargetSlots,") < restore_fn.index("frame_method::psSetShaderResources,0u,pixelSlots,")
+save_fn = frame_body("inline void save(void* c,SavedState& s) {", "// The depth's view leaves")
+for getter in ("omGetRenderTargets", "omGetBlendState", "rsGetState", "rsGetViewports", "iaGetInputLayout", "iaGetPrimitiveTopology", "vsGetShader",
+               "psGetShader", "psGetConstantBuffers", "psGetShaderResources"):
+    assert "frame_method::" + getter in save_fn, getter
+for setter in ("omSetRenderTargets", "omSetBlendState", "rsSetState", "rsSetViewports", "iaSetInputLayout", "iaSetPrimitiveTopology",
+               "psSetShader", "psSetConstantBuffers", "psSetShaderResources"):
+    assert "frame_method::" + setter in restore_fn and "frame_method::" + setter in draw, setter
+assert "method::vsSetShader,s.vertexShader," in restore_fn and "method::vsSetShader,f.vertexShader," in draw
+release_fn = frame_body("inline void releaseSaved(SavedState& s) {", "// A cheap read-back")
+for field in ("s.targets", "s.resources", "s.depthStencil", "s.blend", "s.rasterizer", "s.layout", "s.vertexShader", "s.pixelShader", "s.pixelConstants"):
+    assert field in release_fn, field
+assert frame_start.index("Refusal::voidThread") < frame_start.index("frameStartFrame();") < frame_start.index("Refusal::context")
+assert "runtime->framePass->captured = false; // each frame's render captures its own main view" in frame_body("inline void frameStartFrame() {", "// Main thread, from commit")
+shared_fn = frame_body("inline bool colourShared() {", "// Inside ID 107148")
+for getter in ("csGetShaderResources", "csGetUnorderedAccessViews", "vsGetShaderResources"):
+    assert "frame_method::" + getter in shared_fn, getter
+holds = frame_body("inline bool viewsHold(", "// A view of the main colour texture")
+assert holds.index("frame_method::viewResource,&resource") < holds.index("releaseObject(resource);") < holds.index("releaseObject(views[i]);")
+assert trace_body.index("traceStyle(now,voids.window);") < trace_body.index("traceFrame(now);")
+assert "LineBudget shaderFrameLines{shader::traceLines};" in spike
+# The audited facts the pass stands on.
+for constant in ("constexpr Address postWorldAddress{107148,0x153ac00};", "constexpr Address imageChainAddress{105674,0x14edbf0};",
+                 "constexpr Address rendererAddress{411393,0x3331f40};",
+                 "constexpr std::uintptr_t frameCallRva = 0x153ade7;", "constexpr std::size_t frameGuardedBefore = 0x2b;",
+                 "constexpr std::size_t targets = 0xa58, targetStride = 0x30, targetView = 0x10;",
+                 "constexpr std::size_t depths = 0x2018, depthStride = 0x98, depthResource = 0x88;",
+                 "constexpr std::size_t mainTarget = 1, mainDepth = 0;", "constexpr std::size_t viewport = 0x70, viewProjection = 0x430, depthRange = 0x5c0;",
+                 "constexpr FrameSkip frameGate(bool latched,bool active,bool freshView,bool captured) {"):
+    assert constant in frame_policy, constant
+assert '#include "fixed_spike_shader_frame_shaders.h"' in frame_policy and \
+    '#include "fixed_spike_shader_frame_policy.h" // fifth pass: Stage 2, the frame pass (bFramePass=1)' in cut_policy
+for key, default in (("bFramePass", "1"), ("fFrameBand", "96"), ("fFrameBandHeadroom", "136"), ("fFrameRadiusInner", "900"),
+                     ("fFrameRadiusOuter", "1400"), ("fFrameVignette", "0.25")):
+    assert gate.count('"FixedCameraSpike","' + key + '"') == 1 and ("\n" + key + "=" + default + "\n") in ini, key
+assert (Path(__file__).resolve().parents[1] / "shaders/fixed_spike_frame_vs.hlsl").exists() and \
+    (Path(__file__).resolve().parents[1] / "shaders/fixed_spike_frame_ps.hlsl").exists()
+print("PASS shader fifth-pass wiring: frame runtime only with bFramePass=1; installed after every earlier pass, every guard and device "
+      "object before the one 4-byte call write; drawn inside ID 107148 before ID 105674, which is called once per hook; main thread, "
+      "normal-play destination and active cut only; no view of the colour target on other stages; targets, constants and "
+      "map before any bind; depth-stencil view unbound before the depth is read; all touched state saved, set back and released; "
+      "no allocation per frame; one site per FCS-93..97")
 
 # Wave 2 package "light" (DYL-217). Off unless a light key is on; no hook at
 # all; engine light arrays read only under their lock; the fill light is a
@@ -777,22 +877,22 @@ rows_expr = configure[configure.index("const unsigned rows ="):configure.index("
 for term in ("rigTraceLines", "roomTraceLines+roomPassTraceLines", "hideTraceLines", "shader::traceKinds()*shader::traceLines",
              "fadeTraceLines", "light::lightTraceLines+light::lightLevelTraceLines"):
     assert rows_expr.count(term) == 1, term
-# Every LineBudget of both runtimes is sized by one of the terms above (shader: traceKinds() counts its 3 or 5 budgets).
+# Every LineBudget of both runtimes is sized by one of the terms above (shader: traceKinds() counts its 3 to 6 budgets).
 runtime_struct = spike_body("struct Runtime {", "inline Runtime* runtime")
 light_struct = light_body("struct LightRuntime {", "inline LightRuntime* lights")
 budget_sizes = re.findall(r"(\w+)\{(\w+(?:::\w+)?)\}", "".join(l for l in (runtime_struct + light_struct).splitlines(True) if "LineBudget " in l))
 assert sorted(budget_sizes) == sorted([("rigLines", "rigTraceLines"), ("roomLines", "roomTraceLines"), ("hideLines", "hideTraceLines"),
     ("shaderLines", "shader::traceLines"), ("shaderLookLines", "shader::traceLines"), ("shaderVoidLines", "shader::traceLines"),
-    ("shaderStyleLines", "shader::traceLines"), ("shaderStyle2Lines", "shader::traceLines"), ("fadeLines", "fadeTraceLines"),
+    ("shaderStyleLines", "shader::traceLines"), ("shaderStyle2Lines", "shader::traceLines"), ("shaderFrameLines", "shader::traceLines"), ("fadeLines", "fadeTraceLines"),
     ("roomPassLines", "roomPassTraceLines"), ("lines", "lightTraceLines"), ("levelLines", "lightLevelTraceLines")]), budget_sizes
-# Refusal numbers: the spike's enum (base, FCS-15 fade, FCS-51..59 light) and the shader's own enum (FCS-66..92,
+# Refusal numbers: the spike's enum (base, FCS-15 fade, FCS-51..59 light) and the shader's own enum (FCS-66..97,
 # its own once-mask) are disjoint, and every number fits the mask that logs it.
 shader_codes = dict(re.findall(r"(\w+) = (\d+)", cut_policy[cut_policy.index("enum class Refusal : unsigned {"):cut_policy.index("};", cut_policy.index("enum class Refusal : unsigned {"))]))
 spike_numbers = {int(v) for v in codes.values()}
 shader_numbers = {int(v) for v in shader_codes.values()}
 assert len(shader_numbers) == len(shader_codes) and not spike_numbers & shader_numbers, spike_numbers & shader_numbers
 assert max(spike_numbers) < 64 and "std::uint64_t{1} << static_cast<unsigned>(code)" in spike
-assert min(shader_numbers) == 66 and max(shader_numbers) == 92 and "constexpr unsigned firstRefusal = 66, lastRefusal = 92;" in cut_policy
+assert min(shader_numbers) == 66 and max(shader_numbers) == 97 and "constexpr unsigned firstRefusal = 66, lastRefusal = 97;" in cut_policy
 assert {n for n in spike_numbers if 51 <= n <= 59} == set(range(51, 60)) and 15 in spike_numbers
 # INI: one [FixedCameraSpike] section, every key of both sides once, defaults as on each branch.
 section = ini[ini.index("[FixedCameraSpike]"):]
@@ -806,4 +906,4 @@ for key, value in (("iSeeThroughMode", "0"), ("iRoomSeedMode", "0"), ("bHoldPlay
 assert not any(marker in text for text in (spike, source, ini, light) for marker in ("<<<<<<<", ">>>>>>>", "\n=======\n"))
 print("PASS combined wiring: shader, fade hold and light all installed at kDataLoaded before activation; eligible frame rig -> room -> "
       "shader plane -> fill light -> fade hold; ineligible shader off -> fade back -> restore -> fill duty; writer capacity sums every "
-      "budget; spike codes (base, FCS-15, FCS-51..59) and shader codes (FCS-66..92) disjoint; one INI section with both key sets")
+      "budget; spike codes (base, FCS-15, FCS-51..59) and shader codes (FCS-66..97) disjoint; one INI section with both key sets")

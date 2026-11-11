@@ -123,7 +123,8 @@ void codes() {
     constexpr std::array all{Refusal::settings,Refusal::foreign,Refusal::address,Refusal::table,Refusal::device,Refusal::thread,
         Refusal::bracket,Refusal::create,Refusal::patch,Refusal::unaudited,Refusal::view,Refusal::map,Refusal::object,Refusal::context,
         Refusal::effectTable,Refusal::voidSite,Refusal::voidMemory,Refusal::voidThread,Refusal::effectCreate,Refusal::effectPatch,
-        Refusal::effectUnaudited,Refusal::effectObject,Refusal::effectThread,Refusal::skySite,Refusal::skyLeft,Refusal::styleBuffers,Refusal::styleMap};
+        Refusal::effectUnaudited,Refusal::effectObject,Refusal::effectThread,Refusal::skySite,Refusal::skyLeft,Refusal::styleBuffers,Refusal::styleMap,
+        Refusal::frameSite,Refusal::frameMemory,Refusal::frameDevice,Refusal::frameThread,Refusal::frameRun};
     std::uint32_t seen = 0;
     for (const auto code : all) {
         // The wave 1 once-mask holds codes below 64; these have their own.
@@ -136,9 +137,10 @@ void codes() {
     // The third pass continues at 89 without a gap; 32 codes is the once-mask's limit.
     assert(static_cast<unsigned>(Refusal::effectThread) == 88 && static_cast<unsigned>(Refusal::skySite) == 89 &&
         static_cast<unsigned>(Refusal::skyLeft) == 90 && lastRefusal-firstRefusal < 32u);
-    // The fourth pass continues at 91.
-    assert(static_cast<unsigned>(Refusal::styleBuffers) == 91 && static_cast<unsigned>(Refusal::styleMap) == 92 && lastRefusal == 92);
-    assert(seen == (std::uint32_t{1} << (lastRefusal-firstRefusal+1u))-1u);
+    // The fourth pass continues at 91, the fifth at 93 up to 97, the once-mask's last code.
+    assert(static_cast<unsigned>(Refusal::styleBuffers) == 91 && static_cast<unsigned>(Refusal::styleMap) == 92 &&
+        static_cast<unsigned>(Refusal::frameSite) == 93 && static_cast<unsigned>(Refusal::frameRun) == 97 && lastRefusal == 97);
+    assert(seen == 0xffffffffu); // all 32 codes 66..97 in use
     // A shader preparation reports through its own group's codes.
     for (std::size_t i = 0;i < 2;++i) {
         const auto& c = prepareCodes[i];

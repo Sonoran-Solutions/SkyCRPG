@@ -37,6 +37,12 @@
 // iCutStyle=1 a Lighting or Utility pass of the published view goes through
 // the per-reference policy of fixed_spike_shader_style.h instead of the one
 // plane; iCutStyle=0 leaves this file's flat cut exactly as it was.
+//
+// Fifth pass (owner go 2026-11-11, Stage 2 of the seamless cutaway): with
+// bFramePass=1 one full-screen pass of our own is drawn over the finished
+// scene after the main world render returns (fixed_spike_shader_frame.h); this
+// file only captures the main view's matrices during a pass of the published
+// view and calls its install, frame-start check and trace.
 #include "fixed_spike_shader_policy.h"
 #include <cwchar>
 
@@ -56,6 +62,7 @@ using ClearColor = void(*)(void*,float,float,float,float);
 // Patched, rejected (FCS-73/74/78 or 84/85/87) and unaudited (FCS-75/86) shaders of one group.
 struct Made { unsigned patched{},rejected{},unaudited{}; };
 struct StyleRuntime; // fixed_spike_shader_style.h: only with iCutStyle=1
+struct FrameRuntime; // fixed_spike_shader_frame.h: only with bFramePass=1
 struct Runtime {
     Config config;
     void (*logger)(const char*){};
@@ -64,6 +71,7 @@ struct Runtime {
     void (*voidEmitter)(const char*){};
     void (*styleEmitter)(const char*){};
     void (*style2Emitter)(const char*){};
+    void (*frameEmitter)(const char*){};
     std::atomic<std::uint32_t> refusals{};
     std::atomic_bool pending{};  // hooks to be installed by the next main-thread camera frame
     std::atomic_bool active{};   // a snapshot is published
@@ -98,6 +106,7 @@ struct Runtime {
     unsigned missFrames{},tick{};
     double clock{},nextTrace{};
     StyleRuntime* style{}; // fourth pass; null with iCutStyle=0
+    FrameRuntime* framePass{}; // fifth pass; null with bFramePass=0
 };
 // Process lifetime, like the spike runtime: device objects are never released.
 inline Runtime* runtime = nullptr;
@@ -232,6 +241,8 @@ inline Skip ownerSkip(const std::uint8_t* geometry,std::uint32_t& owner) {
 inline bool styled();
 inline void styledPass(void* pass,std::size_t shaderClass,Vec eye);
 inline void shadowPass(void* pass,std::size_t shaderClass);
+// fixed_spike_shader_frame.h (included at the end of this file).
+inline void captureFrame(Vec eye);
 // The pass is drawn with the patched shader and the plane in slot 13. Both
 // device calls that can fail come before anything is bound.
 inline void apply(const Entry& entry,Constant wanted,std::size_t shaderClass) {
@@ -280,6 +291,7 @@ inline void consider(void* pass,std::size_t shaderClass) {
         return;
     }
     if (!group) ++r.frameMatched;
+    if (!group) captureFrame(eye); // fifth pass: the main view's matrices for the frame pass, once per render
     if (!group && styled()) { styledPass(pass,shaderClass,eye); return; } // fourth pass: the Stage 1 per-reference policy
     const auto geometry = peek<const std::uint8_t*>(pass,offset::passGeometry);
     const Constant wanted = cutConstant(r.view.planeZ,eye.z);
@@ -402,6 +414,11 @@ inline Feature styleState();
 inline void configureStyle();
 inline void styleFrame();
 inline void traceStyle(double now,const VoidWindow& effect);
+inline void installFrame(std::uintptr_t base);
+inline Feature frameState();
+inline void configureFrame();
+inline void frameStartFrame();
+inline void traceFrame(double now);
 // Main thread, from commit, after the Lighting/Utility hooks. The Effect class
 // is hooked only with bShaderCutEffect=1 and when its own guard passes.
 inline void installEffect(std::uintptr_t base) {
@@ -476,6 +493,16 @@ inline void commit() {
         r.style ? featureNames[static_cast<std::size_t>(styleState())] : "off",static_cast<unsigned>(r.config.keepFarGallery),
         static_cast<unsigned>(r.config.styleShadows));
     r.logger(text);
+    // Fifth pass: only with bFramePass=1; refuses on its own (FCS-93..95) and leaves everything above as it is.
+    if (r.framePass) {
+        installFrame(base);
+        std::snprintf(text,sizeof(text),"FixedCameraSpike shader frame installed pass=%s band=%.1f headroom=%.1f radii=%.1f,%.1f vignette=%.3f "
+            "vs=%u ps=%u",featureNames[static_cast<std::size_t>(frameState())],static_cast<double>(r.config.frame.band),
+            static_cast<double>(r.config.frame.headroom),static_cast<double>(r.config.frame.radiusInner),
+            static_cast<double>(r.config.frame.radiusOuter),static_cast<double>(r.config.frame.vignette),
+            static_cast<unsigned>(frame_bytes::vertexShader.size()),static_cast<unsigned>(frame_bytes::pixelShader.size()));
+        r.logger(text);
+    }
 }
 
 // ---- called by the spike's frame bracket ------------------------------------
@@ -505,6 +532,7 @@ inline void frameStart() {
         refuse(Refusal::effectThread,"an Effect render hook ran off the main thread; such calls touch nothing and are drawn natively");
     if (r.voidOffMain.load(std::memory_order_relaxed))
         refuse(Refusal::voidThread,"the main view's clear colour was set off the main thread; those calls kept the engine's colour");
+    frameStartFrame(); // fifth pass: an off-thread return of the main world render
     if (!r.latched.load(std::memory_order_acquire) && peek<void*>(reinterpret_cast<const void*>(r.base+contextAddress.rva),0) != r.context) {
         latch();
         refuse(Refusal::context,"the engine's device context changed; native rendering for the rest of the session");
@@ -572,19 +600,20 @@ inline void trace(double now) {
     if (formatLook(line,sizeof(line),look)) r.lookEmitter(line);
     if (formatVoid(line,sizeof(line),voids)) r.voidEmitter(line);
     traceStyle(now,voids.window); // fourth pass: FixedShaderStyle, only with iCutStyle=1
+    traceFrame(now); // fifth pass: FixedShaderFrame, only with bFramePass=1
 }
 inline bool tracing() { return runtime && runtime->config.trace; }
-// Shader trace line kinds: FixedShader, FixedShaderLook, FixedShaderVoid, and FixedShaderStyle and
-// FixedShaderStyle2 with iCutStyle=1.
-inline unsigned traceKinds() { return runtime && runtime->config.style == stageOneStyle ? 5u : 3u; }
+// Shader trace line kinds: FixedShader, FixedShaderLook, FixedShaderVoid, FixedShaderStyle and
+// FixedShaderStyle2 with iCutStyle=1, and FixedShaderFrame with bFramePass=1.
+inline unsigned traceKinds() { return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u); }
 inline const char* status() { return !runtime ? "off" : runtime->installed ? "installed" : "pending"; }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1 and iSeeThroughMode=3.
 inline void configure(const Config& requested,void (*logger)(const char*),void (*emitter)(const char*),void (*lookEmitter)(const char*),
-    void (*voidEmitter)(const char*),void (*styleEmitter)(const char*),void (*style2Emitter)(const char*)) {
+    void (*voidEmitter)(const char*),void (*styleEmitter)(const char*),void (*style2Emitter)(const char*),void (*frameEmitter)(const char*)) {
     runtime = new Runtime;
     auto& r = *runtime;
     r.logger = logger; r.emitter = emitter; r.lookEmitter = lookEmitter; r.voidEmitter = voidEmitter; r.styleEmitter = styleEmitter;
-    r.style2Emitter = style2Emitter;
+    r.style2Emitter = style2Emitter; r.frameEmitter = frameEmitter;
     bool adjusted = false;
     r.config = validate(requested,&adjusted);
     for (auto& budget : r.budgets) budget.limit = r.config.maxPerFrame;
@@ -592,9 +621,11 @@ inline void configure(const Config& requested,void (*logger)(const char*),void (
     r.effectState = r.config.effect ? Feature::pending : Feature::off;
     r.skyState = r.config.hideSky ? Feature::pending : Feature::off;
     configureStyle();
+    configureFrame();
     if (adjusted) refuse(Refusal::settings,"one or more shader-cut values were out of range; safe values applied");
 }
 } // namespace skycrpg::camera::fixed::shader
 #include "fixed_spike_shader_void.h" // second pass: the void colour
 #include "fixed_spike_shader_sky.h"  // third pass: the sky dome over the void
 #include "fixed_spike_shader_style.h" // fourth pass: Stage 1 of the seamless cutaway
+#include "fixed_spike_shader_frame.h" // fifth pass: Stage 2, the frame pass
