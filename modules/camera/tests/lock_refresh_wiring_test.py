@@ -241,7 +241,7 @@ for entry in ("inline void installLight(std::uintptr_t base) {\n    if (!lights)
               "inline RE::ShadowSceneNode* scene() {\n    if (!lights || !lights->ready) return nullptr;"):
     assert entry in light, entry
 assert spike.count("light::installLight(base);") == 1 and spike.count("light::frameLight(") == 2
-assert end_frame.index("light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState),cause == Exit::load,parent,") < \
+assert end_frame.index("light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState,light::menuPaused()),cause == Exit::load,parent,") < \
     end_frame.index("traceRig(false);") < end_frame.index("light::frameLight(true,light::FillDuty::keep,false,parent,")
 assert end_frame.index("if (!thin::onMain())") < end_frame.index("light::frameLight(")  # main thread only
 for forbidden in ("write_vfunc", "write_call", "write_branch", "AllocTrampoline", "PAGE_EXECUTE_READWRITE", "_ReturnAddress",
@@ -306,9 +306,26 @@ frame_light = light_body("inline void frameLight(", "} // namespace")
 assert frame_light.index("serviceFill(node,wanted,feet,cause);") < frame_light.index("if (!l.config.trace || !node || !eligible")
 assert "fillWanted(l.config.fillMode,duty == FillDuty::keep && finite(feet),interior,l.fillReady && node != nullptr)" in frame_light
 assert "if (cellId != l.cell || loadExit) { l.cell = cellId; l.track.newCell(); }" in frame_light
-# A hold never survives a cell change; it is settled before anything else uses the duty.
-assert frame_light.index("duty = settledDuty(duty,cellId != l.cell);") < frame_light.index("if (duty == FillDuty::hold) return;") < \
+# A hold never survives a cell change or a game load; it is settled (with its
+# exit cause) before anything else uses the duty, and the load flag is consumed
+# only on a serviced frame.
+assert frame_light.index("const auto settled = settle(duty,cellId != l.cell,l.loadPending,cause);") < \
+    frame_light.index("duty = settled.duty; cause = settled.cause;") < frame_light.index("if (duty == FillDuty::hold) return;") < \
+    frame_light.index("loadExit = loadExit || l.loadPending;") < frame_light.index("l.loadPending = false;") < \
     frame_light.index("if (cellId != l.cell || loadExit)")
+assert light.count("loadPending = true") == 1 and "if (lights && (requests & exitBit(Exit::load))) lights->loadPending = true;" in light
+# Every lifecycle request reaches the light, after the restore it always drove.
+assert end_frame.index("const unsigned requests = r.requests.exchange(0u,std::memory_order_acq_rel);") < \
+    end_frame.index("if (requests) restoreAll(firstExit(requests));") < end_frame.index("light::noteExits(requests);") < \
+    end_frame.index("light::frameLight(")
+assert spike.count("light::noteExits(") == 1 and spike.count("light::menuPaused()") == 1
+# The paused-menu read: no string, no GetMenu, main thread (endFrame), nothing when the package is off.
+paused = light_body("inline bool menuPaused() {", "// endFrame(), main thread, both eligible")
+assert paused.index("if (!lights) return false;") < paused.index("RE::UI::GetSingleton()") and "ui->numPausesGame != 0u" in paused
+assert "static_assert(offsetof(RE::UI,numPausesGame) == 0x160);" in light
+# Outdoors the exit is named for it.
+assert frame_light.index("const bool interior = parent && parent->IsInteriorCell();") < \
+    frame_light.index('if (eligible && !interior) cause = "exterior";') < frame_light.index("serviceFill(node,wanted,feet,cause);")
 # Light level on its own line kind and budget; FixedLight carries none of it.
 assert "formatLightLevel(line,sizeof(line),s.seconds,s.frame,level)) emit(l.levelLines,line);" in frame_light
 assert "light::lightTraceLines+light::lightLevelTraceLines" in configure
@@ -322,6 +339,10 @@ census_body = light_body("inline void census(", "// ---- light level")
 assert "within(" not in census_body and "playerRooms(" not in census_body
 assert frame_light.index("const PlayerRooms player = playerRooms(parent,at);") < frame_light.index("census(node,player,at,s,shadows);")
 assert "fillStep(wanted,l.presence,l.track,runtime->now)" in service
+# A light the engine already let go is recorded after the delay, with no engine
+# call; the idle shortcut cannot skip a light still owed its record.
+assert "case FillAction::gone: fillEvent(\"remove\",goneCause); break;" in service
+assert "if (!wanted && !l.track.requested && !l.track.owned && l.presence == Presence::absent && !changed) return;" in service
 print("PASS light wiring: off unless configured; one guarded code patch (light-level summers, sealed gateways, no trampoline); "
       "audited IDs and prologues before use; locked read-only census; one AddLight/RemoveLight site; duty by ineligibility cause; "
       "thread-agnostic stealth wrappers; one site per refusal code")

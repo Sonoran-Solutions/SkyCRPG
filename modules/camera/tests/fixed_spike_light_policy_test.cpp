@@ -55,26 +55,46 @@ void duty() {
     // Eligible: always lit; a hook-silent frame inside the grace: as it was.
     for (const auto cause : {Exit::menu,Exit::special,Exit::firstPerson,Exit::hookSilent})
         for (const auto state : allStates) {
-            assert(fillDuty(true,true,cause,true,state) == FillDuty::keep);
-            assert(fillDuty(false,false,cause,true,state) == FillDuty::hold);
+            assert(fillDuty(true,true,cause,true,state,false) == FillDuty::keep);
+            assert(fillDuty(false,false,cause,true,state,false) == FillDuty::hold);
         }
     // A menu or the console: held for the whole menu (no hide, no timer).
     for (const auto state : allStates) {
-        assert(fillDuty(false,true,Exit::menu,true,state) == FillDuty::hold);
-        assert(fillDuty(false,true,Exit::menu,false,state) == FillDuty::hold);
+        assert(fillDuty(false,true,Exit::menu,true,state,false) == FillDuty::hold);
+        assert(fillDuty(false,true,Exit::menu,false,state,false) == FillDuty::hold);
     }
     // Third-person states the rig hands off: still lit and following.
     for (const auto state : {State::precision,State::targeting,State::obstruction,State::special})
-        assert(fillDuty(false,true,Exit::special,true,state) == FillDuty::keep);
-    assert(fillDuty(false,true,Exit::special,true,State::invalidWorld) == FillDuty::off);
-    assert(fillDuty(false,true,Exit::special,false,State::special) == FillDuty::off); // no state seen: not known third person
+        assert(fillDuty(false,true,Exit::special,true,state,false) == FillDuty::keep);
+    assert(fillDuty(false,true,Exit::special,true,State::invalidWorld,false) == FillDuty::off);
+    assert(fillDuty(false,true,Exit::special,false,State::special,false) == FillDuty::off); // no state seen: not known third person
     // Off: first person, Camera off, F8, load, death, silent past the grace, cell, unload.
     for (const auto cause : {Exit::firstPerson,Exit::disable,Exit::f8,Exit::load,Exit::death,Exit::hookSilent,Exit::cell,Exit::unload})
-        for (const auto state : allStates) assert(fillDuty(false,true,cause,true,state) == FillDuty::off);
-    // A hold never survives a cell change (a menu frame right after a load door).
+        for (const auto state : allStates) assert(fillDuty(false,true,cause,true,state,false) == FillDuty::off);
+    // A menu that pauses the world silences the camera hook (W2L, the Tween
+    // Menu): held through the silence, past the grace too, in every state.
+    for (const auto state : allStates) {
+        assert(fillDuty(false,true,Exit::hookSilent,false,state,true) == FillDuty::hold);
+        assert(fillDuty(false,false,Exit::hookSilent,false,state,true) == FillDuty::hold);
+        // The watchdog still drops the light when nothing is paused.
+        assert(fillDuty(false,true,Exit::hookSilent,false,state,false) == FillDuty::off);
+        // A paused world does not turn the other exits into holds.
+        for (const auto cause : {Exit::firstPerson,Exit::disable,Exit::f8,Exit::load,Exit::death,Exit::cell,Exit::unload})
+            assert(fillDuty(false,true,cause,true,state,true) == FillDuty::off);
+        assert(fillDuty(true,true,Exit::hookSilent,true,state,true) == FillDuty::keep);
+    }
+    // A hold never survives a cell change (a menu frame right after a load door)
+    // or a game load (a quickload into the same cell); the exit says which.
     for (const auto d : {FillDuty::off,FillDuty::keep,FillDuty::hold}) {
         assert(settledDuty(d,false) == d);
         assert(settledDuty(d,true) == (d == FillDuty::hold ? FillDuty::off : d));
+        for (bool cell : {false,true})
+            for (bool loaded : {false,true}) {
+                const auto out = settle(d,cell,loaded,"menu");
+                const bool ends = d == FillDuty::hold && (cell || loaded);
+                assert(out.duty == (ends ? FillDuty::off : d));
+                assert(std::string(out.cause) == (!ends ? "menu" : loaded ? "load" : "cell"));
+            }
     }
     assert(std::string(dutyName(FillDuty::keep)) == "keep" && std::string(dutyName(FillDuty::hold)) == "hold" &&
         std::string(dutyName(FillDuty::off)) == "off");
@@ -171,6 +191,48 @@ void steps() {
     FillTrack idle;
     for (const auto p : {Presence::absent,Presence::queuedAdd,Presence::queuedRemove})
         assert(fillStep(false,p,idle,late) == FillAction::none);
+
+    // W2L door-out: hidden on the cell-change frame, then the engine let the
+    // light go with its cell before the delay ran out, and the camera hook is
+    // silent or the player outdoors from then on. The removal is still decided
+    // at the delay: recorded once (gone), never earlier, never twice.
+    FillTrack door;
+    assert(fillStep(true,Presence::absent,door,0) == FillAction::add && door.owned);
+    assert(fillStep(false,Presence::active,door,20.0) == FillAction::none && door.owned); // the hide frame
+    assert(fillStep(false,Presence::absent,door,20.24) == FillAction::none && door.owned); // gone, inside the delay
+    assert(fillStep(false,Presence::absent,door,20.0+removeDelaySeconds*.9) == FillAction::none);
+    assert(fillStep(false,Presence::absent,door,20.0+removeDelaySeconds) == FillAction::gone && !door.owned);
+    assert(fillStep(false,Presence::absent,door,late+20.0) == FillAction::none); // recorded once
+    // Back inside: an add from absent; not a drop (nothing was wanted meanwhile).
+    assert(fillStep(true,Presence::absent,door,late+21.0) == FillAction::add && door.drops == 0 && door.owned);
+    // Absent already on the hide frame (the engine dropped it before we looked).
+    FillTrack early;
+    assert(fillStep(true,Presence::absent,early,0) == FillAction::add);
+    assert(fillStep(false,Presence::absent,early,3.0) == FillAction::none && early.unwantedSince == 3.0);
+    assert(fillStep(false,Presence::absent,early,3.0+removeDelaySeconds) == FillAction::gone);
+    // Still active at the delay (the hook silent, an exterior frame): our removal, not a record.
+    FillTrack live;
+    assert(fillStep(true,Presence::absent,live,0) == FillAction::add);
+    assert(fillStep(false,Presence::active,live,4.0) == FillAction::none);
+    assert(fillStep(false,Presence::active,live,4.0+removeDelaySeconds) == FillAction::remove && !live.owned);
+    assert(fillStep(false,Presence::queuedRemove,live,late) == FillAction::none);
+    assert(fillStep(false,Presence::absent,live,late) == FillAction::none); // our own removal: never recorded twice
+    // A broken clock: no delay, the loss is recorded at once.
+    FillTrack clockGone;
+    assert(fillStep(true,Presence::absent,clockGone,0) == FillAction::add);
+    assert(fillStep(false,Presence::absent,clockGone,nan) == FillAction::gone);
+    // Re-wanted inside the delay after the engine dropped it: an add, no record.
+    FillTrack again;
+    assert(fillStep(true,Presence::absent,again,0) == FillAction::add);
+    assert(fillStep(false,Presence::absent,again,7.0) == FillAction::none);
+    assert(fillStep(true,Presence::absent,again,7.2) == FillAction::add && again.owned && again.drops == 0);
+    // The drop limit records the loss itself: no second record when unwanted.
+    FillTrack limit;
+    assert(fillStep(true,Presence::absent,limit,0) == FillAction::add);
+    for (unsigned i = 0;i < maxDropsPerCell;++i) assert(fillStep(true,Presence::absent,limit,0) == FillAction::add);
+    assert(fillStep(true,Presence::absent,limit,0) == FillAction::dropLimit && !limit.owned);
+    assert(fillStep(false,Presence::absent,limit,late) == FillAction::none);
+    assert(std::string(goneCause) == "engine-gone");
 }
 
 void rooms() {

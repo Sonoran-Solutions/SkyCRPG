@@ -636,7 +636,9 @@ inline void endFrame() {
     r.now = thin::seconds();
     const bool eligible = r.frameEligible;
     r.frameEligible = false; // a cast outside the bracket is always native
-    if (const unsigned requests = r.requests.exchange(0u,std::memory_order_acq_rel)) restoreAll(firstExit(requests));
+    const unsigned requests = r.requests.exchange(0u,std::memory_order_acq_rel);
+    if (requests) restoreAll(firstExit(requests));
+    light::noteExits(requests);
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto parent = player ? player->GetParentCell() : nullptr;
     const RE::FormID cellId = parent ? parent->GetFormID() : 0u;
@@ -650,7 +652,7 @@ inline void endFrame() {
         const bool exiting = restoreNow(cause,r.silentFrames);
         if (exiting) restoreAll(cause);
         const auto at = player && parent ? player->GetPosition() : RE::NiPoint3{};
-        light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState),cause == Exit::load,parent,
+        light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState,light::menuPaused()),cause == Exit::load,parent,
             player && parent ? Vec{at.x,at.y,at.z} : Vec{},{},{},exitNames[static_cast<std::size_t>(cause)]);
         traceRig(false);
         r.previousEligible = false;

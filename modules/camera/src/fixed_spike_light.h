@@ -63,6 +63,10 @@ static_assert(offsetof(RE::ShadowSceneNode::LIGHT_CREATE_PARAMS,affectWater) == 
 static_assert(offsetof(RE::ShadowSceneNode::LIGHT_CREATE_PARAMS,neverFades) == 5);
 static_assert(offsetof(RE::ShadowSceneNode::LIGHT_CREATE_PARAMS,restrictedNode) == 0x20);
 static_assert(offsetof(RE::ShadowSceneNode::LIGHT_CREATE_PARAMS,lensFlareData) == 0x28);
+// UI +160 counts open menus whose flags (IMenu +1C) have bit 0 (pauses game):
+// incremented at 116A552-116A559, decremented at 116A0CA-116A0D1. Read on the
+// main thread, which opens and closes menus; a plain counter, no string.
+static_assert(offsetof(RE::UI,numPausesGame) == 0x160);
 
 // ID 106362: (scene node, position, light count out, sun term out, ambient term
 // out, exclude light, shadow-light mask) -> sum of ID 108292 (726414-726423 sets
@@ -97,6 +101,7 @@ struct LightRuntime {
     Presence presence{Presence::absent};
     unsigned adds{},removes{};
     RE::FormID cell{};
+    bool loadPending{}; // a game load was signalled since the last serviced frame
     double nextCheck{},nextTrace{},nextShadows{},nextLevel{};
     LineBudget lines{lightTraceLines},levelLines{lightLevelTraceLines};
 };
@@ -342,12 +347,17 @@ inline void serviceFill(RE::ShadowSceneNode* node,bool wanted,Vec feet,const cha
     const bool changed = wanted != l.lastWanted;
     l.lastWanted = wanted;
     if (!node || (!changed && runtime->now < l.nextCheck)) return;
-    if (!wanted && !l.track.requested && l.presence == Presence::absent && !changed) return; // idle
+    // Idle only once nothing is owed: an owned light that went absent is still
+    // checked until its removal is recorded after the delay.
+    if (!wanted && !l.track.requested && !l.track.owned && l.presence == Presence::absent && !changed) return;
     l.nextCheck = runtime->now+.1;
     l.presence = presenceNow(node);
     switch (fillStep(wanted,l.presence,l.track,runtime->now)) {
     case FillAction::add: addFill(node); fillEvent("add",cause); break;
     case FillAction::remove: node->RemoveLight(l.fill.get()); ++l.removes; fillEvent("remove",cause); break;
+    // Already out of every engine array (it went with its cell or a load): no
+    // engine call; `removes` keeps counting our RemoveLight calls only.
+    case FillAction::gone: fillEvent("remove",goneCause); break;
     case FillAction::dropLimit:
         fillEvent("drop-limit",cause);
         refuse(Refusal::fillDropped,"the engine dropped the fill light repeatedly in one cell; no further adds until the cell changes");
@@ -390,6 +400,17 @@ inline void installLight(std::uintptr_t base) {
     if (!installStealth(base) && l.config.stealthNeutral) return;
     l.fillReady = true;
 }
+// endFrame(), main thread, after the lifecycle requests are taken: a load
+// request (kPreLoadGame, kPostLoadGame, TESLoadGameEvent) ends any hold.
+inline void noteExits(unsigned requests) {
+    if (lights && (requests & exitBit(Exit::load))) lights->loadPending = true;
+}
+// endFrame(), main thread: a menu that pauses the world is open (fillDuty).
+inline bool menuPaused() {
+    if (!lights) return false;
+    const auto ui = RE::UI::GetSingleton();
+    return ui && ui->numPausesGame != 0u;
+}
 // endFrame(), main thread, both eligible and ineligible frames. `at` is the
 // census point (feet + eyeLift), `camera` the rendered camera position.
 // `duty` (fillDuty): hold leaves the fill light exactly as it was; keep lights it
@@ -398,10 +419,14 @@ inline void frameLight(bool eligible,FillDuty duty,bool loadExit,RE::TESObjectCE
     if (!lights) return;
     auto& l = *lights;
     const RE::FormID cellId = parent ? parent->GetFormID() : 0u;
-    duty = settledDuty(duty,cellId != l.cell);
+    const auto settled = settle(duty,cellId != l.cell,l.loadPending,cause);
+    duty = settled.duty; cause = settled.cause;
     if (duty == FillDuty::hold) return;
+    loadExit = loadExit || l.loadPending;
+    l.loadPending = false;
     if (cellId != l.cell || loadExit) { l.cell = cellId; l.track.newCell(); }
     const bool interior = parent && parent->IsInteriorCell();
+    if (eligible && !interior) cause = "exterior"; // unwanted only because it is outdoors
     const auto node = scene();
     const bool wanted = fillWanted(l.config.fillMode,duty == FillDuty::keep && finite(feet),interior,l.fillReady && node != nullptr);
     serviceFill(node,wanted,feet,cause);

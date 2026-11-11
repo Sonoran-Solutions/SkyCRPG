@@ -59,11 +59,17 @@ constexpr bool fillWanted(unsigned mode,bool eligible,bool interior,bool ready) 
 // special states (mount, swim, beast, bleedout, furniture, killmove, scripted)
 // -> keep; first person, Camera off, F8, load, death, invalid world and a
 // hook-silent stretch past the grace -> off.
+// `menuPaused` (UI numPausesGame > 0): a menu that pauses the world (for
+// example the Tween Menu, Hypothesis) stops the ThirdPersonState update, so
+// its frames arrive hook-silent, not as State::menu (W2L t=44168.960: hide and
+// removal with cause hook-silent behind the Tween Menu). Such a menu is in the
+// hold set too; silence with nothing paused is still the watchdog exit (off).
 enum class FillDuty { off, keep, hold };
-constexpr FillDuty fillDuty(bool eligible,bool exiting,Exit cause,bool stateSeen,State state) {
+constexpr FillDuty fillDuty(bool eligible,bool exiting,Exit cause,bool stateSeen,State state,bool menuPaused) {
     if (eligible) return FillDuty::keep;
     if (!exiting) return FillDuty::hold;
     if (cause == Exit::menu) return FillDuty::hold;
+    if (cause == Exit::hookSilent && menuPaused) return FillDuty::hold;
     if (cause == Exit::special && stateSeen && (state == State::precision || state == State::targeting ||
         state == State::obstruction || state == State::special)) return FillDuty::keep;
     return FillDuty::off;
@@ -71,8 +77,19 @@ constexpr FillDuty fillDuty(bool eligible,bool exiting,Exit cause,bool stateSeen
 constexpr const char* dutyName(FillDuty d) { return d == FillDuty::keep ? "keep" : d == FillDuty::hold ? "hold" : "off"; }
 // A hold never survives a cell change: the first serviced frame after a load
 // door can be a menu frame (wave 1, p55-e-door-C frames 2536 -> 2537), and the
-// light must not stay where it was in the previous cell.
-constexpr FillDuty settledDuty(FillDuty duty,bool cellChanged) { return duty == FillDuty::hold && cellChanged ? FillDuty::off : duty; }
+// light must not stay where it was in the previous cell. Nor a game load since
+// the last serviced frame (a quickload into the same cell keeps the cell ID).
+// The settled exit is traced with what ended the hold ("cell" / "load"), not
+// with the cause of the menu frame it landed on.
+struct Settled {
+    FillDuty duty{};
+    const char* cause{};
+};
+constexpr Settled settle(FillDuty duty,bool cellChanged,bool loaded,const char* cause) {
+    if (duty != FillDuty::hold || (!cellChanged && !loaded)) return {duty,cause};
+    return {FillDuty::off,loaded ? "load" : "cell"};
+}
+constexpr FillDuty settledDuty(FillDuty duty,bool cellChanged) { return settle(duty,cellChanged,false,"").duty; }
 // Light level without the fill light: the engine's sum minus the fill light's
 // own ID 108292 terms, as the wrapped summer saw them; never below zero, and
 // untouched when the fill light contributed nothing or a value is not finite.
@@ -91,7 +108,10 @@ constexpr Presence presenceOf(bool active,bool queuedAdd,bool queuedRemove) {
 constexpr const char* presenceName(Presence p) {
     return p == Presence::active ? "active" : p == Presence::queuedAdd ? "queued-add" : p == Presence::queuedRemove ? "queued-remove" : "absent";
 }
-enum class FillAction { none, add, remove, dropLimit, removeLimit };
+// gone: the light was handed to the engine and is no longer anywhere in its
+// arrays, but nobody here asked for that (the engine let it go with its cell,
+// W2L door-out t=44205.682): recorded as the removal, nothing is called.
+enum class FillAction { none, add, remove, gone, dropLimit, removeLimit };
 constexpr unsigned maxDropsPerCell = 3;   // the engine removed our light while wanted
 constexpr unsigned maxRemoveRequests = 8; // RemoveLight is a no-op while +300 is false
 // The light is app-culled on the first unwanted frame, but handed back only
@@ -101,6 +121,7 @@ constexpr unsigned maxRemoveRequests = 8; // RemoveLight is a no-op while +300 i
 constexpr double removeDelaySeconds = .5;
 struct FillTrack {
     bool requested{};    // AddLight called and no removal asked for since
+    bool owned{};        // AddLight called, and neither our RemoveLight nor a recorded loss since
     bool gaveUp{};       // drop limit reached: no more adds in this cell
     bool stuck{};        // removal limit reached: the light stays hidden
     unsigned drops{},removeRequests{};
@@ -111,27 +132,37 @@ struct FillTrack {
 // copy at all; a queued removal finishes before a new add. Unwanted: ask for
 // removal only while the light is active and has been unwanted for
 // removeDelaySeconds; RemoveLight (ID 106331) searches the active arrays only,
-// so a queued add is waited out.
+// so a queued add is waited out. The removal decision is the same with the
+// light already gone: once the delay has passed, an owned light the engine no
+// longer holds is recorded (gone) instead of removed, so the trace shows one
+// removal per exit, never earlier than the delay.
 inline FillAction fillStep(bool wanted,Presence p,FillTrack& t,double now) {
     if (wanted) {
         t.removeRequests = 0;
         t.unwantedSince = -1.0;
         if (p != Presence::absent || t.gaveUp) return FillAction::none;
-        if (t.requested && ++t.drops > maxDropsPerCell) { t.gaveUp = true; return FillAction::dropLimit; }
-        t.requested = true;
+        if (t.requested && ++t.drops > maxDropsPerCell) { t.gaveUp = true; t.owned = false; return FillAction::dropLimit; }
+        t.requested = t.owned = true;
         return FillAction::add;
     }
     t.requested = false;
     if (t.unwantedSince < 0.0 || !std::isfinite(now) || now < t.unwantedSince) t.unwantedSince = now;
-    if (p == Presence::active && std::isfinite(now) && now-t.unwantedSince < removeDelaySeconds) return FillAction::none;
+    const bool waiting = std::isfinite(now) && now-t.unwantedSince < removeDelaySeconds;
+    if (p == Presence::active && waiting) return FillAction::none;
     if (p != Presence::active) {
-        if (p == Presence::absent) { t.removeRequests = 0; t.stuck = false; }
-        return FillAction::none;
+        if (p != Presence::absent) return FillAction::none;
+        t.removeRequests = 0; t.stuck = false;
+        if (!t.owned || waiting) return FillAction::none;
+        t.owned = false;
+        return FillAction::gone;
     }
     if (t.stuck) return FillAction::none;
     if (++t.removeRequests > maxRemoveRequests) { t.stuck = true; return FillAction::removeLimit; }
+    t.owned = false;
     return FillAction::remove;
 }
+// Event cause for a removal the engine did first (FillAction::gone).
+constexpr const char* goneCause = "engine-gone";
 
 // ---- census ------------------------------------------------------------------
 // BSLight +5C after the per-frame camera cull (IDs 108278, 108618, 108625):
