@@ -355,6 +355,10 @@ void loadSettings() {
         // Third pass: on by default in mode 3.
         shaderCut.hideSky = flag("FixedCameraSpike","bVoidHideSky",1);
         shaderCut.effectWhole = flag("FixedCameraSpike","bShaderCutEffectWhole",1);
+        // Fourth pass (owner decision 2026-11-10, Stage 1 seamless cutaway): Stage 1 by default in mode 3.
+        shaderCut.style = number("FixedCameraSpike","iCutStyle",shaderCut.style);
+        shaderCut.keepFarGallery = flag("FixedCameraSpike","bCutKeepFarGallery",0);
+        shaderCut.styleShadows = flag("FixedCameraSpike","bCutStyleShadows",1);
         fixed::configure(f,shaderCut,settings,cursorSettings.enabled ? cursorSettings.toggleKey : -1,
             std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera_FixedSpike.log",log,thinGoal,fixedPreCollision,fixedCause);
     }

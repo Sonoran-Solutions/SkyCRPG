@@ -123,7 +123,7 @@ void codes() {
     constexpr std::array all{Refusal::settings,Refusal::foreign,Refusal::address,Refusal::table,Refusal::device,Refusal::thread,
         Refusal::bracket,Refusal::create,Refusal::patch,Refusal::unaudited,Refusal::view,Refusal::map,Refusal::object,Refusal::context,
         Refusal::effectTable,Refusal::voidSite,Refusal::voidMemory,Refusal::voidThread,Refusal::effectCreate,Refusal::effectPatch,
-        Refusal::effectUnaudited,Refusal::effectObject,Refusal::effectThread,Refusal::skySite,Refusal::skyLeft};
+        Refusal::effectUnaudited,Refusal::effectObject,Refusal::effectThread,Refusal::skySite,Refusal::skyLeft,Refusal::styleBuffers,Refusal::styleMap};
     std::uint32_t seen = 0;
     for (const auto code : all) {
         // The wave 1 once-mask holds codes below 64; these have their own.
@@ -135,7 +135,9 @@ void codes() {
     assert(all.size() == lastRefusal-firstRefusal+1u && static_cast<unsigned>(Refusal::context) == 79 && static_cast<unsigned>(Refusal::effectTable) == 80);
     // The third pass continues at 89 without a gap; 32 codes is the once-mask's limit.
     assert(static_cast<unsigned>(Refusal::effectThread) == 88 && static_cast<unsigned>(Refusal::skySite) == 89 &&
-        static_cast<unsigned>(Refusal::skyLeft) == 90 && lastRefusal == 90 && lastRefusal-firstRefusal < 32u);
+        static_cast<unsigned>(Refusal::skyLeft) == 90 && lastRefusal-firstRefusal < 32u);
+    // The fourth pass continues at 91.
+    assert(static_cast<unsigned>(Refusal::styleBuffers) == 91 && static_cast<unsigned>(Refusal::styleMap) == 92 && lastRefusal == 92);
     assert(seen == (std::uint32_t{1} << (lastRefusal-firstRefusal+1u))-1u);
     // A shader preparation reports through its own group's codes.
     for (std::size_t i = 0;i < 2;++i) {
@@ -209,6 +211,12 @@ void settings() {
     assert(defaults.hideSky && defaults.effectWhole);
     c = {}; c.hideSky = false; c.effectWhole = false; c = validate(c,&adjusted);
     assert(!adjusted && !c.hideSky && !c.effectWhole);
+    // Fourth pass: Stage 1 by default (read only in mode 3), gallery off, shadows on; an unknown style is Stage 1, reported.
+    assert(defaults.style == stageOneStyle && !defaults.keepFarGallery && defaults.styleShadows && flatStyle == 0);
+    c = {}; c.style = 0; c.keepFarGallery = true; c.styleShadows = false; c = validate(c,&adjusted);
+    assert(!adjusted && c.style == flatStyle && c.keepFarGallery && !c.styleShadows);
+    c = {}; c.style = 7; c = validate(c,&adjusted);
+    assert(adjusted && c.style == stageOneStyle);
 }
 
 void colours() {
@@ -786,8 +794,14 @@ void skyVoid() {
     // glows (refs 0008F94E at 9392 and 0008F94D at 9423, plane 9420.25, feet 9241) go, the
     // floor mist (0008FB47 at 9153) keeps its lower part.
     View cave; cave.feet = {2487.3f,1485.5f,9241.0f}; cave.planeZ = 9420.25f;
-    assert(wholeEffect(cave,{{2449,1197,9392},200}) && wholeEffect(cave,{{2196,859,9423},200}) && !wholeEffect(cave,{{2837,2373,9153},400}));
+    assert(wholeEffect(cave,{{2449,1197,9392},120}) && wholeEffect(cave,{{2196,859,9423},150}) && !wholeEffect(cave,{{2837,2373,9153},400}));
     assert(!wholeEffect(cave,{{0,0,9330.0f},10}) && wholeEffect(cave,{{0,0,9331.0f},10}) && !wholeEffect(cave,{{0,0,std::numeric_limits<float>::quiet_NaN()},10}));
+    // Fourth pass (review MINOR-3): whole only when the bound's lowest point is above the feet too. The glows go
+    // whole below radius 151 (centre 9392) and 182 (centre 9423); a ceiling-to-floor shaft centred high keeps the plane cut.
+    assert(wholeEffect(cave,{{2449,1197,9392},150.5f}) && !wholeEffect(cave,{{2449,1197,9392},151.5f}));
+    assert(wholeEffect(cave,{{2196,859,9423},181.5f}) && !wholeEffect(cave,{{2196,859,9423},182.5f}));
+    assert(!wholeEffect(cave,{{0,0,9400},300}) && upperEffect(cave,{{0,0,9400},300}) && !upperEffect(cave,{{0,0,9300},10}));
+    assert(!wholeEffect(cave,{{0,0,9400},std::numeric_limits<float>::quiet_NaN()}));
     // FixedShaderVoid: the row, its tokens and the longest it can be.
     char line[sizeof(TraceRow)]{},tiny[64]{};
     VoidSample v;
@@ -812,6 +826,230 @@ void skyVoid() {
     std::printf("sky and whole-Effect rows PASS\n");
 }
 
+namespace {
+// ---- fourth pass: Stage 1 style ---------------------------------------------
+// World boxes and poses are the Bannered Mare's (Skyrim.esm placements, the
+// hearth pose of the W2S/W3 routes): feet (-117.1,-640,68), plane 228.
+const Vec hearth{-117.1f,-640.0f,68.0f};
+Vec eyeAt(Vec feet,unsigned heading) { // headings 45, 135, 225, 315: camera at -x-y, -x+y, +x+y, +x-y
+    const float sx = heading == 0 || heading == 1 ? -1.0f : 1.0f,sy = heading == 0 || heading == 3 ? -1.0f : 1.0f;
+    return {feet.x+237.3f*sx,feet.y+237.3f*sy,feet.z+683.8f};
+}
+Box box(Vec low,Vec high) { return worldBox(low,high,{Vec{1,0,0},Vec{0,1,0},Vec{0,0,1}},1.0f,{0,0,0}); }
+void styleRules() {
+    // Removal: a constant `usable` accepts, below zero at every height of this world; the plane constant unchanged.
+    assert(usable(removeConstant) && !usable(wholeConstant));
+    for (const float z : {-1.0e8f,-1.0e4f,0.0f,1.0e4f,1.0e8f}) assert(clipDistance(removeConstant,z) < 0.0f);
+    assert(cutConstant(228.0f,752.0f).scale == -1.0f && cutConstant(228.0f,752.0f).offset == -524.0f);
+    // Model families.
+    assert(modelFamily("Architecture\\WhiteRun\\WRInteriors\\WRIntWallStr01.nif") == Family::architecture);
+    assert(modelFamily("meshes/dungeons/mines/MineLHall1Way128D01.nif") == Family::dungeons && modelFamily("CLUTTER\\Barrel02.nif") == Family::clutter);
+    assert(modelFamily("Furniture\\Noble\\NobleWallShelf02.nif") == Family::furniture && modelFamily("Effects\\FXMist.nif") == Family::effects);
+    assert(modelFamily("MarkerX.nif") == Family::other && modelFamily(nullptr) == Family::other && modelFamily("") == Family::other);
+    assert(modelFamily("Architecture") == Family::other && modelFamily("ArchitectureX\\a.nif") == Family::other);
+    // worldBox: identity, a 90-degree turn as the engine's rows give it, scale and an off-centre OBND.
+    const Box wall = box({-128,81,-32},{128,120,256});
+    assert(wall.valid && wall.low.y == 81 && wall.high.z == 256);
+    const Box turned = worldBox({-128,81,-32},{128,120,256},{Vec{0,1,0},Vec{-1,0,0},Vec{0,0,1}},2.0f,{100,200,64});
+    assert(turned.valid && turned.low.x == 100+162 && turned.high.x == 100+240 && turned.low.y == 200-256 && turned.high.y == 200+256 &&
+        turned.low.z == 0 && turned.high.z == 576);
+    assert(!worldBox({0,0,0},{0,0,0},{Vec{1,0,0},Vec{0,1,0},Vec{0,0,1}},1,{0,0,0}).valid);
+    assert(!worldBox({0,0,0},{1,1,1},{Vec{1,0,0},Vec{0,1,0},Vec{0,0,1}},0,{0,0,0}).valid && !box({1,0,0},{0,1,1}).valid);
+    // Shapes: Mare OBND spans.
+    assert(thinAxis(box({-128,81,-32},{128,120,256})) == Thin::y && thinAxis(box({-8,-128,0},{8,106,249})) == Thin::x);
+    assert(thinAxis(box({-128,-128,-32},{120,120,256})) == Thin::none && thinAxis(box({-128,-128,246},{128,128,255})) == Thin::none);
+    assert(memberShape(box({-31,-37,-32},{31,36,260})) && memberShape(box({-11,-256,140},{11,256,256})) && memberShape(box({-119,-10,241},{120,11,255})));
+    assert(!memberShape(box({-128,81,-32},{128,120,256})) && !memberShape(box({-128,-128,-32},{120,120,256})) && !memberShape(box({-27,-27,0},{27,27,80})));
+    assert(pieceOf(Kind::architecture,Family::architecture,wall,true) == Piece::kit);
+    assert(pieceOf(Kind::architecture,Family::architecture,box({-31,-37,-32},{31,36,260}),true) == Piece::member);
+    assert(pieceOf(Kind::architecture,Family::clutter,wall,true) == Piece::object && pieceOf(Kind::architecture,Family::furniture,wall,true) == Piece::object);
+    assert(pieceOf(Kind::object,Family::other,Box{},false) == Piece::object && pieceOf(Kind::excluded,Family::architecture,wall,true) == Piece::flat);
+    for (const Family f : {Family::dungeons,Family::landscape,Family::effects,Family::other}) assert(pieceOf(Kind::architecture,f,wall,true) == Piece::flat);
+    assert(pieceOf(Kind::architecture,Family::architecture,wall,false) == Piece::flat && pieceOf(Kind::architecture,Family::architecture,Box{},true) == Piece::flat);
+
+    // Sides at the four headings. Axis-aligned walls (thin y north and south of the player, thin x west and east).
+    const Box north = box({-256,593,32},{0,632,320}),south = box({-256,-1145,32},{0,-1119,320});
+    const Box west = box({-776,-900,32},{-760,-400,320}),east = box({500,-900,32},{516,-400,320});
+    const std::array<std::array<Side,4>,4> walls{{
+        {Side::back,Side::front,Side::front,Side::back},   // north wall at headings 45, 135, 225, 315
+        {Side::front,Side::back,Side::back,Side::front},   // south
+        {Side::front,Side::front,Side::back,Side::back},   // west
+        {Side::back,Side::back,Side::front,Side::front}}}; // east
+    const std::array<Box,4> wallBoxes{north,south,west,east};
+    for (unsigned h = 0;h < 4;++h) {
+        const Vec eye = eyeAt(hearth,h);
+        for (std::size_t i = 0;i < 4;++i) assert(sideOf(wallBoxes[i],thinAxis(wallBoxes[i]),hearth,eye,sideEnter) == walls[i][h]);
+        // A back wall never meets the sightline, at any height; a front wall would.
+        for (std::size_t i = 0;i < 4;++i) if (walls[i][h] == Side::back) assert(!inLane(wallBoxes[i],hearth,eye,0.0f));
+    }
+    // A corner (L-shaped piece, square box) north-east of the player: diagonal rule.
+    const Box corner = box({0,384,32},{248,632,320});
+    assert(thinAxis(corner) == Thin::none);
+    const std::array<Side,4> cornerSides{Side::back,Side::front,Side::front,Side::back};
+    // A corner next to the player (its box ends 20 units from the feet on x) is across at headings where the diagonal splits it.
+    assert(sideOf(box({-97.1f,-700,32},{150,-500,320}),Thin::none,hearth,eyeAt(hearth,1),sideEnter) == Side::across);
+    for (unsigned h = 0;h < 4;++h) assert(sideOf(corner,Thin::none,hearth,eyeAt(hearth,h),sideEnter) == cornerSides[h]);
+    // A diagonal piece (a wall turned 45 degrees: square-ish box, no thin axis).
+    const float c45 = std::sqrt(.5f);
+    const Box diagonal = worldBox({-128,-8,0},{128,8,256},{Vec{c45,c45,0},Vec{-c45,c45,0},Vec{0,0,1}},1.0f,{-500,-800,68}); // south-west of the player
+    assert(diagonal.valid && thinAxis(diagonal) == Thin::none);
+    assert(sideOf(diagonal,Thin::none,hearth,eyeAt(hearth,0),sideEnter) == Side::front && sideOf(diagonal,Thin::none,hearth,eyeAt(hearth,2),sideEnter) == Side::back);
+    // A piece spanning the player (a beam crossing over, the hearth's own floor alcove): across at every heading.
+    const Box spanning = box({-512,-651,204},{256,-629,320});
+    for (unsigned h = 0;h < 4;++h) assert(sideOf(spanning,thinAxis(spanning),hearth,eyeAt(hearth,h),sideEnter) == Side::across);
+    // A wall in line with the player (the Mare's WRIntWallStr01WinA west of the hearth: its thin y range ends 8 units from
+    // the feet) falls back to the diagonal: front at 45, back at 225.
+    const Box inLine = box({-768,-632,32},{-512,-593,320});
+    assert(thinAxis(inLine) == Thin::y && alongAxis(inLine.low.y,inLine.high.y,hearth.y,-237.3f,sideEnter) == Side::across);
+    assert(sideOf(inLine,Thin::y,hearth,eyeAt(hearth,0),sideEnter) == Side::front && sideOf(inLine,Thin::y,hearth,eyeAt(hearth,2),sideEnter) == Side::back);
+    // A camera level with the player on an axis (mid-turn): both sides of that axis are back.
+    assert(alongAxis(10,20,0,0.5f,1) == Side::back && alongAxis(-20,-10,0,-0.5f,1) == Side::back && alongAxis(-5,5,0,100,1) == Side::across);
+    assert(sideOf(Box{},Thin::none,hearth,eyeAt(hearth,0),sideEnter) == Side::across && diagonalSide(north,hearth,hearth,1) == Side::across);
+    assert(quadrantOf(hearth,eyeAt(hearth,0)) == 0 && quadrantOf(hearth,eyeAt(hearth,1)) == 2 && quadrantOf(hearth,eyeAt(hearth,2)) == 3 &&
+        quadrantOf(hearth,eyeAt(hearth,3)) == 1 && quadrantOf(hearth,{nan,0,0}) == -1);
+
+    // Hysteresis: the south wall's thin side is 1119; a player walking toward it keeps "front" until inside its extent.
+    const Vec eye0 = eyeAt(hearth,0);
+    const auto at = [](float y) { return Vec{-117.1f,y,68.0f}; };
+    const auto eyeFor = [](Vec feet) { return Vec{feet.x-237.3f,feet.y-237.3f,feet.z+683.8f}; };
+    assert(sideOf(south,Thin::y,at(-1100),eyeFor(at(-1100)),sideEnter) == Side::across);           // 19 units: too close to take a side
+    assert(settledSide(south,Thin::y,at(-1100),eyeFor(at(-1100)),Side::front,true) == Side::front); // but kept while outside its extent
+    assert(settledSide(south,Thin::y,at(-1130),eyeFor(at(-1130)),Side::front,true) == Side::across); // the player is inside it: crossed
+    assert(settledSide(south,Thin::y,at(-1100),eyeFor(at(-1100)),Side::front,false) == Side::across); // a snap starts without memory
+    assert(settledSide(south,Thin::y,at(-1180),eyeFor(at(-1180)),Side::across,true) == Side::back);   // crossed to the other side
+    assert(settledSide(north,Thin::y,hearth,eye0,Side::front,true) == Side::back);                    // a stale class is never kept
+    // The lane: enter at 48, leave at 112.
+    const Box post = box({-200,-760,32},{-150,-710,320}); // a pillar between the player and the camera at heading 45
+    assert(inLane(post,hearth,eye0,laneEnter) && !inLane(post,hearth,eyeAt(hearth,2),0.0f) && sideOf(post,Thin::none,hearth,eyeAt(hearth,2),sideEnter) == Side::back);
+    const Box beside = box({-117.1f+70.0f,-700,32},{-117.1f+120.0f,-650,320}); // 70 units east of the lane
+    assert(!inLane(beside,hearth,eye0,laneEnter) && settledLane(beside,hearth,eye0,true) && !settledLane(beside,hearth,eye0,false));
+    assert(segmentHitsBox({0,0,0},{10,0,0},box({4,-1,-1},{6,1,1}),0) && !segmentHitsBox({0,0,0},{10,0,0},box({4,2,-1},{6,3,1}),0) &&
+        segmentHitsBox({0,0,0},{10,0,0},box({4,2,-1},{6,3,1}),2.5f) && !segmentHitsBox({0,0,0},{10,0,0},Box{},100));
+
+    // Decisions. Objects on each side; members; kit pieces; the storey above; the gallery switch; not a kit cell.
+    const auto rule = [](Piece piece,Side side,bool lane,bool above,bool overhead,bool gallery,bool kit = true,bool around = false) {
+        Facts f; f.piece = piece; f.side = side; f.lane = lane; f.above = above; f.overhead = overhead; f.gallery = gallery; f.kitCell = kit;
+        f.around = around;
+        return decide(f);
+    };
+    const auto is = [](Decision d,Treat t,Bucket b) { return d.treat == t && d.bucket == b; };
+    for (const Piece piece : {Piece::flat,Piece::kit,Piece::member,Piece::object})
+        for (const Side side : {Side::across,Side::front,Side::back})
+            for (unsigned bits = 0;bits < 16;++bits) {
+                const Decision d = rule(piece,side,bits & 1u,bits & 2u,bits & 4u,bits & 8u,false);
+                assert(is(d,Treat::flat,Bucket::flat)); // caves and ruins: the flat cut, whatever the piece
+                const Decision k = rule(piece,side,bits & 1u,bits & 2u,bits & 4u,bits & 8u);
+                // Never sliced: objects and members; never anything on the back side, except a piece the policy cannot place.
+                if (piece == Piece::object || piece == Piece::member) assert(k.treat == Treat::keep || k.treat == Treat::remove);
+                if (side == Side::back && piece != Piece::flat) assert(k.treat == Treat::keep || (k.treat == Treat::remove && !(bits & 8u)));
+                if (piece == Piece::flat) assert(is(k,Treat::flat,Bucket::fallback));
+            }
+    assert(is(rule(Piece::object,Side::front,true,false,false,false),Treat::remove,Bucket::removedObject));
+    // The Mare hearth fire (Campfire01Burning, a clutter static whose box 580 x 601 x 502 contains the hearth pose) stays;
+    // a lamp hanging over the player goes.
+    assert(is(rule(Piece::object,Side::across,true,false,false,false,true,true),Treat::keep,Bucket::keptObject));
+    assert(is(rule(Piece::object,Side::across,true,false,true,false,true,true),Treat::remove,Bucket::removedObject));
+    assert(is(rule(Piece::object,Side::across,false,true,false,false,true,true),Treat::remove,Bucket::removedObject)); // upper floor wins
+    assert(is(rule(Piece::object,Side::across,true,false,false,false),Treat::remove,Bucket::removedObject));
+    assert(is(rule(Piece::object,Side::front,false,false,false,false),Treat::keep,Bucket::keptObject));
+    assert(is(rule(Piece::object,Side::back,true,false,false,false),Treat::keep,Bucket::keptObject));
+    assert(is(rule(Piece::object,Side::back,false,true,false,false),Treat::remove,Bucket::removedObject));   // on the upper floor
+    assert(is(rule(Piece::member,Side::front,true,false,false,false),Treat::remove,Bucket::removedWhole));   // a pillar in the way
+    assert(is(rule(Piece::member,Side::back,false,false,false,false),Treat::keep,Bucket::keptMember));       // a pillar behind
+    assert(is(rule(Piece::member,Side::back,false,false,true,false),Treat::remove,Bucket::removedWhole));    // a beam overhead
+    assert(is(rule(Piece::member,Side::back,false,false,true,true),Treat::keep,Bucket::keptGallery));
+    assert(is(rule(Piece::kit,Side::back,true,false,false,false),Treat::keep,Bucket::keptFar));
+    assert(is(rule(Piece::kit,Side::front,false,false,false,false),Treat::low,Bucket::slicedNear)); // near walls: at the plane, as now
+    assert(is(rule(Piece::kit,Side::front,true,false,false,false),Treat::low,Bucket::slicedNear));
+    assert(is(rule(Piece::kit,Side::across,false,false,false,false),Treat::slice,Bucket::slicedSpan));
+    assert(is(rule(Piece::kit,Side::back,false,true,false,false),Treat::remove,Bucket::removedWhole));      // the upper storey
+    assert(is(rule(Piece::kit,Side::back,false,true,false,true),Treat::keep,Bucket::keptGallery));          // ... its back half kept
+    assert(is(rule(Piece::kit,Side::front,false,true,false,true),Treat::remove,Bucket::removedWhole));
+    assert(is(rule(Piece::kit,Side::across,false,true,false,true),Treat::remove,Bucket::removedWhole));
+    assert(sliceHeight(Treat::slice,228,310) == 310 && sliceHeight(Treat::low,228,310) == 228 && sliceHeight(Treat::low,228,200) == 200 &&
+        sliceHeight(Treat::flat,228,310) == 228);
+
+    // The storey line at the hearth: the loft floor (WRIntLoftMid01, bottom 310) within 512; beams, low pieces and far slabs never.
+    const float base = 68.0f,planeZ = 228.0f;
+    const Box loft = box({-256,-384,310},{0,-128,319});
+    assert(storeyCandidate(Piece::kit,loft,hearth,base) && !storeyCandidate(Piece::member,loft,hearth,base) && !storeyCandidate(Piece::object,loft,hearth,base));
+    assert(!storeyCandidate(Piece::kit,box({-256,-384,190},{0,-128,199}),hearth,base));      // under head height
+    assert(!storeyCandidate(Piece::kit,box({-256,-384,900},{0,-128,909}),hearth,base));      // above 768
+    assert(!storeyCandidate(Piece::kit,box({600,-384,310},{856,-128,319}),hearth,base));     // 717 away
+    assert(!storeyCandidate(Piece::kit,box({-256,-140,310},{0,-128,319}),hearth,base));      // a 12-unit strip
+    assert(boxReach(loft,hearth) == 256.0f && boxReach(box({-200,-700,0},{0,-600,1}),hearth) == 0.0f && boxReach(box({600,-640,0},{700,-600,1}),hearth) > 716.0f);
+    Storey storey;
+    assert(storey.line(planeZ) == planeZ);
+    storey.update(infinity,base,planeZ,0.0);                 // first frame in the cell: nothing drawn yet
+    assert(!storey.known && storey.line(planeZ) == planeZ);
+    storey.update(310,base,planeZ,0.02);                     // the first storey seen is taken at once
+    assert(storey.known && storey.line(planeZ) == 310);
+    storey.update(314,base,planeZ,0.04);                     // within 8: nothing moves
+    assert(storey.line(planeZ) == 310);
+    storey.update(500,base,planeZ,0.06);                     // higher: only after 0.6 s
+    assert(storey.line(planeZ) == 310);
+    storey.update(500,base,planeZ,0.5);
+    assert(storey.line(planeZ) == 310);
+    storey.update(500,base,planeZ,0.7);
+    assert(storey.line(planeZ) == 500);
+    storey.update(300,base,planeZ,0.72);                     // lower: at once (more removed: the safe way)
+    assert(storey.line(planeZ) == 300);
+    storey.update(infinity,base,planeZ,0.74);                // none for a moment: the line holds
+    assert(storey.line(planeZ) == 300);
+    storey.update(300,base,planeZ,0.76);                     // back again: the hold restarts
+    storey.update(infinity,base,planeZ,1.0);
+    assert(storey.line(planeZ) == 300);
+    storey.update(infinity,base,planeZ,1.7);
+    assert(!storey.known && storey.line(planeZ) == planeZ);  // gone for 0.6 s: back to the plane
+    const unsigned long long moves = storey.moves;
+    storey.update(555,321.5f,481.5f,1.72);                   // up the stairs: a new storey base, taken at once
+    assert(storey.known && storey.line(481.5f) == 555 && storey.moves == moves+1u);
+    storey.reset();
+    assert(!storey.primed && !storey.known && storey.moves == 0);
+
+    // The cell census: Mare, Embershard Mine, Bleak Falls Barrow (ESM counts).
+    assert(cellStyle({212,0,319}) == CellStyle::kit && cellStyle({9,622,697}) == CellStyle::flat && cellStyle({0,1444,1700}) == CellStyle::flat);
+    assert(cellStyle({}) == CellStyle::unknown && cellStyle({15,0,15}) == CellStyle::flat && cellStyle({16,16,40}) == CellStyle::flat &&
+        cellStyle({17,16,40}) == CellStyle::kit);
+
+    // Style 0 is the flat cut: no decision is ever taken, and a flat decision cuts at the plane with the plane constant.
+    assert(sliceHeight(Treat::flat,planeZ,555) == planeZ && cutConstant(sliceHeight(Treat::flat,planeZ,555),752).offset == cutConstant(planeZ,752).offset);
+
+    // FixedShaderStyle: tokens, nan forms, the longest row; FixedShaderVoid unchanged by the new window fields.
+    char line[sizeof(TraceRow)]{};
+    StyleSample st;
+    st.seconds = 1234.5; st.frame = 99; st.style = 1; st.state = Feature::installed; st.cell = CellStyle::kit; st.census = {212,0,319};
+    st.shadows = true; st.haveView = st.storeyKnown = true; st.storeyZ = 310; st.base = 68; st.lineZ = 310; st.refs = 180; st.moves = 2;
+    st.window.frames = 6; st.window.buckets[static_cast<std::size_t>(Bucket::keptFar)] = 40; st.window.buckets[static_cast<std::size_t>(Bucket::removedWhole)] = 300;
+    st.window.slicedFar = 0; st.window.shadowRemoved = 12; st.fxFloorKept = 1; st.fxWholeRadius = 120.25f;
+    assert(formatStyle(line,sizeof(line),st));
+    const std::string row = line;
+    for (const char* field : {"FixedShaderStyle t=1234.500 frame=99 style=1 state=installed cell=kit kit=212 dungeon=0 gallery=0 shadows=1 frames=6 ",
+        "storeyZ=310.00 relStorey=242.00 lineZ=310.00 keptFar=40 keptObjects=0 ","slicedFar=0 slicedObjects=0 removedWhole=300 removedObjects=0 ",
+        "refs=180 ","storeyMoves=2 ","shadowRemoved=12 ","fxFloorKept=1 fxWholeRadius=120.2 sample=window"})
+        assert(row.find(field) != std::string::npos);
+    StyleSample idle; idle.state = Feature::refused;
+    assert(formatStyle(line,sizeof(line),idle) && std::string(line).find("state=refused cell=unknown") != std::string::npos &&
+        std::string(line).find("storeyZ=nan relStorey=nan lineZ=nan ") != std::string::npos);
+    // As the FixedShader row's longest: ten-digit window counters (a 0.1 s window), the widest values of the rest.
+    const unsigned long long most = 9999999999ull;
+    StyleSample big; big.seconds = 1e7; big.frame = ~0ull; big.style = 1; big.census = {~0u,~0u,~0u}; big.haveView = big.storeyKnown = true;
+    big.state = Feature::installed; big.cell = CellStyle::unknown; big.gallery = big.shadows = true;
+    big.storeyZ = big.lineZ = -1e7f; big.base = 1e7f; big.refs = ~0u; big.moves = most; big.fxFloorKept = most; big.fxWholeRadius = 1e7f;
+    for (auto& value : big.window.buckets) value = most;
+    big.window.frames = big.window.underLine = big.window.slicedLow = big.window.slicedFar = big.window.slicedObjects = big.window.tableFull = most;
+    big.window.storeyUploads = big.window.shadowPasses = big.window.shadowRemoved = big.window.shadowSkips = most;
+    assert(formatStyle(line,sizeof(line),big) && std::strlen(line) < sizeof(TraceRow));
+    std::printf("longest FixedShaderStyle row: %zu of %zu bytes\n",std::strlen(line),sizeof(TraceRow));
+    VoidSample v; v.seconds = 1; v.skyState = Feature::installed;
+    char before[sizeof(TraceRow)]{};
+    assert(formatVoid(before,sizeof(before),v));
+    v.window.floorKept = 5; v.window.wholeRadius = 300;
+    assert(formatVoid(line,sizeof(line),v) && std::string(line) == before);
+    std::printf("style rules PASS\n");
+}
+} // namespace
+
 int main() {
     codes();
     settings();
@@ -826,5 +1064,6 @@ int main() {
     patchRejects();
     traces();
     skyVoid();
+    styleRules();
     if (!archive()) std::printf("archive rows skipped: SKYCRPG_SHADER_ARCHIVE is not set\n");
 }

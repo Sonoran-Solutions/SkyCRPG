@@ -600,7 +600,7 @@ Two facts constrain the cause. (1) The residual is **cool** (blue > green > red)
 
 ### The pass that paints the void: the sky dome of a Show Sky interior (Source, except where marked)
 
-1. **Mode.** When an interior cell attaches, function 36E660 (ID 22824) at 36E691..36E6BF reads `cell+0x40` (CELL DATA flags): no 0x80 (Show Sky) → `Sky::SetMode(1)`; 0x80 without 0x100 (Use Sky Lighting) → mode 2 ("sky dome only"); both → mode 3. **EmbershardMine01 (0x83), BleakFallsBarrow01 (0x83) and WhiterunBanneredMare (0xA1) all have 0x80 and not 0x100: mode 2.** 271 of 759 interior cells in the masters carry 0x80 (one of them also 0x100).
+1. **Mode.** When an interior cell attaches, the mode chooser at 1A3F40 (called from 1A2F55; exteriors: 1A36AE..1A371E, same rule) reads `cell+0x40` (CELL DATA flags): no 0x80 (Show Sky) → `Sky::SetMode(1)`; 0x80 without 0x100 (Use Sky Lighting) → mode 2 ("sky dome only"); both → mode 3. **EmbershardMine01 (0x83), BleakFallsBarrow01 (0x83) and WhiterunBanneredMare (0xA1) all have 0x80 and not 0x100: mode 2.** 271 of 759 interior cells in the masters carry 0x80 (one of them also 0x100). *(Corrected after the binary review of 8f1248f: an earlier text named 36E660 (ID 22824) here; that is the ToggleSky console command's handler, which applies the same flag rule. The call 1A2F55 → 1A3F40 was re-read for this correction; the rest of the chooser is the reviewer's reading.)*
 2. **The dome is shown.** `Sky::SetMode` (ID 26222, 411660): `r14b = (mode − 2) ≤ 1`; at 411794..4117C7 the root (`Sky+0x08`) gets `flags+0xF4` bit 0 (`kHidden`) cleared when `r14b && !(Sky+0x1DC & 0x80)` (HideSky), set otherwise. So mode 1 interiors draw no sky; modes 2 and 3 do.
 3. **Its colours are the exterior weather's.** Sky::Update in mode 2 (413384..413491) fills all 17 sky colours from the current and last weather (`Sky+0x48/+0x50`) through 414CF0, then (413778..41387D) replaces only sunlight (+0xD8), ambient (+0xCC), fog near (+0xB4) and fog far (+0x138) from the cell's lighting (or the lighting override). Sky upper, lower and horizon stay the weather's: blue at day, which explains the cool residual and why it does not follow any cell record. The clear colour is still fog far × 0.8333 (412681..4126D1), which is why `nativeColor` matches the cell.
 4. **It covers exactly the void.** Every BSSkyShader vertex shader (fxp entries 60..68) writes `o0 = r1.xyzz` (z = w, depth 1.0 after the divide); the dome technique (VS 68, PS 77) outputs the blend of three colour rows by the vertex weights (`cb2[13..15]`) times `cb2[12].w`, plus `cb2[0].y` and a dither, alpha `v.w·cb2[13].w`. Geometry is nearer than 1.0 everywhere it exists, so only void pixels receive it.
@@ -718,6 +718,7 @@ Exceptions to look for: bloom spill near bright lights (image space, unchanged);
 
 ### First-run protocol (for the orchestrator; nothing here was run)
 
+0. **First, same cell (added after the binary review of 8f1248f):** in `EmbershardMine01` with the cut active, console `ts` (ToggleSky, the handler at 36E660) hides the sky root: the void should become exactly (0,0,0) at once; `ts` again restores it. This tests the root cause in the very cell without a second interior or the new build.
 1. Optional, cheapest, on the **current** stage `6397406`: one interior **without** Show Sky (`coc WhiterunJorrvaskrBasement` or `WhiterunDragonsreachBasement`, both 0x21) with `iSeeThroughMode=3`, four headings. Expected: void pixels exactly (0,0,0) already. This confirms or refutes the root cause without the new build.
 2. On the build of this pass: `p55-shader-cave`, `p55-shader-mare`, `p55-shader-bfb-seed1`, `p55-shader-lifecycle`, keys at their defaults, `iShaderCutTrace=1`. Expected lines once each, in order: `shader cut installed …`, `shader look installed void=installed … effect=installed effectAudited=114`, `shader void installed sky=installed effectWhole=on`. No `code=FCS-` line except FCS-75/86 and possibly one FCS-90 after a door or load.
 3. Trace while active in the three cells: `FixedShaderVoid … sky=installed skyMode=2 skyHeld=1`, `skyHides=1` in the first active window and then `skyKeeps` equal to the frames; `skyEngineHidden=0`. In the cave: `fxWholeCut≈14` per window and `fxCutRefs` naming 0008F94E and/or 0008F94D (if other IDs appear, the wedge attribution above is wrong; report them). `FixedShader` and `FixedShaderLook` as in W3.
@@ -727,7 +728,7 @@ Exceptions to look for: bloom spill near bright lights (image space, unchanged);
 
 ### What the reviewer must check
 
-1. In the binary: 31E0D80 is the pointer `Sky::GetSingleton` (1C7D00, ID 13878) returns and ID 401652 resolves to it; SetMode (411660, ID 26222) head and 411794..4117CC bytes; the mode choice at 36E691..36E6BF; that SetMode is the only writer of the sky root's hidden bit (I did not scan for other writers of `[root+0xF4]`; the rule only puts the bit back where SetMode's own rule says "shown").
+1. In the binary: 31E0D80 is the pointer `Sky::GetSingleton` (1C7D00, ID 13878) returns and ID 401652 resolves to it; SetMode (411660, ID 26222) head and 411794..4117CC bytes; the mode choice (now attributed to 1A3F40, see the correction above); that SetMode is the only writer of the sky root's hidden bit (I did not scan for other writers of `[root+0xF4]`; the rule only puts the bit back where SetMode's own rule says "shown").
 2. Mode 2 colours: 413384..413491 (weather), 413778..41387D (cell lighting replaces only sunlight, ambient, fog near/far).
 3. `settleSky` runs only on the main thread (`publish`, `deactivate` under `thin::onMain()`, `frameStart`), before the frame's culling; the two writes are a read-modify-write of one dword at `root+0xF4`.
 4. `consider`: `wholeEffect` uses the same world bound as `reach`; Lighting/Utility never take `wholeConstant`; the budget, owner and audit rules are unchanged for Effect.
@@ -743,6 +744,125 @@ Exceptions to look for: bloom spill near bright lights (image space, unchanged);
 - The wedge's reference (the trace's `fxCutRefs` will say).
 - The CNAM component order (affects only the Mare's prediction by a few levels).
 - Water reflections and save thumbnails in Show Sky interiors while the cut is active.
+
+## Fourth pass: Stage 1 of the seamless cutaway (2026-11-10)
+
+Owner decision (verbatim, ledger 2026-11-10T22:35): "go I agree with your recommendations", the recommendations being `session-p55/research/seamless-cutaway.md` decisions 1-5. Built as CPU-side per-draw policy on the existing cut hook: **no new shader patch, no new hook, no new engine write, no new binary site.** Every in-game claim below is **NOT_RUN**.
+
+### Rules as built (`iCutStyle=1`, `include/fixed_spike_shader_style_policy.h`)
+
+Each Lighting/Utility pass of the published view finds its owning reference (the flat cut's `ownerOf`), and the reference gets one decision per frame from its world box (base OBND × the 3D root's world rotation, scale and translation, as wave 1's `extentOf`, here with all three rows), its kind (`kindOf`) and the first folder of its base model path:
+
+| Order | Condition | Treatment | Counter |
+| --- | --- | --- | --- |
+| 0 | The cell is not a kit building (census below) | flat cut at feet + `fShaderCutHeight`, exactly the third pass | `flat` |
+| 1 | Piece the policy cannot place: architecture form (Static, MovableStatic) whose model is not under `architecture\`, `clutter\` or `furniture\` (dungeon, landscape, effects, none), or with no OBND | flat cut | `fallback` |
+| 2 | The storey above: box bottom ≥ storey line − 8, or a member whose bottom is ≥ held feet + 128 | removed whole; with `bCutKeepFarGallery=1` kept whole when on the back side | `removedWhole` / `removedObjects` / `keptGallery` |
+| 3 | Object (object form types, or a static under `clutter\` / `furniture\`) or member (pillar, post, beam: middle span ≤ 128 and longest ≥ 2× it) whose box contains the feet in the ground plane | kept whole, or removed whole when overhead (bottom ≥ feet + 128) | `keptObjects` / `keptMembers` / `removed*` |
+| 4 | Other object or member | removed whole when not on the back side **and** in the lane; otherwise kept whole | as above |
+| 5 | Kit piece on the back side | kept whole (full height, never cut) | `keptFar` |
+| 6 | Kit piece on the front (camera) side | sliced at the plane, as now (rule 3) | `slicedNear` (+`slicedLow`) |
+| 7 | Kit piece across the player | sliced at the storey line; at the plane where it is in the lane | `slicedSpan` (+`slicedLow`) |
+
+Never touched, as before: actors, skinned geometry, lights and excluded kinds, ownerless geometry, the Effect class (it keeps the third pass's rule, with the floor fix below).
+
+**Near / far ("front" / "back").** The test is a separating plane through the player: a box wholly beyond it, on the side away from the camera, cannot meet any sightline from the camera to the player at any height, so keeping it whole can never hide the player. For a wall (one horizontal span ≤ 64 and the other ≥ 2.5× it, ≥ 128 tall) the plane is perpendicular to its thin axis: with the locked headings 45/135/225/315 (camera offset (±237.3, ±237.3, 683.8), wave 1) each world axis has a definite camera side, so an axis-aligned wall is front or back exactly, with no diagonal split and no drift. A wall in line with the player (thin range within 24 units of the feet, the wall itself to one side), every corner (an L-shaped corner has a square box), every diagonal, curved or blocky piece uses the plane perpendicular to the horizontal camera direction: front when the box's projection starts ≥ 24 units toward the camera, back when it ends ≥ 24 units away, across otherwise. A camera level with the player on an axis (mid-turn) makes both sides of that axis back (the sightline stays in the plane). Pieces that are both floor and wall, and pieces spanning both sides, come out "across", whose treatment is the old slice (the safe default: it is what showed the player in every W2S/W3 Mare screenshot); a piece with no box or an unknown model is flat-cut.
+
+**No popping while walking.** A piece keeps its front/back class while the player stays outside its extent on that axis (clearance 0) and takes a new class only with 24 units of clearance; a heading snap (the camera's quadrant changes) starts without memory. The lane (two segments, from feet + 20 and feet + 120 to the eye, box grown by 48 to enter, 112 to stay) has the same hysteresis. The storey line has its own (below).
+
+**Object versus architecture.** Form type first (`kindOf`, unchanged: Furniture, Activator, TalkingActivator, Container, Door, Tree, Flora, Misc, Weapon, Armor, Book, Ingredient, AlchemyItem, Scroll, Ammo, KeyMaster, SoulGem are objects; Static and MovableStatic architecture); then for architecture the model folder: `clutter\` and `furniture\` statics are objects (in the Mare 76 + 12 of 319 statics are: bar sets, chandeliers, pelts, wall baskets, the hearth fire `Campfire01Burning`, noble furniture statics); `architecture\` statics are kit pieces or members by shape. Pillars are kit pieces (`WRIntFreeWallColum01`, 62 × 73 × 292) and are recognised by shape, as are beams (`WRIntBeam512` 22 × 512 × 116) and the inner-corner posts (`WRIntWallCorIn01` 47 × 47 × 288). Source: Skyrim.esm placements read offline (below).
+
+**The storey line ("ceiling").** From bounds, no ray: the lowest bottom of a kit piece (not a member) at least 128 wide in both horizontal spans, starting 128..768 above the held feet height (`CutPlane`, unchanged) and reaching within 512 units of the feet in the ground plane, collected while the previous frame was drawn. Mare hearth: the loft floor `WRIntLoftMid01`, bottom 310 (feet 68, plane 228); Mare loft pose: the ceiling `WRIntCeilMid01` at 555 (feet 321.5, plane 481.5). Unknown (no candidate): the line is the plane, so everything behaves as the flat cut except the back-side and object rules. Hysteresis: a new storey base (stairs, teleport: the `CutPlane` base moved, which itself has the 24/96/0.6 s hysteresis) or the first storey seen takes its value at once; within one storey a lower line found takes effect at once (more is removed); a higher line or losing every candidate takes effect after 0.6 s. After an ineligible gap the held line stays. **Stairs:** the line follows the `CutPlane` base: while the base is the ground floor, the loft floor is above the line and removed; once the base settles on the loft, the next storey up is searched. **Gallery:** with `bCutKeepFarGallery=1` the back-side part of what is above the line (gallery floor, railings, upper walls, overhead beams over the back half) is kept whole. **Never under an uncut ceiling:** every kit slab over the player within 512 is at or above the line and is removed; anything else over the player that is not wholly above the line is "across" and cut at the line, or at the plane when it meets the lane.
+
+**Cells (caves and one-piece meshes).** Once per cell (first eligible frame, main thread, `TESObjectCELL::ForEachReference` as wave 1's scan) the placed statics are counted by model folder: a kit cell has ≥ 16 `architecture\` statics and more than `dungeons\` ones. Bannered Mare 212 vs 0 (kit); Embershard Mine 9 vs 622 and Bleak Falls Barrow 0 vs 1,444 (flat). In a flat cell every pass takes the third pass's path exactly (below-plane passes are not even looked up), so caves, ruins and their one-piece room meshes are untouched; a kit cell's pieces with a `dungeons\` model are flat-cut too (`fallback`). Retried for 120 frames when a cell has no statics yet, then flat.
+
+**Whole-draw removal.** Confirmed: `usable()` gates only the plane constant built from `planeZ` before selection; `apply()` uploads whatever it is given, which is why the third pass's `wholeConstant` (0, −1) works without passing `usable`. Stage 1 uses `removeConstant` (−1, −1e9), which `usable` accepts: clip = −relZ − 1e9 < 0 for every height within ±1e8 (portable test). It lives in its own dynamic buffer created with that content (`D3D11_SUBRESOURCE_DATA`, never Mapped), so removals add no Map; the storey line has a second dynamic buffer Mapped only when its value changes; plane slices use the flat cut's own buffer and `apply()`. A removed reference loses every pass of every geometry, including geometries under the plane (which the flat cut never looks at), so it never shows a lower half.
+
+**Shadows (rule 5).** Source: shadow-map rendering is `BSUtilityShader` work (technique bits 0x4000 `RenderShadowmap`, `shader-discard.md` Q1, RVA in that file), and the Utility class's vtable slots 6/7 are hooked, so shadow passes reach `consider`; they carry another render-state eye and direction (W3 Mare trace: `otherView≈10,300` per window at `otherEye=-900.8,-518.8,115.8 otherDir=1.00,0.00,0.00`), i.e. they are the "other view" passes. Built: with `bCutStyleShadows=1`, in a kit cell, a **Utility** pass of another view whose geometry pointer the main view removed whole in this frame or the previous one is drawn with the same patched shader and `removeConstant` (own per-frame budget, not counted on `FixedShader`). Sliced pieces keep their shadows. Using both frames makes it independent of whether shadow maps are drawn before or after the main view; **that order was not established** (Hypothesis either way), nor whether the shadow passes draw the same `BSGeometry` objects as the main view (if they do not, nothing happens: `shadowPasses=0`), nor whether every shadow technique's vertex shader is on the audited list (if not: one FCS-75 line and `shadowSkips`, drawn natively), nor whether interior shadow maps are re-rendered every frame. No new hook was needed. Reflections and other Utility other-view passes of a removed geometry are also clipped (consistent with "removed"); menus, the local map and inventory scenes are inactive frames and never reach this. If the run shows anything odd, `bCutStyleShadows=0` turns it off alone. Rule 5 is therefore **built, NOT_RUN**.
+
+**Effect floor rule (binary review of 8f1248f, MINOR-3).** `wholeEffect` now also requires the bound's lowest point above the feet (`centre.z − radius > feet.z`); a tall Effect mesh centred high that reaches the player's level (a light shaft to the floor, a waterfall or spray card, a placed magic barrier) keeps the plane cut, so its floor-level part stays. This applies in both styles (it is a correction of the third pass, not part of the style). The Embershard glows (centres 9392 and 9423, feet 9241) still go whole while their radius is below 151 and 182; their radii were not measured: `FixedShaderStyle fxWholeRadius` reports the largest radius clipped whole per window and `fxFloorKept` the Effect passes the new rule kept at the plane (`FixedShaderVoid` is byte-identical). If the wedge at cave h1 returns, `fxFloorKept > 0` there says the glows reach the feet.
+
+### Settings (`[FixedCameraSpike]`, read only with `bEnabled=1`, used only in `iSeeThroughMode=3`)
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `iCutStyle` | 1 | 0: the flat cut exactly as 8f1248f (no style runtime is allocated, no census, no line); 1: Stage 1. Other values: 1, reported as FCS-66 |
+| `bCutKeepFarGallery` | 0 | 1: the back half of the storey above stays whole (A/B) |
+| `bCutStyleShadows` | 1 | 1: geometry removed whole in the main view is clipped in Utility passes of other views too |
+
+`bShaderCutEffectWhole` keeps its key; only its rule gained the floor condition.
+
+### Log line (once, after `shader void installed …`)
+
+`FixedCameraSpike shader style installed style=%u state=%s gallery=%u shadows=%u` — state `installed`, `refused` (FCS-91) or `off` (`iCutStyle=0`).
+
+### Trace: `FixedShaderStyle` (new optional kind; only with `iCutStyle=1`; `FixedShader`, `FixedShaderLook` and `FixedShaderVoid` keep their formats byte for byte)
+
+One row per 0.1 s window, after `FixedShaderVoid`, same `t` and `frame`:
+
+```
+FixedShaderStyle t=%.3f frame=%llu style=%u state=%s cell=%s kit=%u dungeon=%u gallery=%u shadows=%u frames=%llu storeyZ=%.2f relStorey=%.2f lineZ=%.2f keptFar=%llu keptObjects=%llu keptMembers=%llu keptGallery=%llu underLine=%llu slicedNear=%llu slicedSpan=%llu slicedLow=%llu slicedFar=%llu slicedObjects=%llu removedWhole=%llu removedObjects=%llu flat=%llu fallback=%llu refs=%u tableFull=%llu storeyMoves=%llu storeyMaps=%llu shadowPasses=%llu shadowRemoved=%llu shadowSkips=%llu fxFloorKept=%llu fxWholeRadius=%.1f sample=window
+```
+
+Pass counts per window unless marked. `state` off/pending/installed/refused; `cell` unknown/kit/flat; `kit`/`dungeon` the census; `frames` published frames; `storeyZ` the held storey line (nan when none or inactive), `relStorey` = storeyZ − held feet height, `lineZ` the line in use (the plane when no storey; nan inactive). `kept*` drawn whole by rule; `underLine` straddling passes the line does not reach (drawn whole, nothing to cut); `slicedNear` / `slicedSpan` passes cut; `slicedLow` of those, cut at the plane; **`slicedFar`** passes given a slicing constant whose reference is on the back side (only flat and fallback paths can do this); **`slicedObjects`** passes given a slicing constant whose reference is an object; `removedWhole` (architecture) / `removedObjects` passes clipped whole; **`flat`** passes cut flat because the cell is not a kit building; **`fallback`** passes cut flat in a kit cell (unplaceable piece or a full reference table); `refs` references classified in the last frame; `tableFull` passes whose reference found no table slot (4,096); `storeyMoves` cumulative line changes; `storeyMaps` Maps of the storey buffer; `shadowPasses` other-view Utility passes of removed geometry, `shadowRemoved` of those clipped, `shadowSkips` not (unaudited shader or budget); `fxFloorKept`, `fxWholeRadius` as above. Longest row 752 of 768 bytes (portable test). On `FixedShader`, `cut` counts slices and removals of the main view; `skipBelow` also counts under-plane passes of references that are not removed; kept passes are on no `FixedShader` field. Checker rows proposed: in the Mare at every heading `cell=kit`, `slicedFar=0`, `slicedObjects=0`, `fallback=0`, `keptFar>0`, `removedWhole>0`, `storeyZ` finite with `relStorey≈242` at the hearth; in Embershard and Bleak Falls Barrow `cell=flat` and `FixedShader` counts equal to W3's.
+
+### Refusal codes (fourth pass)
+
+| Code | Site | Effect |
+| --- | --- | --- |
+| FCS-91 | `installStyle`: the device refused the storey or the remove buffer | style refused; the flat cut is drawn (iCutStyle=0 behaviour) for the session |
+| FCS-92 | `uploadStorey`: Map of the storey buffer failed | latched: native rendering for the session (as FCS-77) |
+
+### Offline game-data check (Source: Skyrim.esm, read-only, a scratch Python reader of CELL/REFR/base records; not committed)
+
+The Mare's 690 placed references (319 statics) were placed with their OBND and run through a Python model of these rules at the hearth (−117.1, −640, 68), the doorway and the loft poses at the four headings (the model uses the z rotation only; x/y rotations, present on a few clutter references, are ignored there, not in the build). Hearth, every heading: storey line 310 (23 candidates); ~119 architecture and ~89 object references removed whole (loft floor, railings, roof, ceilings, beams, everything on the loft); 8-24 back-side kit pieces kept whole, 7-24 front-side walls cut at the plane, 1 across; 11 members (pillars, inner-corner posts) kept whole; ~50 objects kept whole, among them the hearth fire, which contains the pose (rule 3 keeps it; without that rule the fire would have been removed whenever the player stands at the hearth). No object or back-side piece sliced. Embershard 9 vs 622 and Bleak Falls Barrow 0 vs 1,444 statics by folder: flat. These are counts of placed references, not of what the engine draws (culling, LOD and multi-geometry references are not modelled).
+
+### Tests (g++ 15.2.0, Python 3.14.4, this host)
+
+| Check | Result |
+| --- | --- |
+| 15 portable C++ tests, the CI loop from the repository root (`-std=c++20 -Wall -Wextra -Werror -pedantic -pthread`) | **PASS**, exit 0 each; `fixed_spike_shader_policy_test` prints `longest FixedShaderStyle row: 752 of 768 bytes` and `style rules PASS` |
+| `fixed_spike_shader_policy_test` with `SKYCRPG_SHADER_ARCHIVE` | **PASS**, archive lines unchanged |
+| Wiring audit, nine sections | **PASS** (new `shader fourth-pass wiring`; `shader cut wiring` one site per FCS-66..92) |
+| g++ `-fsyntax-only -Wall -Wextra -Werror -pedantic -Wshadow -Wconversion -Wsign-conversion -Wfloat-conversion -Wold-style-cast` of `fixed_spike_shader.h` (with the void, sky and style headers) against scratch stand-ins for the Windows, REL and RE declarations | 0 warnings. Not an MSVC or CommonLib build. |
+| `git diff --check` | **PASS** |
+| Windows `/W4 /WX` build | **NOT_RUN** |
+
+New portable rows: codes 91/92; defaults and validation of the three keys; `removeConstant` negative at every height and `usable`; model folders (case, `meshes\`, `/`, near misses); `worldBox` with identity, a 90° turn with scale and an off-centre OBND, invalid inputs; wall/member shapes on Mare OBNDs; `pieceOf` for every kind and folder; **sides at all four headings** for axis-aligned walls north, south, west and east of the hearth (and that a back wall never meets the lane), a corner, a 45° diagonal piece, a spanning beam, a wall in line with the player, a camera level with the player; quadrants; **hysteresis** (kept while outside the extent, lost when crossed, reset by a snap, a stale class never kept); the lane (enter 48 / stay 112) and the segment-box test; **every decision input combination** with the invariants (caves always flat; objects and members never sliced; nothing on the back side sliced) and the named cases (object on each side and in/out of the lane, a pillar in the way and behind, beams overhead, the hearth fire around the player, a lamp over the player, upper floor, **gallery switch** on and off); slice heights; **the storey line** (candidates and exclusions, first value at once, within-tolerance, a higher one after 0.6 s, a lower one at once, losing candidates held 0.6 s, a new base at once, reset); the census on the three cells and its boundary; **style 0 cuts at the plane with the plane constant**; the `FixedShaderStyle` row, its nan forms and longest length; `FixedShaderVoid` unchanged by the new window fields; `wholeEffect` floor rule (shaft reaching the floor keeps the plane; glow boundaries 151/182).
+
+### First-run protocol for the Bannered Mare (for the orchestrator; nothing here was run)
+
+0. Same-cell sky check from the third pass first (above): `ts` in Embershard.
+1. Route `p55-shader-mare` (hearth pose (−117.1, −640, 68), headings 45/135/225/315, W3 settle and screenshot steps) on this build, keys at their defaults (`iCutStyle=1`), `iShaderCutTrace=1`. Log: `shader style installed style=1 state=installed gallery=0 shadows=1` once after `shader void installed …`; no FCS-91/92.
+2. Trace while posed: `FixedShaderStyle … cell=kit kit=212 dungeon=0`, `storeyZ≈310 relStorey≈242 lineZ≈310`, `slicedFar=0 slicedObjects=0 fallback=0`, `keptFar>0`, `removedWhole>0`, `removedObjects>0` at every heading; `storeyMoves` constant while standing; `shadowPasses`/`shadowRemoved` > 0 if the shadow passes draw the same geometry (0 means rule 5 did nothing: report it).
+3. Screenshot per heading against `session-p55/results/wave3/mare-black-void.png` (same pose and headings). Expected differences: **back walls and back corners stand to full height** (≈ 252 units above the floor, top at 320) with their windows, shields, baskets and shelves whole, instead of ending flat at 228; **pillars stand whole with their modelled tops** where they are behind or beside the player, and vanish entirely where they stand in the line of sight; **no beam, rafter, loft floor, railing, roof or ceiling** anywhere (W3 already removed most of it by the plane; what changes is that nothing above 228 is half-drawn and the long beam shadows on the floor should be gone); doors and every object either whole or absent, never cut; **front walls look as in W3** (cut at the plane; most are not drawn from outside); the hearth fire, tables, benches, patrons and the player as in W3. The void black as in W3/8f1248f.
+4. What I expect to remain visibly cut: kit pieces straddling the player that reach above the line (at the hearth only one corner piece, cut at 310, i.e. its top 10 units); front-side walls that are drawn from outside (double-sided partitions such as the free-standing walls `WRIntFreeWallStr01`), cut at 228 exactly as in W3; anything in a `dungeons\` folder. Likely new artefacts: objects hanging on an invisible front wall (wall baskets, mounted elk, banners) now stand whole in the void where W3 cut them at 228 (rule 2 keeps them unless they hide the player); a pillar or object popping out when the player walks into its lane (hysteresis 48/112); at the loft the back roof slopes stand whole as an A-frame back wall.
+5. A/B rows: `bCutKeepFarGallery=1` at the hearth: the back half of the loft (floor edge, railing, loft walls, the beams over the back half) appears whole along the back walls; `bCutStyleShadows=0`: beam shadows return on the floor if rule 5 worked; `iCutStyle=0`: `FixedShader`, `FixedShaderLook`, `FixedShaderVoid` comparable to W3/8f1248f and no `FixedShaderStyle` line (the Effect floor rule is the one intended difference).
+6. Then the loft (`loft` pose, line ≈ 555) and the doorway pose, and `p55-shader-cave`, `p55-shader-bfb-seed1` (expected `cell=flat`, `flat>0`, all else 0, look as W3) and `p55-shader-lifecycle` (no style decision while inactive; census redone after each door).
+
+### What the reviewer must check
+
+1. `consider`: with `iCutStyle=0` (`r.style` null, `styled()` false) the path is byte-for-byte the third pass's; the two new lines are the only entry points and both are `!group && styled()`.
+2. `styledPass`: the flat cut's own selection (`reach`, owner rules, audited bytecode, budget) before any bind; under-plane passes are looked up only in kit cells and drawn natively unless removed; `apply()` for plane slices (same buffer, same Map rule); the storey buffer Mapped only on change; the remove buffer never Mapped.
+3. `installStyle`: two `CreateBuffer` calls with the engine's dynamic description, the second with `D3D11_SUBRESOURCE_DATA` (16 bytes, `pSysMem` first) holding `removeConstant`; a refusal leaves the flat cut.
+4. `shadowPass`: only Utility passes of other views, only for geometry pointers the main view removed in this or the last frame, only in kit cells; the bracket is closed by the existing `finish`; not counted on `FixedShader`.
+5. `noteCell`: `ForEachReference` once per cell on the main thread, reading base form type and `TESModel::GetModel()` only (no `BSFixedString` construction); table and sets cleared on a cell change.
+6. `refresh`: `Get3D()`, `world.rotate.entry` rows, `world.scale`, `world.translate`, `worldBound`, `boundData` (all as wave 1's `extentOf`); nothing is retained across frames except the reference pointer as a key, which is compared, never dereferenced, unless `ownerOf` returned it this frame.
+7. MSVC `/W4 /WX`: no `near`/`far`/`min`/`max` identifiers (sides are `front`/`back`/`across`), `(std::min)`, `(std::max)`, no shadowing (checked with g++ `-Wshadow`).
+8. The Effect floor rule changes the third pass's behaviour in both styles (intended, review MINOR-3).
+
+### Unverified (NOT_RUN or Hypothesis)
+
+- Every look, count and cost in game; the Windows build.
+- That front-side Mare walls are not drawn from outside (Hypothesis from wave 1 screenshots; it is why rule 3 keeps them at the plane).
+- Shadow-pass order, geometry identity in shadow passes, audit coverage of shadow vertex shaders, whether shadow maps are re-rendered each frame.
+- Frame cost: in kit cells every Lighting/Utility pass now finds its owner (under-plane passes included) and each reference is classified once per frame; at the Mare about 18,500 passes per 0.1 s window (W3). Not measured; the 60 fps cap bounds what can be seen.
+- The storey line from bounds versus what a ray would find; galleries other than the Mare's; ramps and sloped floors; cells mixing kit and dungeon pieces (Markarth, Dwemer-built homes); MovableStatic pieces that move (the box is re-read each frame).
+- That 4,096 reference slots and 8,192 removed-geometry slots suffice (`tableFull`, overflowing removals simply keep their shadow).
+
+### Proposed shared-file changes (not made)
+
+None needed beyond this package's files.
 
 ## Reproduce the offline checks
 
@@ -769,10 +889,13 @@ objdump -d -M intel --start-address=0x141557090 --stop-address=0x14155814d "$E" 
 objdump -d -M intel --no-show-raw-insn "$E" | grep -E '# 0x1433d3e[6-8]'          # every reference to the fog-colour global
 objdump -d -M intel --no-show-raw-insn "$E" | grep -E 'call +0x14100a(3f0|460|4c0)' # SetClearColor / Restore / RT-clear callers
 # third pass
-objdump -d -M intel --start-address=0x14036e660 --stop-address=0x14036e700 "$E"   # cell flags 0x80/0x100 -> Sky::SetMode(1/2/3)
+objdump -d -M intel --start-address=0x14036e660 --stop-address=0x14036e700 "$E"   # ToggleSky console handler (ID 22824): same flag rule
+objdump -d -M intel --start-address=0x1401a3f40 --stop-address=0x1401a4000 "$E"   # interior sky-mode chooser (called from 1A2F55): cell flags 0x80/0x100 -> Sky::SetMode(1/2/3)
 objdump -d -M intel --start-address=0x140411660 --stop-address=0x1404118c0 "$E"   # Sky::SetMode (ID 26222): root +F4 bit 0 at 411794..4117C7
 objdump -d -M intel --start-address=0x1401c7d00 --stop-address=0x1401c7d20 "$E"   # Sky::GetSingleton (ID 13878): pointer at 31E0D80 (ID 401652)
 objdump -d -M intel --start-address=0x140412df0 --stop-address=0x140413a30 "$E"   # Sky colours: mode 1 (413285), mode 2 weather loop (413384) and cell lighting (413828)
+# fourth pass: no new binary site. The Mare / Embershard / Bleak Falls Barrow placements were read from Data/Skyrim.esm
+# (CELL EDID -> its persistent and temporary REFR children: NAME, DATA, XSCL; base STAT/MSTT/... records: EDID, OBND, MODL).
 # image-space and sky shaders: shaders011.fxp entries counted from 0 in file order (each entry starts with 44 33 22 11);
 # entries 60..77 BSSkyShader, 15846/15848 HDR tonemap, 15828/15830 DOF fogged, 15944/15946 VL apply, 15960 VL composite,
 # 16000/16002/16004 SAO composite variants; disassembled with vkd3d-shader (D3D assembly target)

@@ -79,12 +79,13 @@ constexpr std::uint32_t ammoForm = 0x2a; // the engine looks past an ammunition 
 
 // One code per refusal site; codes above 63 need their own once-mask. 80..88
 // are the second pass's: the Effect class and the void colour; 89..90 the
-// third pass's: the sky dome over the void (fixed_spike_shader_sky_policy.h).
+// third pass's: the sky dome over the void (fixed_spike_shader_sky_policy.h);
+// 91..92 the fourth pass's: the Stage 1 style (fixed_spike_shader_style_policy.h).
 enum class Refusal : unsigned { settings = 66, foreign = 67, address = 68, table = 69, device = 70, thread = 71, bracket = 72,
     create = 73, patch = 74, unaudited = 75, view = 76, map = 77, object = 78, context = 79,
     effectTable = 80, voidSite = 81, voidMemory = 82, voidThread = 83, effectCreate = 84, effectPatch = 85, effectUnaudited = 86,
-    effectObject = 87, effectThread = 88, skySite = 89, skyLeft = 90 };
-constexpr unsigned firstRefusal = 66, lastRefusal = 90;
+    effectObject = 87, effectThread = 88, skySite = 89, skyLeft = 90, styleBuffers = 91, styleMap = 92 };
+constexpr unsigned firstRefusal = 66, lastRefusal = 92;
 static_assert(lastRefusal-firstRefusal < 32);
 // The refusals a shader preparation can end in, per group.
 struct PrepareCodes { Refusal object,unaudited,patch,create; };
@@ -135,7 +136,12 @@ struct Config {
     // Third pass. Read only in mode 3, where both default on.
     bool hideSky{true};         // bVoidHideSky: the sky dome is not drawn over the void while the cut is active
     bool effectWhole{true};     // bShaderCutEffectWhole: a selected Effect pass is clipped whole, not at the plane
+    // Fourth pass (owner decision 2026-11-10, Stage 1 seamless cutaway). Read only in mode 3.
+    unsigned style{1};          // iCutStyle: 0 the flat cut exactly as the third pass, 1 Stage 1
+    bool keepFarGallery{};      // bCutKeepFarGallery: the back half of the storey above is kept whole
+    bool styleShadows{true};    // bCutStyleShadows: what the main view removes whole casts no shadow
 };
+constexpr unsigned flatStyle = 0, stageOneStyle = 1;
 // The camera stands about 336 ground units from the feet, so a radius under
 // 384 could leave a piece between camera and player whole.
 constexpr float minRadius = 384.0f;
@@ -147,8 +153,9 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     if (!c.shaders || c.shaders > 3u) c.shaders = 3;
     // Clamped or unreadable colours are reported once as FCS-66; unreadable is black.
     const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;
+    if (c.style > stageOneStyle) c.style = stageOneStyle;
     if (adjusted) *adjusted = c.height != in.height || c.radius != in.radius || c.maxPerFrame != in.maxPerFrame || c.shaders != in.shaders ||
-        colorChanged;
+        colorChanged || c.style != in.style;
     return c;
 }
 // iShaderCutShaders selects Lighting and Utility only; Effect has its own key.
@@ -728,3 +735,4 @@ inline bool formatLook(char* out,std::size_t size,const LookSample& s) {
 }
 } // namespace skycrpg::camera::fixed::shader
 #include "fixed_spike_shader_sky_policy.h" // third pass: the sky dome over the void, Effect passes clipped whole
+#include "fixed_spike_shader_style_policy.h" // fourth pass: Stage 1 of the seamless cutaway (iCutStyle=1)

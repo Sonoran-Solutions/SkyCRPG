@@ -32,6 +32,11 @@
 // void; while the cut is active its root is hidden as the engine hides it in
 // other interiors (fixed_spike_shader_sky.h), and a selected Effect pass is
 // clipped whole instead of at the plane (bShaderCutEffectWhole).
+//
+// Fourth pass (owner decision 2026-11-10, Stage 1 seamless cutaway): with
+// iCutStyle=1 a Lighting or Utility pass of the published view goes through
+// the per-reference policy of fixed_spike_shader_style.h instead of the one
+// plane; iCutStyle=0 leaves this file's flat cut exactly as it was.
 #include "fixed_spike_shader_policy.h"
 #include <cwchar>
 
@@ -50,12 +55,14 @@ struct Entry { const std::uint8_t* object{}; void* patched{}; };
 using ClearColor = void(*)(void*,float,float,float,float);
 // Patched, rejected (FCS-73/74/78 or 84/85/87) and unaudited (FCS-75/86) shaders of one group.
 struct Made { unsigned patched{},rejected{},unaudited{}; };
+struct StyleRuntime; // fixed_spike_shader_style.h: only with iCutStyle=1
 struct Runtime {
     Config config;
     void (*logger)(const char*){};
     void (*emitter)(const char*){};
     void (*lookEmitter)(const char*){};
     void (*voidEmitter)(const char*){};
+    void (*styleEmitter)(const char*){};
     std::atomic<std::uint32_t> refusals{};
     std::atomic_bool pending{};  // hooks to be installed by the next main-thread camera frame
     std::atomic_bool active{};   // a snapshot is published
@@ -89,6 +96,7 @@ struct Runtime {
     unsigned long long frame{},published{},framePasses{},frameMatched{};
     unsigned missFrames{},tick{};
     double clock{},nextTrace{};
+    StyleRuntime* style{}; // fourth pass; null with iCutStyle=0
 };
 // Process lifetime, like the spike runtime: device objects are never released.
 inline Runtime* runtime = nullptr;
@@ -219,6 +227,10 @@ inline Skip ownerSkip(const std::uint8_t* geometry,std::uint32_t& owner) {
     const bool actor = ref->GetFormType() == RE::FormType::ActorCharacter;
     return ownerRule(true,actor,actor ? Kind::excluded : kindOf(ref,ref->GetBaseObject()));
 }
+// fixed_spike_shader_style.h (included at the end of this file).
+inline bool styled();
+inline void styledPass(void* pass,std::size_t shaderClass,Vec eye);
+inline void shadowPass(void* pass,std::size_t shaderClass);
 // The pass is drawn with the patched shader and the plane in slot 13. Both
 // device calls that can fail come before anything is bound.
 inline void apply(const Entry& entry,Constant wanted,std::size_t shaderClass) {
@@ -263,9 +275,11 @@ inline void consider(void* pass,std::size_t shaderClass) {
     if (!sameView(r.view,eye,direction)) {
         ++w.otherView;
         if (!group) { r.otherEye = eye; r.otherDirection = direction; r.haveOther = true; }
+        if (!group && styled()) shadowPass(pass,shaderClass); // fourth pass: shadows of what the main view removed whole
         return;
     }
     if (!group) ++r.frameMatched;
+    if (!group && styled()) { styledPass(pass,shaderClass,eye); return; } // fourth pass: the Stage 1 per-reference policy
     const auto geometry = peek<const std::uint8_t*>(pass,offset::passGeometry);
     const Constant wanted = cutConstant(r.view.planeZ,eye.z);
     Skip skip = Skip::noBound;
@@ -283,6 +297,9 @@ inline void consider(void* pass,std::size_t shaderClass) {
     // Third pass: an Effect pass centred in the upper half below the plane or higher is not drawn at all.
     const bool whole = group && r.config.effectWhole && wholeEffect(r.view,bound);
     if (group) { r.voidWindow.note(owner); if (whole) ++r.voidWindow.whole; }
+    // Fourth pass: what the floor rule kept at the plane, and the largest radius clipped whole.
+    if (group && r.config.effectWhole && !whole && upperEffect(r.view,bound)) ++r.voidWindow.floorKept;
+    if (whole && bound.radius > r.voidWindow.wholeRadius) r.voidWindow.wholeRadius = bound.radius;
     apply(*entry,whole ? wholeConstant : wanted,shaderClass);
 }
 
@@ -379,6 +396,11 @@ void hookClass() {
 inline void installVoid(std::uintptr_t base);
 inline void installSky(std::uintptr_t base);
 inline void settleSky(bool want);
+inline void installStyle();
+inline Feature styleState();
+inline void configureStyle();
+inline void styleFrame();
+inline void traceStyle(double now,const VoidWindow& effect);
 // Main thread, from commit, after the Lighting/Utility hooks. The Effect class
 // is hooked only with bShaderCutEffect=1 and when its own guard passes.
 inline void installEffect(std::uintptr_t base) {
@@ -447,6 +469,12 @@ inline void commit() {
     std::snprintf(text,sizeof(text),"FixedCameraSpike shader void installed sky=%s effectWhole=%s",
         featureNames[static_cast<std::size_t>(r.skyState)],r.config.effectWhole && r.effectState == Feature::installed ? "on" : "off");
     r.logger(text);
+    // Fourth pass: refuses on its own (FCS-91) and leaves the flat cut as it is.
+    installStyle();
+    std::snprintf(text,sizeof(text),"FixedCameraSpike shader style installed style=%u state=%s gallery=%u shadows=%u",r.config.style,
+        r.style ? featureNames[static_cast<std::size_t>(styleState())] : "off",static_cast<unsigned>(r.config.keepFarGallery),
+        static_cast<unsigned>(r.config.styleShadows));
+    r.logger(text);
 }
 
 // ---- called by the spike's frame bracket ------------------------------------
@@ -506,6 +534,7 @@ inline void publish(Vec eye,Vec forward,Vec feet,bool interiorCell,unsigned long
     if (!next) { r.active.store(false,std::memory_order_release); settleSky(false); return; }
     r.view = *next; r.haveView = true; r.published = frame;
     for (auto& budget : r.budgets) budget.frame();
+    styleFrame(); // fourth pass: the storey line from the frame just drawn
     r.active.store(true,std::memory_order_release);
     settleSky(true);
 }
@@ -541,23 +570,28 @@ inline void trace(double now) {
     if (format(line,sizeof(line),s)) r.emitter(line);
     if (formatLook(line,sizeof(line),look)) r.lookEmitter(line);
     if (formatVoid(line,sizeof(line),voids)) r.voidEmitter(line);
+    traceStyle(now,voids.window); // fourth pass: FixedShaderStyle, only with iCutStyle=1
 }
 inline bool tracing() { return runtime && runtime->config.trace; }
+// Shader trace line kinds: FixedShader, FixedShaderLook, FixedShaderVoid, and FixedShaderStyle with iCutStyle=1.
+inline unsigned traceKinds() { return runtime && runtime->config.style == stageOneStyle ? 4u : 3u; }
 inline const char* status() { return !runtime ? "off" : runtime->installed ? "installed" : "pending"; }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1 and iSeeThroughMode=3.
 inline void configure(const Config& requested,void (*logger)(const char*),void (*emitter)(const char*),void (*lookEmitter)(const char*),
-    void (*voidEmitter)(const char*)) {
+    void (*voidEmitter)(const char*),void (*styleEmitter)(const char*)) {
     runtime = new Runtime;
     auto& r = *runtime;
-    r.logger = logger; r.emitter = emitter; r.lookEmitter = lookEmitter; r.voidEmitter = voidEmitter;
+    r.logger = logger; r.emitter = emitter; r.lookEmitter = lookEmitter; r.voidEmitter = voidEmitter; r.styleEmitter = styleEmitter;
     bool adjusted = false;
     r.config = validate(requested,&adjusted);
     for (auto& budget : r.budgets) budget.limit = r.config.maxPerFrame;
     r.voidState = r.config.voidColor ? Feature::pending : Feature::off;
     r.effectState = r.config.effect ? Feature::pending : Feature::off;
     r.skyState = r.config.hideSky ? Feature::pending : Feature::off;
+    configureStyle();
     if (adjusted) refuse(Refusal::settings,"one or more shader-cut values were out of range; safe values applied");
 }
 } // namespace skycrpg::camera::fixed::shader
 #include "fixed_spike_shader_void.h" // second pass: the void colour
 #include "fixed_spike_shader_sky.h"  // third pass: the sky dome over the void
+#include "fixed_spike_shader_style.h" // fourth pass: Stage 1 of the seamless cutaway

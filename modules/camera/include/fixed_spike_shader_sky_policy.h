@@ -7,7 +7,10 @@
 // The void is not only the clear colour. Interiors flagged Show Sky (CELL DATA
 // 0x80; Embershard Mine 01, Bleak Falls Barrow 01 and the Bannered Mare all
 // are, none has Use Sky Lighting 0x100) put the Sky in mode 2, "sky dome
-// only" (RVA 36E691..36E6B2). In that mode Sky::SetMode (ID 26222) shows the
+// only". The mode is chosen for an interior at RVA 1A3F40 (called from
+// 1A2F55) and for an exterior at 1A36AE..1A371E, by the same rule; 36E660
+// (ID 22824), which an earlier text named here, is the ToggleSky console
+// command's handler (correction from the binary review of 8f1248f). In that mode Sky::SetMode (ID 26222) shows the
 // sky's root node (411794..4117C7), and the sky colours come from the
 // exterior weather (413384..413491) while only sunlight, ambient and the two
 // fog colours are taken from the cell (413828..41387D). The dome's vertex
@@ -99,10 +102,22 @@ constexpr SkyStep skyStep(bool want,bool held,bool haveRoot,bool sameRoot,bool e
 // between the feet and the plane is therefore drawn with clip = 0 * height - 1
 // for every vertex: nothing of it is rasterised. One whose centre is lower
 // (floor mist, a fire in a floor brazier) keeps the plane cut, so what lies
-// under the plane stays.
+// under the plane stays. Fourth pass (binary review of 8f1248f, MINOR-3): a
+// tall mesh whose centre is high but whose bound reaches down to the feet (a
+// light shaft to the floor, a waterfall or spray card, a placed magic barrier)
+// keeps the plane cut, so its part at the player's level is still drawn; whole
+// clipping needs the lowest point of the bound above the feet as well. The
+// Embershard glows (centres 9392 and 9423, feet 9241) still go whole up to
+// radius 151 and 182.
 constexpr Constant wholeConstant{0.0f,-1.0f,0.0f,0.0f};
 static_assert(clipDistance(wholeConstant,1.0e6f) < 0.0f && clipDistance(wholeConstant,-1.0e6f) < 0.0f);
 inline bool wholeEffect(const View& view,Bound bound) {
+    return std::isfinite(bound.centre.z) && std::isfinite(bound.radius) && bound.centre.z > (view.planeZ+view.feet.z)*0.5f &&
+        bound.centre.z-bound.radius > view.feet.z;
+}
+// The upper-half test alone: such a pass that reaches the feet is the one the
+// fourth pass keeps cut at the plane (FixedShaderStyle fxFloorKept).
+inline bool upperEffect(const View& view,Bound bound) {
     return std::isfinite(bound.centre.z) && bound.centre.z > (view.planeZ+view.feet.z)*0.5f;
 }
 
@@ -111,6 +126,9 @@ constexpr std::size_t effectRefSlots = 4;
 struct VoidWindow {
     std::array<unsigned long long,static_cast<std::size_t>(SkyStep::count)> steps{}; // main-thread frames by step
     unsigned long long engineHidden{},noSky{},whole{};
+    unsigned long long floorKept{}; // fourth pass: upper-half Effect passes kept at the plane because they reach the feet
+    float wholeRadius{};            // fourth pass: the largest bound radius clipped whole in the window
+    // Not on the FixedShaderVoid row (byte-identical to 8f1248f); FixedShaderStyle reports both.
     std::array<std::uint32_t,effectRefSlots> refs{}; // distinct owners of cut Effect passes, first four
     unsigned refCount{};
     void note(std::uint32_t formId) {

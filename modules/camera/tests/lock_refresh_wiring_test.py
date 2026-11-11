@@ -355,12 +355,15 @@ assert "inline bool publishes(bool installed,bool latched,bool interiorCell,floa
     "std::isfinite(feetZ);" in cut_policy
 void = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_void.h").read_text()
 cut_codes = dict(re.findall(r"(\w+) = (\d+)", cut_policy[cut_policy.index("enum class Refusal : unsigned {"):cut_policy.index("constexpr unsigned firstRefusal")]))
-assert len(cut_codes) == 25 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 91))
+assert len(cut_codes) == 27 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 93))
 sky = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_sky.h").read_text()
 sky_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_sky_policy.h").read_text()
+style = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_style.h").read_text()
+style_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_style_policy.h").read_text()
 prepare_table = cut_policy[cut_policy.index("constexpr std::array<PrepareCodes,2> prepareCodes{{"):cut_policy.index("// ---- [FixedCameraSpike] shader-cut keys")]
 for name in cut_codes:
-    sites = cut.count("Refusal::" + name) + void.count("Refusal::" + name) + sky.count("Refusal::" + name) + prepare_table.count("Refusal::" + name)
+    sites = cut.count("Refusal::" + name) + void.count("Refusal::" + name) + sky.count("Refusal::" + name) + style.count("Refusal::" + name) + \
+        prepare_table.count("Refusal::" + name)
     assert sites == 1, name  # one site per code
 for field in ("object", "unaudited", "patch", "create"):
     assert prepare.count("refuse(codes." + field + ",text); return;") == 1, field
@@ -377,7 +380,7 @@ for constant in ("constexpr Address stateAddress{388819,0x20cfc00};", "constexpr
                  "constexpr Address clearColorAddress{77249,0x100a3f0};", "constexpr std::uintptr_t voidCallRva = 0x656daa;"):
     assert constant in cut_policy, constant
 print("PASS shader cut wiring: no runtime outside mode 3; main-thread install after every guard; no code or engine-state write; "
-      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..90")
+      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..92")
 
 # Wave 2 shader, second pass (owner decision 2026-11-10): the Effect class and
 # the void colour. Both exist only inside the shader runtime (mode 3), are
@@ -385,7 +388,8 @@ print("PASS shader cut wiring: no runtime outside mode 3; main-thread install af
 # Community Shaders refuse them with the cut, FCS-67), and are native whenever
 # the cut's snapshot is not published.
 assert cut.endswith('#include "fixed_spike_shader_void.h" // second pass: the void colour\n'
-                    '#include "fixed_spike_shader_sky.h"  // third pass: the sky dome over the void\n')
+                    '#include "fixed_spike_shader_sky.h"  // third pass: the sky dome over the void\n'
+                    '#include "fixed_spike_shader_style.h" // fourth pass: Stage 1 of the seamless cutaway\n')
 assert "inline void installVoid(std::uintptr_t base);" in cut and cut.count("installVoid(base);") == 1 and cut.count("installEffect(base);") == 1
 assert void.count("inline void installVoid(std::uintptr_t base) {") == 1 and "runtime = " not in void
 install_effect = cut_body("inline void installEffect(std::uintptr_t base) {", "// Main thread, inside the camera frame service.")
@@ -430,8 +434,9 @@ assert "s.window = r.windows[0];" in trace_body and "look.effect = r.windows[1];
     trace_body.index("if (format(line,sizeof(line),s)) r.emitter(line);") < trace_body.index("if (formatLook(line,sizeof(line),look)) r.lookEmitter(line);")
 assert '"relPlane=%.2f passes=%llu cut=%llu byClass=%llu,%llu peak=%u cap=%u uploads=%llu shaders=%u,%u,%u created=%llu open=%llu "' in cut_policy
 assert "LineBudget shaderLines{shader::traceLines},shaderLookLines{shader::traceLines};" in spike and \
-    "[](const char* text) { emit(runtime->shaderLookLines,text); },[](const char* text) { emit(runtime->shaderVoidLines,text); });" in configure_spike and \
-    "(shader::tracing() ? 3u*shader::traceLines : 0u)" in configure_spike
+    "[](const char* text) { emit(runtime->shaderLookLines,text); },[](const char* text) { emit(runtime->shaderVoidLines,text); },\n" \
+    "            [](const char* text) { emit(runtime->shaderStyleLines,text); });" in configure_spike and \
+    "(shader::tracing() ? shader::traceKinds()*shader::traceLines : 0u)" in configure_spike
 assert 'shaderCut.colorText = read("FixedCameraSpike","sVoidColor","0,0,0");' in gate and \
     "const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;" in cut_policy
 assert "\nbShaderCutEffect=1\n" in ini and "\nbVoidColor=1\n" in ini and "\nsVoidColor=0,0,0\n" in ini
@@ -485,3 +490,66 @@ assert "LineBudget shaderVoidLines{shader::traceLines};" in spike and "\nbVoidHi
 print("PASS shader third-pass wiring: sky root hidden only on published main-thread frames, put back only under the engine's own rule, "
       "two one-bit writes and nothing else; Effect clipped whole only in its group with the key on; FixedShaderVoid after FixedShaderLook; "
       "one site per FCS-89..90")
+
+# Wave 2 shader, fourth pass: Stage 1 of the seamless cutaway (iCutStyle=1).
+# A per-reference choice of the constant buffer in slot 13 inside the same
+# hooks; nothing new is hooked or written; iCutStyle=0 allocates nothing and
+# takes the third pass's path unchanged.
+def style_body(start, end):
+    return style[style.index(start):style.index(end, style.index(start))]
+assert "inline bool styled();" in cut and "inline void styledPass(void* pass,std::size_t shaderClass,Vec eye);" in cut and \
+    "inline void shadowPass(void* pass,std::size_t shaderClass);" in cut
+assert "        if (!group && styled()) shadowPass(pass,shaderClass); // fourth pass: shadows of what the main view removed whole\n        return;\n    }" in consider
+assert consider.index("++w.otherView;") < consider.index("if (!group && styled()) shadowPass(pass,shaderClass);") < \
+    consider.index("if (!group) ++r.frameMatched;") < consider.index("if (!group && styled()) { styledPass(pass,shaderClass,eye); return; }") < \
+    consider.index("peek<const std::uint8_t*>(pass,offset::passGeometry)")
+assert cut.count("styledPass(") == 2 and cut.count("shadowPass(") == 2 and cut.count("configureStyle();") == 2 and cut.count("installStyle();") == 2  # declaration and one call
+styled_fn = style_body("inline bool styled() {", "inline const char* modelPath(")
+assert "runtime->style->state == Feature::installed && !runtime->latched.load(" in styled_fn
+configure_style = style_body("inline void configureStyle() {", "// commit, after the sky.")
+assert "if (r.config.style != stageOneStyle) return;" in configure_style and style.count("new StyleRuntime") == 1 and "runtime = " not in style
+assert commit.index("installSky(base);") < commit.index("installStyle();") < commit.index('"FixedCameraSpike shader style installed style=%u state=%s gallery=%u shadows=%u"')
+install_style = style_body("inline void installStyle() {", "inline void traceStyle(")
+assert install_style.index("if (!r.style) return;") < install_style.index("method::createBuffer") < \
+    install_style.index("Refusal::styleBuffers") < install_style.index("s.state = Feature::installed;")
+assert install_style.count("method::createBuffer") == 2 and "const InitialData initial{&removeConstant,0u,0u};" in install_style and \
+    "static_cast<const void*>(&initial),&remove)" in install_style
+# The per-pass path: the flat cut's selection, then the reference, then audited bytecode and the budget before any bind.
+pass_fn = style_body("inline void styledPass(", "// A Utility pass of another view")
+assert pass_fn.index("skip = reach(r.view,bound,") < pass_fn.index("ownerOf(geometry)") < pass_fn.index("ownerRule(") < pass_fn.index("entryFor(ref)") < \
+    pass_fn.index("if (d.treat == Treat::keep)") < pass_fn.index("shaderFor(0)") < pass_fn.index("!r.budgets[0].take()") < \
+    pass_fn.index("bindStyle(*entry,s.removeBuffer,shaderClass,true);") < pass_fn.index("apply(*entry,plane,shaderClass);") < \
+    pass_fn.index("uploadStorey(") < pass_fn.index("bindStyle(*entry,s.storeyBuffer,shaderClass,true);")
+assert "if (skip != Skip::none && !(below && s.cellStyle == CellStyle::kit)) { skipped(skip); return; }" in pass_fn and \
+    "if (below && d.treat != Treat::remove) { skipped(Skip::below); return; }" in pass_fn
+shadow = style_body("inline void shadowPass(", "// ---- frame, cell, install, trace")
+assert "if (!r.config.styleShadows || shaderClass != 1 || s.cellStyle != CellStyle::kit) return;" in shadow and \
+    shadow.index("wasRemoved(geometry)") < shadow.index("shaderFor(0)") < shadow.index("s.shadowBudget.take()") < \
+    shadow.index("bindStyle(*entry,s.removeBuffer,shaderClass,false);")
+bind = style_body("inline void bindStyle(", "// ---- the passes")
+assert bind.index("method::vsSetConstantBuffers,cutBuffer,1u,") < bind.index("method::vsSetShader,entry.patched,") < bind.index("r.opened.store(true,")
+# Only the storey buffer is ever Mapped; the remove buffer is filled once, at creation. The only copy goes into the mapped buffer.
+assert style.count("method::map") == 1 and "method::map,s.storeyBuffer," in style and style.count("std::memcpy(") == 1 and \
+    "std::memcpy(mapped.data,&wanted,sizeof(wanted));" in style
+for forbidden in ("safe_write", "VirtualAlloc", "VirtualProtect", "write_vfunc", "write_call", "write_branch", "AllocTrampoline", "BSFixedString",
+                  "AddTask(", "GetSingleton", "SetAppCulled", "GetMenu(", "_ReturnAddress"):
+    assert forbidden not in style, forbidden
+# Frame, cell and trace hooks: on the main thread, inside the spike's bracket.
+assert publish.index("for (auto& budget : r.budgets) budget.frame();") < publish.index("styleFrame();") < publish.index("r.active.store(true,")
+assert end_frame.index("shader::noteCell(parent);") < end_frame.index("shader::publish(viewer,") and spike.count("shader::noteCell(") == 1
+assert "if (!runtime || !runtime->style || !cell || !thin::onMain()) return;" in style_body("inline void noteCell(", "// configure, after validate")
+assert trace_body.index("if (formatVoid(line,sizeof(line),voids)) r.voidEmitter(line);") < trace_body.index("traceStyle(now,voids.window);")
+assert "if (!r.style) return;" in style_body("inline void traceStyle(", "} // namespace")
+assert "LineBudget shaderStyleLines{shader::traceLines};" in spike
+assert "inline unsigned traceKinds() { return runtime && runtime->config.style == stageOneStyle ? 4u : 3u; }" in cut
+for key in ("iCutStyle", "bCutKeepFarGallery", "bCutStyleShadows"):
+    assert gate.count('"FixedCameraSpike","' + key + '"') == 1 and ("\n" + key + "=") in ini, key
+assert "\niCutStyle=1\n" in ini and "\nbCutKeepFarGallery=0\n" in ini and "\nbCutStyleShadows=1\n" in ini
+assert "if (c.style > stageOneStyle) c.style = stageOneStyle;" in cut_policy and "unsigned style{1};" in cut_policy
+# The policy decides nothing for a cell that is not a kit building, and slices only kit pieces.
+assert "if (!f.kitCell) return {Treat::flat,Bucket::flat};" in style_policy and "constexpr Constant removeConstant{-1.0f,-1.0e9f,0.0f,0.0f};" in style_policy
+# Review MINOR-3 of 8f1248f: an Effect pass is clipped whole only when its bound lies wholly above the feet.
+assert "bound.centre.z-bound.radius > view.feet.z;" in sky_policy
+print("PASS shader fourth-pass wiring: style runtime only with iCutStyle=1; per-reference buffer choice inside the existing hooks after the "
+      "flat cut's own selection; audited bytecode and budget before any bind; remove buffer never Mapped; shadow rule on Utility other-view "
+      "passes of removed geometry only; no new hook or engine write; one site per FCS-91..92")
