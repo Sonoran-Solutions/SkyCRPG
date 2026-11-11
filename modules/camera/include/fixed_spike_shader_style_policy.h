@@ -142,6 +142,27 @@ inline bool geometryExceeds(const Box& b,Vec centre,float radius) {
         centre.y > b.high.y+geometrySlack || centre.z < b.low.z-geometrySlack || centre.z > b.high.z+geometrySlack ||
         radius > halfDiagonal+geometrySlack;
 }
+// A roof or ceiling kit piece by its model's file name: "roof" or "ceil" in
+// it, and not "wall" (WRIntRoofOpen01, WRIntRoofCorR01, WRIntRoofAlcoveCap01,
+// WRIntRoofStr01BackCap, WRIntCeilMid01, WRIntCeilChimney01, NorRmBgMidCeiling...
+// are; WRIntRoofWall02 and WRIntLoftWallRoof01, walls under the roof, are not).
+// Such pieces start at the floor of the storey they cover (the Mare's roof
+// slopes stand on the loft floor), so neither the storey line nor the
+// overhead rule finds them from the top storey (W5 loft, 2026-11-11).
+inline bool contains(const char* text,const char* word) {
+    for (const char* at = text;*at;++at) {
+        std::size_t i = 0;
+        while (word[i] && at[i] && lowered(at[i]) == word[i]) ++i;
+        if (!word[i]) return true;
+    }
+    return false;
+}
+inline bool roofModel(const char* path) {
+    if (!path) return false;
+    const char* name = path;
+    for (const char* at = path;*at;++at) if (*at == '\\' || *at == '/') name = at+1;
+    return (contains(name,"roof") || contains(name,"ceil")) && !contains(name,"wall");
+}
 // `obnd`: the box came from the base OBND (otherwise from the bound sphere).
 // An object without a usable box (no 3D, no OBND and a zero bound) cannot be
 // placed either: flat (review of 30503e0, MINOR-1).
@@ -325,12 +346,12 @@ struct Storey {
 };
 
 // ---- the decision ---------------------------------------------------------------------
-enum class Treat : unsigned { flat, keep, slice, low, remove, count };
-constexpr std::array treatNames{"flat","keep","slice","low","remove"};
+enum class Treat : unsigned { flat, keep, slice, low, remove, cap, count };
+constexpr std::array treatNames{"flat","keep","slice","low","remove","cap"};
 static_assert(treatNames.size() == static_cast<std::size_t>(Treat::count));
 // Trace counters by decision (counted per pass).
 enum class Bucket : unsigned { flat, fallback, keptFar, keptObject, keptMember, keptGallery, slicedNear, slicedSpan, removedWhole, removedObject,
-    interactCut, aroundCut, count };
+    interactCut, aroundCut, cappedFar, count };
 struct Facts {
     Piece piece{Piece::flat};
     Side side{Side::across};
@@ -343,8 +364,14 @@ struct Facts {
     bool interact{};  // an interactable reference (door, container, activator, furniture, flora, an item): never removed whole
     bool gallery{};   // bCutKeepFarGallery
     bool kitCell{};   // the cell's census says kit building
+    bool roof{};      // roofModel: a roof or ceiling piece
+    bool standing{};  // box bottom at most feet + standSlack: it stands on the player's storey
+    bool overCap{};   // box top above the back-side cap + capSlack
 };
-struct Decision { Treat treat{Treat::flat}; Bucket bucket{Bucket::flat}; };
+// Why a removal or a cap happened, for the FixedShaderStyle2 row.
+enum class Note : unsigned { none, roof, overhead, cap, count };
+struct Decision { Treat treat{Treat::flat}; Bucket bucket{Bucket::flat}; Note note{Note::none}; };
+constexpr float standSlack = 64.0f, capSlack = 64.0f, topStoreyCap = 350.0f;
 // Rules 1-4 of the owner decision, in this order:
 //   not a kit cell                       flat (caves and ruins exactly as the flat cut)
 //   a piece this policy cannot place     flat, counted as a fallback
@@ -369,9 +396,13 @@ struct Decision { Treat treat{Treat::flat}; Bucket bucket{Bucket::flat}; };
 constexpr float floorTop = 32.0f;
 constexpr Decision rules(const Facts& f) {
     const bool object = f.piece == Piece::object;
-    if (f.above || (f.piece == Piece::member && f.overhead)) {
+    // W5 (2026-11-11): roofs and ceilings are never kept, on any side.
+    if (f.roof && !object) return {Treat::remove,Bucket::removedWhole,Note::roof};
+    // W5: every architecture piece whose bottom is above head height belongs to the storey above,
+    // at once and wherever the storey line is (the loft floor's edge over a player beside the hall).
+    if (f.above || (!object && f.overhead)) {
         if (f.gallery && f.side == Side::back) return {Treat::keep,Bucket::keptGallery};
-        return {Treat::remove,object ? Bucket::removedObject : Bucket::removedWhole};
+        return {Treat::remove,object ? Bucket::removedObject : Bucket::removedWhole,f.above ? Note::none : Note::overhead};
     }
     if (object || f.piece == Piece::member) {
         if (f.around && f.overhead) return {Treat::remove,object ? Bucket::removedObject : Bucket::removedWhole};
@@ -380,7 +411,9 @@ constexpr Decision rules(const Facts& f) {
         if (f.side != Side::back && f.lane) return {Treat::remove,object ? Bucket::removedObject : Bucket::removedWhole};
         return {Treat::keep,object ? Bucket::keptObject : Bucket::keptMember};
     }
-    if (f.side == Side::back) return {Treat::keep,Bucket::keptFar};
+    // A back piece is kept whole only when it stands on the player's storey and does not rise far
+    // above the storey's ceiling (a gable on the top storey): otherwise it is cut at the cap.
+    if (f.side == Side::back) return f.standing && !f.overCap ? Decision{Treat::keep,Bucket::keptFar} : Decision{Treat::cap,Bucket::cappedFar,Note::cap};
     if (f.side == Side::front) return {Treat::low,Bucket::slicedNear};
     return {f.lane ? Treat::low : Treat::slice,Bucket::slicedSpan};
 }
@@ -394,9 +427,11 @@ constexpr Decision decide(const Facts& f) {
     return d;
 }
 // The height a slicing treatment cuts at.
-inline float sliceHeight(Treat treat,float planeZ,float lineZ) {
-    return treat == Treat::slice ? lineZ : treat == Treat::low ? (std::min)(planeZ,lineZ) : planeZ;
+inline float sliceHeight(Treat treat,float planeZ,float lineZ,float capZ = 0.0f) {
+    return treat == Treat::slice ? lineZ : treat == Treat::low ? (std::min)(planeZ,lineZ) : treat == Treat::cap ? capZ : planeZ;
 }
+// The back-side cap: the storey line when a storey is known, else (the top storey) the held feet height + 350.
+constexpr float capHeight(bool storeyKnown,float lineZ,float baseZ) { return storeyKnown ? lineZ : baseZ+topStoreyCap; }
 
 // ---- the cell -------------------------------------------------------------------------
 // A cell is a kit building when its placed statics with an architecture model
@@ -418,6 +453,9 @@ struct StyleWindow {
     std::array<unsigned long long,static_cast<std::size_t>(Bucket::count)> buckets{}; // passes by decision
     unsigned long long frames{},underLine{},slicedLow{},slicedFar{},slicedObjects{},tableFull{},storeyUploads{};
     unsigned long long shadowPasses{},shadowRemoved{},shadowSkips{};
+    // FixedShaderStyle2 (W5 fixes): passes by Note, and gallery keeps the geometry check turned into removals.
+    std::array<unsigned long long,static_cast<std::size_t>(Note::count)> notes{};
+    unsigned long long galleryRemoved{};
 };
 struct StyleSample {
     double seconds{};
@@ -452,6 +490,22 @@ inline bool formatStyle(char* out,std::size_t size,const StyleSample& s) {
         bucket(Bucket::slicedSpan),w.slicedLow,w.slicedFar,w.slicedObjects,bucket(Bucket::removedWhole),bucket(Bucket::removedObject),
         bucket(Bucket::flat),bucket(Bucket::fallback)+bucket(Bucket::aroundCut),s.refs,w.tableFull,s.moves,w.storeyUploads,w.shadowPasses,w.shadowRemoved,w.shadowSkips,s.fxFloorKept,
         static_cast<double>(s.fxWholeRadius),bucket(Bucket::interactCut));
+    return written > 0 && static_cast<std::size_t>(written) < size;
+}
+// ---- trace: FixedShaderStyle2 (second optional line, own budget; FixedShaderStyle unchanged) -------
+struct Style2Sample {
+    double seconds{};
+    unsigned long long frame{};
+    bool haveView{};
+    float capZ{};         // the back-side cap in use
+    StyleWindow window{};
+};
+inline bool formatStyle2(char* out,std::size_t size,const Style2Sample& s) {
+    const auto note = [&](Note which) { return s.window.notes[static_cast<std::size_t>(which)]; };
+    const int written = std::snprintf(out,size,
+        "FixedShaderStyle2 t=%.3f frame=%llu capZ=%.2f cappedFar=%llu roofRemoved=%llu overheadRemoved=%llu galleryRemoved=%llu sample=window",
+        s.seconds,s.frame,s.haveView ? static_cast<double>(s.capZ) : static_cast<double>(std::numeric_limits<float>::quiet_NaN()),
+        s.window.buckets[static_cast<std::size_t>(Bucket::cappedFar)],note(Note::roof),note(Note::overhead),s.window.galleryRemoved);
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 } // namespace skycrpg::camera::fixed::shader

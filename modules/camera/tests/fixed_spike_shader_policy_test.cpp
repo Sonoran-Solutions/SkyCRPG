@@ -914,7 +914,7 @@ void styleRules() {
             const float half = .5f*std::sqrt(w.x*w.x+w.y*w.y+w.z*w.z);
             assert(half > 190.0f && half < 200.0f);
             assert(!geometryExceeds(backWall,centre,half) && !geometryExceeds(backWall,{centre.x+100,centre.y,centre.z},half+10));
-            Facts f; f.kitCell = true; f.piece = Piece::kit; f.side = Side::back;
+            Facts f; f.kitCell = true; f.piece = Piece::kit; f.side = Side::back; f.standing = true;
             assert(decide(f).bucket == Bucket::keptFar);
             assert(geometryExceeds(backWall,{centre.x,centre.y-sy*80.0f,centre.z},50.0f));   // centre 60 units in front of the box
             assert(geometryExceeds(backWall,centre,half+40.0f));                           // a geometry larger than its OBND
@@ -987,6 +987,7 @@ void styleRules() {
     const auto rule = [](Piece piece,Side side,bool lane,bool above,bool overhead,bool gallery,bool kit = true,bool around = false,bool low = false,
         bool floor = false,bool interact = false) {
         Facts f; f.piece = piece; f.side = side; f.lane = lane; f.above = above; f.overhead = overhead; f.gallery = gallery; f.kitCell = kit;
+        f.standing = true;
         f.around = around; f.low = low; f.floor = floor; f.interact = interact;
         return decide(f);
     };
@@ -1141,6 +1142,65 @@ void styleRules() {
     assert(formatVoid(before,sizeof(before),v));
     v.window.floorKept = 5; v.window.wholeRadius = 300;
     assert(formatVoid(line,sizeof(line),v) && std::string(line) == before);
+    // ---- W5 fixes (2026-11-11) ----
+    // Roofs and ceilings by model name; walls under the roof are not roofs.
+    for (const char* roof : {"Architecture\\WhiteRun\\WRInteriors\\WRIntRoofOpen01.nif","Architecture\\WhiteRun\\WRInteriors\\WRIntRoofCorR01.nif",
+        "Architecture\\WhiteRun\\WRInteriors\\WRIntRoofAlcoveCap01.nif","Architecture\\WhiteRun\\WRInteriors\\WRIntRoofStr01BackCap.nif",
+        "architecture/whiterun/wrinteriors/WRIntCeilMid01.nif","Dungeons\\Nordic\\NorRmBgMidCeilingOnlyLow01.nif"}) assert(roofModel(roof));
+    for (const char* wall : {"Architecture\\WhiteRun\\WRInteriors\\WRIntRoofWall02.nif","Architecture\\WhiteRun\\WRInteriors\\WRIntLoftWallRoof01.nif",
+        "Architecture\\WhiteRun\\WRInteriors\\WRIntWallStr01.nif","Architecture\\Roofs\\WRIntWallStr01.nif",""}) assert(!roofModel(wall));
+    assert(!roofModel(nullptr));
+    const auto w5 = [](Piece piece,Side side,bool roof,bool above,bool overhead,bool standing,bool overCap,bool gallery = false,bool lane = false) {
+        Facts f; f.kitCell = true; f.piece = piece; f.side = side; f.roof = roof; f.above = above; f.overhead = overhead; f.standing = standing;
+        f.overCap = overCap; f.gallery = gallery; f.lane = lane;
+        return decide(f);
+    };
+    // The loft (feet 321.5): the roof slopes stand on the loft floor (bottom 320) on the back side: removed, gallery or not.
+    for (const Side side : {Side::across,Side::front,Side::back})
+        for (const bool gallery : {false,true}) {
+            const Decision d = w5(Piece::kit,side,true,false,false,true,false,gallery);
+            assert(d.treat == Treat::remove && d.bucket == Bucket::removedWhole && d.note == Note::roof);
+        }
+    assert(w5(Piece::object,Side::back,true,false,false,true,false).treat == Treat::keep); // a roof-named object is an object
+    // Under the loft edge (pose 172.9,-708,68; storey line 320): the loft floor WRIntLoftMid01 (bottom 310) is under the
+    // line less 8 but its bottom is above head height: removed on every side and lane state, kept only as a gallery back piece.
+    {
+        const Vec beside{172.9f,-708.0f,68.0f};
+        const Box loftEdge = box({-256,-128,310},{0,128,319});
+        assert(!(loftEdge.low.z >= 320.0f-aboveTolerance) && loftEdge.low.z >= beside.z+storeyHeadroom);
+        for (const Side side : {Side::across,Side::front,Side::back})
+            for (const bool lane : {false,true}) {
+                const Decision d = w5(Piece::kit,side,false,false,true,false,false,false,lane);
+                assert(d.treat == Treat::remove && d.bucket == Bucket::removedWhole && d.note == Note::overhead);
+            }
+        assert(w5(Piece::kit,Side::back,false,false,true,false,false,true).bucket == Bucket::keptGallery);
+        // Objects above head height but under the line (hanging game on the back wall) are not "overhead": kept.
+        assert(w5(Piece::object,Side::back,false,false,true,false,false).treat == Treat::keep);
+    }
+    // Back pieces: kept only standing on the storey and not far above the cap; otherwise cut at the cap, never "slicedFar".
+    assert(w5(Piece::kit,Side::back,false,false,false,true,false).bucket == Bucket::keptFar);
+    assert(is(w5(Piece::kit,Side::back,false,false,false,false,false),Treat::cap,Bucket::cappedFar) && w5(Piece::kit,Side::back,false,false,false,false,false).note == Note::cap);
+    assert(is(w5(Piece::kit,Side::back,false,false,false,true,true),Treat::cap,Bucket::cappedFar));
+    assert(w5(Piece::kit,Side::front,false,false,false,false,true).bucket == Bucket::slicedNear); // front pieces as before
+    assert(capHeight(true,310.0f,68.0f) == 310.0f && capHeight(false,488.55f,328.55f) == 678.55f && sliceHeight(Treat::cap,228,310,400) == 400);
+    // Mare numbers: a ground-floor back wall (32..320) stands and is within the cap (310 + 64); a loft gable WRIntRoofWall02
+    // (320..576) at the loft (feet 321.5, line 555) stands and is within 555 + 64; on the top storey with no storey line
+    // (feet 328.55) the cap is 678.55, and a 600-unit gable (328..928) would be cut there.
+    assert(32.0f <= 68.0f+standSlack && !(320.0f > 310.0f+capSlack));
+    assert(320.0f <= 321.5f+standSlack && !(576.0f > 555.0f+capSlack));
+    assert(928.0f > capHeight(false,488.55f,328.55f)+capSlack);
+    // FixedShaderStyle2: exact row, nan form, length.
+    Style2Sample two; two.seconds = 1234.5; two.frame = 99; two.haveView = true; two.capZ = 310;
+    two.window.buckets[static_cast<std::size_t>(Bucket::cappedFar)] = 3; two.window.notes[static_cast<std::size_t>(Note::roof)] = 40;
+    two.window.notes[static_cast<std::size_t>(Note::overhead)] = 12; two.window.galleryRemoved = 1;
+    assert(formatStyle2(line,sizeof(line),two));
+    assert(std::string(line) == "FixedShaderStyle2 t=1234.500 frame=99 capZ=310.00 cappedFar=3 roofRemoved=40 overheadRemoved=12 galleryRemoved=1 sample=window");
+    Style2Sample idle2;
+    assert(formatStyle2(line,sizeof(line),idle2) && std::string(line).find(" capZ=nan ") != std::string::npos);
+    Style2Sample big2; big2.seconds = 1e7; big2.frame = ~0ull; big2.haveView = true; big2.capZ = -1e7f;
+    for (auto& value : big2.window.notes) value = ~0ull;
+    big2.window.buckets[static_cast<std::size_t>(Bucket::cappedFar)] = ~0ull; big2.window.galleryRemoved = ~0ull;
+    assert(formatStyle2(line,sizeof(line),big2) && std::strlen(line) < sizeof(TraceRow));
     std::printf("style rules PASS\n");
 }
 } // namespace

@@ -80,6 +80,7 @@ struct Runtime {
     LineBudget shaderLines{shader::traceLines},shaderLookLines{shader::traceLines}; // wave 2 shader: FixedShader, FixedShaderLook
     LineBudget shaderVoidLines{shader::traceLines}; // wave 2 shader, third pass: FixedShaderVoid
     LineBudget shaderStyleLines{shader::traceLines}; // wave 2 shader, fourth pass: FixedShaderStyle (iCutStyle=1)
+    LineBudget shaderStyle2Lines{shader::traceLines}; // wave 2 shader, fourth pass W5 fixes: FixedShaderStyle2 (iCutStyle=1)
     double nextRig{},nextRoom{};
 };
 // Process lifetime, like the thin runtime: hidden roots and the trace worker
@@ -769,7 +770,7 @@ inline void configure(const Config& requested,const shader::Config& shaderReques
     if (shader::shaderMode(r.config.seeThroughMode))
         shader::configure(shaderRequested,logger,[](const char* text) { emit(runtime->shaderLines,text); },
             [](const char* text) { emit(runtime->shaderLookLines,text); },[](const char* text) { emit(runtime->shaderVoidLines,text); },
-            [](const char* text) { emit(runtime->shaderStyleLines,text); });
+            [](const char* text) { emit(runtime->shaderStyleLines,text); },[](const char* text) { emit(runtime->shaderStyle2Lines,text); });
     if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace || shader::tracing()) {
         const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines : 0u)+
             (r.config.hideTrace ? hideTraceLines : 0u)+(shader::tracing() ? shader::traceKinds()*shader::traceLines : 0u);

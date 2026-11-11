@@ -63,6 +63,7 @@ struct Runtime {
     void (*lookEmitter)(const char*){};
     void (*voidEmitter)(const char*){};
     void (*styleEmitter)(const char*){};
+    void (*style2Emitter)(const char*){};
     std::atomic<std::uint32_t> refusals{};
     std::atomic_bool pending{};  // hooks to be installed by the next main-thread camera frame
     std::atomic_bool active{};   // a snapshot is published
@@ -573,15 +574,17 @@ inline void trace(double now) {
     traceStyle(now,voids.window); // fourth pass: FixedShaderStyle, only with iCutStyle=1
 }
 inline bool tracing() { return runtime && runtime->config.trace; }
-// Shader trace line kinds: FixedShader, FixedShaderLook, FixedShaderVoid, and FixedShaderStyle with iCutStyle=1.
-inline unsigned traceKinds() { return runtime && runtime->config.style == stageOneStyle ? 4u : 3u; }
+// Shader trace line kinds: FixedShader, FixedShaderLook, FixedShaderVoid, and FixedShaderStyle and
+// FixedShaderStyle2 with iCutStyle=1.
+inline unsigned traceKinds() { return runtime && runtime->config.style == stageOneStyle ? 5u : 3u; }
 inline const char* status() { return !runtime ? "off" : runtime->installed ? "installed" : "pending"; }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1 and iSeeThroughMode=3.
 inline void configure(const Config& requested,void (*logger)(const char*),void (*emitter)(const char*),void (*lookEmitter)(const char*),
-    void (*voidEmitter)(const char*),void (*styleEmitter)(const char*)) {
+    void (*voidEmitter)(const char*),void (*styleEmitter)(const char*),void (*style2Emitter)(const char*)) {
     runtime = new Runtime;
     auto& r = *runtime;
     r.logger = logger; r.emitter = emitter; r.lookEmitter = lookEmitter; r.voidEmitter = voidEmitter; r.styleEmitter = styleEmitter;
+    r.style2Emitter = style2Emitter;
     bool adjusted = false;
     r.config = validate(requested,&adjusted);
     for (auto& budget : r.budgets) budget.limit = r.config.maxPerFrame;

@@ -26,7 +26,7 @@ struct StyleEntry {
     const RE::TESObjectREFR* ref{};
     std::uint32_t formId{},baseId{};
     unsigned long long frame{};      // last refresh; 0 = never
-    bool used{},lane{};
+    bool used{},lane{},roof{},interact{},floor{};
     int quadrant{-1};
     Family family{Family::other};
     Piece piece{Piece::flat};
@@ -51,7 +51,7 @@ struct StyleRuntime {
     unsigned censusTries{},refsNow{},refsLast{};
     Storey storey;
     float found{std::numeric_limits<float>::infinity()}; // lowest storey candidate of the frame being drawn
-    float base{},lineZ{};
+    float base{},lineZ{},capZ{};
     int quadrant{-1};
     unsigned long long lastFrame{};
     Budget shadowBudget;
@@ -109,7 +109,11 @@ inline void refresh(StyleEntry& e,RE::TESObjectREFR* ref,Kind kind) {
     auto& s = *r.style;
     const auto base = ref->GetBaseObject();
     const std::uint32_t baseId = base ? base->GetFormID() : 0u;
-    if (!e.frame || e.baseId != baseId) { e.baseId = baseId; e.family = modelFamily(modelPath(base)); }
+    if (!e.frame || e.baseId != baseId) {
+        e.baseId = baseId;
+        const char* path = modelPath(base);
+        e.family = modelFamily(path); e.roof = roofModel(path);
+    }
     Box box;
     bool obnd = false;
     if (const auto root = ref->Get3D()) {
@@ -142,6 +146,11 @@ inline void refresh(StyleEntry& e,RE::TESObjectREFR* ref,Kind kind) {
     f.floor = f.around && box.high.z <= feet.z+floorTop;
     // Every object form type the cursor can activate (all of kindOf's objects but Tree).
     f.interact = kind == Kind::object && base && base->GetFormType() != RE::FormType::Tree;
+    // W5 fixes: roofs and ceilings never kept; a back piece kept only standing on this storey and not far above its cap.
+    f.roof = e.roof;
+    f.standing = box.valid && box.low.z <= s.base+standSlack;
+    f.overCap = box.valid && box.high.z > s.capZ+capSlack;
+    e.interact = f.interact; e.floor = f.floor;
     e.decision = decide(f);
     e.frame = r.frame;
     ++s.refsNow;
@@ -212,25 +221,34 @@ inline void styledPass(void* pass,std::size_t shaderClass,Vec eye) {
         d = e->decision;
         // A back-side keep rests on the base OBND; a pass whose geometry the box does not account
         // for gets the flat cut instead (review of 30503e0, MINOR-3, as corrected after 2f5d9f6, MAJOR-1).
-        if ((d.bucket == Bucket::keptFar || d.bucket == Bucket::keptGallery) && geometryExceeds(e->box,bound.centre,bound.radius))
-            d = {Treat::flat,Bucket::fallback};
+        // W5 gallery fix: a gallery keep whose geometry exceeds its box is removed like the rest of the
+        // storey above (an interactable gets the flat cut, the floor under the player stays), never
+        // flat-cut as a fallback (that sliced gallery objects).
+        if (d.bucket == Bucket::keptFar && geometryExceeds(e->box,bound.centre,bound.radius)) d = {Treat::flat,Bucket::fallback};
+        else if (d.bucket == Bucket::keptGallery && geometryExceeds(e->box,bound.centre,bound.radius)) {
+            d = e->floor ? Decision{Treat::flat,Bucket::fallback} : e->interact ? Decision{Treat::flat,Bucket::interactCut} :
+                Decision{Treat::remove,e->piece == Piece::object ? Bucket::removedObject : Bucket::removedWhole};
+            ++sw.galleryRemoved;
+        }
     }
     if (below && d.treat != Treat::remove) { skipped(Skip::below); return; }
-    const bool sliced = d.treat == Treat::flat || d.treat == Treat::slice || d.treat == Treat::low;
-    const float height = sliced ? sliceHeight(d.treat,r.view.planeZ,s.lineZ) : r.view.planeZ;
+    const bool sliced = d.treat == Treat::flat || d.treat == Treat::slice || d.treat == Treat::low || d.treat == Treat::cap;
+    const float height = sliced ? sliceHeight(d.treat,r.view.planeZ,s.lineZ,s.capZ) : r.view.planeZ;
     if (d.treat == Treat::keep) { ++sw.buckets[static_cast<std::size_t>(d.bucket)]; return; }
     if (sliced && bound.centre.z+bound.radius <= height) { ++sw.underLine; return; }
     const Entry* entry = shaderFor(0);
     if (!entry || !entry->patched) { skipped(Skip::shader); return; }
     if (!r.budgets[0].take()) { skipped(Skip::cap); return; }
     ++sw.buckets[static_cast<std::size_t>(d.bucket)];
+    ++sw.notes[static_cast<std::size_t>(d.note)];
     if (d.treat == Treat::remove) {
         noteRemoved(geometry);
         bindStyle(*entry,s.removeBuffer,shaderClass,true);
         return;
     }
     if (d.treat == Treat::low) ++sw.slicedLow;
-    if (e ? e->side == Side::back : false) ++sw.slicedFar;
+    // A back piece cut at its cap is counted on FixedShaderStyle2 cappedFar, not as slicedFar.
+    if (d.bucket != Bucket::cappedFar && (e ? e->side == Side::back : false)) ++sw.slicedFar;
     // An interactable given the flat cut instead of a removal is counted on interactCut only.
     // ... and a tall object around the player given the flat cut, on fallback (aroundCut).
     if (d.bucket != Bucket::interactCut && d.bucket != Bucket::aroundCut && (e ? e->piece == Piece::object : kind == Kind::object)) ++sw.slicedObjects;
@@ -284,6 +302,7 @@ inline void styleFrame() {
     if (!resumed) s.storey.update(s.found,s.base,r.view.planeZ,r.view.seconds);
     s.found = std::numeric_limits<float>::infinity();
     s.lineZ = s.storey.line(r.view.planeZ);
+    s.capZ = capHeight(s.storey.known,s.lineZ,s.base);
     s.quadrant = quadrantOf(r.view.feet,r.view.eye);
     s.refsLast = s.refsNow; s.refsNow = 0;
     s.current = 1u-s.current;
@@ -365,8 +384,11 @@ inline void traceStyle(double now,const VoidWindow& effect) {
     sample.storeyKnown = s.storey.known; sample.storeyZ = s.storey.z; sample.base = s.base; sample.lineZ = s.lineZ;
     sample.refs = s.refsLast; sample.moves = s.storey.moves; sample.window = s.window;
     sample.fxFloorKept = effect.floorKept; sample.fxWholeRadius = effect.wholeRadius;
+    Style2Sample second;
+    second.seconds = now; second.frame = r.frame; second.haveView = sample.haveView; second.capZ = s.capZ; second.window = s.window;
     s.window = {};
     char line[sizeof(TraceRow)]{};
     if (formatStyle(line,sizeof(line),sample)) r.styleEmitter(line);
+    if (formatStyle2(line,sizeof(line),second)) r.style2Emitter(line);
 }
 } // namespace skycrpg::camera::fixed::shader

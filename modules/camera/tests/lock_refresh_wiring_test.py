@@ -435,7 +435,8 @@ assert "s.window = r.windows[0];" in trace_body and "look.effect = r.windows[1];
 assert '"relPlane=%.2f passes=%llu cut=%llu byClass=%llu,%llu peak=%u cap=%u uploads=%llu shaders=%u,%u,%u created=%llu open=%llu "' in cut_policy
 assert "LineBudget shaderLines{shader::traceLines},shaderLookLines{shader::traceLines};" in spike and \
     "[](const char* text) { emit(runtime->shaderLookLines,text); },[](const char* text) { emit(runtime->shaderVoidLines,text); },\n" \
-    "            [](const char* text) { emit(runtime->shaderStyleLines,text); });" in configure_spike and \
+    "            [](const char* text) { emit(runtime->shaderStyleLines,text); },[](const char* text) { emit(runtime->shaderStyle2Lines,text); });" \
+    in configure_spike and \
     "(shader::tracing() ? shader::traceKinds()*shader::traceLines : 0u)" in configure_spike
 assert 'shaderCut.colorText = read("FixedCameraSpike","sVoidColor","0,0,0");' in gate and \
     "const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;" in cut_policy
@@ -541,7 +542,20 @@ assert "if (!runtime || !runtime->style || !cell || !thin::onMain()) return;" in
 assert trace_body.index("if (formatVoid(line,sizeof(line),voids)) r.voidEmitter(line);") < trace_body.index("traceStyle(now,voids.window);")
 assert "if (!r.style) return;" in style_body("inline void traceStyle(", "} // namespace")
 assert "LineBudget shaderStyleLines{shader::traceLines};" in spike
-assert "inline unsigned traceKinds() { return runtime && runtime->config.style == stageOneStyle ? 4u : 3u; }" in cut
+assert "inline unsigned traceKinds() { return runtime && runtime->config.style == stageOneStyle ? 5u : 3u; }" in cut
+assert "LineBudget shaderStyle2Lines{shader::traceLines};" in spike
+# W5 fixes: FixedShaderStyle2 after FixedShaderStyle; the style row's format is unchanged; roofs never kept; kit overhead removed;
+# back pieces kept only standing and within the cap, else cut at the cap and not counted as slicedFar; gallery keeps that exceed
+# their box are removed, never flat-cut.
+trace_style = style_body("inline void traceStyle(", "} // namespace")
+assert trace_style.index("if (formatStyle(line,sizeof(line),sample)) r.styleEmitter(line);") < trace_style.index("if (formatStyle2(line,sizeof(line),second)) r.style2Emitter(line);")
+assert '"FixedShaderStyle2 t=%.3f frame=%llu capZ=%.2f cappedFar=%llu roofRemoved=%llu overheadRemoved=%llu galleryRemoved=%llu sample=window",' in style_policy
+rules_fn = style_policy[style_policy.index("constexpr Decision rules(const Facts& f) {"):style_policy.index("constexpr Decision decide(const Facts& f) {")]
+assert rules_fn.index("if (f.roof && !object) return {Treat::remove,Bucket::removedWhole,Note::roof};") < rules_fn.index("if (f.above || (!object && f.overhead)) {")
+assert "f.standing && !f.overCap ? Decision{Treat::keep,Bucket::keptFar} : Decision{Treat::cap,Bucket::cappedFar,Note::cap};" in rules_fn
+assert "if (d.bucket != Bucket::cappedFar && (e ? e->side == Side::back : false)) ++sw.slicedFar;" in pass_fn
+assert "else if (d.bucket == Bucket::keptGallery && geometryExceeds(e->box,bound.centre,bound.radius)) {" in pass_fn and \
+    "Decision{Treat::remove,e->piece == Piece::object ? Bucket::removedObject : Bucket::removedWhole};" in pass_fn
 for key in ("iCutStyle", "bCutKeepFarGallery", "bCutStyleShadows"):
     assert gate.count('"FixedCameraSpike","' + key + '"') == 1 and ("\n" + key + "=") in ini, key
 assert "\niCutStyle=1\n" in ini and "\nbCutKeepFarGallery=0\n" in ini and "\nbCutStyleShadows=1\n" in ini
