@@ -352,6 +352,9 @@ void loadSettings() {
         shaderCut.effect = flag("FixedCameraSpike","bShaderCutEffect",1);
         shaderCut.voidColor = flag("FixedCameraSpike","bVoidColor",1);
         shaderCut.colorText = read("FixedCameraSpike","sVoidColor","0,0,0");
+        // Third pass: on by default in mode 3.
+        shaderCut.hideSky = flag("FixedCameraSpike","bVoidHideSky",1);
+        shaderCut.effectWhole = flag("FixedCameraSpike","bShaderCutEffectWhole",1);
         fixed::configure(f,shaderCut,settings,cursorSettings.enabled ? cursorSettings.toggleKey : -1,
             std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera_FixedSpike.log",log,thinGoal,fixedPreCollision,fixedCause);
     }

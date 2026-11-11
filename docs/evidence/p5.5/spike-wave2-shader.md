@@ -4,6 +4,8 @@
 
 **Second pass (2026-11-10, base `4a3b722`).** Owner decision after batch W2S: void colour pure black to start, fog cards and light shafts above the cut removed, ENB or Community Shaders still refuse everything. Built: the void colour override and the Effect-class cut, both behind new keys that default on in `iSeeThroughMode=3` only. Everything about it is in **"Second pass: void colour and Effect-class cut"** below; the sections before it describe the first pass and stay valid except where that section says otherwise. Its game rows are **NOT_RUN**.
 
+**Third pass (2026-11-10, base `6397406`).** Batch W3 showed the void dark but not black. Root cause: in interiors flagged Show Sky the engine draws the exterior sky dome over the void. Built: the sky dome hidden while the cut is active (`bVoidHideSky`), and Effect meshes centred in the upper half under the plane or higher clipped whole (`bShaderCutEffectWhole`, the wedge). See **"Third pass: what paints the void, and the wedge"** below. Its game rows are **NOT_RUN**.
+
 **Status.** Source, portable tests, wiring audit, offline binary audit and offline shader-archive audit are complete and uncommitted. The Windows `/W4 /WX` build is **NOT_RUN** (no MSVC here). **Every in-game row is NOT_RUN**: nothing was launched, no shader was created on a device. The mode is default-off: with `iSeeThroughMode` absent or 0..2 no shader-cut runtime is allocated and no hook is installed.
 
 Each claim is marked **Source** (file:line, binary RVA, Address Library ID, the shipped shader archive, or a URL and revision) or **Hypothesis**. RVAs are relative to image base `0x140000000` of `SkyrimSE.exe`, SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`; IDs are resolved through `session-p4/stage-camera-rc1/Data/SKSE/Plugins/versionlib-1-7-104-0.bin`, SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842` (ID *n* at file offset `96 + 4n`). Shader archive: `Data/Skyrim - Shaders.bsa`, SHA-256 `fd1ba630f443353ed21ed4ca0380968f9c7091c8434518ea3cc79bc6d38c18e7`, one uncompressed file `shadersfx\shaders011.fxp` (67,768,128 bytes at archive offset 0x66). Disassembly: `objdump -d -M intel`. Scratch tools (ID resolver, PE reader, a scanner for vtable calls on a global COM object, a DXBC disassembler, a reference checksum, a ctypes wrapper for vkd3d-shader) stayed outside the worktree.
@@ -396,9 +398,9 @@ Method: `objdump -d -M intel` over the whole image (scratch, deleted after use);
 | ID 36558 = RVA 656D10, ID 77249 = 100A3F0 (`SetClearColor`), 77250 = 100A460 (`RestoreClearColor`), 77251 = 100A4C0, 77247 = 100A050, 36559 = 656E60. | Source: Address Library. |
 | Bytes 656D8B..656DAF: `f30f101de5d0d702 f30f1015d9d0d702 f30f100dcdd0d702 488d0d96b1cd02 e841369b00` = `movss xmm3,[3D3E78]`, `movss xmm2,[3D3E74]`, `movss xmm1,[3D3E70]`, `lea rcx,[3331F40]` (renderer, ID 411393), `call 100A3F0`. Alpha: 656D7D..656D85 stores 1.0 (RVA 1B5BE28) to `[rsp+0x20]`. | Source. These 36 bytes are `voidSiteBytes`; the call's displacement `0x009B3641` is checked by test. |
 | `SetClearColor` (100A3F0..100A459): saves the old colour from `rcx+0x27D8..0x27E4` to 3331F20..2C, then stores `xmm1`, `xmm2`, `xmm3` (via `xmm5`) and `[rsp+0x28]` to `rcx+0x27D8..0x27E4`. So it is `void(Renderer*, float r, float g, float b, float a)` in the Windows x64 convention (fourth float in `xmm3`, fifth argument on the stack at `[rsp+0x28]` on entry), which is exactly how `hookClearColor` is declared and how it calls the original. First 16 bytes `f30f1081d8270000 0f28ebf30f11051d` (`clearColorPrologue`). | Source. |
-| The fog-colour global 3D3E70..78: writers 0FFB9E/0FFBA6 (initialisation), 41227F/41228B (ID 26229), 4126C5/4126D1 and 4127DE/4127EE (ID 26230); the **only** readers are 656D8B/656D93/656D9B. No other instruction in `.text` references 3D3E60..3D3E8F. | Source: every RIP-relative operand in the disassembly. Nothing here writes the global. |
+| The fog-colour global 3D3E70..78: writers 0FFB9E/0FFBA6 (initialisation), 41227F/41228B (ID 26229), 4126C5/4126D1 and 4127DE/4127EE (ID 26230); the **only** readers are 656D8B/656D93/656D9B. No other instruction in `.text` references 3D3E70..3D3E7B (the three floats). *Corrected in the third pass after review (MINOR-1): an earlier version of this row said 3D3E60..3D3E8F; other addresses in that wider window are referenced, so only 3D3E70..3D3E7B is claimed.* | Source: every RIP-relative operand in the disassembly. Nothing here writes the global. |
 | ID 36558 has three callers: 656834 and 656A78 in ID 36555 (the frame function), 656CC8 in ID 36557. No absolute pointer to it exists in the image (only its `.pdata` entry). ID 36555's callers: ID 36564 (659319), IDs 19121/19122 (2C65DA, 2C6890) and 1A2B13 (function 1A28F0, no ID found). ID 36559 has one caller, 656E2D in ID 36558. | Source. |
-| **Where the colour goes.** Inside ID 36559, which 36558 calls right after the call at 656DAA: 65752C sets (0.5, 0.5, 0, 0), clears the target returned by 153C900 (ID 77251) and restores (657563) the colour back; 65757E binds render target 1 to slot 0 and **65758A clears it with the colour set at 656DAA** (77251 reads `renderer+0x27D8`); **6575E5 sets (0, 0, 0, 0)** (`xmm6` is zeroed at 657057 and not written again before) and nothing restores it in that call. No jump from before 657511 lands after it, and there is no `ret` in 656E60..657750. | Source. So the substituted colour is used by one explicit clear, of the main colour target, and does not outlive the call to 36559; that it is not also used by a pending-clear flush (ID 77247 reads `renderer+0x27D8` at 100A127 for slots set to clear) between 656DAA and 65752C is **Hypothesis**: the functions 36559 calls before 657511 were not all followed. |
+| **Where the colour goes.** Inside ID 36559, which 36558 calls right after the call at 656DAA: 65752C sets (0.5, 0.5, 0, 0), clears the target returned by 153C900 (ID 77251) and restores (657563) the colour back; 65757E binds render target 1 to slot 0 and **65758A clears it with the colour set at 656DAA** (77251 reads `renderer+0x27D8`); **6575E5 sets (0, 0, 0, 0)** (`xmm6` is zeroed at 657057 and not written again before) and nothing restores it in that call. No jump from before 657511 lands after it, and there is no `ret` in 656E60..657750. | Source. So the substituted colour is used by one explicit clear, of the main colour target, and does not outlive the call to 36559; that it is not also used by a pending-clear flush (ID 77247 reads `renderer+0x27D8` at 100A127 for slots set to clear) between 656DAA and 65752C is **Hypothesis**: the functions 36559 calls before 657511 were not all followed, nor were indirect calls. The binary review (2026-11-10, MINOR-2) found one unpaired pending-clear flush path, **6571B3 -> 1541755**, between the two: if it flushes a render target that was marked "clear" with the renderer's colour, that target clears with the void colour (black) instead of the fog colour while the cut is active. Worst case a shadow map or the water-reflection target clears black; compare shadows and water reflections with the cut on and off in game. **Hypothesis**, not seen in W3. |
 | Explicit render-target clears with the renderer's colour (ID 77251) are called only at 657557, 65758A, 657634 (ID 36559) and 153E7AA..153E826 (ID 107199, which sets and restores its own colour). | Source: call scan. |
 | `SetClearColor` has 32 call sites in 28 functions. 22 functions pair it with `RestoreClearColor` (they set their own colour and put the previous one back). Unpaired: ID 16335, ID 36555 (65697F, black, after the world render), ID 36558 (656DAA, ours), ID 36559 (6575E5, zero), ID 39039, ID 77484, ID 105674, and 1546853 (a chunk whose restore is in another chunk, 1546C0F). Each passes its own colour; none reads 3D3E70. | Source. |
 | Other views. The water reflections are rendered from 36559's first part through ID 107140 (65721A), which sets and restores its own colour. The local map, the inventory and magic-menu 3D scenes and loading screens are not rendered through ID 36558 (its callers above); while any menu is open the rig is ineligible, so the cut's `active` is false and the hook passes the engine's colour anyway. A save-game screenshot taken while the cut is active, if the engine renders it through 36555 (IDs 19121/19122 look like such a path), would show the black void the player sees. | Calls: Source. Which engine function draws each named view, and the screenshot path: **Hypothesis**. |
@@ -535,7 +537,7 @@ What each screenshot should show: the floor, the player and the lit wooden struc
 | A brighter or darker exposure | Eye adaptation (`ISHDRDownSample*LightAdapt`) averages the frame; half the frame turning black lowers the average, so the scene is probably brightened | The cave looks brighter than in W2S at the same pose; possibly blown highlights on lit beams. Hypothesis. |
 | Bloom halo around lights on black | Bloom is image space, unchanged | Soft glows around torches remain, more visible on black. |
 | Effect meshes of placed objects cut at the plane | Same rule as their Lighting meshes | A glow or flame of a placed object above the plane ends at the plane with it. |
-| A black void in the save-game screenshot | If the save screenshot renders through ID 36555 while the cut is active | Only cosmetic. Hypothesis. |
+| A black void in the save-game screenshot | If the save screenshot renders through ID 36555 while the cut is active (IDs 19121/19122 call 36555) | Cosmetic but **persisted in the save file's thumbnail** (review MINOR-3). Hypothesis; check a quicksave thumbnail taken with the cut active. The third pass's sky hide applies to that frame too. |
 | First-use hitches | Up to 114 more patched shaders created on first use | `fxCreated` > 0 in the first windows. |
 
 ### What this work saw that bears on 1b and the post pass (not built)
@@ -571,6 +573,177 @@ What each screenshot should show: the floor, the player and the lit wooden struc
 - `session-p55/routes/package_checks.py`: `shader_faults` should take FCS-71..88 except the informative FCS-75 and FCS-86; S1-like install checks should require exactly one `^FixedCameraSpike shader look installed void=installed .* effect=installed ` line and fail on FCS-80..82; new look rows: `voidApplied>0` and `voidInactive=0` in active windows, `voidApplied=0` in ineligible windows, `fxCut>0` at the cave heading 45, `fxShaders` second number 0.
 - `session-p55/routes`: route variants with `bShaderCutEffect=0`/`bVoidColor=0` reproduce `4a3b722` (A/B for the owner).
 
+## Third pass: what paints the void, and the wedge (2026-11-10)
+
+Base `6397406`, same worktree and branch. Input: batch W3 on `6397406` (all clean; runs `session-p55/routes/runs/p55-shader-*-W3`, screenshots `session-p4/autotest/runs/batch-p55-shader-*-W3-00/screenshots/`, sheets `session-p55/results/wave3/`). The override installed and applied (`voidApplied=7` per window, `voidColor=0.000,0.000,0.000`), yet void pixels were not black. Method as in the earlier passes: `objdump` of the functions named below (scratch, deleted), the Address Library, a PE reader for bytes, RTTI and `.pdata`; the shader archive disassembled with vkd3d-shader (`libvkd3d-shader.so.1.19.0` of the Steam Linux Runtime, through ctypes, target D3D assembly); CELL, LGTM and IMGS records read from the five masters the way `p55-instrument/tools/coverage/cell_census.py` reads them.
+
+### Measured (screenshots, sRGB 0..255; my own pixel count over every fourth pixel)
+
+| Cell (W3) | Void, features off | Void, black clear | Uniformity | `nativeColor` (W3 trace) = fog far × 0.8333 |
+| --- | --- | --- | --- | --- |
+| EmbershardMine01 | (77,91,85), 43% of the frame at h0 | (19,39,47), 52% at h0, every void pixel identical | exact | 0.399,0.369,0.275 (template MineTemplateMedium fog far (122,113,84)) |
+| WhiterunBanneredMare | not run | (32..34, 47..49, 54..55) | ±1 | 0.288,0.271,0.232 (template WhiteRunIntLightingTemplate fog far (88,83,71)) |
+| BleakFallsBarrow01 | not run | (47..52, 53..57, 58..63), a vertical gradient (s-bfb-h3: 47 at the top, 49 at the bottom of column 5) | gradient | 0.245,0.324,0.317 and 0.314,0.451,0.441 (cell fog far (75,99,97); the second while the camera sees the other lighting) |
+
+The brief's "nativeColor 0.245,0.324,0.317 in the Mare" is Bleak Falls Barrow's; the Mare's is 0.288,0.271,0.232 (Source: the three W3 logs).
+
+Two facts constrain the cause. (1) The residual is **cool** (blue > green > red) in all three cells, while every fog colour these cells use is warm or neutral; with the features off the warm clear colour plus the residual shows as grey-green. (2) In Bleak Falls Barrow 3-4% of all pixels are exactly (0,0,0), and they lie on geometry (s-bfb-h0: x 38..1922, y 76..1108, inside rock): nothing adds a constant to every pixel after the scene, so the residual is added to the **void pixels only**, before or at image space.
+
+### Candidates excluded (Source: shader archive and binary)
+
+| Pass | Why it is not the residual |
+| --- | --- |
+| Cell fog in image space, `ISSAOCompositeFog` / `ISSAOCompositeSAOFog` (fxp entries 16002/16004; 16000, the third SAO composite, has no fog) | `fog = min(pow(saturate(dist·cb2[0].y − cb2[0].x), cb2[0].z), cb2[0].w)`, colour `lerp(cb2[1], cb2[2], fog)`, `lerp(scene, colour, fog)·cb2[1].w`, applied only where `depth < 0.999999` (16002: `lt r4.x, r3.z, l(9.99998987e-01)` then `movc`; 16004 the same at its line 75). Void depth is 1.0: never fogged. Its other additive term (`cb2[9].yzw`, noise-modulated) is weighted by `1 − smoothstep(distance from cb2[5].xyz / cb2[8].y)`, 0 beyond `cb2[8].y`; that this covers the far plane is Hypothesis (the constants were not read). |
+| Tonemap `ISHDRTonemapBlendCinematic(Fade)` (entries 15846/15848) | Hue-preserving tonemap, then saturation, tint (`lum·tint`, 0 for black), `avg + contrast·(brightness·c − avg)` (a grey lift only when contrast < 1) and the global fade colour. Nothing per pixel by depth, and BFB's pure-black geometry pixels prove no global lift. |
+| Depth of field "Fogged" variants (15828/15830) | They blur; no colour is added. |
+| The sky in interior mode 1 | Sky::Update for mode 1 (412DF0, ID 26232) copies the fog-far colour into sky upper, lower, horizon and sun (413285..4132E1): warm, not cool; and SetMode hides the root in mode 1 anyway (below). |
+
+### The pass that paints the void: the sky dome of a Show Sky interior (Source, except where marked)
+
+1. **Mode.** When an interior cell attaches, function 36E660 (ID 22824) at 36E691..36E6BF reads `cell+0x40` (CELL DATA flags): no 0x80 (Show Sky) → `Sky::SetMode(1)`; 0x80 without 0x100 (Use Sky Lighting) → mode 2 ("sky dome only"); both → mode 3. **EmbershardMine01 (0x83), BleakFallsBarrow01 (0x83) and WhiterunBanneredMare (0xA1) all have 0x80 and not 0x100: mode 2.** 271 of 759 interior cells in the masters carry 0x80 (one of them also 0x100).
+2. **The dome is shown.** `Sky::SetMode` (ID 26222, 411660): `r14b = (mode − 2) ≤ 1`; at 411794..4117C7 the root (`Sky+0x08`) gets `flags+0xF4` bit 0 (`kHidden`) cleared when `r14b && !(Sky+0x1DC & 0x80)` (HideSky), set otherwise. So mode 1 interiors draw no sky; modes 2 and 3 do.
+3. **Its colours are the exterior weather's.** Sky::Update in mode 2 (413384..413491) fills all 17 sky colours from the current and last weather (`Sky+0x48/+0x50`) through 414CF0, then (413778..41387D) replaces only sunlight (+0xD8), ambient (+0xCC), fog near (+0xB4) and fog far (+0x138) from the cell's lighting (or the lighting override). Sky upper, lower and horizon stay the weather's: blue at day, which explains the cool residual and why it does not follow any cell record. The clear colour is still fog far × 0.8333 (412681..4126D1), which is why `nativeColor` matches the cell.
+4. **It covers exactly the void.** Every BSSkyShader vertex shader (fxp entries 60..68) writes `o0 = r1.xyzz` (z = w, depth 1.0 after the divide); the dome technique (VS 68, PS 77) outputs the blend of three colour rows by the vertex weights (`cb2[13..15]`) times `cb2[12].w`, plus `cb2[0].y` and a dither, alpha `v.w·cb2[13].w`. Geometry is nearer than 1.0 everywhere it exists, so only void pixels receive it.
+5. **Formula (Hypothesis for the blend):** HDR void = α·dome + (1 − α)·clear, then the cell's image space. The clear colour's visible contribution (features off vs on) shows α < 1 over the lower dome that a camera pitched down 55° sees; the BFB gradient is the dome's vertex-colour gradient. With black clear the void is α·dome, the weather's lower-sky colour, scaled by each cell's eye adaptation and imagespace (BFB `BleakFallsBarrowImagespace01`: saturation 0.95, contrast 1.2, tint 0.25 toward (0.67,0.76,0.98), which is why BFB's residual is greyer and brighter; Mare `WhiteRunIntIS`: contrast 1.22; Embershard `DefaultImageSpaceDungeon`: all 1, no tint).
+
+What would refute it: a mode 1 interior (no Show Sky, e.g. `WhiterunJorrvaskrBasement` 0x21 or `WhiterunDragonsreachBasement` 0x21) whose void is not exactly the clear colour on the build `6397406`. That is the cheapest in-game check of this section (NOT_RUN).
+
+### What was built
+
+| File | Change |
+| --- | --- |
+| `include/fixed_spike_shader_sky_policy.h` (new) | The audited Sky facts (singleton pointer ID 401652 = 31E0D80, `SetMode` ID 26222 = 411660, its 47-byte head and the 57-byte show/hide rule at 411794), field offsets (`root` +0x08, `mode` +0x1BC, `flags` +0x1DC, HideSky 0x80, NiAVObject flags +0xF4, hidden bit 1), `skySiteCheck`, `engineShowsSky`, the per-frame `skyStep` table, `wholeConstant`, `wholeEffect`, and the `FixedShaderVoid` row. Included at the end of `fixed_spike_shader_policy.h`. |
+| `src/fixed_spike_shader_sky.h` (new) | `installSky` (guards, FCS-89) and `settleSky` (the one engine write: the root's hidden bit). Included at the end of `fixed_spike_shader.h`. |
+| `include/fixed_spike_shader_policy.h` | FCS-89, FCS-90; `bVoidHideSky` and `bShaderCutEffectWhole` in `Config`. Format strings of `FixedShader` and `FixedShaderLook` untouched. |
+| `src/fixed_spike_shader.h` | `ownerSkip` also reports the owner's form ID; `consider` keeps the bound and, for an Effect pass that `wholeEffect` selects, uploads `wholeConstant`; `commit` calls `installSky` after the second-pass line and logs one more line; `settleSky` from `publish`, the main-thread branch of `deactivate`, and `frameStart` after a latch; the `FixedShaderVoid` row in `trace`. |
+| `src/fixed_spike.h` | One more line budget (`shaderVoidLines`), the third emitter, writer rows ×3 for the shader trace. |
+| `src/plugin.cpp`, `config/SkyCRPG_Camera.ini` | Two keys inside the existing gate, documented. |
+| `tests/fixed_spike_shader_policy_test.cpp`, `tests/lock_refresh_wiring_test.py` | New rows below; an eighth wiring section. |
+
+**Off equals `6397406`.** Outside mode 3 nothing of this exists. In mode 3 with `bVoidHideSky=0` and `bShaderCutEffectWhole=0`: no engine byte is written beyond the second pass's, the `FixedShader` and `FixedShaderLook` rows are byte-compatible and count the same, and the additions are one log line (`shader void installed sky=off effectWhole=off`) and the `FixedShaderVoid` rows when tracing.
+
+### Sky hide: hook sites, bytes, rules
+
+No code is patched. Guard (`installSky`, main thread, in `commit` after the void colour): ID 401652 → 31E0D80 (check 1), ID 26222 → 411660 (check 2), `SetMode`'s first 47 bytes `40 57 48 83 ec 30 81 89 dc 01 00 00 00 01 00 00 8d 42 fe 83 f8 01 48 89 6c 24 50 8b 81 bc 01 00 00 8b ea 4c 89 74 24 28 48 8b f9 41 0f 96 c6` (check 3: the HideSky/mode fields and the mode-2/3 rule), and 411794..4117CC `45 84 f6 74 11 8b 87 dc 01 00 00 c1 e8 07 a8 01 75 04 b2 01 eb 02 32 d2 48 8b 4f 08 48 85 c9 74 18 8b 81 f4 00 00 00 84 d2 75 05 83 c8 01 eb 03 83 e0 fe 89 81 f4 00 00 00` (check 4: root at +8, its flags at +F4, bit 0). Any difference: FCS-89 `check=N`, the sky is left to the engine, the cut and the void colour unchanged.
+
+Per main-thread frame (`settleSky(want)`, `want` = the cut published this frame): read `Sky*` from 31E0D80 (never calling the accessor, which would create it), its root, mode and flags, and the root's flags. Then:
+
+| Wanted, root present, engine shows the sky (mode 2/3, no HideSky) | Step |
+| --- | --- |
+| we hold another root | `leave` (the old one is not touched again; the next frame hides this one) |
+| hidden bit clear | `hide`: set bit 0, remember the root |
+| bit set and we hold it | `keep` |
+| bit set, not ours | `none` (someone else hid it; never restored by us) |
+| **Otherwise** (not wanted, no root, or the engine itself hides the sky) | |
+| we hold nothing | `none` |
+| same root, the engine's rule says shown, bit still set | `restore`: clear bit 0 (only when not wanted) |
+| anything else | `leave`: forget the hold, bit as the engine left it (FCS-90 once, informative) |
+
+So the bit is set only on frames that published the cut, and put back on the first main-thread frame that did not (any ineligible frame, a menu, F8, first person, outdoors, a latch, a lifecycle exit seen on the main thread), and only when SetMode's own rule still says "shown". A cell change runs SetMode, which rewrites the bit for the new cell; the hold is then dropped without touching it. The hidden state is one the engine produces itself (mode 1 interiors, or HideSky).
+
+Side effects (Hypothesis): while the cut is active, every view that culls the sky root in a Show Sky interior loses the sky too (a water reflection of the sky in such a cell shows the clear colour); a save-game thumbnail taken in that frame shows the black void.
+
+### The wedge at heading 135 (s-cave-h1)
+
+Identified from the W3 trace and the cell's records (Hypothesis for the exact reference; the new trace names it):
+
+- Shader class **Effect** (it went away with the Effect cut where the whole glow was above the plane: the round blue halo at h0; at h1 in the features-off shot the same blue glow sits over the corridor).
+- It **was cut**, not skipped: every active cave window has `fxPasses=84 fxCut=14 fxSkipBelow=56 fxSkipOwner=14 fxShaders=2,0,0 fxSkipShader=0`, i.e. per frame 2 Effect passes cut, 2 ownerless, 8 below the plane, 0 unaudited. What remains is the part **under** the plane, by design: a camera-facing card cut by a horizontal plane ends in a straight edge, bright against the dark void.
+- References: the only Effect-model statics near the arrival pose (player 2487,1485,9241; plane 9420.25) are two **FXGlowFillRoundBrt** (`Effects\Ambient\FXGlowFillRndLitBrt.nif`): **0008F94E** at (2449,1197,9392), 291 units from the player, 28 units under the plane, and **0008F94D** at (2196,859,9423), on the plane; two cut passes per frame match them. The other candidates are a Light (`DefaultSunlightBounceAmb01NS` 0008F94C, never cut) and `FXMistLow01` (0008FB47, MSTT at 9153, far under the plane; its particles are a likely source of the 2 ownerless passes, Hypothesis).
+
+Decision: **cut whole**. A selected Effect pass (one the cut would clip, with all its rules: plane reach, owner, kind, audited bytecode, budget) whose bound centre lies above the midpoint between the feet and the plane (`wholeEffect`: centre z > (planeZ + feet z) / 2, 9330.6 here) is drawn with the constant (0, −1), so its clip distance is −1 for every vertex and nothing of it is rasterised. Both glows (centres 9392 and 9423) go whole; floor mist and a fire in a floor brazier (centre lower) keep the plane cut, so their lower part stays. `bShaderCutEffectWhole=0` returns to the plane cut. The patched Effect shaders and the constant buffer are the second pass's; nothing new is bound.
+
+### Settings (`[FixedCameraSpike]`, read only when `bEnabled=1`, used only in `iSeeThroughMode=3`)
+
+| Key | Default | Range | Meaning |
+| --- | --- | --- | --- |
+| `bVoidHideSky` | 1 | 0/1 | while the cut is active, the sky root carries the hidden bit (no dome over the void in Show Sky interiors) |
+| `bShaderCutEffectWhole` | 1 | 0/1 | a selected Effect pass centred above the midpoint of feet and plane is not drawn at all instead of being cut at the plane |
+
+### Log line (once, after `shader look installed …`, which is unchanged)
+
+```
+FixedCameraSpike shader void installed sky=%s effectWhole=%s
+```
+
+`sky`: `off` (key 0), `installed`, `refused` (FCS-89); `pending` cannot appear here. `effectWhole`: `on` when the key is 1 and the Effect hooks installed, otherwise `off`. If the cut itself never installs (FCS-67..70) this line is not written.
+
+### Trace: `FixedShaderVoid` (new kind; `FixedShader` and `FixedShaderLook` unchanged byte for byte)
+
+Written right after each `FixedShaderLook` row (same `t` and `frame`, same 0.1 s window, its own budget of 6,000 lines):
+
+```
+FixedShaderVoid t=%.3f frame=%llu sky=%s skyMode=%d skyHeld=%u skyHides=%llu skyKeeps=%llu skyRestores=%llu skyLeft=%llu skyEngineHidden=%llu skyNone=%llu fxWhole=%s fxWholeCut=%llu fxCutRefs=%s sample=window
+```
+
+Example (test row): `FixedShaderVoid t=1234.500 frame=99 sky=installed skyMode=2 skyHeld=1 skyHides=1 skyKeeps=5 skyRestores=0 skyLeft=0 skyEngineHidden=0 skyNone=0 fxWhole=on fxWholeCut=14 fxCutRefs=0008F94E,0008F94D sample=window`. Longest possible row 391 of 768 bytes (test).
+
+Legend: `sky` as in the log line (`pending` before the cut installs). `skyMode`: the Sky's mode at the last main-thread frame (−1 no Sky; 1 interior, 2 dome only, 3 full). `skyHeld`: 1 if the root carries our hidden bit at the end of the window. `skyHides`, `skyKeeps`, `skyRestores`, `skyLeft`: main-thread frames in the window by step (above); `skyEngineHidden`: active frames in which the engine itself hid the sky (mode 1 or HideSky: nothing to do); `skyNone`: active frames with no Sky or no root. `fxWhole`: as `effectWhole` in the log. `fxWholeCut`: Effect passes clipped whole in the window (they are also in `FixedShaderLook fxCut`). `fxCutRefs`: the first four distinct owners (form IDs, 8 hex digits) of cut Effect passes in the window, comma separated, or `none`.
+
+For the checker: register `FixedShaderVoid` in `OPTIONAL_KINDS` (the generic parser keeps `fxCutRefs` as a string), optionally `CAPS['FixedShaderVoid'] = 6000`; add FCS-89 to the shader faults and treat FCS-90 as informative like FCS-75/86 (a cell change while held logs it once).
+
+### Refusal codes (third pass)
+
+| Code | Site | Meaning, and what stays in force |
+| --- | --- | --- |
+| FCS-89 `check=N` | `installSky` | Sky singleton ID (1), SetMode ID (2), SetMode head bytes (3), show/hide rule bytes (4) differ; the sky is left to the engine; cut and void colour unchanged |
+| FCS-90 | `settleSky` | informative: the sky's root, mode or HideSky changed under our hold (a cell change, or the engine hid it); the hold is dropped and the bit left as the engine set it |
+
+All 25 codes 66..90 fit the shader runtime's 32-bit once-mask.
+
+### Tests (g++ 15.2.0, Python 3.14.4, this host)
+
+| Check | Result |
+| --- | --- |
+| 15 portable C++ tests (the CI loop: `-std=c++20 -Wall -Wextra -Werror -pedantic`) | **PASS**, exit 0 each; `fixed_spike_shader_policy_test` prints `longest FixedShaderVoid row: 391 of 768 bytes` and `sky and whole-Effect rows PASS` |
+| `fixed_spike_shader_policy_test` with `SKYCRPG_SHADER_ARCHIVE` | **PASS**, archive lines unchanged (`effect ok=332 …`, `16044 blobs, 16044 checksums reproduced …`) |
+| Wiring audit, eight sections | **PASS**, exit 0 (new `shader third-pass wiring`; `shader cut wiring` now one site per FCS-66..90) |
+| g++ `-fsyntax-only -Wall -Wextra -Werror -pedantic -Wshadow -Wconversion -Wsign-conversion -Wfloat-conversion -Wold-style-cast` of `fixed_spike_shader.h` (with the void and sky headers) against scratch stand-ins for the Windows, REL and RE declarations | 0 warnings. Not an MSVC or CommonLib build. |
+| `git diff --check` | **PASS** |
+| Windows `/W4 /WX` build | **NOT_RUN** |
+
+New portable rows: codes 89/90 contiguous after 88; defaults (both on); the sky facts and that the guarded bytes contain the very loads and stores the offsets name (`mov eax,[rcx+1BC]`, `mov eax,[rdi+1DC]`/`shr 7`, `mov rcx,[rdi+8]`, `[rcx+F4]` `or 1`/`and FFFFFFFE`); `skySiteCheck` at three image bases with every guarded byte flipped (47 + 57), a moved ID, a jump written over SetMode; `engineShowsSky` for modes 0..5 × flag patterns; **every one of the 64 input combinations of `skyStep`** against the table, with the invariants (hide only when wanted and shown by the engine; restore only when not wanted, held, same root, shown, bit set; nothing when neither held nor wanted); a frame sequence (hide, keep, menu restore to the exact flags, a door into a mode 1 interior, back, HideSky under the hold, a new root, no Sky, a root hidden by someone else); `wholeConstant` gives −1 at every height and is not a plane constant; `wholeEffect` with the Embershard numbers (both glows whole, the floor mist not, the boundary at 9330.6, NaN never); the `FixedShaderVoid` row exactly, its `none`/`off` forms, its four-reference limit and its longest length.
+
+### Expected void pixel after the fix (NOT_RUN)
+
+With the dome gone the void is the clear colour (black) through image space: tonemap(0) = 0; saturation and tint of 0 are 0; `avg + contrast·(0 − avg)` = avg·(1 − contrast) ≤ 0 for contrast ≥ 1, clamped to 0 (Embershard contrast 1.0, BFB 1.2, the Mare 1.22, reading CNAM as saturation, brightness, contrast: Hypothesis for the component order); fade alpha 0 unless an image-space modifier is running.
+
+| Cell | Before (W3) | Expected after |
+| --- | --- | --- |
+| EmbershardMine01 | (19,39,47) | **(0,0,0)** |
+| BleakFallsBarrow01 | about (48,54,60), gradient | **(0,0,0)** |
+| WhiterunBanneredMare | (33,49,55) | **(0,0,0)** (if CNAM's third float is not contrast, at most a grey of a few levels) |
+
+Exceptions to look for: bloom spill near bright lights (image space, unchanged); anything that draws at depth 1.0 besides the sky (none found); volumetric lighting, which is composited additively (`ISCompositeVolumetricLighting`, entry 15960: `vol·cb2[0].rgb`) and whose use in interiors was not traced (Hypothesis that it is off or negligible there; a uniform cool tint that survives the fix would point at it).
+
+### First-run protocol (for the orchestrator; nothing here was run)
+
+1. Optional, cheapest, on the **current** stage `6397406`: one interior **without** Show Sky (`coc WhiterunJorrvaskrBasement` or `WhiterunDragonsreachBasement`, both 0x21) with `iSeeThroughMode=3`, four headings. Expected: void pixels exactly (0,0,0) already. This confirms or refutes the root cause without the new build.
+2. On the build of this pass: `p55-shader-cave`, `p55-shader-mare`, `p55-shader-bfb-seed1`, `p55-shader-lifecycle`, keys at their defaults, `iShaderCutTrace=1`. Expected lines once each, in order: `shader cut installed …`, `shader look installed void=installed … effect=installed effectAudited=114`, `shader void installed sky=installed effectWhole=on`. No `code=FCS-` line except FCS-75/86 and possibly one FCS-90 after a door or load.
+3. Trace while active in the three cells: `FixedShaderVoid … sky=installed skyMode=2 skyHeld=1`, `skyHides=1` in the first active window and then `skyKeeps` equal to the frames; `skyEngineHidden=0`. In the cave: `fxWholeCut≈14` per window and `fxCutRefs` naming 0008F94E and/or 0008F94D (if other IDs appear, the wedge attribution above is wrong; report them). `FixedShader` and `FixedShaderLook` as in W3.
+4. Screenshots: void pixels (0,0,0) (the checker's void-pixel share at ±6 of black near the share of void in W3: about 0.52 at cave h0, 0.39 at h1); no light wedge at cave h1; floor, player, lit structures as in W3; geometry pixels unchanged compared with W3 at the same pose (diff only where the void was).
+5. Lifecycle: in every ineligible window `skyHeld=0` and a `skyRestores=1` (or `skyLeft=1` across a door/load) in the window where the cut went inactive; screenshots taken while ineligible show the sky as before (the W3 lifecycle look).
+6. A/B: `bVoidHideSky=0` reproduces W3's void; `bShaderCutEffectWhole=0` brings the wedge back.
+
+### What the reviewer must check
+
+1. In the binary: 31E0D80 is the pointer `Sky::GetSingleton` (1C7D00, ID 13878) returns and ID 401652 resolves to it; SetMode (411660, ID 26222) head and 411794..4117CC bytes; the mode choice at 36E691..36E6BF; that SetMode is the only writer of the sky root's hidden bit (I did not scan for other writers of `[root+0xF4]`; the rule only puts the bit back where SetMode's own rule says "shown").
+2. Mode 2 colours: 413384..413491 (weather), 413778..41387D (cell lighting replaces only sunlight, ambient, fog near/far).
+3. `settleSky` runs only on the main thread (`publish`, `deactivate` under `thin::onMain()`, `frameStart`), before the frame's culling; the two writes are a read-modify-write of one dword at `root+0xF4`.
+4. `consider`: `wholeEffect` uses the same world bound as `reach`; Lighting/Utility never take `wholeConstant`; the budget, owner and audit rules are unchanged for Effect.
+5. `FixedShader`/`FixedShaderLook` format strings untouched (they are not in the diff).
+6. MSVC `/W4 /WX`: `std::array<std::uint32_t,4>` in `VoidWindow`, the two literal `snprintf` formats in `formatVoid`, `bool` from `size_t && bool`.
+
+### Unverified (NOT_RUN or Hypothesis)
+
+- Every game row; the Windows build.
+- That the dome is alpha-blended over the clear colour in its lower part (the clear's visible contribution says so; the blend state was not read).
+- That hiding the root before the camera update removes the dome from the same frame's render (the engine's mode 1 uses the same bit; the frame order is the one the cut already relies on).
+- That nothing else draws at depth 1.0 in these interiors (volumetric lighting in interiors not traced).
+- The wedge's reference (the trace's `fxCutRefs` will say).
+- The CNAM component order (affects only the Mare's prediction by a few levels).
+- Water reflections and save thumbnails in Show Sky interiors while the cut is active.
+
 ## Reproduce the offline checks
 
 ```sh
@@ -595,6 +768,14 @@ objdump -d -M intel --start-address=0x1406565b0 --stop-address=0x140656c0e "$E" 
 objdump -d -M intel --start-address=0x141557090 --stop-address=0x14155814d "$E"   # Effect SetupGeometry / RestoreGeometry
 objdump -d -M intel --no-show-raw-insn "$E" | grep -E '# 0x1433d3e[6-8]'          # every reference to the fog-colour global
 objdump -d -M intel --no-show-raw-insn "$E" | grep -E 'call +0x14100a(3f0|460|4c0)' # SetClearColor / Restore / RT-clear callers
+# third pass
+objdump -d -M intel --start-address=0x14036e660 --stop-address=0x14036e700 "$E"   # cell flags 0x80/0x100 -> Sky::SetMode(1/2/3)
+objdump -d -M intel --start-address=0x140411660 --stop-address=0x1404118c0 "$E"   # Sky::SetMode (ID 26222): root +F4 bit 0 at 411794..4117C7
+objdump -d -M intel --start-address=0x1401c7d00 --stop-address=0x1401c7d20 "$E"   # Sky::GetSingleton (ID 13878): pointer at 31E0D80 (ID 401652)
+objdump -d -M intel --start-address=0x140412df0 --stop-address=0x140413a30 "$E"   # Sky colours: mode 1 (413285), mode 2 weather loop (413384) and cell lighting (413828)
+# image-space and sky shaders: shaders011.fxp entries counted from 0 in file order (each entry starts with 44 33 22 11);
+# entries 60..77 BSSkyShader, 15846/15848 HDR tonemap, 15828/15830 DOF fogged, 15944/15946 VL apply, 15960 VL composite,
+# 16000/16002/16004 SAO composite variants; disassembled with vkd3d-shader (D3D assembly target)
 ```
 
 Sources read: the binary and Address Library above; `Data/Skyrim - Shaders.bsa` (read-only); `session-p55/research/shader-discard.md` and `p55-spike-clip` (`docs/evidence/p5.5/spike-wave2-clip.md`, `modules/camera/src/fixed_spike_clip.h`, `include/fixed_spike_clip_policy.h`, the wiring test) as leads, each fact used here re-derived except where marked; the coordinator's summary of the clip package's independent review; DXVK `src/dxbc/dxbc_compiler.cpp` at v2.7.1 (zlib/libpng licence) through a summarising fetch, for facts only; `libvkd3d-shader.so.1.19.0` (LGPL) of the Steam Linux Runtime as an offline validator, not linked or copied. No GPL source was opened and no code was copied from any third party. The MD5 block function is written from RFC 1321; the DXBC final-block rule is checked against the archive's own 16,044 stored checksums.

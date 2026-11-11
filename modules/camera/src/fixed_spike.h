@@ -78,6 +78,7 @@ struct Runtime {
     TraceWriter writer;
     LineBudget rigLines{rigTraceLines},roomLines{roomTraceLines},hideLines{hideTraceLines};
     LineBudget shaderLines{shader::traceLines},shaderLookLines{shader::traceLines}; // wave 2 shader: FixedShader, FixedShaderLook
+    LineBudget shaderVoidLines{shader::traceLines}; // wave 2 shader, third pass: FixedShaderVoid
     double nextRig{},nextRoom{};
 };
 // Process lifetime, like the thin runtime: hidden roots and the trace worker
@@ -765,10 +766,10 @@ inline void configure(const Config& requested,const shader::Config& shaderReques
     // wave 2 shader: its runtime exists only in mode 3; its rows go through the same single-producer writer.
     if (shader::shaderMode(r.config.seeThroughMode))
         shader::configure(shaderRequested,logger,[](const char* text) { emit(runtime->shaderLines,text); },
-            [](const char* text) { emit(runtime->shaderLookLines,text); });
+            [](const char* text) { emit(runtime->shaderLookLines,text); },[](const char* text) { emit(runtime->shaderVoidLines,text); });
     if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace || shader::tracing()) {
         const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines : 0u)+
-            (r.config.hideTrace ? hideTraceLines : 0u)+(shader::tracing() ? 2u*shader::traceLines : 0u);
+            (r.config.hideTrace ? hideTraceLines : 0u)+(shader::tracing() ? 3u*shader::traceLines : 0u);
         r.traceReady = r.writer.start(tracePath,rows);
         if (!r.traceReady) refuse(Refusal::traceWriter,"trace writer did not start; traces off, behaviour unchanged");
     }

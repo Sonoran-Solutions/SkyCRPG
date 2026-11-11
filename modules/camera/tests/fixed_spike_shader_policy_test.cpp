@@ -123,7 +123,7 @@ void codes() {
     constexpr std::array all{Refusal::settings,Refusal::foreign,Refusal::address,Refusal::table,Refusal::device,Refusal::thread,
         Refusal::bracket,Refusal::create,Refusal::patch,Refusal::unaudited,Refusal::view,Refusal::map,Refusal::object,Refusal::context,
         Refusal::effectTable,Refusal::voidSite,Refusal::voidMemory,Refusal::voidThread,Refusal::effectCreate,Refusal::effectPatch,
-        Refusal::effectUnaudited,Refusal::effectObject,Refusal::effectThread};
+        Refusal::effectUnaudited,Refusal::effectObject,Refusal::effectThread,Refusal::skySite,Refusal::skyLeft};
     std::uint32_t seen = 0;
     for (const auto code : all) {
         // The wave 1 once-mask holds codes below 64; these have their own.
@@ -133,6 +133,9 @@ void codes() {
     }
     // 66..79 are the first pass's, unchanged; the second pass continues at 80 without a gap.
     assert(all.size() == lastRefusal-firstRefusal+1u && static_cast<unsigned>(Refusal::context) == 79 && static_cast<unsigned>(Refusal::effectTable) == 80);
+    // The third pass continues at 89 without a gap; 32 codes is the once-mask's limit.
+    assert(static_cast<unsigned>(Refusal::effectThread) == 88 && static_cast<unsigned>(Refusal::skySite) == 89 &&
+        static_cast<unsigned>(Refusal::skyLeft) == 90 && lastRefusal == 90 && lastRefusal-firstRefusal < 32u);
     assert(seen == (std::uint32_t{1} << (lastRefusal-firstRefusal+1u))-1u);
     // A shader preparation reports through its own group's codes.
     for (std::size_t i = 0;i < 2;++i) {
@@ -202,6 +205,10 @@ void settings() {
     c = {}; c.colorText = "grey"; c.color = {.5f,.5f,.5f}; c = validate(c,&adjusted);
     assert(adjusted && c.color.red == 0.0f && c.color.green == 0.0f && c.color.blue == 0.0f);
     c = {}; c.colorText = "nan,0,0"; assert(validate(c,&adjusted).color.red == 0.0f && adjusted);
+    // Third pass: both on by default (read only in mode 3), and validate leaves them as set.
+    assert(defaults.hideSky && defaults.effectWhole);
+    c = {}; c.hideSky = false; c.effectWhole = false; c = validate(c,&adjusted);
+    assert(!adjusted && !c.hideSky && !c.effectWhole);
 }
 
 void colours() {
@@ -688,6 +695,123 @@ bool archive() {
 }
 }
 
+// ---- third pass: the sky dome over the void, Effect passes clipped whole ----
+// A copy of the audited bytes around the two guarded ranges.
+struct SkyImage {
+    Bytes head{skyModeHead.begin(),skyModeHead.end()};
+    Bytes rule{skyRuleBytes.begin(),skyRuleBytes.end()};
+};
+void skyVoid() {
+    // The facts the guard fixes: singleton pointer, SetMode, the layout its bytes read.
+    assert(skyAddress.id == 401652 && skyAddress.rva == 0x31e0d80 && skyModeAddress.id == 26222 && skyModeAddress.rva == 0x411660);
+    assert(skyRuleRva == 0x411794 && skyModeHead.size() == 47 && skyRuleBytes.size() == 57);
+    assert(sky::root == 8 && sky::mode == 0x1bc && sky::flags == 0x1dc && sky::hideSky == 0x80 && sky::objectFlags == 0xf4 && sky::hidden == 1);
+    // The bytes say what the constants say: mov eax,[rcx+1BC]; mov eax,[rdi+1DC] / shr 7; mov rcx,[rdi+8]; [rcx+F4] or 1 / and FFFFFFFE.
+    const std::array<std::uint8_t,6> readMode{0x8b,0x81,0xbc,0x01,0x00,0x00},readFlags{0x8b,0x87,0xdc,0x01,0x00,0x00};
+    const std::array<std::uint8_t,4> readRoot{0x48,0x8b,0x4f,0x08};
+    const std::array<std::uint8_t,6> readObject{0x8b,0x81,0xf4,0x00,0x00,0x00},writeObject{0x89,0x81,0xf4,0x00,0x00,0x00};
+    const auto has = [](const auto& hay,const auto& needle) {
+        return std::search(hay.begin(),hay.end(),needle.begin(),needle.end()) != hay.end();
+    };
+    assert(has(skyModeHead,readMode) && has(skyRuleBytes,readFlags) && has(skyRuleBytes,readRoot) && has(skyRuleBytes,readObject) &&
+        has(skyRuleBytes,writeObject));
+    assert(skyModeHead[16] == 0x8d && skyModeHead[17] == 0x42 && skyModeHead[18] == 0xfe && skyModeHead[19] == 0x83 && skyModeHead[21] == 0x01); // lea eax,[rdx-2]; cmp eax,1
+    assert(skyRuleBytes[13] == 0x07 && skyRuleBytes[45] == 0x01 && skyRuleBytes[50] == 0xfe); // shr 7; or 1; and FFFFFFFE
+    // The check at three image bases.
+    for (const std::uintptr_t base : {std::uintptr_t{0x140000000},std::uintptr_t{0x7ff600000000},std::uintptr_t{0x10000}}) {
+        SkyImage image;
+        const std::uintptr_t pointer = base+skyAddress.rva,setMode = base+skyModeAddress.rva;
+        assert(skySiteCheck(base,pointer,setMode,image.head.data(),image.rule.data()) == 0);
+        assert(skySiteCheck(base,pointer+8,setMode,image.head.data(),image.rule.data()) == 1);
+        assert(skySiteCheck(base,pointer,setMode+16,image.head.data(),image.rule.data()) == 2);
+        for (std::size_t i = 0;i < image.head.size();++i) {
+            SkyImage changed; changed.head[i] ^= 0x40;
+            assert(skySiteCheck(base,pointer,setMode,changed.head.data(),changed.rule.data()) == 3);
+        }
+        for (std::size_t i = 0;i < image.rule.size();++i) {
+            SkyImage changed; changed.rule[i] ^= 0x01;
+            assert(skySiteCheck(base,pointer,setMode,changed.head.data(),changed.rule.data()) == 4);
+        }
+        SkyImage detoured; detoured.head[0] = 0xe9; // a jump written over SetMode's first bytes
+        assert(skySiteCheck(base,pointer,setMode,detoured.head.data(),detoured.rule.data()) == 3);
+    }
+    // SetMode's rule: modes 2 (dome only) and 3 (full) show the sky unless HideSky.
+    for (std::uint32_t mode = 0;mode < 6;++mode)
+        for (const std::uint32_t flags : {0u,sky::hideSky,0x100u,0x180u,0xffffff7fu})
+            assert(engineShowsSky(mode,flags) == ((mode == 2u || mode == 3u) && !(flags & 0x80u)));
+    // Every input combination of one frame's step, against the table in the policy.
+    for (unsigned bits = 0;bits < 64;++bits) {
+        const bool want = bits & 1u,held = bits & 2u,haveRoot = bits & 4u,sameRoot = bits & 8u,shows = bits & 16u,hiddenBit = bits & 32u;
+        const SkyStep step = skyStep(want,held,haveRoot,sameRoot,shows,hiddenBit);
+        SkyStep expected = SkyStep::none;
+        if (want && haveRoot && shows) expected = held && !sameRoot ? SkyStep::leave : !hiddenBit ? SkyStep::hide : held ? SkyStep::keep : SkyStep::none;
+        else if (held) expected = haveRoot && sameRoot && shows && hiddenBit ? SkyStep::restore : SkyStep::leave;
+        assert(step == expected);
+        // Invariants: never hide unless the cut wants it and the engine shows the sky; never
+        // restore while wanted or something we did not hide; never write when not held and not wanted.
+        if (step == SkyStep::hide) assert(want && haveRoot && shows && !hiddenBit);
+        if (step == SkyStep::restore) assert(!want && held && haveRoot && sameRoot && shows && hiddenBit);
+        if (!want && !held) assert(step == SkyStep::none);
+        if (step == SkyStep::keep) assert(held && hiddenBit);
+    }
+    // A run of frames in a Show Sky interior, then a menu, then a cell change that runs SetMode.
+    struct Root { std::uint32_t flags{0x0e}; } root,other;
+    std::uint32_t mode = 2,skyFlags = 0;
+    Root* heldRoot = nullptr;
+    const auto frame = [&](bool want,Root* now) {
+        const SkyStep step = skyStep(want,heldRoot != nullptr,now != nullptr,now == heldRoot,engineShowsSky(mode,skyFlags),now && (now->flags & sky::hidden));
+        if (step == SkyStep::hide) { now->flags |= sky::hidden; heldRoot = now; }
+        else if (step == SkyStep::restore) { now->flags &= ~sky::hidden; heldRoot = nullptr; }
+        else if (step == SkyStep::leave) heldRoot = nullptr;
+        return step;
+    };
+    assert(frame(true,&root) == SkyStep::hide && (root.flags & 1u) && frame(true,&root) == SkyStep::keep);
+    assert(frame(false,&root) == SkyStep::restore && root.flags == 0x0e && frame(false,&root) == SkyStep::none);   // menu: back as it was
+    assert(frame(true,&root) == SkyStep::hide);
+    mode = 1; root.flags |= sky::hidden;                       // a door into a mode 1 interior: SetMode hides it itself
+    assert(frame(false,&root) == SkyStep::leave && (root.flags & 1u) && frame(true,&root) == SkyStep::none && (root.flags & 1u));
+    mode = 2; root.flags &= ~sky::hidden;                      // back into a Show Sky interior: SetMode shows it
+    assert(frame(true,&root) == SkyStep::hide);
+    skyFlags = sky::hideSky; root.flags |= sky::hidden;        // HideSky set by the engine under our hold
+    assert(frame(false,&root) == SkyStep::leave && (root.flags & 1u));
+    skyFlags = 0; root.flags &= ~sky::hidden;
+    assert(frame(true,&root) == SkyStep::hide && frame(true,&other) == SkyStep::leave && (root.flags & 1u) && frame(true,&other) == SkyStep::hide);
+    assert(frame(true,nullptr) == SkyStep::leave && frame(false,nullptr) == SkyStep::none);
+    other.flags |= sky::hidden; heldRoot = nullptr;            // hidden by someone else: never taken over, never restored
+    assert(frame(true,&other) == SkyStep::none && frame(false,&other) == SkyStep::none && (other.flags & 1u));
+    // Effect passes clipped whole: -1 for every height, and never mistaken for a plane constant.
+    for (const float z : {-1.0e7f,-1.0f,0.0f,1.0f,1.0e7f}) assert(clipDistance(wholeConstant,z) == -1.0f);
+    assert(!usable(wholeConstant) && usable(cutConstant(100.0f,20.0f)));
+    // Whole only when the bound centre is above the midpoint of feet and plane: the Embershard
+    // glows (refs 0008F94E at 9392 and 0008F94D at 9423, plane 9420.25, feet 9241) go, the
+    // floor mist (0008FB47 at 9153) keeps its lower part.
+    View cave; cave.feet = {2487.3f,1485.5f,9241.0f}; cave.planeZ = 9420.25f;
+    assert(wholeEffect(cave,{{2449,1197,9392},200}) && wholeEffect(cave,{{2196,859,9423},200}) && !wholeEffect(cave,{{2837,2373,9153},400}));
+    assert(!wholeEffect(cave,{{0,0,9330.0f},10}) && wholeEffect(cave,{{0,0,9331.0f},10}) && !wholeEffect(cave,{{0,0,std::numeric_limits<float>::quiet_NaN()},10}));
+    // FixedShaderVoid: the row, its tokens and the longest it can be.
+    char line[sizeof(TraceRow)]{},tiny[64]{};
+    VoidSample v;
+    v.seconds = 1234.5; v.frame = 99; v.skyState = Feature::installed; v.held = true; v.mode = 2; v.effectWhole = true;
+    v.window.steps = {0,1,5,0,0}; v.window.whole = 14; v.window.note(0x0008f94e); v.window.note(0x0008f94d); v.window.note(0x0008f94e);
+    assert(formatVoid(line,sizeof(line),v));
+    const std::string row = line;
+    assert(row == "FixedShaderVoid t=1234.500 frame=99 sky=installed skyMode=2 skyHeld=1 skyHides=1 skyKeeps=5 skyRestores=0 skyLeft=0 "
+        "skyEngineHidden=0 skyNone=0 fxWhole=on fxWholeCut=14 fxCutRefs=0008F94E,0008F94D sample=window");
+    VoidSample quiet; quiet.skyState = Feature::off;
+    assert(formatVoid(line,sizeof(line),quiet));
+    assert(std::string(line).find(" sky=off skyMode=-1 skyHeld=0 ") != std::string::npos && std::string(line).find(" fxWhole=off fxWholeCut=0 fxCutRefs=none ") != std::string::npos);
+    VoidSample huge; huge.seconds = 1e7; huge.frame = ~0ull; huge.skyState = Feature::refused; huge.mode = -2147483647-1;
+    for (auto& value : huge.window.steps) value = ~0ull;
+    huge.window.engineHidden = huge.window.noSky = huge.window.whole = ~0ull;
+    for (std::uint32_t id = 0xff000000u;id < 0xff000008u;++id) huge.window.note(id);
+    assert(huge.window.refCount == effectRefSlots);
+    assert(formatVoid(line,sizeof(line),huge) && std::strlen(line) < sizeof(TraceRow));
+    assert(std::string(line).find("fxCutRefs=FF000000,FF000001,FF000002,FF000003 sample=window") != std::string::npos);
+    std::printf("longest FixedShaderVoid row: %zu of %zu bytes\n",std::strlen(line),sizeof(TraceRow));
+    assert(!formatVoid(tiny,sizeof(tiny),v));
+    std::printf("sky and whole-Effect rows PASS\n");
+}
+
 int main() {
     codes();
     settings();
@@ -701,5 +825,6 @@ int main() {
     patchSynthetic();
     patchRejects();
     traces();
+    skyVoid();
     if (!archive()) std::printf("archive rows skipped: SKYCRPG_SHADER_ARCHIVE is not set\n");
 }

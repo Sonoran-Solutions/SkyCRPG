@@ -27,6 +27,11 @@
 // (fixed_spike_shader_void.h). Both stay native whenever the cut is inactive.
 // The void colour is this mode's only change to engine code: the displacement
 // of one call, made once at install; nothing in this file writes code.
+//
+// Third pass: in Show Sky interiors the engine draws the sky dome over the
+// void; while the cut is active its root is hidden as the engine hides it in
+// other interiors (fixed_spike_shader_sky.h), and a selected Effect pass is
+// clipped whole instead of at the plane (bShaderCutEffectWhole).
 #include "fixed_spike_shader_policy.h"
 #include <cwchar>
 
@@ -50,6 +55,7 @@ struct Runtime {
     void (*logger)(const char*){};
     void (*emitter)(const char*){};
     void (*lookEmitter)(const char*){};
+    void (*voidEmitter)(const char*){};
     std::atomic<std::uint32_t> refusals{};
     std::atomic_bool pending{};  // hooks to be installed by the next main-thread camera frame
     std::atomic_bool active{};   // a snapshot is published
@@ -59,7 +65,10 @@ struct Runtime {
     std::atomic<unsigned long long> voidOffMain{};
     // Main thread only from here on.
     bool installed{},haveView{},haveUploaded{},haveOther{};
-    Feature voidState{},effectState{};
+    Feature voidState{},effectState{},skyState{};
+    std::uint8_t* skyRoot{};  // the sky root whose hidden bit we set and have not put back
+    int skyMode{-1};          // the Sky's mode at the last main-thread frame, -1 no Sky
+    VoidWindow voidWindow{};
     ClearColor clearColor{}; // the engine's SetClearColor; set before the call site is redirected
     std::uintptr_t base{};
     const std::uint8_t* state{};
@@ -203,9 +212,10 @@ inline RE::TESObjectREFR* ownerOf(const std::uint8_t* node) {
     }
     return found;
 }
-inline Skip ownerSkip(const std::uint8_t* geometry) {
+inline Skip ownerSkip(const std::uint8_t* geometry,std::uint32_t& owner) {
     const auto ref = ownerOf(geometry);
     if (!ref) return ownerRule(false,false,Kind::excluded);
+    owner = ref->GetFormID();
     const bool actor = ref->GetFormType() == RE::FormType::ActorCharacter;
     return ownerRule(true,actor,actor ? Kind::excluded : kindOf(ref,ref->GetBaseObject()));
 }
@@ -259,16 +269,21 @@ inline void consider(void* pass,std::size_t shaderClass) {
     const auto geometry = peek<const std::uint8_t*>(pass,offset::passGeometry);
     const Constant wanted = cutConstant(r.view.planeZ,eye.z);
     Skip skip = Skip::noBound;
+    std::uint32_t owner = 0;
+    Bound bound{};
     if (geometry && usable(wanted)) {
-        const Bound bound{peek<Vec>(geometry,offset::objectBound),peek<float>(geometry,offset::objectBound+sizeof(Vec))};
+        bound = {peek<Vec>(geometry,offset::objectBound),peek<float>(geometry,offset::objectBound+sizeof(Vec))};
         skip = reach(r.view,bound,peek<const void*>(geometry,offset::geometrySkin) != nullptr);
-        if (skip == Skip::none) skip = ownerSkip(geometry);
+        if (skip == Skip::none) skip = ownerSkip(geometry,owner);
     }
     const Entry* entry = skip == Skip::none ? shaderFor(group) : nullptr;
     if (skip == Skip::none && (!entry || !entry->patched)) skip = Skip::shader;
     if (skip == Skip::none && !r.budgets[group].take()) skip = Skip::cap;
     if (skip != Skip::none) { ++w.skips[static_cast<std::size_t>(skip)]; return; }
-    apply(*entry,wanted,shaderClass);
+    // Third pass: an Effect pass centred in the upper half below the plane or higher is not drawn at all.
+    const bool whole = group && r.config.effectWhole && wholeEffect(r.view,bound);
+    if (group) { r.voidWindow.note(owner); if (whole) ++r.voidWindow.whole; }
+    apply(*entry,whole ? wholeConstant : wanted,shaderClass);
 }
 
 // ---- hooks ------------------------------------------------------------------
@@ -360,8 +375,10 @@ void hookClass() {
     static_cast<void>(table.write_vfunc(restoreSlot,&hookRestore<Index>));
     static_cast<void>(table.write_vfunc(setupSlot,&hookSetup<Index>));
 }
-// fixed_spike_shader_void.h (included at the end of this file).
+// fixed_spike_shader_void.h and fixed_spike_shader_sky.h (included at the end of this file).
 inline void installVoid(std::uintptr_t base);
+inline void installSky(std::uintptr_t base);
+inline void settleSky(bool want);
 // Main thread, from commit, after the Lighting/Utility hooks. The Effect class
 // is hooked only with bShaderCutEffect=1 and when its own guard passes.
 inline void installEffect(std::uintptr_t base) {
@@ -425,6 +442,11 @@ inline void commit() {
         static_cast<double>(r.config.color.blue),featureNames[static_cast<std::size_t>(r.effectState)],
         static_cast<unsigned>(auditedEffectVertexShaders.size()));
     r.logger(text);
+    // Third pass: refuses on its own and leaves the cut and the void colour as they are.
+    installSky(base);
+    std::snprintf(text,sizeof(text),"FixedCameraSpike shader void installed sky=%s effectWhole=%s",
+        featureNames[static_cast<std::size_t>(r.skyState)],r.config.effectWhole && r.effectState == Feature::installed ? "on" : "off");
+    r.logger(text);
 }
 
 // ---- called by the spike's frame bracket ------------------------------------
@@ -434,9 +456,11 @@ inline void install(std::uintptr_t base) {
     runtime->base = base;
     runtime->pending.store(true,std::memory_order_release);
 }
-// Any thread.
+// Any thread. On the main thread the sky root is put back at once.
 inline void deactivate() {
-    if (runtime) runtime->active.store(false,std::memory_order_release);
+    if (!runtime) return;
+    runtime->active.store(false,std::memory_order_release);
+    if (thin::onMain()) settleSky(false);
 }
 // Main thread, before the camera update.
 inline void frameStart() {
@@ -445,6 +469,7 @@ inline void frameStart() {
     if (r.pending.exchange(false,std::memory_order_acq_rel)) commit();
     if (!r.installed) return;
     if (r.opened.load(std::memory_order_acquire)) fault(Fault::frame);
+    if (r.latched.load(std::memory_order_acquire)) settleSky(false);
     if (r.offMain[0].load(std::memory_order_relaxed))
         refuse(Refusal::thread,"a render hook ran off the main thread; such calls touch nothing and are drawn natively");
     if (r.offMain[1].load(std::memory_order_relaxed))
@@ -478,10 +503,11 @@ inline void publish(Vec eye,Vec forward,Vec feet,bool interiorCell,unsigned long
     std::optional<View> next;
     if (publishes(r.installed,r.latched.load(std::memory_order_acquire),interiorCell,feet.z))
         next = makeView(r.config,eye,forward,feet,r.plane.update(feet.z,now),frame,now);
-    if (!next) { r.active.store(false,std::memory_order_release); return; }
+    if (!next) { r.active.store(false,std::memory_order_release); settleSky(false); return; }
     r.view = *next; r.haveView = true; r.published = frame;
     for (auto& budget : r.budgets) budget.frame();
     r.active.store(true,std::memory_order_release);
+    settleSky(true);
 }
 inline void trace(double now) {
     if (!runtime) return;
@@ -506,25 +532,32 @@ inline void trace(double now) {
     look.look = r.look; look.effect = r.windows[1];
     look.peak = r.budgets[1].peak;
     look.patched = r.made[1].patched; look.rejected = r.made[1].rejected; look.unaudited = r.made[1].unaudited;
+    VoidSample voids;
+    voids.seconds = now; voids.frame = r.frame; voids.skyState = r.skyState; voids.held = r.skyRoot != nullptr; voids.mode = r.skyMode;
+    voids.effectWhole = r.config.effectWhole && r.effectState == Feature::installed; voids.window = r.voidWindow;
     for (auto& budget : r.budgets) budget.peak = 0;
-    r.windows = {}; r.look = {}; r.haveOther = false;
+    r.windows = {}; r.look = {}; r.voidWindow = {}; r.haveOther = false;
     char line[768]{};
     if (format(line,sizeof(line),s)) r.emitter(line);
     if (formatLook(line,sizeof(line),look)) r.lookEmitter(line);
+    if (formatVoid(line,sizeof(line),voids)) r.voidEmitter(line);
 }
 inline bool tracing() { return runtime && runtime->config.trace; }
 inline const char* status() { return !runtime ? "off" : runtime->installed ? "installed" : "pending"; }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1 and iSeeThroughMode=3.
-inline void configure(const Config& requested,void (*logger)(const char*),void (*emitter)(const char*),void (*lookEmitter)(const char*)) {
+inline void configure(const Config& requested,void (*logger)(const char*),void (*emitter)(const char*),void (*lookEmitter)(const char*),
+    void (*voidEmitter)(const char*)) {
     runtime = new Runtime;
     auto& r = *runtime;
-    r.logger = logger; r.emitter = emitter; r.lookEmitter = lookEmitter;
+    r.logger = logger; r.emitter = emitter; r.lookEmitter = lookEmitter; r.voidEmitter = voidEmitter;
     bool adjusted = false;
     r.config = validate(requested,&adjusted);
     for (auto& budget : r.budgets) budget.limit = r.config.maxPerFrame;
     r.voidState = r.config.voidColor ? Feature::pending : Feature::off;
     r.effectState = r.config.effect ? Feature::pending : Feature::off;
+    r.skyState = r.config.hideSky ? Feature::pending : Feature::off;
     if (adjusted) refuse(Refusal::settings,"one or more shader-cut values were out of range; safe values applied");
 }
 } // namespace skycrpg::camera::fixed::shader
 #include "fixed_spike_shader_void.h" // second pass: the void colour
+#include "fixed_spike_shader_sky.h"  // third pass: the sky dome over the void

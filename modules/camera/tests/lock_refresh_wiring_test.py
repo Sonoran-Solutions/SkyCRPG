@@ -245,7 +245,7 @@ assert "constexpr bool shaderMode(unsigned seeThroughMode) { return seeThroughMo
 assert "if (c.seeThroughMode > 1 && c.seeThroughMode != 3) c.seeThroughMode = 0;" in spike_policy
 assert "constexpr bool hideScanned(unsigned seeThroughMode,bool interiorCell) { return seeThroughMode == 1 && interiorCell; }" in spike_policy
 for helper in ("inline void install(std::uintptr_t base) {\n    if (!runtime) return;",
-               "inline void deactivate() {\n    if (runtime) ",
+               "inline void deactivate() {\n    if (!runtime) return;",
                "inline void frameStart() {\n    if (!runtime) return;",
                "inline void publish(Vec eye,Vec forward,Vec feet,bool interiorCell,unsigned long long frame,double now) {\n    if (!runtime) return;",
                "inline void trace(double now) {\n    if (!runtime) return;",
@@ -253,7 +253,7 @@ for helper in ("inline void install(std::uintptr_t base) {\n    if (!runtime) re
                "inline const char* status() { return !runtime ? "):
     assert helper in cut, helper
 for key in ("fShaderCutHeight", "fShaderCutRadius", "iShaderCutMaxPerFrame", "iShaderCutShaders", "iShaderCutTrace",
-            "bShaderCutEffect", "bVoidColor", "sVoidColor"):
+            "bShaderCutEffect", "bVoidColor", "sVoidColor", "bVoidHideSky", "bShaderCutEffectWhole"):
     assert gate.count('"FixedCameraSpike","' + key + '"') == 1 and ("\n" + key + "=") in ini, key
 assert "\niSeeThroughMode=0\n" in ini and "\nfShaderCutHeight=160\n" in ini and "\nfShaderCutRadius=0\n" in ini and "\niShaderCutTrace=0\n" in ini
 # The spike's bracket drives it: any thread may only switch it off.
@@ -313,8 +313,8 @@ assert consider.index("r.latched.load(") < consider.index("if (!thin::onMain()) 
     consider.index("++w.passes;") < consider.index("r.opened.load(") < consider.index("!fresh(r.view,r.clock)") < \
     consider.index("peek<Vec>(r.state,offset::posAdjust)") < consider.index("if (!sameView(r.view,eye,direction)) {") < \
     consider.index("peek<const std::uint8_t*>(pass,offset::passGeometry)") < consider.index("skip = reach(r.view,bound,") < \
-    consider.index("skip = ownerSkip(geometry);") < consider.index("shaderFor(group)") < consider.index("!r.budgets[group].take()") < \
-    consider.index("apply(*entry,wanted,shaderClass);")
+    consider.index("skip = ownerSkip(geometry,owner);") < consider.index("shaderFor(group)") < consider.index("!r.budgets[group].take()") < \
+    consider.index("apply(*entry,whole ? wholeConstant : wanted,shaderClass);")
 assert "geometry && usable(wanted)" in consider and "offset::geometrySkin) != nullptr" in consider and cut.count("apply(*entry,") == 1
 # Effect passes take exactly this path (same view test, bound, owner rules, audited bytecode); they never feed the FCS-76 view check.
 assert "const std::size_t group = groupOf(shaderClass);" in consider and "if (!group) ++r.frameMatched;" in consider and \
@@ -350,15 +350,17 @@ publish = cut_body("inline void publish(", "inline void trace(double now) {")
 assert publish.index("if (r.published+1u != frame) r.plane.reset();") < \
     publish.index("if (publishes(r.installed,r.latched.load(std::memory_order_acquire),interiorCell,feet.z))") < \
     publish.index("makeView(r.config,eye,forward,feet,r.plane.update(feet.z,now),frame,now)") < \
-    publish.index("if (!next) { r.active.store(false,std::memory_order_release); return; }") < publish.index("r.active.store(true,")
+    publish.index("if (!next) { r.active.store(false,std::memory_order_release); settleSky(false); return; }") < publish.index("r.active.store(true,")
 assert "inline bool publishes(bool installed,bool latched,bool interiorCell,float feetZ) {\n    return installed && !latched && interiorCell && " \
     "std::isfinite(feetZ);" in cut_policy
 void = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_void.h").read_text()
 cut_codes = dict(re.findall(r"(\w+) = (\d+)", cut_policy[cut_policy.index("enum class Refusal : unsigned {"):cut_policy.index("constexpr unsigned firstRefusal")]))
-assert len(cut_codes) == 23 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 89))
+assert len(cut_codes) == 25 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 91))
+sky = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_sky.h").read_text()
+sky_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_sky_policy.h").read_text()
 prepare_table = cut_policy[cut_policy.index("constexpr std::array<PrepareCodes,2> prepareCodes{{"):cut_policy.index("// ---- [FixedCameraSpike] shader-cut keys")]
 for name in cut_codes:
-    sites = cut.count("Refusal::" + name) + void.count("Refusal::" + name) + prepare_table.count("Refusal::" + name)
+    sites = cut.count("Refusal::" + name) + void.count("Refusal::" + name) + sky.count("Refusal::" + name) + prepare_table.count("Refusal::" + name)
     assert sites == 1, name  # one site per code
 for field in ("object", "unaudited", "patch", "create"):
     assert prepare.count("refuse(codes." + field + ",text); return;") == 1, field
@@ -375,14 +377,15 @@ for constant in ("constexpr Address stateAddress{388819,0x20cfc00};", "constexpr
                  "constexpr Address clearColorAddress{77249,0x100a3f0};", "constexpr std::uintptr_t voidCallRva = 0x656daa;"):
     assert constant in cut_policy, constant
 print("PASS shader cut wiring: no runtime outside mode 3; main-thread install after every guard; no code or engine-state write; "
-      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..88")
+      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..90")
 
 # Wave 2 shader, second pass (owner decision 2026-11-10): the Effect class and
 # the void colour. Both exist only inside the shader runtime (mode 3), are
 # installed by its main-thread commit after every cut guard (so ENB and
 # Community Shaders refuse them with the cut, FCS-67), and are native whenever
 # the cut's snapshot is not published.
-assert cut.endswith('#include "fixed_spike_shader_void.h" // second pass: the void colour\n')
+assert cut.endswith('#include "fixed_spike_shader_void.h" // second pass: the void colour\n'
+                    '#include "fixed_spike_shader_sky.h"  // third pass: the sky dome over the void\n')
 assert "inline void installVoid(std::uintptr_t base);" in cut and cut.count("installVoid(base);") == 1 and cut.count("installEffect(base);") == 1
 assert void.count("inline void installVoid(std::uintptr_t base) {") == 1 and "runtime = " not in void
 install_effect = cut_body("inline void installEffect(std::uintptr_t base) {", "// Main thread, inside the camera frame service.")
@@ -427,11 +430,58 @@ assert "s.window = r.windows[0];" in trace_body and "look.effect = r.windows[1];
     trace_body.index("if (format(line,sizeof(line),s)) r.emitter(line);") < trace_body.index("if (formatLook(line,sizeof(line),look)) r.lookEmitter(line);")
 assert '"relPlane=%.2f passes=%llu cut=%llu byClass=%llu,%llu peak=%u cap=%u uploads=%llu shaders=%u,%u,%u created=%llu open=%llu "' in cut_policy
 assert "LineBudget shaderLines{shader::traceLines},shaderLookLines{shader::traceLines};" in spike and \
-    "[](const char* text) { emit(runtime->shaderLookLines,text); });" in configure_spike and \
-    "(shader::tracing() ? 2u*shader::traceLines : 0u)" in configure_spike
+    "[](const char* text) { emit(runtime->shaderLookLines,text); },[](const char* text) { emit(runtime->shaderVoidLines,text); });" in configure_spike and \
+    "(shader::tracing() ? 3u*shader::traceLines : 0u)" in configure_spike
 assert 'shaderCut.colorText = read("FixedCameraSpike","sVoidColor","0,0,0");' in gate and \
     "const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;" in cut_policy
 assert "\nbShaderCutEffect=1\n" in ini and "\nbVoidColor=1\n" in ini and "\nsVoidColor=0,0,0\n" in ini
 print("PASS shader second-pass wiring: Effect and void only inside mode 3 after every cut guard; Effect through the cut's own path with its own "
       "guard, list and counters; one engine call per void hook, engine colour unless applied; one 4-byte code write after every check; "
       "FixedShader row unchanged")
+
+# Wave 2 shader, third pass: the sky dome over the void and Effect passes
+# clipped whole. The sky root's hidden bit is the only engine write; it is made
+# on the main thread only, set only on a frame that published the cut, put
+# back on the first main-thread frame that did not, and only where the
+# engine's own SetMode rule still says the root is shown.
+assert "inline void installSky(std::uintptr_t base);" in cut and "inline void settleSky(bool want);" in cut and cut.count("installSky(base);") == 1
+assert commit.index("installVoid(base);") < commit.index('"FixedCameraSpike shader look installed void=') < commit.index("installSky(base);") < \
+    commit.index('"FixedCameraSpike shader void installed sky=%s effectWhole=%s"')
+def sky_body(start, end):
+    return sky[sky.index(start):sky.index(end, sky.index(start))]
+install_sky = sky_body("inline void installSky(std::uintptr_t base) {", "// Main thread only:")
+assert install_sky.index("if (!r.config.hideSky) { r.skyState = Feature::off; return; }") < install_sky.index("skySiteCheck(base,REL::ID(skyAddress.id).address(),") < \
+    install_sky.index("Refusal::skySite") < install_sky.index("r.skyState = Feature::installed;")
+settle = sky_body("inline void settleSky(bool want) {", "} // namespace")
+assert settle.index("if (r.skyState != Feature::installed) return;") < settle.index("skyStep(want,r.skyRoot != nullptr,root != nullptr,root == r.skyRoot,")
+assert settle.count("std::memcpy(root+sky::objectFlags,&value,sizeof(value));") == 2 and sky.count("std::memcpy(") == 2
+assert "const std::uint32_t value = objectFlags | sky::hidden;" in settle and "const std::uint32_t value = objectFlags & ~sky::hidden;" in settle
+assert settle.index("if (step == SkyStep::hide) {") < settle.index("objectFlags | sky::hidden") < settle.index("} else if (step == SkyStep::restore) {") < \
+    settle.index("objectFlags & ~sky::hidden") < settle.index("} else if (step == SkyStep::leave) {") < settle.index("Refusal::skyLeft")
+for forbidden in ("safe_write", "VirtualAlloc", "VirtualProtect", "write_vfunc", "write_call", "write_branch", "AllocTrampoline", "runtime = ",
+                  "GetSingleton", "AddTask(", "BSFixedString"):
+    assert forbidden not in sky, forbidden
+# settleSky runs only on the main thread: publish (true only after the snapshot is published), the main-thread
+# branch of deactivate, frameStart after a latch.
+assert cut.count("settleSky(") == 5 and cut.count("settleSky(true);") == 1
+assert publish.index("r.active.store(true,std::memory_order_release);") < publish.index("settleSky(true);")
+deactivate = cut_body("inline void deactivate() {", "// Main thread, before the camera update.")
+assert "if (thin::onMain()) settleSky(false);" in deactivate and deactivate.index("runtime->active.store(false,") < deactivate.index("settleSky(false)")
+assert frame_start.index("if (!r.installed) return;") < frame_start.index("if (r.latched.load(std::memory_order_acquire)) settleSky(false);")
+assert "constexpr Address skyAddress{401652,0x31e0d80};" in sky_policy and "constexpr Address skyModeAddress{26222,0x411660};" in sky_policy and \
+    "constexpr std::uintptr_t skyRuleRva = 0x411794;" in sky_policy and \
+    "constexpr std::size_t root = 0x08, mode = 0x1bc, flags = 0x1dc;" in sky_policy and "constexpr std::size_t objectFlags = 0xf4;" in sky_policy
+assert "constexpr bool engineShowsSky(std::uint32_t mode,std::uint32_t flags) { return (mode == 2u || mode == 3u) && !(flags & sky::hideSky); }" in sky_policy
+# Effect passes: whole only for the Effect group with the key on; the selection is unchanged.
+assert "const bool whole = group && r.config.effectWhole && wholeEffect(r.view,bound);" in consider and \
+    consider.index("bound = {peek<Vec>(geometry,offset::objectBound),") < consider.index("skip = reach(r.view,bound,") < \
+    consider.index("const bool whole = group && r.config.effectWhole && wholeEffect(r.view,bound);") < \
+    consider.index("apply(*entry,whole ? wholeConstant : wanted,shaderClass);")
+assert "constexpr Constant wholeConstant{0.0f,-1.0f,0.0f,0.0f};" in sky_policy
+assert "inline Skip ownerSkip(const std::uint8_t* geometry,std::uint32_t& owner) {" in cut and "owner = ref->GetFormID();" in cut
+assert trace_body.index("if (formatLook(line,sizeof(line),look)) r.lookEmitter(line);") < trace_body.index("if (formatVoid(line,sizeof(line),voids)) r.voidEmitter(line);")
+assert "r.windows = {}; r.look = {}; r.voidWindow = {}; r.haveOther = false;" in trace_body
+assert "LineBudget shaderVoidLines{shader::traceLines};" in spike and "\nbVoidHideSky=1\n" in ini and "\nbShaderCutEffectWhole=1\n" in ini
+print("PASS shader third-pass wiring: sky root hidden only on published main-thread frames, put back only under the engine's own rule, "
+      "two one-bit writes and nothing else; Effect clipped whole only in its group with the key on; FixedShaderVoid after FixedShaderLook; "
+      "one site per FCS-89..90")

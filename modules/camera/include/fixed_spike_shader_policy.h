@@ -78,12 +78,13 @@ constexpr unsigned maxOwnerHops = 32;
 constexpr std::uint32_t ammoForm = 0x2a; // the engine looks past an ammunition reference for the actor carrying it (RVA 2EED5E)
 
 // One code per refusal site; codes above 63 need their own once-mask. 80..88
-// are the second pass's: the Effect class and the void colour.
+// are the second pass's: the Effect class and the void colour; 89..90 the
+// third pass's: the sky dome over the void (fixed_spike_shader_sky_policy.h).
 enum class Refusal : unsigned { settings = 66, foreign = 67, address = 68, table = 69, device = 70, thread = 71, bracket = 72,
     create = 73, patch = 74, unaudited = 75, view = 76, map = 77, object = 78, context = 79,
     effectTable = 80, voidSite = 81, voidMemory = 82, voidThread = 83, effectCreate = 84, effectPatch = 85, effectUnaudited = 86,
-    effectObject = 87, effectThread = 88 };
-constexpr unsigned firstRefusal = 66, lastRefusal = 88;
+    effectObject = 87, effectThread = 88, skySite = 89, skyLeft = 90 };
+constexpr unsigned firstRefusal = 66, lastRefusal = 90;
 static_assert(lastRefusal-firstRefusal < 32);
 // The refusals a shader preparation can end in, per group.
 struct PrepareCodes { Refusal object,unaudited,patch,create; };
@@ -131,6 +132,9 @@ struct Config {
     bool voidColor{true};       // bVoidColor: the main view clears to `color` while the cut is active
     std::string colorText{"0,0,0"}; // sVoidColor as read
     Color color{};              // parsed from colorText by validate
+    // Third pass. Read only in mode 3, where both default on.
+    bool hideSky{true};         // bVoidHideSky: the sky dome is not drawn over the void while the cut is active
+    bool effectWhole{true};     // bShaderCutEffectWhole: a selected Effect pass is clipped whole, not at the plane
 };
 // The camera stands about 336 ground units from the feet, so a radius under
 // 384 could leave a piece between camera and player whole.
@@ -723,3 +727,4 @@ inline bool formatLook(char* out,std::size_t size,const LookSample& s) {
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 } // namespace skycrpg::camera::fixed::shader
+#include "fixed_spike_shader_sky_policy.h" // third pass: the sky dome over the void, Effect passes clipped whole
