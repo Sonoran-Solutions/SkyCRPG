@@ -26,7 +26,7 @@ struct StyleEntry {
     const RE::TESObjectREFR* ref{};
     std::uint32_t formId{},baseId{};
     unsigned long long frame{};      // last refresh; 0 = never
-    bool used{},lane{},roof{},interact{},floor{};
+    bool used{},lane{},roof{},interact{},walkable{};
     int quadrant{-1};
     Family family{Family::other};
     Piece piece{Piece::flat};
@@ -143,7 +143,6 @@ inline void refresh(StyleEntry& e,RE::TESObjectREFR* ref,Kind kind) {
     f.overhead = box.valid && box.low.z >= s.base+storeyHeadroom;
     f.around = box.valid && feet.x >= box.low.x && feet.x <= box.high.x && feet.y >= box.low.y && feet.y <= box.high.y;
     f.low = box.valid && box.high.z <= feet.z+laneHigh;
-    f.floor = f.around && box.high.z <= feet.z+floorTop;
     // Every object form type the cursor can activate (all of kindOf's objects but Tree).
     f.interact = kind == Kind::object && base && base->GetFormType() != RE::FormType::Tree;
     // W5 fixes: roofs and ceilings never kept; a back piece kept only standing on this storey and not far above its cap.
@@ -151,7 +150,7 @@ inline void refresh(StyleEntry& e,RE::TESObjectREFR* ref,Kind kind) {
     f.walkable = box.valid && box.high.z <= feet.z+floorTop;
     f.standing = box.valid && box.low.z <= s.base+standSlack;
     f.overCap = box.valid && box.high.z > s.capZ+capSlack;
-    e.interact = f.interact; e.floor = f.floor;
+    e.interact = f.interact; e.walkable = f.walkable;
     e.decision = decide(f);
     e.frame = r.frame;
     ++s.refsNow;
@@ -229,7 +228,7 @@ inline void styledPass(void* pass,std::size_t shaderClass,Vec eye) {
         if ((d.bucket == Bucket::keptFar || d.bucket == Bucket::cappedFar) && geometryExceeds(e->box,bound.centre,bound.radius))
             d = {Treat::flat,Bucket::fallback};
         else if (d.bucket == Bucket::keptGallery && geometryExceeds(e->box,bound.centre,bound.radius)) {
-            d = e->floor ? Decision{Treat::flat,Bucket::fallback} : e->interact ? Decision{Treat::flat,Bucket::interactCut} :
+            d = e->walkable ? Decision{Treat::flat,Bucket::fallback} : e->interact ? Decision{Treat::flat,Bucket::interactCut} :
                 Decision{Treat::remove,e->piece == Piece::object ? Bucket::removedObject : Bucket::removedWhole};
             ++sw.galleryRemoved;
         }
@@ -251,7 +250,8 @@ inline void styledPass(void* pass,std::size_t shaderClass,Vec eye) {
     }
     if (d.treat == Treat::low) ++sw.slicedLow;
     // A back piece cut at its cap is counted on FixedShaderStyle2 cappedFar, not as slicedFar.
-    if (d.bucket != Bucket::cappedFar && (e ? e->side == Side::back : false)) ++sw.slicedFar;
+    // ... nor an interactable on the back side given the flat cut (review of 82056db: it counted them as sliced walls).
+    if (d.bucket != Bucket::cappedFar && d.bucket != Bucket::interactCut && (e ? e->side == Side::back : false)) ++sw.slicedFar;
     // An interactable given the flat cut instead of a removal is counted on interactCut only.
     // ... and a tall object around the player given the flat cut, on fallback (aroundCut).
     if (d.bucket != Bucket::interactCut && d.bucket != Bucket::aroundCut && (e ? e->piece == Piece::object : kind == Kind::object)) ++sw.slicedObjects;

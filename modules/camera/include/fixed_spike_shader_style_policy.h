@@ -162,8 +162,10 @@ inline bool roofModel(const char* path) {
     const char* name = path;
     for (const char* at = path;*at;++at) if (*at == '\\' || *at == '/') name = at+1;
     // Review of 0b738ab: stairs are walked on (rifrmsmbaseceilingstairs01); columns, supports and beams
-    // (wrintcastleroofsupportbeam*, sovintcolumnroof01, slggcolceil01) are posts and beams, left to the
+    // (wrintcastleroofsupportbeam*, sovintcolumnroof01) are posts and beams, left to the
     // member and overhead rules, so a floor-standing post is never removed by its name.
+    // slggcolceil01 ("col", not "column") is not excluded by name: it is a column by shape, a member, and the
+    // roof rule applies to kit pieces only (review of 82056db, MINOR-2: "col" alone would also match other words).
     return (contains(name,"roof") || contains(name,"ceil")) && !contains(name,"wall") && !contains(name,"stair") &&
         !contains(name,"column") && !contains(name,"support") && !contains(name,"beam");
 }
@@ -364,7 +366,6 @@ struct Facts {
     bool overhead{};  // box bottom at or above the held feet height + storeyHeadroom
     bool around{};    // the box contains the feet in the ground plane (the player stands in or under it)
     bool low{};       // the box's top is at most feet + laneHigh (a hearth, a rug, a bench: not a cabinet)
-    bool floor{};     // around, and the top within floorTop of the feet: the floor the player stands on
     bool interact{};  // an interactable reference (door, container, activator, furniture, flora, an item): never removed whole
     bool gallery{};   // bCutKeepFarGallery
     bool kitCell{};   // the cell's census says kit building
@@ -389,8 +390,8 @@ constexpr float standSlack = 64.0f, capSlack = 64.0f, topStoreyCap = 350.0f;
 //     around the player (orchestrator decision after the fix pass; counted with fallback on the row)
 //   object or member: removed whole when not on the back side and in the lane, else kept whole
 // and over all of these (review of 30503e0):
-//   the floor under the player (around, top within 32 of the feet) is never removed (MINOR-4): it
-//     keeps the flat cut, which does not reach it
+//   anything walkable (top within 32 of the feet, anywhere: review of 82056db, MINOR-1; it replaced
+//     "the floor containing the feet") is never removed: it keeps the flat cut, which does not reach it
 //   an interactable reference is never removed whole (it would stay solid and clickable while
 //     invisible): it gets the flat cut at the plane instead, counted as interactCut (MINOR-5)
 //   kit piece on the back side: kept whole
@@ -431,7 +432,7 @@ constexpr Decision decide(const Facts& f) {
     if (f.piece == Piece::flat) return {Treat::flat,Bucket::fallback};
     const Decision d = rules(f);
     if (d.treat != Treat::remove) return d;
-    if (f.floor) return {Treat::flat,Bucket::fallback};
+    if (f.walkable) return {Treat::flat,Bucket::fallback};
     if (f.interact) return {Treat::flat,Bucket::interactCut};
     return d;
 }

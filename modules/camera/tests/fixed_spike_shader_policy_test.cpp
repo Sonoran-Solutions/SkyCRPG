@@ -988,7 +988,7 @@ void styleRules() {
         bool floor = false,bool interact = false) {
         Facts f; f.piece = piece; f.side = side; f.lane = lane; f.above = above; f.overhead = overhead; f.gallery = gallery; f.kitCell = kit;
         f.standing = true;
-        f.around = around; f.low = low; f.floor = floor; f.interact = interact;
+        f.around = around; f.low = low; f.walkable = floor; f.interact = interact;
         return decide(f);
     };
     const auto is = [](Decision d,Treat t,Bucket b) { return d.treat == t && d.bucket == b; };
@@ -1033,13 +1033,26 @@ void styleRules() {
     assert(is(rule(Piece::object,Side::back,false,true,false,false,true,false,false,false,true),Treat::flat,Bucket::interactCut));
     assert(is(rule(Piece::object,Side::front,false,false,false,false,true,false,false,false,true),Treat::keep,Bucket::keptObject));
     assert(is(rule(Piece::object,Side::back,false,true,false,true,true,false,false,false,true),Treat::keep,Bucket::keptGallery));
-    // Never removed when interactable or the floor, whatever else holds.
+    // Review of 82056db, MINOR-1: arriving on an upper floor made of several slabs (WRIntLoftMid01, 310..319, the feet at
+    // 321.5), the storey line can re-prime on the frame the base changes from candidates that include the slabs, so all of
+    // them are "above"; none at feet level is removed on any frame, whether or not it contains the feet.
+    for (const float lineZ : {310.0f,555.0f})
+        for (const float baseZ : {68.0f,321.5f})
+            for (const Vec slabAt : {Vec{-640,-256,0},Vec{-384,-256,0},Vec{-640,0,0},Vec{-896,-512,0}}) {
+                const Box slab = box({slabAt.x-128,slabAt.y-128,310},{slabAt.x+128,slabAt.y+128,319});
+                const Vec feetNow{-640,-256,321.5f};
+                Facts f; f.kitCell = true; f.piece = Piece::kit; f.side = sideOf(slab,thinAxis(slab),feetNow,eyeAt(feetNow,0),sideEnter);
+                f.above = slab.low.z >= lineZ-aboveTolerance; f.overhead = slab.low.z >= baseZ+storeyHeadroom;
+                f.walkable = slab.high.z <= feetNow.z+floorTop; f.standing = slab.low.z <= baseZ+standSlack;
+                assert(f.walkable && decide(f).treat != Treat::remove);
+            }
+    // Never removed when interactable or walkable, whatever else holds.
     for (unsigned bits = 0;bits < 512;++bits) {
         Facts f; f.kitCell = true; f.piece = (bits & 1u) ? Piece::object : (bits & 2u) ? Piece::member : Piece::kit;
         f.side = (bits & 4u) ? Side::front : (bits & 8u) ? Side::back : Side::across;
         f.lane = bits & 16u; f.above = bits & 32u; f.overhead = bits & 64u; f.around = bits & 128u; f.low = bits & 256u;
         for (const bool interact : {false,true}) for (const bool floor : {false,true}) {
-            f.interact = interact; f.floor = floor;
+            f.interact = interact; f.walkable = floor;
             if (interact || floor) assert(decide(f).treat != Treat::remove);
         }
     }

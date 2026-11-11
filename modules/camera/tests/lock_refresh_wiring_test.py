@@ -556,7 +556,7 @@ assert rules_fn.index("if (f.roof && f.piece == Piece::kit && !f.walkable) retur
 assert "f.walkable = box.valid && box.high.z <= feet.z+floorTop;" in style
 assert "if ((d.bucket == Bucket::keptFar || d.bucket == Bucket::cappedFar) && geometryExceeds(e->box,bound.centre,bound.radius))" in pass_fn
 assert "f.standing && !f.overCap ? Decision{Treat::keep,Bucket::keptFar} : Decision{Treat::cap,Bucket::cappedFar,Note::cap};" in rules_fn
-assert "if (d.bucket != Bucket::cappedFar && (e ? e->side == Side::back : false)) ++sw.slicedFar;" in pass_fn
+assert "if (d.bucket != Bucket::cappedFar && d.bucket != Bucket::interactCut && (e ? e->side == Side::back : false)) ++sw.slicedFar;" in pass_fn
 assert "else if (d.bucket == Bucket::keptGallery && geometryExceeds(e->box,bound.centre,bound.radius)) {" in pass_fn and \
     "Decision{Treat::remove,e->piece == Piece::object ? Bucket::removedObject : Bucket::removedWhole};" in pass_fn
 for key in ("iCutStyle", "bCutKeepFarGallery", "bCutStyleShadows"):
@@ -575,7 +575,7 @@ assert "immutable.usage = 1; immutable.access = 0;" in install_style and "static
 assert "geometryExceeds(e->box,bound.centre,bound.radius))" in pass_fn  # MINOR-3 as corrected after 2f5d9f6
 assert "if (s.shadowAccepted.back() && s.shadowRejected.back()) return false;" in audit_fn and "std::array<const std::uint8_t*,256> shadowRejected{},shadowAccepted{};" in style
 decide_fn = style_policy[style_policy.index("constexpr Decision decide(const Facts& f) {"):style_policy.index("// The height a slicing treatment cuts at.")]
-assert decide_fn.index("const Decision d = rules(f);") < decide_fn.index("if (f.floor) return {Treat::flat,Bucket::fallback};") < \
+assert decide_fn.index("const Decision d = rules(f);") < decide_fn.index("if (f.walkable) return {Treat::flat,Bucket::fallback};") < \
     decide_fn.index("if (f.interact) return {Treat::flat,Bucket::interactCut};")  # MINOR-4, MINOR-5
 assert "f.interact = kind == Kind::object && base && base->GetFormType() != RE::FormType::Tree;" in style
 assert '"shadowSkips=%llu fxFloorKept=%llu fxWholeRadius=%.1f interactCut=%llu sample=window",' in style_policy
