@@ -45,6 +45,7 @@ struct Config {
     unsigned hidePerFrame{16};
     unsigned hideTotal{192};
     bool hideTrace{};
+    bool holdFade{true};       // bHoldPlayerFade: the engine does not fade the player for its own camera point while the rig holds
 };
 // Keys that already have an owner in this stack: F8 (66) SmoothCam, K/L (37/38)
 // map, U (22) target lock, [ ] (26/27) Selection cycle, plus the live Camera and

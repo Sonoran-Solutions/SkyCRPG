@@ -952,6 +952,66 @@ Tests: 15 portable C++ tests PASS; wiring audit nine sections PASS (the roof rul
 
 Tests: 15 portable C++ tests PASS; wiring audit nine sections PASS; syntax check 0 warnings. Trace formats unchanged.
 
+### Sixth pass on 78a6a67: the engine's player fade (base rig), thick columns, Breezehome
+
+**1. Player fade: built in the base rig (`src/fixed_spike.h`, `include/fixed_spike_fade_policy.h`), key `bHoldPlayerFade=1`.** Cause established by `session-p55/research/missing-player-loft.md` and W10: with `setini "fCharControllerCheckHeightOffset:Camera" -5000` the player was drawn at all four loft headings.
+
+- **Choice: (b), hold the Setting. No code patch.** I re-verified the following in the binary:
+  - The Setting object is at RVA **20BA460** = Address Library **ID 382599**. Its vtable is 17EE3F8; its value at +8 is 124.0f in the file (0x42F80000); its name pointer at +0x10 is 196CFF8, which holds `"fCharControllerCheckHeightOffset:Camera"`. Object, value and name are initialised statically.
+  - A scan of `.text` for rip-relative references found every reference to the object or value:
+    - **8FAAB1** (`movss xmm6,[20BA468]` at 8FAAAD, inside `PlayerCamera::CheckCameraCollision`, ID 50832 = 8FA5D0) is the only reader of the value;
+    - B2BB7, 16B9CD0 and 17A3CE4..17A3D01 register and unregister it with the INI collection (the collection is returned by 19D780 = ID 13254).
+  - `CheckCharacterCollision` (557AD0 = ID 33008) has exactly one direct caller, 8FAAE9 (no other `E8`/`E9` targets it). Its return value is used only at 8FAAEE..8FAB02: when true and the cast named no actor, the player singleton (ID 403521, 3230778) becomes the actor to fade. Nothing else depends on it.
+  - NPC fades near the camera come from `fActorFadeOutLimit` inside the cast (5574F0, ID 33007; read at 5577A4, per the research) and are untouched.
+  - `CheckCameraCollision` has 8 direct callers (8F3B08, 8F4210, 8F4688, 8F4F0B, 8F6BA2, 8FE58E, 8FED28, 8FFC92), i.e. other camera states. While the rig holds, only the third-person one runs.
+  - **Fade-in:** at 8FAB29..8FAB55, when the handle at PlayerCamera+130 changes and the old actor's fade state (6FE000) is 2 (out), 691A10 (ID 37574) fades it in.
+    - So once the test stops returning true, the engine itself brings back a player that was faded before the rig engaged, or while it held.
+    - Remaining gap (Hypothesis): a player faded while the handle was cleared by another path would not be brought back by this; not observed.
+  - **Saves:** INI Settings are not written to save games. Hypothesis, from the format: a save carries form and global data, not Setting values. The Skyrim.ini collection is written back to disk only by the console `saveini`. The hold is therefore process memory only, and a quit while held loses it.
+- **Gating.**
+  - **Hold:** at the end of every frame the rig held the view (`endFrame`, eligible path, the same eligibility as the caster detour), the value is set to −5000. The engine's value is saved first. The hold is in place for the next native `ThirdPersonState::Update`, which SmoothCam calls before its own placement.
+  - **Release:** on the first ineligible frame (load, cell change, menu, death, F8, first person, any exit cause) and on every main-thread lifecycle call (`lifecycle()`), the saved value is written back if the Setting still holds −5000. If someone else wrote it meanwhile (console `setini`), it is left as they set it ("leave"). While held, a foreign write is adopted as the new saved value and the hold is re-applied ("rehold").
+  - **First frame:** the frame on which the rig first holds still runs with the engine's value (eligibility is known only after that frame's native update). A fade that starts on that frame is undone by the engine on the next.
+- **Refusal FCS-15** (free in the base series: base uses 1-3, 10-14, 20-23, 30-31, 40-41, 50, 60-61; packages use 40-49, 50-59, 60-69, 66-92). Raised when ID 382599 does not resolve to 20BA460, or the object's name pointer is missing or names another Setting. The engine's fade is then left alone. The name is read only after the address matched.
+- **Log line** (once, after `installed rig=1 …`): `FixedCameraSpike player fade hold=%s setting=382599 holdValue=-5000.0 engineValue=%.1f` (state `installed`, `refused` or `off`).
+- **Trace: new optional kind `FixedFade`.** One row per 0.1 s window, written while any spike trace is on, with its own 6,000-row budget. Existing lines are unchanged.
+  ```
+  FixedFade t=%.3f frame=%llu state=%s held=%u holdValue=%.1f current=%.1f saved=%.1f frames=%llu holds=%llu keeps=%llu reholds=%llu releases=%llu leaves=%llu playerFaded=%llu heldPlayerFaded=%llu sample=window
+  ```
+  - `playerFaded` counts camera frames in which the engine's fade handle (PlayerCamera+130) named the player; `heldPlayerFaded` counts those that happened while held.
+  - Expected at the loft: `heldPlayerFaded` 0 after the first held frame, `playerFaded` > 0 only on frames the rig did not hold.
+  - The player's handle value is cached once (`GetHandle()`).
+- **Tests:** new `tests/fixed_spike_fade_policy_test.cpp`:
+  - the facts;
+  - `fadeSettingCheck` at three bases (address moved, no name, another name, prefix or longer name);
+  - every one of the 16 inputs of `fadeStep` against the table, with invariants (never written when not installed, never released while the rig holds, written back only when still ours);
+  - a frame sequence: hold, a setini under the hold, release, a menu, someone's write before release;
+  - the `FixedFade` row exactly, its nan form and its longest length (423 of 768).
+- **Wiring audit:** new section `player fade hold`. It checks: install order and guards; the name read only at the audited address; the two `endFrame` call sites and their order; the lifecycle restore; the key in the gate and the INI; no code write. The base code count is now 20 with FCS-15.
+
+**2. Thick columns in Dragonsreach (no rule change).** Skyrim.esm placements at the route pose (−448, −128, −318):
+
+- The tall pieces crossing the plane within 520 units are the castle pillars `WRIntCastleFreePillar01`: OBND 69 × 72 × 545, z −351..194.
+- They are members by the current shape rule (middle span ≤ 128), as are every other column-like piece in the cell: `…FreePillar01Mid` 62 × 54 × 514, `…MidEndNubs` 73 × 72 × 593, `…Top` 54 × 46 × 514, `WRIntCastleStoneColumn01` 56 × 56 × 491, `WRTempIntPromCol01` 42 × 42 × 499.
+- Each hall column is a **stack of three or four references** (base, mid, top). The base piece stands on the floor and is kept whole (member rules). The pieces above start at 194, at the storey line (192): they are "above" and removed whole.
+- What looks like a sliced top in s-kit-dragonsreach-h0 is therefore the **open upper end of the base piece**, which in vanilla is hidden by the next piece. It is not the plane: the column is drawn to 194, 512 above the feet, where the plane is at feet + 160.
+- They look thick because they stand next to the camera.
+- A shape rule for "thick" columns (vertical ≥ 2 × both horizontal spans, spans similar) would also make the castle corners `WRIntCastleWallCor01` (256 × 256 × 544) and `…DoubleHighExCor01` (247 × 247 × 512) members, so it was not added.
+- Options for the owner:
+  - (a) keep a stacked column whole up its whole stack (to the roof, ~1,600 units) whenever its base piece is kept;
+  - (b) remove the whole stack when any piece of it is removed;
+  - (c) leave as is (column ends at the storey line with an open end).
+- I recommend (a) for back-side columns only. It is not built.
+
+**3. Breezehome (no rule change).** At the COC pose (−384.5, −656.2, 64; plane 224, storey line 310):
+
+- The walls in frame are `WRIntWallStr01Low`, `WRIntWallStr01WinBLow`, `WRIntWallSTStrWinA`, `WRIntWallSTCor*` and `WRIntWallCorIn01`, all with boxes 32..320.
+- At each heading about half of them are front walls, cut at the plane exactly as in style 0 (rule 3), and half are back walls kept whole to 320.
+- A pixel diff of the W7 screenshots (style 1 against style 0, threshold 40, every second pixel) changes only 3,031 / 9,984 / 27 / 121 samples at h0..h3. At h0 the difference is the back walls' upper parts at the top edge of the frame: whole in style 1, cut flat in style 0, mostly outside the frame (crop compared by eye).
+- From the doorway the camera looks at the room with the back walls at the edge of the picture. The 96 units each back wall gains (224 → 320) project above the top of the frame, and what style 1 removes above the line (roof, ceilings, the upper floor) was already invisible under the flat cut. Both pictures therefore look alike, and the rules do what they should.
+- The W7 `slicedFar` (126-140 per window at 45/315) was the `interactCut` miscount fixed in 78a6a67 plus the geometry-check fallback.
+- A pose in the middle of the main room would show the difference.
+
 ### Proposed shared-file changes (not made)
 
 None needed beyond this package's files.

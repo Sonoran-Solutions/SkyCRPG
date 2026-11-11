@@ -4,6 +4,7 @@
 // spike adapter (DYL-217): nothing is allocated, installed or evaluated unless
 // [FixedCameraSpike] bEnabled=1. SmoothCam stays the only transform writer.
 #include "fixed_spike_policy.h"
+#include "fixed_spike_fade_policy.h" // base rig: the engine's own player fade (bHoldPlayerFade)
 #include "fixed_spike_shader.h" // wave 2 shader: iSeeThroughMode=3
 #include <memory>
 
@@ -15,6 +16,7 @@ enum class Refusal : unsigned {
     casterModule = 10, casterAddress = 11, casterPrologue = 12, casterMemory = 13, casterProtect = 14,
     roomTable = 20, roomSlot = 21, roomPrologue = 22, roomCallers = 23,
     pickSlot = 30, hideExterior = 31,
+    fadeSetting = 15,
     snapMapped = 40, snapUnbound = 41,
     traceWriter = 50,
     restoreConflict = 60, offMain = 61
@@ -81,6 +83,15 @@ struct Runtime {
     LineBudget shaderVoidLines{shader::traceLines}; // wave 2 shader, third pass: FixedShaderVoid
     LineBudget shaderStyleLines{shader::traceLines}; // wave 2 shader, fourth pass: FixedShaderStyle (iCutStyle=1)
     LineBudget shaderStyle2Lines{shader::traceLines}; // wave 2 shader, fourth pass W5 fixes: FixedShaderStyle2 (iCutStyle=1)
+    // Player fade hold (fixed_spike_fade_policy.h). Main thread only, except the pointer set at install.
+    float* fadeValue{};          // the Setting's value; null: not installed
+    FadeFeature fadeState{FadeFeature::off};
+    bool fadeHeld{};
+    float fadeSaved{};
+    std::uint32_t playerHandle{};
+    FadeWindow fadeWindow;
+    double nextFade{};
+    LineBudget fadeLines{fadeTraceLines};
     double nextRig{},nextRoom{};
 };
 // Process lifetime, like the thin runtime: hidden roots and the trace worker
@@ -148,13 +159,67 @@ inline void restoreAll(Exit cause) {
     if (!runtime->tracked) return;
     for (auto& slot : runtime->hidden) if (slot.used) release(slot,cause);
 }
+// ---- player fade hold (bHoldPlayerFade) -----------------------------------------
+// At install (kDataLoaded, any thread: reads only): the Setting by ID, its address and its name.
+inline void installFade(std::uintptr_t base) {
+    auto& r = *runtime;
+    if (!r.config.holdFade) return;
+    const std::uintptr_t at = REL::ID(fadeSettingId).address();
+    const char* name = at == base+fadeSettingRva ? *reinterpret_cast<const char* const*>(at+settingName) : nullptr;
+    if (const unsigned failed = fadeSettingCheck(base,at,name)) {
+        r.fadeState = FadeFeature::refused;
+        char text[224]{};
+        std::snprintf(text,sizeof(text),"check=%u: Setting ID %llu is not fCharControllerCheckHeightOffset:Camera at the audited RVA; "
+            "the engine's player fade is left as it is",failed,static_cast<unsigned long long>(fadeSettingId));
+        refuse(Refusal::fadeSetting,text); return;
+    }
+    r.fadeValue = reinterpret_cast<float*>(at+settingValue);
+    r.fadeState = FadeFeature::installed;
+}
+// Main thread: endFrame (eligible: this frame held the view; the next native update reads the
+// hold) and every lifecycle exit on the main thread (not eligible).
+inline void settleFade(bool eligible) {
+    auto& r = *runtime;
+    if (!r.fadeValue || !thin::onMain()) return;
+    float& value = *r.fadeValue;
+    const FadeStep step = fadeStep(true,eligible,r.fadeHeld,value);
+    ++r.fadeWindow.steps[static_cast<std::size_t>(step)];
+    if (step == FadeStep::hold || step == FadeStep::rehold) { r.fadeSaved = value; value = fadeHoldValue; r.fadeHeld = true; }
+    else if (step == FadeStep::release) { value = r.fadeSaved; r.fadeHeld = false; }
+    else if (step == FadeStep::leave) r.fadeHeld = false;
+}
+// Main thread, every camera frame: whether the engine's fade handle names the player.
+inline void observeFade() {
+    auto& r = *runtime;
+    if (r.fadeState != FadeFeature::installed) return;
+    const auto camera = RE::PlayerCamera::GetSingleton();
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    if (!camera || !player) return;
+    if (!r.playerHandle) r.playerHandle = player->GetHandle().native_handle();
+    std::uint32_t handle{};
+    std::memcpy(&handle,reinterpret_cast<const std::uint8_t*>(camera)+playerFadeHandle,sizeof(handle));
+    ++r.fadeWindow.frames;
+    if (r.playerHandle && handle == r.playerHandle) { ++r.fadeWindow.playerFaded; if (r.fadeHeld) ++r.fadeWindow.heldPlayerFaded; }
+}
+inline void traceFade() {
+    auto& r = *runtime;
+    if (r.fadeState == FadeFeature::off || !r.traceReady || r.now < r.nextFade) return;
+    r.nextFade = r.now+.1;
+    FadeSample s;
+    s.seconds = r.now; s.frame = r.frame; s.state = r.fadeState; s.held = r.fadeHeld;
+    s.current = r.fadeValue ? *r.fadeValue : std::numeric_limits<float>::quiet_NaN();
+    s.saved = r.fadeHeld ? r.fadeSaved : std::numeric_limits<float>::quiet_NaN();
+    s.window = r.fadeWindow; r.fadeWindow = {};
+    char line[sizeof(TraceRow)]{};
+    if (formatFade(line,sizeof(line),s)) emit(r.fadeLines,line);
+}
 // Lifecycle events can arrive on any thread; restore at once when on Main.
 inline void lifecycle(Exit cause) {
     if (!runtime) return;
     requestRestore(cause);
     runtime->roomActive.store(false,std::memory_order_release);
     shader::deactivate(); // wave 2 shader
-    if (runtime->active.load(std::memory_order_acquire) && thin::onMain()) restoreAll(cause);
+    if (runtime->active.load(std::memory_order_acquire) && thin::onMain()) { restoreAll(cause); settleFade(false); }
 }
 // Plain placed references only. Light references are left out on purpose: the
 // 3D of a light is the light itself, and hiding a ceiling must not put out the
@@ -631,6 +696,7 @@ inline void endFrame() {
         r.silentFrames = cause == Exit::hookSilent ? r.silentFrames+1u : 0u;
         r.roomActive.store(false,std::memory_order_release);
         shader::deactivate(); shader::trace(r.now); // wave 2 shader
+        observeFade(); settleFade(false); traceFade(); // base rig: the engine's player fade back to its own value
         dropSnaps();
         if (restoreNow(cause,r.silentFrames)) restoreAll(cause);
         traceRig(false);
@@ -653,6 +719,7 @@ inline void endFrame() {
     shader::noteCell(parent); // wave 2 shader, fourth pass: the census of a newly entered cell (iCutStyle=1 only)
     shader::publish(viewer,{facing[0][1],facing[1][1],facing[2][1]},{position.x,position.y,position.z},parent->IsInteriorCell(),r.frame,r.now);
     shader::trace(r.now);
+    observeFade(); settleFade(true); traceFade(); // base rig: no player fade for the engine's own camera point next frame
 }
 
 // ---- install ----------------------------------------------------------------
@@ -745,6 +812,7 @@ inline void install(bool prerequisites,bool service) {
     installCaster(base);
     if (r.config.roomSeedMode) installRoomHook(base);
     shader::install(base); // wave 2 shader: a no-op unless iSeeThroughMode=3
+    installFade(base); // base rig: bHoldPlayerFade (FCS-15 on a failed check)
     r.active.store(true,std::memory_order_release);
     char line[256]{};
     std::snprintf(line,sizeof(line),"installed rig=1 caster=%s rooms=%s seeThrough=%u shaderCut=%s heading=%.3f zoom=%.3f snapKeys=%d,%d traces=%u,%u,%u",
@@ -752,6 +820,10 @@ inline void install(bool prerequisites,bool service) {
         !r.config.roomSeedMode ? "vanilla" : r.roomHook ? "hooked" : "refused",r.config.seeThroughMode,shader::status(),
         static_cast<double>(r.config.heading),static_cast<double>(r.config.zoom),r.config.snapLeftKey,r.config.snapRightKey,
         static_cast<unsigned>(r.config.rigTrace),static_cast<unsigned>(r.config.roomTrace),static_cast<unsigned>(r.config.hideTrace));
+    note(line);
+    std::snprintf(line,sizeof(line),"player fade hold=%s setting=%llu holdValue=%.1f engineValue=%.1f",
+        fadeFeatureNames[static_cast<std::size_t>(r.fadeState)],static_cast<unsigned long long>(fadeSettingId),static_cast<double>(fadeHoldValue),
+        r.fadeValue ? static_cast<double>(*r.fadeValue) : static_cast<double>(std::numeric_limits<float>::quiet_NaN()));
     note(line);
 }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1.
@@ -773,7 +845,8 @@ inline void configure(const Config& requested,const shader::Config& shaderReques
             [](const char* text) { emit(runtime->shaderStyleLines,text); },[](const char* text) { emit(runtime->shaderStyle2Lines,text); });
     if (r.config.rigTrace || r.config.roomTrace || r.config.hideTrace || shader::tracing()) {
         const unsigned rows = (r.config.rigTrace ? rigTraceLines : 0u)+(r.config.roomTrace ? roomTraceLines : 0u)+
-            (r.config.hideTrace ? hideTraceLines : 0u)+(shader::tracing() ? shader::traceKinds()*shader::traceLines : 0u);
+            (r.config.hideTrace ? hideTraceLines : 0u)+(shader::tracing() ? shader::traceKinds()*shader::traceLines : 0u)+
+            (r.config.holdFade ? fadeTraceLines : 0u);
         r.traceReady = r.writer.start(tracePath,rows);
         if (!r.traceReady) refuse(Refusal::traceWriter,"trace writer did not start; traces off, behaviour unchanged");
     }

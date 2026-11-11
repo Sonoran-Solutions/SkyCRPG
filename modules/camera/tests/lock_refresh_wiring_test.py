@@ -214,7 +214,7 @@ assert "slots[0x33] != REL::Module::get().base()+0x104be80" in spike
 for forbidden in ("BSFixedString", "GetMenu(", "IsMenuOpen(", "RequestCameraControl", "AddTask("):
     assert forbidden not in spike, forbidden
 codes = dict(re.findall(r"(\w+) = (\d+)", spike_body("enum class Refusal : unsigned {", "};")))
-assert len(codes) == 19 and len(set(codes.values())) == len(codes)
+assert len(codes) == 20 and len(set(codes.values())) == len(codes) and codes["fadeSetting"] == "15"
 for name in codes:
     assert (spike + source).count("Refusal::" + name) == 1, name  # one site per code
 print("PASS spike on wiring: frame-scoped suppression; shared caster detour; sealed gateway; caller-gated room hook; hook-thread isolation; "
@@ -261,7 +261,7 @@ assert "shader::deactivate(); // wave 2 shader" in spike_body("inline void lifec
 begin_frame = spike_body("inline void beginFrame() {", "inline void clearFrame() {")
 assert begin_frame.index("!thin::onMain()) return;") < begin_frame.index("shader::frameStart();")
 assert end_frame.index("shader::deactivate(); shader::trace(r.now);") < end_frame.index("r.previousEligible = false;") < \
-    end_frame.index("publishView(viewer,eye);") < end_frame.index("shader::publish(viewer,") < end_frame.index("shader::trace(r.now);\n}")
+    end_frame.index("publishView(viewer,eye);") < end_frame.index("shader::publish(viewer,") < end_frame.index("shader::trace(r.now);\n    observeFade(); settleFade(true); traceFade();")
 assert "parent->IsInteriorCell(),r.frame,r.now);" in end_frame[end_frame.index("shader::publish(viewer,"):]
 assert spike.count("shader::publish(") == 1 and spike.count("shader::frameStart(") == 1 and spike.count("shader::install(") == 1
 install_spike = spike_body("inline void install(bool prerequisites,bool service) {", "// loadSettings, only when")
@@ -582,3 +582,27 @@ assert '"shadowSkips=%llu fxFloorKept=%llu fxWholeRadius=%.1f interactCut=%llu s
 print("PASS shader fourth-pass wiring: style runtime only with iCutStyle=1; per-reference buffer choice inside the existing hooks after the "
       "flat cut's own selection; audited bytecode and budget before any bind; remove buffer never Mapped; shadow rule on Utility other-view "
       "passes of removed geometry only; no new hook or engine write; one site per FCS-91..92")
+
+# Base rig: the engine's own player fade (bHoldPlayerFade). One Setting value is held while the rig
+# holds the view and put back on the first frame it does not and on every main-thread lifecycle exit;
+# no code is written; the Setting is found by ID and verified by address and name before any write.
+fade_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_fade_policy.h").read_text()
+install_fade = spike_body("inline void installFade(std::uintptr_t base) {", "// Main thread: endFrame")
+assert install_fade.index("if (!r.config.holdFade) return;") < install_fade.index("REL::ID(fadeSettingId).address()") < \
+    install_fade.index("fadeSettingCheck(base,at,name)") < install_fade.index("Refusal::fadeSetting") < install_fade.index("r.fadeValue = ")
+assert "at == base+fadeSettingRva ? *reinterpret_cast<const char* const*>(at+settingName) : nullptr" in install_fade  # the name is read only at the audited address
+settle_fade = spike_body("inline void settleFade(bool eligible) {", "// Main thread, every camera frame")
+assert "if (!r.fadeValue || !thin::onMain()) return;" in settle_fade and "float& value = *r.fadeValue;" in settle_fade and "value = fadeHoldValue;" in settle_fade and "value = r.fadeSaved;" in settle_fade
+assert "constexpr std::uint64_t fadeSettingId = 382599;" in fade_policy and "constexpr std::uintptr_t fadeSettingRva = 0x20ba460;" in fade_policy and \
+    "constexpr float fadeHoldValue = -5000.0f;" in fade_policy
+assert end_frame.count("observeFade(); settleFade(false); traceFade();") == 1 and end_frame.count("observeFade(); settleFade(true); traceFade();") == 1
+assert end_frame.index("observeFade(); settleFade(false); traceFade();") < end_frame.index("r.previousEligible = false;") < \
+    end_frame.index("shader::publish(viewer,") < end_frame.index("observeFade(); settleFade(true); traceFade();")
+assert "if (runtime->active.load(std::memory_order_acquire) && thin::onMain()) { restoreAll(cause); settleFade(false); }" in \
+    spike_body("inline void lifecycle(Exit cause) {", "// Plain placed references only.")
+assert install_spike.index("installFade(base);") < install_spike.index("r.active.store(true,")
+assert gate.count('"FixedCameraSpike","bHoldPlayerFade"') == 1 and "\nbHoldPlayerFade=1\n" in ini
+for forbidden in ("write_call", "write_branch", "safe_write(", "VirtualProtect"):
+    assert forbidden not in install_fade + settle_fade, forbidden
+print("PASS player fade hold: one Setting found by ID, checked by address and name, held only while the rig holds, put back on the first "
+      "frame it does not and on every main-thread lifecycle exit; no code written; FCS-15")

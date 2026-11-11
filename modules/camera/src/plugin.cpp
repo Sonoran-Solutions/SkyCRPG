@@ -341,6 +341,7 @@ void loadSettings() {
         f.hidePerFrame = number("FixedCameraSpike","iHideMaxPerFrame",f.hidePerFrame);
         f.hideTotal = number("FixedCameraSpike","iHideMaxTotal",f.hideTotal);
         f.hideTrace = flag("FixedCameraSpike","iHideTrace",0);
+        f.holdFade = flag("FixedCameraSpike","bHoldPlayerFade",1);
         // Wave 2 shader cut (iSeeThroughMode=3); unused in every other mode.
         fixed::shader::Config shaderCut;
         shaderCut.height = number("FixedCameraSpike","fShaderCutHeight",shaderCut.height);
