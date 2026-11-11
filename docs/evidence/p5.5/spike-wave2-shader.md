@@ -6,6 +6,8 @@
 
 **Third pass (2026-11-10, base `6397406`).** Batch W3 showed the void dark but not black. Root cause: in interiors flagged Show Sky the engine draws the exterior sky dome over the void. Built: the sky dome hidden while the cut is active (`bVoidHideSky`), and Effect meshes centred in the upper half under the plane or higher clipped whole (`bShaderCutEffectWhole`, the wedge). See **"Third pass: what paints the void, and the wedge"** below. Its game rows are **NOT_RUN**.
 
+**Stage 2 (2026-11-11, base `3528e92`).** Owner go "Start Stage 2": one full-screen frame pass of our own after the main world render and before image space (soft cut edge, radial falloff, vignette, exact void colour), behind `bFramePass` (default on in mode 3). Everything about it is in **"Stage 2: the frame pass"** below. Its game rows are **NOT_RUN**.
+
 **Status.** Source, portable tests, wiring audit, offline binary audit and offline shader-archive audit are complete and uncommitted. The Windows `/W4 /WX` build is **NOT_RUN** (no MSVC here). **Every in-game row is NOT_RUN**: nothing was launched, no shader was created on a device. The mode is default-off: with `iSeeThroughMode` absent or 0..2 no shader-cut runtime is allocated and no hook is installed.
 
 Each claim is marked **Source** (file:line, binary RVA, Address Library ID, the shipped shader archive, or a URL and revision) or **Hypothesis**. RVAs are relative to image base `0x140000000` of `SkyrimSE.exe`, SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`; IDs are resolved through `session-p4/stage-camera-rc1/Data/SKSE/Plugins/versionlib-1-7-104-0.bin`, SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842` (ID *n* at file offset `96 + 4n`). Shader archive: `Data/Skyrim - Shaders.bsa`, SHA-256 `fd1ba630f443353ed21ed4ca0380968f9c7091c8434518ea3cc79bc6d38c18e7`, one uncompressed file `shadersfx\shaders011.fxp` (67,768,128 bytes at archive offset 0x66). Disassembly: `objdump -d -M intel`. Scratch tools (ID resolver, PE reader, a scanner for vtable calls on a global COM object, a DXBC disassembler, a reference checksum, a ctypes wrapper for vkd3d-shader) stayed outside the worktree.
@@ -1016,6 +1018,190 @@ Tests: 15 portable C++ tests PASS; wiring audit nine sections PASS; syntax check
 
 None needed beyond this package's files.
 
+## Stage 2: the frame pass (2026-11-11, base `3528e92`)
+
+Owner go 2026-11-11 ("Start Stage 2"). Specification: `session-p55/briefs/w4-stage2.md`; design leads `session-p55/research/out-of-bounds-look.md` (candidates 3a, 4a, 5) and `research/seamless-cutaway.md` (C2b, C7, "Stage 2"). In the code this is the cut's **fifth pass** (first: the cut, second: void colour and Effect, third: sky, fourth: Stage 1). Every in-game row is **NOT_RUN**; the Windows `/W4 /WX` build is **NOT_RUN**. Disassembly: `objdump -d -M intel` of the ranges listed under "Reproduce", a PE reader and a byte scanner for RIP-relative references, `call` targets and COM calls through the device and context globals (scratch, deleted after use).
+
+### What it does
+
+While the cut is active (third person, rig on, interior, cut installed and not latched: the same `active` flag as the cut, the void colour and the sky), one full-screen triangle of our own is drawn into the main colour target **after the main world render (ID 36558) returns in the frame function (ID 36555) and before image space**. Its pixel shader reads the main depth, rebuilds the world position and moves the pixel towards `sVoidColor` by
+
+- **band** (3a, soft cut edge): `k = smoothstep(bandFloor, planeZ, z)` for surfaces at or under the plane, `bandFloor = max(planeZ − fFrameBand, heldFeet + fFrameBandHeadroom)`, faded out within 48..96 ground units of the player's feet; nothing above the plane is touched;
+- **falloff** (4a): `f = smoothstep(R1, R2, ground distance to the feet)`;
+- combined `1 − (1 − k)(1 − f)`, then the **vignette** the same way (`v = fFrameVignette · smoothstep(0.35, 1, |ndc|/√2)`);
+- **void** pixels (depth ≥ 0.999999, the engine's own "no geometry" test; depth is cleared to 1.0) get exactly 1.
+
+Blending is `src·α + dst·(1 − α)` with the void colour as `src` and the amount as `α`, RGB only: a lerp in the scene's HDR colour space before tonemap, never an addition; void pixels become exactly the void colour (`void·1 + scene·0`).
+
+**Kit cells.** With Stage 1 (`iCutStyle=1`) in a cell the census calls a kit building, the back walls stand above the plane on purpose and are not cut, so a band at plane height would paint a dark stripe across them. **The band is off there** (`band=kit` in the trace); falloff and vignette stay. Simplest rule that cannot darken a wall that was never cut. Caves and ruins (`cell=flat`) and Stage 1 off (`iCutStyle=0`) get the band.
+
+**Actors.** The brief assumed the plane sits above actors' heads. With `fShaderCutHeight=160` and a 96-unit band it does not: the band would start at feet + 64 and darken every head on the player's floor by up to about 75 %. So the band never reaches below the **held feet + `fFrameBandHeadroom` (136)**: with the default plane the band in force is **24 units** (feet + 136 .. feet + 160), the study's own "last 24-48 units"; `fFrameBandHeadroom=0` gives the full `fFrameBand`. Above the plane the band is 0, so an actor standing tall through the plane is never painted out. The player is also protected by the 48..96 guard around the feet. **Stairs:** the plane holds the feet height within 24 units and follows after 0.6 s (or at once beyond 96, `CutPlane`); while climbing, the player's head can be up to 32 units into the band before the plane follows, and the guard keeps it untouched; another actor on a ledge between feet + 8 and feet + 32 above the player's floor has its upper body in the band (a dark belt under the plane; **Hypothesis** that this is rare enough).
+
+### Binary facts established (SkyrimSE.exe 1.7.104; same hashes and Address Library as above)
+
+| Fact | Evidence |
+| --- | --- |
+| **Insertion point.** ID 36555 (6565B0) calls ID 36558 (656D10) twice. 6567C7 calls ID 82075 on the UI singleton (ID 400327); 82075 walks the menu stack (`UI+0x110`, count `+0x120`) testing menu flag `+0x1C & 0x20`. If any menu has it, the path at 6567D4 renders the world **once** behind the flag 32303B2 with argument 0xE (656834, a frozen menu background). Otherwise 656A0E clears that flag and reaches **656A78** (`xor edx,edx; mov rcx,rbp; call 656D10`), then jumps to 65689F, where image space starts (ID 105676 at 6568D9 / 6569F2, per-frame upload ID 77258 at 656915). So **656A78 is normal play** and its return is after the whole world render and before image space. Only 656A78 is redirected; 656834 and 656CC8 (ID 36557) are untouched. | **Source**: 6565B0..656C0E, 1169590..1169684. That flag 0x20 is CommonLib's `kFreezeFrameBackground`: Hypothesis (name only). |
+| **Call-site guard.** 656A60..656A7C = `48 8b 0d d9 9c bd 02 48 8b 89 28 01 00 00 e8 3d f5 2d 00 33 d2 48 8b cd e8 93 02 00 00`; ID 36558's first 16 bytes `40 57 41 56 41 57 48 83 ec 40 48 c7 44 24 30 fe`. The void relay's site (656DAA) is inside 36558 and is neither read nor written by this pass. | **Source**. |
+| **What 36558 leaves.** ID 36559 (656E60..65791E) calls ID 107131 (1537F60) at 6574C5 before the main pass: `SetRenderTarget(slot 0, target 1)` (ID 77453 at 10155B0) and `SetDepthStencilTarget(ID 77457() = 0, mode 3 or 0, view 0)` (ID 77454 at 1015670; ID 77457 at 1015790 is `xor eax,eax; ret`). It then clears target 1 with the void colour (65757E/65758A), adds slots 1 = 7 and 2 = the normals target, draws, and resets slots 1 and 2 to −1 (657853, 657871). Targets are bound lazily: the state flush ID 77386 applies them at the next draw. | **Source**. That target 1 is the HDR scene image space reads next: Hypothesis (the memo's; consistent with the clear and the call order). |
+| **Render-target table.** ID 77253 (100A590, reached from 1015450 with `rcx = 3331F40`, the renderer, ID 411393) creates target *i*'s texture at `renderer + 0xA58 + 0x30·i` (CreateTexture2D, device +0x28, 100A640), its render-target view at `+0xA68` (device +0x48), SRV `+0xA70`, copy `+0xA60/+0xA78`, UAV `+0xA80`. The flush reads views at `[3330188] + 0xA58 + 0x30·i` (1010EB0) where global 3330188 (ID 411347) is set to `renderer + 0x10` (0E97CC, 1007B3B). ID 77251 clears `renderer + 0xA68 + 0x30·i`. So **main colour texture `renderer + 0xA88`, its view `renderer + 0xA98`**. | **Source**. |
+| **Depth table.** The depth creator at 100A980 (reached from 1015495 with the renderer) creates depth *i*'s texture at `renderer + 0x2018 + 0x98·i` with **BindFlags 0x48** (depth-stencil + shader resource), one sample, `ArraySize` from its descriptor (100AA21: `mov qword [rbp+0x1f],0x48`; 100AA16: samples 1, quality 0), views `+0x2020 + 8·v`, read-only views `+0x2060 + 8·v`, and the **shader-resource view of the depth at `+0x20A0`** (CreateShaderResourceView, 100AB55; formats: typeless R24G8 → SRV R24_UNORM_X8, R32 → R32_FLOAT, R16 → R16_UNORM), stencil view `+0x20A8`. ID 77343 (100F8B0) binds `[renderer + 0x20A0 + 0x98·i]` as a pixel-shader texture; the flush picks `views` or `readOnlyViews` of the bound depth (1010F3A..1010F56). So **main depth texture `renderer + 0x2018`, its SRV `renderer + 0x20A0`**. | **Source**. **CommonLib:** the study quoted "0x2018 from `Renderer +0x10`"; the binary has the table at **`renderer + 0x2018` = `[3330188] + 0x2008`**: a 16-byte difference of exactly the kind the evidence warns about. Nothing here uses CommonLib's renderer declarations. |
+| **Depth convention.** Depth is cleared to 1.0 (flush 1010F8C and ID 77252 at 100A534 load 1B5BE28 = 1.0); the sky's vertex shaders write z = w (third pass); the engine's image-space fog treats depth ≥ 0.999999 as no geometry (shader entries 16002/16004). Standard (not reversed) Z. | **Source**. |
+| **View-projection.** ID 77258 (100AE80) builds the per-frame buffer on the stack (`rsp+0x40`, `rbp = rsp+0x100`) and copies 0x2D0 bytes into it after `Map` (100B440..100B4F5). Rows 8..11 (`rbp−0x40..−0x10`) are the **transpose of the 4×4 at state + 0x430** (100AF47..100B003, shuffles traced), the rows every patched world vertex shader multiplies `cb2` World with (first-pass shader audit). So `clip = p · M` with `p` the world position **relative to the position adjustment** (state +0x35C; World row 3 is `translate − posAdjust`, first-pass audit) and `M` = state +0x430. It is the matrix the depth was rasterised with, jitter included. Rows 32..35 hold the engine's own inverse of it (100B1D8 → `rbp+0x140`); the pass inverts `M` itself in double instead. | **Source** for the layout. CommonLib's `ViewData::viewProjMat` sits at the same place (camera data at state +0x380, +0xB0): naming only. |
+| **Viewport and depth range.** The flush sets the viewport from state + 0x70 (10110E4, RSSetViewports count 1) and its min/max depth from state + 0x5C0 / + 0x5C4 (101106C..101107F), reduced at MaxDepth by a depth-bias table when state + 0xA0 is non-zero. | **Source**. |
+| **COM offsets.** D3D11 ABI order (CommonLibSSE-NG `REX/W32/D3D11.h`): engine call sites exist for CreatePixelShader 0x78 (100FFC1), PSSetShaderResources 0x40 (10113F8), PSSetShader 0x48 (10102B1, tail jump), Draw 0x68 (100963F), PSSetConstantBuffers 0x80 (1009EBB), IASetInputLayout 0x88 (100CB7C), IASetPrimitiveTopology 0xC0 (10112DC), OMSetRenderTargets 0x108 (1010FC0), OMSetBlendState 0x118 (101114C), RSSetState 0x158 (101105A), RSSetViewports 0x160 (10110F3). The Get* methods, CreateBlendState 0xA0, CreateRasterizerState 0xB0 and Texture2D::GetDesc 0x50 rest on the ABI order alone. | Call sites: **Source**. ABI-only offsets: **Source** for the header order; no engine call to compare. |
+| **No PS UAVs.** No `OMSetRenderTargetsAndUnorderedAccessViews` (context +0x110) call goes through the context global, so OMSetRenderTargets cannot disturb an engine UAV. | **Source** (same scan limit as the first pass: calls through a copy of the context pointer are not seen). |
+
+### Why the first choice and not ID 105676
+
+At 656A7D the HDR scene and its depth are complete and nothing of image space has run, so the paint is tonemapped and eye-adapted like the scene, and a dark void lowers the adaptation input the same way the black clear colour already does; the call site is one guarded `E8` reached only in normal play. Around ID 105676 the pass would have to pick the tonemap's effect index (and ENB replaces that stage), and after the tonemap the depth may be reused. The void relay (656DAA, inside 36558) is untouched.
+
+### Targets, depth read, hazards
+
+At the return the pass binds **only** `renderer + 0xA98` (main colour view) as render target 0 and **no depth-stencil view**, then the engine's own SRV `renderer + 0x20A0` in pixel slot 0. It needs no depth test: depth is read in the pixel shader, so the depth texture is never bound for writing and reading at once. The textures' descriptions are checked whenever either pointer changes (one 2D single-sample depth with the shader-resource bind, a single-sample colour target of the same size, the main viewport inside them; FCS-97 cause 1..5 otherwise, and those frames are skipped). The depth-stencil view is unbound before the SRV is bound; on the way back the SRV leaves slot 0 before the saved targets (the engine's depth-stencil view among them) return, and the saved pixel resources come back after them, so the runtime never has to unbind anything itself (it would otherwise null an SRV of the main target bound elsewhere when we bind that target).
+
+**Fallback not needed.** The depth's SRV is established with Source confidence (created with the shader-resource bind and stored at `+0x20A0`, bound from there by the engine itself), so the void-only form (z = 1, depth test EQUAL) was not built. If the in-game trace shows `skipTargets` or the whole frame comes out the void colour, that is the signal to build it.
+
+### World position and the camera-relative offset
+
+The matrix, the position adjustment, the viewport and the depth range are **captured from the render state during the first Lighting/Utility pass of the published view in the same render** (`consider`, right after the existing view test), not read at the insertion point, so whatever another view leaves in the state after the main pass cannot reach the reconstruction. The pass draws only if that capture exists for this render and was made with the snapshot (`View::frame`) still published, i.e. the plane, feet and active flag are the very values the geometry was cut with. The inverse is computed on the CPU in double from `M`; the shader computes `p_j = dot((ndc.x, ndc.y, (d − min)/(max − min), 1), column_j(M⁻¹))`, divides by `w` and works relative to the position adjustment; feet and plane are uploaded relative to it. A test shifts the whole scene by (60000, −45000, −3000) and gets the same amounts. `moved` in the trace counts frames whose state matrix at the insertion point differs from the captured one (informative).
+
+### Shaders
+
+`modules/camera/shaders/fixed_spike_frame_vs.hlsl` (vertex: one triangle from `SV_VertexID`, no buffers) and `fixed_spike_frame_ps.hlsl` (pixel: the maths above; `cbuffer FramePass` = `FrameConstants`, 160 bytes, 10 rows), written for this project from scratch. Built offline by `modules/camera/tools/frame_shaders.py` with vkd3d-shader 2.1's HLSL compiler (`libvkd3d-shader.so.1.19.0` of the Steam Linux Runtime, through ctypes, read-only; profiles vs_5_0 / ps_5_0; any compiler message fails the build). vkd3d writes RDEF, ISGN, OSGN, SHDR, STAT; the tool rebuilds the container to the **shipped game shaders' form (ISGN, OSGN, SHEX)**, copying signatures and token stream unchanged, and recomputes the checksum. The bytes and the FNV-1a-64 of each source file are in `include/fixed_spike_shader_frame_shaders.h` (vertex 548 bytes, pixel 2,956 bytes). They are created once at install through the engine's device (CreateVertexShader +0x60, CreatePixelShader +0x78) with a dynamic constant buffer (the engine's own description), a blend state and a rasterizer state (cull none, no scissor, depth clip on).
+
+| Check | Result |
+| --- | --- |
+| `frame_shaders.py --check`: a fresh build equals the committed header byte for byte | **PASS** (`frame shaders MATCH`) |
+| `frame_shaders.py --validate`: each blob read back by vkd3d-shader (it verifies the checksum, E0003 otherwise), disassembled and translated to SPIR-V | **PASS**, no message; the disassembly is the HLSL statement for statement |
+| Portable test: checksum of both blobs (the policy's own MD5-based checksum), chunks exactly ISGN/OSGN/SHEX, version tokens vs_5_0 / ps_5_0, signatures (`SV_VertexID` in, `SV_Position` out; `SV_Position` in, `SV_Target` out), `cb0` declared with 10 rows = `sizeof(FrameConstants)/16`, one `Texture2D` at t0, the vertex shader with no resource; **the HLSL sources hash to the values recorded in the header** (a source edit without a rebuild fails CI) | **PASS** |
+| DXVK and a Windows D3D11 runtime creating them | **NOT_RUN** |
+
+### State hygiene
+
+Read before the draw and set back after, every reference released: render targets 0..7 and the depth-stencil view; blend state, blend factor, sample mask; rasterizer state; all viewports (count first); input layout; topology; vertex shader; pixel shader; pixel constant buffer 0; pixel shader resources 0..15 (the engine's 16 pixel texture slots, state +0x240). Not touched, so not saved: depth-stencil state (no depth-stencil view is bound, so no depth or stencil test runs), vertex buffers and index buffer (no input layout; the vertex shader reads only `SV_VertexID`), vertex constant buffers and resources, samplers (the shader uses `Load`), scissor rectangles (scissor off in our state), geometry/hull/domain shaders (the engine never binds them, first pass). After the restore one read-back compares render target 0, the depth-stencil view and the pixel shader with the saved ones (`mismatch`, cumulative). Device objects are made once at install; per frame there is one Map/Unmap of 160 bytes and no allocation. The engine's `ClearState` at every frame begin (1009E72) would also clear anything left behind, but nothing is relied on that.
+
+### Gating
+
+`frameGate(latched, active, freshView, captured)`: latched (any refusal latch of the cut, or a failed Map) → skip; not active (outdoors, first person, menus, the rig off, any ineligible frame, the frame of any lifecycle exit: `deactivate` clears `active` on every thread at once) → skip; snapshot older than 0.25 s → skip; no capture of this render with this snapshot → skip; then targets and constants. Menus with a frozen background never reach the hook (656834). ENB and Community Shaders: `commit` refuses before anything (FCS-67), so the pass never exists. Thread: the hook calls ID 36558 on whatever thread, and draws only on the main thread (FCS-96 otherwise).
+
+### Settings (`[FixedCameraSpike]`, read only when `bEnabled=1`, used only in `iSeeThroughMode=3`)
+
+| Key | Default | Range | Meaning |
+| --- | --- | --- | --- |
+| `bFramePass` | 1 | 0/1 | the whole pass. 0: no runtime, no hook, no log line, no trace kind, nothing validated: behaviour of `3528e92` |
+| `fFrameBand` | 96 | 0, or 8..512 | soft cut edge under the plane; 0 = off |
+| `fFrameBandHeadroom` | 136 | 0..512 | the band never reaches below the held feet + this (actors' heads); 0 = the full band |
+| `fFrameRadiusInner` | 900 | 0..16384 | full brightness within this ground distance of the feet |
+| `fFrameRadiusOuter` | 1400 | 0..16384 | the void colour beyond it; ≤ inner = falloff off |
+| `fFrameVignette` | 0.25 | 0..1 | darkening towards the corners; 0 = off |
+
+Out-of-range values are clamped (NaN takes the default) and reported once as FCS-66. The void colour is `sVoidColor` (second pass), whatever `bVoidColor` says.
+
+### Log line (once, after `shader style installed …`, only with `bFramePass=1`)
+
+```
+FixedCameraSpike shader frame installed pass=%s band=%.1f headroom=%.1f radii=%.1f,%.1f vignette=%.3f vs=%u ps=%u
+```
+
+`pass`: `installed` or `refused` (FCS-93..95). Not written if the cut itself never installs.
+
+### Trace: `FixedShaderFrame` (new optional kind, only with `bFramePass=1`; `FixedShader`, `FixedShaderLook`, `FixedShaderVoid`, `FixedShaderStyle`, `FixedShaderStyle2` and `FixedFade` unchanged byte for byte)
+
+Written after the style rows of each 0.1 s window (same `t` and `frame`), its own budget of 6,000 lines:
+
+```
+FixedShaderFrame t=%.3f frame=%llu pass=%s calls=%llu drawn=%llu skipLatched=%llu skipInactive=%llu skipStale=%llu skipCapture=%llu skipTargets=%llu skipMatrix=%llu offMain=%llu band=%s bandN=%.1f headroom=%.1f bandFrom=%.2f planeZ=%.2f falloff=%s radii=%.1f,%.1f vignette=%.3f depth=%s target=%ux%u formats=%u,%u moved=%llu mismatch=%llu micros=%.1f sample=window
+```
+
+Example (test row): `FixedShaderFrame t=1234.500 frame=99 pass=installed calls=6 drawn=5 skipLatched=0 skipInactive=0 skipStale=0 skipCapture=1 skipTargets=0 skipMatrix=0 offMain=0 band=on bandN=96.0 headroom=136.0 bandFrom=9396.25 planeZ=9420.25 falloff=on radii=900.0,1400.0 vignette=0.250 depth=read target=1920x1080 formats=10,44 moved=0 mismatch=0 micros=31.0 sample=window`. Longest possible row 645 of 768 bytes (test).
+
+Legend: `pass` as in the log line (`pending` before the cut installs). `calls`: main-world-render returns in normal play in the window; `drawn`: passes drawn; `skip*`: frames not drawn, by first reason (latched, inactive, stale, capture, targets, matrix). `offMain` cumulative. `band`: at the last drawn frame `on`, `kit` (off in a Stage 1 kit cell) or `off`; `none` if nothing was drawn. `bandN`, `headroom`, `radii`, `vignette`, `falloff`: the settings in force. `bandFrom` / `planeZ`: world heights of the band floor and the plane at the last drawn frame (nan if none, `bandFrom` nan unless `band=on`). `depth`: `read` if a pass was drawn. `target`: the depth texture's size; `formats`: DXGI formats of the main colour and depth textures (0 before the first check). `moved`: drawn frames whose render state at the insertion point held another view-projection than the captured one. `mismatch`: restores whose read-back differed (cumulative; must stay 0). `micros`: time in the pass while tracing.
+
+For the checker (`session-p55/routes/check_spike_log.py`, not edited here): register `FixedShaderFrame` in `OPTIONAL_KINDS` (the generic parser keeps `radii`, `target` and `formats` as strings) and `CAPS['FixedShaderFrame'] = 6000`; FCS-93..96 are faults, FCS-97 cause 1..5 informative (frames skipped), cause 10 a fault.
+
+### Refusal codes (FCS-93..97; all 32 codes 66..97 now fill the shader runtime's once-mask)
+
+| Code | Site | Meaning, and what stays in force |
+| --- | --- | --- |
+| FCS-93 `check=N` | `installFrame` | 1 ID 36555, 2 ID 36558, 3 the renderer ID 411393, 4 the 29 bytes at 656A60, 5 the call not to ID 36558, 6 ID 36558's prologue, 10..17 an evidence window (ID 107131, ID 77457, the flush's target views, the target creator, the depth-SRV creator, ID 77343, the view-projection rows of ID 77258, the flush's viewport), 18 the viewport depth range; no frame pass, everything else unchanged |
+| FCS-94 `cause=N` | `installFrame` | no relay memory within reach (1), or the relay out of reach / not sealed (2); call site untouched |
+| FCS-95 `object=N` | `installFrame` | the device refused 1 the vertex shader, 2 the pixel shader, 3 the constant buffer, 4 the blend state, 5 the rasterizer state; what was made is released; call site untouched |
+| FCS-96 | `frameStart` | the main world render returned off the main thread; those frames were not touched |
+| FCS-97 `cause=N` | `drawFrame` | 1..5 the targets as above (frames skipped while it holds, checked again when a texture changes); 10 the constant buffer could not be mapped: pass off for the session |
+
+### Files
+
+| File | Change |
+| --- | --- |
+| `include/fixed_spike_shader_frame_policy.h` (new) | audited facts with their bytes, offsets, COM offsets, D3D11 structures, blend/rasterizer descriptions, `FrameCapture`, `FrameConstants`, `invert`, `bandState`, `frameConstants`, a C++ copy of the pixel shader (`framePixel`) for the tests, `frameGate`, `targetCheck`, `frameSiteCheck`, the trace row |
+| `include/fixed_spike_shader_frame_shaders.h` (new, generated) | the two DXBC blobs and their source hashes |
+| `shaders/fixed_spike_frame_vs.hlsl`, `shaders/fixed_spike_frame_ps.hlsl` (new) | sources |
+| `tools/frame_shaders.py` (new) | build, `--check`, `--validate` |
+| `src/fixed_spike_shader_frame.h` (new) | runtime, capture, target check, save/restore, draw, hook, install, trace |
+| `include/fixed_spike_shader_policy.h` | codes 93..97; `FrameConfig` and `validateFrame` (skipped with `bFramePass=0`); `Config::frame`; the include |
+| `src/fixed_spike_shader.h` | `framePass` and `frameEmitter` in the runtime; `captureFrame` after the view test in `consider`; `installFrame` and its log line at the end of `commit`; `frameStartFrame`; `traceFrame`; `traceKinds` +1; one more emitter in `configure`; `configureFrame`; the include |
+| `src/fixed_spike.h` | one line budget and the sixth emitter |
+| `src/plugin.cpp`, `config/SkyCRPG_Camera.ini` | six keys inside the existing gate, documented |
+| `tests/fixed_spike_shader_frame_policy_test.cpp` (new), `tests/fixed_spike_shader_policy_test.cpp`, `tests/lock_refresh_wiring_test.py` | below |
+
+### Tests (g++ 15.2.0, Python 3.14.4, this host)
+
+| Check | Result |
+| --- | --- |
+| The 17 portable C++ tests (CI loop, `-std=c++20 -Wall -Wextra -Werror -pedantic -pthread`, from the repo root) | **PASS**, every test printed `… PASS`; the new one prints `longest FixedShaderFrame row: 645 of 768 bytes` |
+| `fixed_spike_shader_policy_test` with `SKYCRPG_SHADER_ARCHIVE` | **PASS**, archive lines unchanged |
+| Wiring audit, eleven sections (new `shader fifth-pass wiring`; `shader cut wiring` now one site per FCS-66..97) | **PASS** |
+| Eight hand mutations in a scratch copy (draw before the engine render, no restore, state not published before the write, pixel resources not saved, no thread check, capture from Effect passes, saved references not released, relay sealed RWX) | each failed the audit |
+| g++ `-fsyntax-only -Wall -Wextra -Werror -pedantic -Wshadow -Wconversion -Wsign-conversion -Wfloat-conversion -Wold-style-cast` of `fixed_spike_shader.h` (with every pass, frame included) against scratch stand-ins for the Windows, REL, RE and thin declarations | 0 warnings. Not an MSVC or CommonLib build |
+| `git diff --check` | **PASS** |
+| Windows `/W4 /WX` build | **NOT_RUN** |
+
+New portable rows: codes 93..97 contiguous, the mask full; defaults; clamping, NaN, negative band, every part off, `bFramePass=0` leaving values unvalidated and unreported; **world position from depth** against a view-projection built like the engine's (row vectors, eye-relative, the rig's 55° pitch and 683.8 height at the Embershard pose, with and without TAA jitter, through a [0.1, 0.9] depth range too) within 0.75 units at five points; the same amounts after a 75,000-unit world shift; void pixels exactly the void colour at centre and corners; the band at a known height, nothing above the plane, the player's head on a lagging stair, another actor's head on the player's floor, headroom 0, kit cells; the falloff; the combination; each part off; never brighter over a screen grid; vignette 0 at the centre and its strength in the corner; unusable captures refused; the gate over every camera state × interior × installed × latched × fresh × captured; `targetCheck` causes 1..5; the blend and rasterizer descriptions; **the evidence windows decoded to the very offsets used** (0xA58, 0xA68, 0x2018, 0x20A0, 0x98, state +0x430/+0x70/+0x5C0, target 1, depth 0, the three call targets of ID 107131); `frameSiteCheck` at three image bases with every guarded byte flipped; the shader blobs and sources (above); the trace row exactly, its `none`/`nan`/`kit` forms and its longest length.
+
+### First-run protocol (for the orchestrator; nothing here was run)
+
+Build `shader` at the commit of this pass. Expected log lines once each, after the existing four: `FixedCameraSpike shader frame installed pass=installed band=96.0 headroom=136.0 radii=900.0,1400.0 vignette=0.250 vs=548 ps=2956`. No FCS-93..97 line.
+
+1. **Embershard Mine** (W12 pose, routes `p55-comb-cave-*` or `p55-shader-cave`, four headings, `iShaderCutTrace=1`): `FixedShaderFrame pass=installed`, `drawn` equal to `calls` (about 6 per window at the 60 fps cap) in settled windows, `band=on`, `bandFrom` = planeZ − 24, `depth=read`, `mismatch=0`, `moved=0`, `skipCapture` at most 1 in the first window. Screenshot against `results/wave12/cave-nofill-vs-fill.png`: the void unchanged (already black); the last ~24 units under the cut edges of rock and the lit wooden frames shade into black instead of ending in a lit razor line; the far passage and the stray shards beyond ~900 units fade out by ~1400; a light darkening in the corners; the player, the floor around the player and the fill light's pool unchanged.
+2. **Bleak Falls Barrow** (W12 pose, `p55-comb-bfb-*`): the same rows; the chamber walls' cut tops soften; the neighbouring rooms beyond 1400 sink into black.
+3. **Bannered Mare hearth** (Stage 1, `p55-shader-mare` / `p55-comb-mare`): `band=kit`, falloff and vignette on. Against `results/wave11/mare-hearth.png`: the back walls keep their full height with no dark stripe at the plane height; the far ends of the hall (beyond ~900 units of the player) darken towards black (at h0/h2 the far tables and the bar), the corners darken lightly; patrons near the player unchanged.
+4. **Lifecycle** (`p55-shader-lifecycle`): in every ineligible window `drawn=0` and `skipInactive>0`; screenshots taken while ineligible show no vignette or falloff.
+5. **A/B**: `bFramePass=0` must reproduce the 3528e92 screenshots and traces exactly (no `FixedShaderFrame` row, no new log line); `fFrameBandHeadroom=0` shows the full 96-unit band (expect darkened heads of NPCs on the player's floor: that is why the default is 136); `fFrameVignette=0`, `fFrameRadiusOuter=0` isolate the parts.
+
+### What could look wrong
+
+| What | Why | How it shows |
+| --- | --- | --- |
+| The whole frame the void colour | the depth read is not the scene's (another depth bound at 656A7D, or depth 0 cleared after the main pass) | black screenshot with `drawn>0`; set `bFramePass=0`. Hypothesis that depth 0 is intact at the return (the engine's own image-space fog reads the depth after this point) |
+| The falloff circle off-centre or sliding with the camera | a reconstruction error: wrong matrix or offset | the lit pool not centred on the feet; compare the pool with the player's position at four headings; `moved>0` would point at the capture |
+| The scene brighter than in W12 | eye adaptation reacts to the darker frame (more black, lower average luminance) | brighter player and floor; bloom more visible on black. Hypothesis |
+| Banding in the gradients | an 8-bit-like gradient after the tonemap of a smooth HDR ramp to black | visible steps in the falloff ring on dark rock; `fFrameRadiusOuter` wider softens it |
+| TAA ghosting at the band and the vignette | the band moves with the world (fine for reprojection), the vignette is fixed to the screen and the history was painted at another screen position | a faint trailing edge of the vignette while turning; dark smears behind the cut edge on fast moves. Hypothesis |
+| A dark belt on actors | an actor on a ledge 8..32 units above the player's floor stands in the band under the plane; or `fFrameBandHeadroom` lowered | a dark band across the upper body |
+| Water reflections, save thumbnails | the save thumbnail (IDs 19121/19122 → ID 36555) is rendered through the same call | the thumbnail shows the vignette and falloff, as it already shows the black void |
+| A hitch at install | DXVK compiles the two shaders and the pipeline on first use | one slow frame on the first active frame |
+
+### What the reviewer must check
+
+1. The binary facts above: 656A60..656A7C and the two calls of ID 36558; ID 82075's menu-flag test and that 656A78 is the normal-play branch; ID 107131 and ID 77457 (target 1, depth 0); the RT creator at 100A590 (texture `+0xA58`, view `+0xA68`) and that it is called with the renderer (1015450); the depth creator at 100A980 (bind 0x48, SRV at `+0x20A0`, stride 0x98) and that it is called with the renderer (101548E); ID 77343 at 100F8B0; the per-frame upload's rows 8..11 = transpose of state +0x430; viewport state +0x70 and depth range +0x5C0/+0x5C4.
+2. `frameEvidence` bytes against the binary (each window's RVA and length).
+3. That nothing between the main pass and 656A7D clears or replaces depth 0 in third person (36559 after 6576F6: 6E4A90, 15436B0, ID 107148, 153ABB0, ID 107143), and that the r14b branch (657729, first-person depth 7 via ID 107129) does not run in third person.
+4. `fixed_spike_shader_frame.h`: the relay encoding and the 4-byte displacement write at 656A79 after every check and every device object; `hookMainView` calls ID 36558 once with `rcx, rdx, r8, r9` passed on (36558 takes `rcx, edx`; its home-space spills are the callee's own); save/restore covers everything the draw sets, in the hazard-free order, and releases every reference; `restoredAsSaved` releases its three.
+5. The COM offsets that rest on the ABI only (all Get* methods, CreateBlendState 0xA0, CreateRasterizerState 0xB0, Texture2D::GetDesc 0x50) and the D3D11 structure layouts (`TextureDescription` 44, `BlendDescription` 264, `RasterizerDescription` 40, `Viewport` 24).
+6. `framePixel` against `shaders/fixed_spike_frame_ps.hlsl` statement for statement (the tests run the C++ copy, not the shader), and `frame_shaders.py --check`.
+7. MSVC `/W4 /WX`: `std::array<float,16> !=` comparison, the brace-initialised `TargetBlend` with an `std::uint8_t` array member, `std::initializer_list<void*>` loops, `(std::max)`.
+
+### Unverified (NOT_RUN or Hypothesis)
+
+- Every game row; the Windows build; DXVK and Windows D3D11 accepting the vkd3d-built shaders in the shipped container form.
+- That depth 0 still holds the scene's depth at the return of ID 36558 in third person, and that target 1 is what image space reads next.
+- That the cb12 the main pass draws with was uploaded from the state values captured at its first pass (strongly supported: the cut's plane constant uses the same state's position adjustment and cuts correctly in game).
+- That the main view's viewport depth range is the base range at state +0x5C0 (geometry drawn with a depth-bias mode uses a slightly lower MaxDepth; the error is below a unit).
+- That no engine pixel-shader texture outside slots 0..15, and no vertex-shader texture, is a view of the main colour target at 656A7D (if one were, binding the target would make the runtime unbind it and it would not come back).
+- Eye adaptation, banding and TAA behaviour; frame cost (one full-screen triangle, one depth load and about 60 ALU per pixel, ~40 COM calls on the CPU; invisible under the 60 fps cap).
+- The name `kFreezeFrameBackground` for menu flag 0x20.
+
 ## Reproduce the offline checks
 
 ```sh
@@ -1051,6 +1237,21 @@ objdump -d -M intel --start-address=0x140412df0 --stop-address=0x140413a30 "$E" 
 # image-space and sky shaders: shaders011.fxp entries counted from 0 in file order (each entry starts with 44 33 22 11);
 # entries 60..77 BSSkyShader, 15846/15848 HDR tonemap, 15828/15830 DOF fogged, 15944/15946 VL apply, 15960 VL composite,
 # 16000/16002/16004 SAO composite variants; disassembled with vkd3d-shader (D3D assembly target)
+# Stage 2 (the frame pass)
+objdump -d -M intel --start-address=0x1406565b0 --stop-address=0x140656c0e "$E"   # ID 36555: 656834 (frozen menu background) and 656A78 (normal play)
+objdump -d -M intel --start-address=0x141169590 --stop-address=0x141169690 "$E"   # ID 82075: menu stack, flag +0x1C & 0x20
+objdump -d -M intel --start-address=0x140656e60 --stop-address=0x14065791f "$E"   # ID 36559: 107131 at 6574C5, the main pass, slots reset at 657853/657871
+objdump -d -M intel --start-address=0x141537f60 --stop-address=0x141537fbb "$E"   # ID 107131: target 1, depth ID 77457() = 0
+objdump -d -M intel --start-address=0x1410155b0 --stop-address=0x1410157b6 "$E"   # IDs 77453/77454 (set target / depth), 77457 (xor eax,eax)
+objdump -d -M intel --start-address=0x141010de0 --stop-address=0x141011160 "$E"   # flush: target views +0xA58, depth views, OMSetRenderTargets, viewport
+objdump -d -M intel --start-address=0x14100a590 --stop-address=0x14100a7f0 "$E"   # render-target creator: texture +0xA58, view +0xA68
+objdump -d -M intel --start-address=0x14100a980 --stop-address=0x14100aba5 "$E"   # depth creator: bind 0x48, views, SRV +0x20A0
+objdump -d -M intel --start-address=0x141015430 --stop-address=0x141015496 "$E"   # both creators reached with the renderer 3331F40
+objdump -d -M intel --start-address=0x14100f8b0 --stop-address=0x14100f91a "$E"   # ID 77343: binds +0x20A0 as a pixel texture
+objdump -d -M intel --start-address=0x14100ae80 --stop-address=0x14100b521 "$E"   # ID 77258: rows 8..11 = transpose(state+0x430), Map and copy
+objdump -d -M intel --start-address=0x1400e97b0 --stop-address=0x1400e97d3 "$E"   # global 3330188 = renderer + 0x10
+python3 -B -I modules/camera/tools/frame_shaders.py --check                         # the shader header equals a fresh vkd3d-shader build
+python3 -B -I modules/camera/tools/frame_shaders.py --validate "$TMPDIR/frame"      # disassembly and SPIR-V of both blobs
 ```
 
 Sources read: the binary and Address Library above; `Data/Skyrim - Shaders.bsa` (read-only); `session-p55/research/shader-discard.md` and `p55-spike-clip` (`docs/evidence/p5.5/spike-wave2-clip.md`, `modules/camera/src/fixed_spike_clip.h`, `include/fixed_spike_clip_policy.h`, the wiring test) as leads, each fact used here re-derived except where marked; the coordinator's summary of the clip package's independent review; DXVK `src/dxbc/dxbc_compiler.cpp` at v2.7.1 (zlib/libpng licence) through a summarising fetch, for facts only; `libvkd3d-shader.so.1.19.0` (LGPL) of the Steam Linux Runtime as an offline validator, not linked or copied. No GPL source was opened and no code was copied from any third party. The MD5 block function is written from RFC 1321; the DXBC final-block rule is checked against the archive's own 16,044 stored checksums.

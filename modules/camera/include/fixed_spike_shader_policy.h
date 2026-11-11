@@ -80,12 +80,14 @@ constexpr std::uint32_t ammoForm = 0x2a; // the engine looks past an ammunition 
 // One code per refusal site; codes above 63 need their own once-mask. 80..88
 // are the second pass's: the Effect class and the void colour; 89..90 the
 // third pass's: the sky dome over the void (fixed_spike_shader_sky_policy.h);
-// 91..92 the fourth pass's: the Stage 1 style (fixed_spike_shader_style_policy.h).
+// 91..92 the fourth pass's: the Stage 1 style (fixed_spike_shader_style_policy.h); 93..97 the fifth pass's: the
+// Stage 2 frame pass (fixed_spike_shader_frame_policy.h). 97 is the last code the 32-bit once-mask can hold.
 enum class Refusal : unsigned { settings = 66, foreign = 67, address = 68, table = 69, device = 70, thread = 71, bracket = 72,
     create = 73, patch = 74, unaudited = 75, view = 76, map = 77, object = 78, context = 79,
     effectTable = 80, voidSite = 81, voidMemory = 82, voidThread = 83, effectCreate = 84, effectPatch = 85, effectUnaudited = 86,
-    effectObject = 87, effectThread = 88, skySite = 89, skyLeft = 90, styleBuffers = 91, styleMap = 92 };
-constexpr unsigned firstRefusal = 66, lastRefusal = 92;
+    effectObject = 87, effectThread = 88, skySite = 89, skyLeft = 90, styleBuffers = 91, styleMap = 92,
+    frameSite = 93, frameMemory = 94, frameDevice = 95, frameThread = 96, frameRun = 97 };
+constexpr unsigned firstRefusal = 66, lastRefusal = 97;
 static_assert(lastRefusal-firstRefusal < 32);
 // The refusals a shader preparation can end in, per group.
 struct PrepareCodes { Refusal object,unaudited,patch,create; };
@@ -122,6 +124,31 @@ inline ColorText parseColor(std::string_view text,Color& out) {
     out = {parts[0],parts[1],parts[2]};
     return clamped ? ColorText::clamped : ColorText::ok;
 }
+// ---- fifth pass (owner go 2026-11-11, Stage 2 of the seamless cutaway): the frame pass ----------
+// One full-screen pass over the finished HDR scene (fixed_spike_shader_frame_policy.h). Read only in
+// mode 3, where it defaults on; with bFramePass=0 nothing of it exists and nothing is validated.
+struct FrameConfig {
+    bool enabled{true};          // bFramePass
+    float band{96.0f};           // fFrameBand: soft cut edge, world units under the plane; 0 = off
+    float headroom{136.0f};      // fFrameBandHeadroom: the band never reaches below the held feet + this (actors' heads)
+    float radiusInner{900.0f};   // fFrameRadiusInner: full brightness inside this ground distance of the feet
+    float radiusOuter{1400.0f};  // fFrameRadiusOuter: the void colour beyond it; outer <= inner = falloff off
+    float vignette{.25f};        // fFrameVignette: darkening towards the frame's corners, 0..1; 0 = off
+};
+// Out of range: band 0 or 8..512 (a positive band under 8 is 8), headroom 0..512, radii 0..16384,
+// vignette 0..1; NaN or infinite takes the default. Each change is reported once as FCS-66.
+inline FrameConfig validateFrame(FrameConfig f,bool& adjusted) {
+    if (!f.enabled) return f;
+    const FrameConfig in = f;
+    f.band = !std::isfinite(f.band) ? 96.0f : f.band <= 0.0f ? 0.0f : std::clamp(f.band,8.0f,512.0f);
+    f.headroom = bounded(f.headroom,136.0f,0.0f,512.0f);
+    f.radiusInner = bounded(f.radiusInner,900.0f,0.0f,16384.0f);
+    f.radiusOuter = bounded(f.radiusOuter,1400.0f,0.0f,16384.0f);
+    f.vignette = bounded(f.vignette,.25f,0.0f,1.0f);
+    adjusted = adjusted || f.band != in.band || f.headroom != in.headroom || f.radiusInner != in.radiusInner ||
+        f.radiusOuter != in.radiusOuter || f.vignette != in.vignette;
+    return f;
+}
 struct Config {
     float height{160.0f};       // cut plane above the player's feet
     float radius{0.0f};         // 0 = every piece in view; otherwise only pieces reaching within this ground distance of the feet
@@ -140,6 +167,7 @@ struct Config {
     unsigned style{1};          // iCutStyle: 0 the flat cut exactly as the third pass, 1 Stage 1
     bool keepFarGallery{};      // bCutKeepFarGallery: the back half of the storey above is kept whole
     bool styleShadows{true};    // bCutStyleShadows: what the main view removes whole casts no shadow
+    FrameConfig frame{};        // fifth pass: bFramePass and the fFrame* keys
 };
 constexpr unsigned flatStyle = 0, stageOneStyle = 1;
 // The camera stands about 336 ground units from the feet, so a radius under
@@ -154,8 +182,10 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     // Clamped or unreadable colours are reported once as FCS-66; unreadable is black.
     const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;
     if (c.style > stageOneStyle) c.style = stageOneStyle;
+    bool frameChanged = false;
+    c.frame = validateFrame(c.frame,frameChanged);
     if (adjusted) *adjusted = c.height != in.height || c.radius != in.radius || c.maxPerFrame != in.maxPerFrame || c.shaders != in.shaders ||
-        colorChanged || c.style != in.style;
+        colorChanged || c.style != in.style || frameChanged;
     return c;
 }
 // iShaderCutShaders selects Lighting and Utility only; Effect has its own key.
@@ -736,3 +766,4 @@ inline bool formatLook(char* out,std::size_t size,const LookSample& s) {
 } // namespace skycrpg::camera::fixed::shader
 #include "fixed_spike_shader_sky_policy.h" // third pass: the sky dome over the void, Effect passes clipped whole
 #include "fixed_spike_shader_style_policy.h" // fourth pass: Stage 1 of the seamless cutaway (iCutStyle=1)
+#include "fixed_spike_shader_frame_policy.h" // fifth pass: Stage 2, the frame pass (bFramePass=1)
