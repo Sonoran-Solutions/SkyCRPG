@@ -358,7 +358,7 @@ assert "inline bool publishes(bool installed,bool latched,bool interiorCell,floa
     "std::isfinite(feetZ);" in cut_policy
 void = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_void.h").read_text()
 cut_codes = dict(re.findall(r"(\w+) = (\d+)", cut_policy[cut_policy.index("enum class Refusal : unsigned {"):cut_policy.index("constexpr unsigned firstRefusal")]))
-assert len(cut_codes) == 36 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 102))
+assert len(cut_codes) == 40 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 106))
 sky = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_sky.h").read_text()
 sky_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_sky_policy.h").read_text()
 style = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_style.h").read_text()
@@ -367,10 +367,12 @@ frame = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_frame.h")
 frame_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_frame_policy.h").read_text()
 fill = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_fill.h").read_text()
 fill_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_fill_policy.h").read_text()
+tilt = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_tilt.h").read_text()
+tilt_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_tilt_policy.h").read_text()
 prepare_table = cut_policy[cut_policy.index("constexpr std::array<PrepareCodes,2> prepareCodes{{"):cut_policy.index("// ---- [FixedCameraSpike] shader-cut keys")]
 for name in cut_codes:
     sites = cut.count("Refusal::" + name) + void.count("Refusal::" + name) + sky.count("Refusal::" + name) + style.count("Refusal::" + name) + \
-        frame.count("Refusal::" + name) + fill.count("Refusal::" + name) + prepare_table.count("Refusal::" + name)
+        frame.count("Refusal::" + name) + fill.count("Refusal::" + name) + tilt.count("Refusal::" + name) + prepare_table.count("Refusal::" + name)
     assert sites == 1, name  # one site per code
 for field in ("object", "unaudited", "patch", "create"):
     assert prepare.count("refuse(codes." + field + ",text); return;") == 1, field
@@ -387,7 +389,7 @@ for constant in ("constexpr Address stateAddress{388819,0x20cfc00};", "constexpr
                  "constexpr Address clearColorAddress{77249,0x100a3f0};", "constexpr std::uintptr_t voidCallRva = 0x656daa;"):
     assert constant in cut_policy, constant
 print("PASS shader cut wiring: no runtime outside mode 3; main-thread install after every guard; no code or engine-state write; "
-      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..101")
+      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..105")
 
 # Wave 2 shader, second pass (owner decision 2026-11-10): the Effect class and
 # the void colour. Both exist only inside the shader runtime (mode 3), are
@@ -398,7 +400,8 @@ assert cut.endswith('#include "fixed_spike_shader_void.h" // second pass: the vo
                     '#include "fixed_spike_shader_sky.h"  // third pass: the sky dome over the void\n'
                     '#include "fixed_spike_shader_style.h" // fourth pass: Stage 1 of the seamless cutaway\n'
                     '#include "fixed_spike_shader_frame.h" // fifth pass: Stage 2, the frame pass\n'
-                    '#include "fixed_spike_shader_fill.h" // Stage 3.1: the back-face fill\n')
+                    '#include "fixed_spike_shader_fill.h" // Stage 3.1: the back-face fill\n'
+                    '#include "fixed_spike_shader_tilt.h" // Stage 3.2: the tilted cut\n')
 assert "inline void installVoid(std::uintptr_t base);" in cut and cut.count("installVoid(base);") == 1 and cut.count("installEffect(base);") == 1
 assert void.count("inline void installVoid(std::uintptr_t base) {") == 1 and "runtime = " not in void
 install_effect = cut_body("inline void installEffect(std::uintptr_t base) {", "// Main thread, inside the camera frame service.")
@@ -445,7 +448,8 @@ assert '"relPlane=%.2f passes=%llu cut=%llu byClass=%llu,%llu peak=%u cap=%u upl
 assert "LineBudget shaderLines{shader::traceLines},shaderLookLines{shader::traceLines};" in spike and \
     "[](const char* text) { emit(runtime->shaderLookLines,text); },[](const char* text) { emit(runtime->shaderVoidLines,text); },\n" \
     "            [](const char* text) { emit(runtime->shaderStyleLines,text); },[](const char* text) { emit(runtime->shaderStyle2Lines,text); },\n" \
-    "            [](const char* text) { emit(runtime->shaderFrameLines,text); },[](const char* text) { emit(runtime->shaderFillLines,text); });" \
+    "            [](const char* text) { emit(runtime->shaderFrameLines,text); },[](const char* text) { emit(runtime->shaderFillLines,text); },\n" \
+    "            [](const char* text) { emit(runtime->shaderTiltLines,text); });" \
     in configure_spike and \
     "(shader::tracing() ? shader::traceKinds()*shader::traceLines : 0u)" in configure_spike
 assert 'shaderCut.colorText = read("FixedCameraSpike","sVoidColor","0,0,0");' in gate and \
@@ -489,9 +493,13 @@ assert "constexpr Address skyAddress{401652,0x31e0d80};" in sky_policy and "cons
     "constexpr std::size_t root = 0x08, mode = 0x1bc, flags = 0x1dc;" in sky_policy and "constexpr std::size_t objectFlags = 0xf4;" in sky_policy
 assert "constexpr bool engineShowsSky(std::uint32_t mode,std::uint32_t flags) { return (mode == 2u || mode == 3u) && !(flags & sky::hideSky); }" in sky_policy
 # Effect passes: whole only for the Effect group with the key on; the selection is unchanged.
-assert "const bool whole = group && r.config.effectWhole && wholeEffect(r.view,bound);" in consider and \
+# Stage 3.2: the whole rule reads the published view, or in a tilted cell (Effect only) the tilted height at the bound centre.
+assert "const bool whole = group && r.config.effectWhole && wholeEffect(local,bound);" in consider and \
+    "const View local = tilt ? tiltedView(r.view,tiltPlanesNow(),bound.centre.x,bound.centre.y) : r.view;" in consider and \
     consider.index("bound = {peek<Vec>(geometry,offset::objectBound),") < consider.index("skip = reach(r.view,bound,") < \
-    consider.index("const bool whole = group && r.config.effectWhole && wholeEffect(r.view,bound);") < \
+    consider.index("const bool tilt = group && tiltCell();") < \
+    consider.index("const bool whole = group && r.config.effectWhole && wholeEffect(local,bound);") < \
+    consider.index("if (!whole && group && tiltPass(*entry,eye,shaderClass)) return;") < \
     consider.index("apply(*entry,whole ? wholeConstant : wanted,shaderClass);")
 assert "constexpr Constant wholeConstant{0.0f,-1.0f,0.0f,0.0f};" in sky_policy
 assert "inline Skip ownerSkip(const std::uint8_t* geometry,std::uint32_t& owner) {" in cut and "owner = ref->GetFormID();" in cut
@@ -552,7 +560,8 @@ assert "if (!runtime || !runtime->style || !cell || !thin::onMain()) return;" in
 assert trace_body.index("if (formatVoid(line,sizeof(line),voids)) r.voidEmitter(line);") < trace_body.index("traceStyle(now,voids.window);")
 assert "if (!r.style) return;" in style_body("inline void traceStyle(", "} // namespace")
 assert "LineBudget shaderStyleLines{shader::traceLines};" in spike
-assert "    return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u)+(runtime && runtime->fill ? 2u : 0u);" in cut
+assert "    return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u)+(runtime && runtime->fill ? 2u : 0u)+\n" \
+    "        (runtime && runtime->tilt ? 1u : 0u);" in cut
 assert "LineBudget shaderStyle2Lines{shader::traceLines};" in spike
 # W5 fixes: FixedShaderStyle2 after FixedShaderStyle; the style row's format is unchanged; roofs never kept; kit overhead removed;
 # back pieces kept only standing and within the cap, else cut at the cap and not counted as slicedFar; gallery keeps that exceed
@@ -796,6 +805,66 @@ print("PASS shader Stage 3.1 fill wiring: fill runtime only with iCutFill=1; ins
       "first; no code write, no new hook; drawn in the Lighting RestoreGeometry hook before the engine's, main thread, plane-cut passes "
       "only; rasteriser, depth-stencil, blend, pixel shader and pixel slot 13 saved, set back in reverse and released; no allocation "
       "per frame; one site per FCS-98..101")
+
+# Stage 3.2 (iCutTilt): the tilted cut. Its runtime exists only with iCutTilt=1 (validate keeps it only with
+# iCutStyle=1); it adds no hook, no code write and no engine-state write; a pass reaches it only where the flat
+# cut or Stage 1 would bind the plane buffer, and every refusal leaves that flat bind. The flat patch's bytes
+# do not depend on it (the archive digest in fixed_spike_shader_policy_test.cpp).
+def tilt_body(start, end):
+    return tilt[tilt.index(start):tilt.index(end, tilt.index(start))]
+assert "if (c.tilt > 1u || c.style != stageOneStyle) c.tilt = 0u;" in cut_policy and "unsigned tilt{0};" in cut_policy
+assert "inline void configureTilt() {\n    auto& r = *runtime;\n    if (r.config.tilt == tiltFlatCells) r.tilt = new TiltRuntime;\n}" in tilt
+assert cut.count("    configureTilt();") == 1 and cut.count("        installTilt();") == 1 and cut.count("    tiltFrame();") == 1 and cut.count("    traceTilt(now);") == 1
+commit = cut_body("inline void commit() {", "// ---- called by the spike's frame bracket")
+assert commit.index("installFill(base);") < commit.index("if (r.tilt) {") < commit.index("installTilt();")
+publish = cut_body("inline void publish(", "inline void trace(double now) {")
+assert publish.index("styleFrame();") < publish.index("tiltFrame();") < publish.index("r.active.store(true,")
+assert "inline bool tiltOn() { return runtime && runtime->tilt && runtime->tilt->state == Feature::installed && styled(); }" in tilt
+assert "inline bool tiltCell() { return tiltOn() && runtime->style->cellStyle == CellStyle::flat && runtime->tilt->planes.has_value(); }" in tilt
+# Stage 1: only the plane buffer's bind is replaced; the storey line and removals are untouched.
+assert "        if (!tiltPass(*entry,eye,shaderClass)) apply(*entry,plane,shaderClass);\n        return;\n    }" in style and style.count("tiltPass(") == 1
+assert cut.count("tiltPass(") == 2  # the declaration and the Effect path
+tilt_pass = tilt_body("inline bool tiltPass(", "// publish, after styleFrame")
+order = ["if (!r.tilt || !styled()) return false;",
+         "if (t.state != Feature::installed) { if (t.state == Feature::refused && r.style->cellStyle == CellStyle::flat) ++tw.refusedFlat; return false; }",
+         "if (r.style->cellStyle != CellStyle::flat)", "if (!t.planes)", "tiltEntryFor(entry,group)",
+         "if (!slot) { ++tw.fullFlat; return false; }", "if (!slot->shader || t.state != Feature::installed) { ++tw.refusedFlat; return false; }",
+         "if (!uploadTilt(tiltConstant(*t.planes,eye)))", "method::vsSetConstantBuffers,cutBuffer,1u,", "method::vsSetShader,slot->shader,",
+         "r.openObject = entry.object;", "r.openFill = false;", "r.opened.store(true,", "++w.cut;"]
+assert all(tilt_pass.index(a) < tilt_pass.index(b) for a, b in zip(order, order[1:]))
+upload = tilt_body("inline bool uploadTilt(", "// A pass the flat cut would draw")
+assert upload.index("method::map,t.buffer,") < upload.index("Refusal::tiltMap") < upload.index("std::memcpy(mapped.data,&wanted,sizeof(wanted));") < \
+    upload.index("method::unmap,t.buffer,")
+assert "latch()" not in tilt  # a tilt refusal never ends the flat cut
+entry_for = tilt_body("inline TiltEntry* tiltEntryFor(", "// The rows Mapped only")
+assert entry_for.index("patchVertexShader(code,size,Cut::tilted)") < entry_for.index("Refusal::tiltPatch") < \
+    entry_for.index("method::createVertexShader") < entry_for.index("Refusal::tiltCreate") < entry_for.index("slot.shader = created;")
+# A one-sided refusal never leaves one class tilted and its twin flat: FCS-102 and 103 end the tilt for the session.
+assert entry_for.count("++t.refused; t.state = Feature::refused;") == 2 and \
+    entry_for.index("++t.refused; t.state = Feature::refused;") < entry_for.index("Refusal::tiltPatch")
+assert tilt_body("inline bool uploadTilt(", "// A pass the flat cut").count("t.state = Feature::refused;") == 1 and \
+    tilt_body("inline void installTilt(", "inline void traceTilt(").count("t.state = Feature::refused;") == 1
+# Cache identity: an entry is reused only for the same object with the same bytecode (size and container checksum);
+# otherwise its copy is released and the entry rebuilt in place.
+assert "    return slot.size == size && std::memcmp(slot.sum.data(),code+checksumAt,slot.sum.size()) == 0;" in tilt
+assert entry_for.index("if (slot.object == entry.object && sameCode(slot,size,code)) return &slot;") < \
+    entry_for.index("if (slot.object == entry.object) { releaseObject(slot.shader); ++t.window.rebuilt; }") < \
+    entry_for.index("else if (slot.object) continue;") < entry_for.index("slot = {};") < \
+    entry_for.index("std::memcpy(slot.sum.data(),code+checksumAt,slot.sum.size());") < entry_for.index("patchVertexShader(code,size,Cut::tilted)")
+assert entry_for.count("++t.window.created;") == 1
+for forbidden in ("safe_write", "VirtualAlloc", "VirtualProtect", "write_vfunc", "write_call", "write_branch", "AllocTrampoline", "std::vector"):
+    assert forbidden not in tilt, forbidden
+# The frame pass's band is off in a tilted cell; its shader bytes are unchanged.
+assert "const bool tilted = tiltCell();" in frame and "kitCell,band,bandFloor,tilted);" in frame
+assert "    if (kitCell) return BandState::kit;\n    if (tiltCell) return BandState::tilt;" in frame_policy
+assert "LineBudget shaderTiltLines{shader::traceLines};" in spike and gate.count('"FixedCameraSpike","iCutTilt"') == 1 and \
+    gate.count('"FixedCameraSpike","fCutTiltSlope"') == 1 and gate.count('"FixedCameraSpike","fCutTiltMax"') == 1 and \
+    "\niCutTilt=0\n" in ini and "\nfCutTiltSlope=0.5\n" in ini and "\nfCutTiltMax=400\n" in ini
+assert cut_policy.endswith('#include "fixed_spike_shader_tilt_policy.h"  // Stage 3.2: the tilted cut (iCutTilt=1)\n') or \
+    '#include "fixed_spike_shader_tilt_policy.h"' in cut_policy
+print("PASS shader Stage 3.2 tilt wiring: tilt runtime only with iCutTilt=1 and iCutStyle=1; installed after every earlier pass; no hook, "
+      "code or engine-state write; only the plane buffer's bind replaced, in flat cells, buffer then shader as apply; every refusal "
+      "ends the tilt for the session (flat cut, no latch); cache entries tied to their bytecode; frame band off in tilted cells; one site per FCS-102..105")
 # Wave 2 package "light" (DYL-217). Off unless a light key is on; no hook at
 # all; engine light arrays read only under their lock; the fill light is a
 # plain AddLight/RemoveLight client, hidden at once on every ineligible frame.
@@ -969,16 +1038,16 @@ light_struct = light_body("struct LightRuntime {", "inline LightRuntime* lights"
 budget_sizes = re.findall(r"(\w+)\{((?:\d+\*)?\w+(?:::\w+)?)\}", "".join(l for l in (runtime_struct + light_struct).splitlines(True) if "LineBudget " in l))
 assert sorted(budget_sizes) == sorted([("rigLines", "rigTraceLines"), ("roomLines", "roomTraceLines"), ("hideLines", "hideTraceLines"),
     ("shaderLines", "shader::traceLines"), ("shaderLookLines", "shader::traceLines"), ("shaderVoidLines", "shader::traceLines"),
-    ("shaderStyleLines", "shader::traceLines"), ("shaderStyle2Lines", "shader::traceLines"), ("shaderFrameLines", "shader::traceLines"), ("shaderFillLines", "2*shader::traceLines"), ("fadeLines", "fadeTraceLines"),
+    ("shaderStyleLines", "shader::traceLines"), ("shaderStyle2Lines", "shader::traceLines"), ("shaderFrameLines", "shader::traceLines"), ("shaderFillLines", "2*shader::traceLines"), ("shaderTiltLines", "shader::traceLines"), ("fadeLines", "fadeTraceLines"),
     ("roomPassLines", "roomPassTraceLines"), ("lines", "lightTraceLines"), ("levelLines", "lightLevelTraceLines")]), budget_sizes
-# Refusal numbers: the spike's enum (base, FCS-15 fade, FCS-51..59 light) and the shader's own enum (FCS-66..101,
+# Refusal numbers: the spike's enum (base, FCS-15 fade, FCS-51..59 light) and the shader's own enum (FCS-66..105,
 # its own once-mask) are disjoint, and every number fits the mask that logs it.
 shader_codes = dict(re.findall(r"(\w+) = (\d+)", cut_policy[cut_policy.index("enum class Refusal : unsigned {"):cut_policy.index("};", cut_policy.index("enum class Refusal : unsigned {"))]))
 spike_numbers = {int(v) for v in codes.values()}
 shader_numbers = {int(v) for v in shader_codes.values()}
 assert len(shader_numbers) == len(shader_codes) and not spike_numbers & shader_numbers, spike_numbers & shader_numbers
 assert max(spike_numbers) < 64 and "std::uint64_t{1} << static_cast<unsigned>(code)" in spike
-assert min(shader_numbers) == 66 and max(shader_numbers) == 101 and "constexpr unsigned firstRefusal = 66, lastRefusal = 101;" in cut_policy
+assert min(shader_numbers) == 66 and max(shader_numbers) == 105 and "constexpr unsigned firstRefusal = 66, lastRefusal = 105;" in cut_policy
 assert {n for n in spike_numbers if 51 <= n <= 59} == set(range(51, 60)) and 15 in spike_numbers
 # INI: one [FixedCameraSpike] section, every key of both sides once, defaults as on each branch.
 section = ini[ini.index("[FixedCameraSpike]"):]
@@ -992,4 +1061,4 @@ for key, value in (("iSeeThroughMode", "0"), ("iRoomSeedMode", "0"), ("bHoldPlay
 assert not any(marker in text for text in (spike, source, ini, light) for marker in ("<<<<<<<", ">>>>>>>", "\n=======\n"))
 print("PASS combined wiring: shader, fade hold and light all installed at kDataLoaded before activation; eligible frame rig -> room -> "
       "shader plane -> fill light -> fade hold; ineligible shader off -> fade back -> restore -> fill duty; writer capacity sums every "
-      "budget; spike codes (base, FCS-15, FCS-51..59) and shader codes (FCS-66..101) disjoint; one INI section with both key sets")
+      "budget; spike codes (base, FCS-15, FCS-51..59) and shader codes (FCS-66..105) disjoint; one INI section with both key sets")

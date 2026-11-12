@@ -365,6 +365,10 @@ void loadSettings() {
         // Stage 3 step 3.1: solid caps by back-face fill, caves and ruins only; off unless asked for.
         shaderCut.fill = number("FixedCameraSpike","iCutFill",shaderCut.fill);
         shaderCut.fillColorText = read("FixedCameraSpike","sCutFillColor","0,0,0");
+        // Stage 3 step 3.2: the tilted cut in caves and ruins (iCutStyle=1 only); off unless asked for.
+        shaderCut.tilt = number("FixedCameraSpike","iCutTilt",shaderCut.tilt);
+        shaderCut.tiltSlope = number("FixedCameraSpike","fCutTiltSlope",shaderCut.tiltSlope);
+        shaderCut.tiltMax = number("FixedCameraSpike","fCutTiltMax",shaderCut.tiltMax);
         // Fifth pass (owner go 2026-11-11, Stage 2 of the seamless cutaway): the frame pass, on by default in mode 3.
         shaderCut.frame.enabled = flag("FixedCameraSpike","bFramePass",1);
         shaderCut.frame.band = number("FixedCameraSpike","fFrameBand",shaderCut.frame.band);

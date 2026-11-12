@@ -4,8 +4,11 @@
 // the patcher, the checksum and the audited list are also checked against
 // every shader blob in it; without it those rows are reported as skipped.
 #include "fixed_spike_shader_policy.h"
+#include <bit>
 #include <cassert>
+#include <cmath>
 #include <cstdlib>
+#include <map>
 #include <string>
 using namespace skycrpg::camera::fixed::shader;
 using skycrpg::camera::radians;
@@ -43,25 +46,27 @@ struct Shape {
     bool patched{};                // the additions the patcher is expected to make
     bool extraBuffer13{},callInBody{},insideIf{},retFirst{},otherRow{},swapOperands{},lateDeclaration{},samePosition{},noSum{};
     bool unknownOpcode{},twoTemps{},strangeBetween{};
+    bool tilted{};                 // Stage 3.2: with `patched`, the tilted cut's additions instead of the flat cut's
+    bool axisClash{};              // Stage 3.2: one .xxxx product reads another cb2 row (the World x row is ambiguous)
 };
 Tokens body(const Shape& s) {
     Tokens t{vertexShader50,0u};
     append(t,{0x0100086au});
     append(t,{0x04000059u,token::row,12u,12u});
     append(t,{0x04000059u,token::row,2u,s.geometryRows});
-    if (s.patched) append(t,{0x04000059u,token::row,13u,1u});
+    if (s.patched) append(t,{0x04000059u,token::row,13u,s.tilted ? 3u : 1u});
     if (s.extraBuffer13) append(t,{0x04000059u,token::row,13u,4u});
     append(t,{0x0300005fu,0x00101072u,0u});
     append(t,{0x04000067u,0x001020f2u,s.outputRegister,1u});
     if (s.patched) append(t,{0x04000067u,token::outputX,16u,2u});
-    append(t,{0x02000068u,s.temps+(s.patched ? 1u : 0u)});
+    append(t,{0x02000068u,s.temps+(s.patched ? (s.tilted ? 2u : 1u) : 0u)});
     if (s.twoTemps) append(t,{0x02000068u,s.temps});
     if (s.retFirst) append(t,{0x0100003eu});
     if (s.insideIf) append(t,{0x0304001fu,0x0010000au,0u}); // if_nz r0.x
     if (s.callInBody) append(t,{0x03000004u,0x00106000u,0u}); // call l0
     for (std::uint32_t row = 8;row <= 11;++row) {
         const std::uint32_t z = s.otherRow && row == 10 ? s.worldFirst+3u : s.worldFirst+2u;
-        append(t,{0x09780038u,token::tempAll,0u,0x00208006u,12u,row,token::row,2u,s.worldFirst});
+        append(t,{0x09780038u,token::tempAll,0u,0x00208006u,12u,row,token::row,2u,s.axisClash && row == 9 ? s.worldFirst+3u : s.worldFirst});
         append(t,{0x09780038u,token::tempAll,1u,0x00208556u,12u,row,token::row,2u,s.worldFirst+1u});
         append(t,{0x07780000u,token::tempAll,0u,token::tempRead,0u,token::tempRead,1u});
         if (s.swapOperands) append(t,{0x09780038u,token::tempAll,1u,token::row,2u,z,token::rowZ,12u,row});
@@ -73,7 +78,18 @@ Tokens body(const Shape& s) {
             append(t,{0x05000036u,0x00100072u,2u,0x00101246u,0u}); // mov r2.xyz, v0.xyzx
             append(t,{0x05000036u,0x00100082u,2u,0x00004001u,0x3f800000u}); // mov r2.w, l(1.0)
             if (s.strangeBetween) append(t,{0x0500004bu,0x00100012u,1u,0x0010000au,1u}); // sqrt r1.x, r1.x
-            if (s.patched) {
+            if (s.patched && s.tilted) {
+                const std::uint32_t T = s.temps,U = s.temps+1u;
+                append(t,{0x08000011u,0x00100012u,T,token::row,2u,s.worldFirst,token::tempRead,2u});    // dp4 rT.x, cb2[x], r2
+                append(t,{0x08000011u,0x00100022u,T,token::row,2u,s.worldFirst+1u,token::tempRead,2u}); // dp4 rT.y, cb2[y], r2
+                append(t,{0x08000011u,0x00100042u,T,token::row,2u,s.worldFirst+2u,token::tempRead,2u}); // dp4 rT.z, cb2[z], r2
+                append(t,{0x05000036u,0x00100082u,T,0x00004001u,0x3f800000u});                         // mov rT.w, l(1.0)
+                append(t,{0x08000011u,0x00100012u,U,token::tempRead,T,token::row,13u,0u});              // dp4 rU.x, rT, cb13[0]
+                append(t,{0x08000011u,0x00100022u,U,token::tempRead,T,token::row,13u,1u});              // dp4 rU.y, rT, cb13[1]
+                append(t,{0x08000011u,0x00100042u,U,token::tempRead,T,token::row,13u,2u});              // dp4 rU.z, rT, cb13[2]
+                append(t,{0x07000033u,0x00100022u,U,0x0010001au,U,0x0010002au,U});                     // min rU.y, rU.y, rU.z
+                append(t,{0x07000034u,token::outputX,16u,0x0010000au,U,0x0010001au,U});                 // max o16.x, rU.x, rU.y
+            } else if (s.patched) {
                 append(t,{0x08000011u,token::tempX,s.temps,token::row,2u,s.worldFirst+2u,token::tempRead,2u});
                 append(t,{0x0b000032u,token::outputX,16u,token::tempReadX,s.temps,token::rowX,13u,0u,token::rowY,13u,0u});
             }
@@ -125,7 +141,8 @@ void codes() {
         Refusal::effectTable,Refusal::voidSite,Refusal::voidMemory,Refusal::voidThread,Refusal::effectCreate,Refusal::effectPatch,
         Refusal::effectUnaudited,Refusal::effectObject,Refusal::effectThread,Refusal::skySite,Refusal::skyLeft,Refusal::styleBuffers,Refusal::styleMap,
         Refusal::frameSite,Refusal::frameMemory,Refusal::frameDevice,Refusal::frameThread,Refusal::frameRun,
-        Refusal::fillSite,Refusal::fillDevice,Refusal::fillLayout,Refusal::fillMap};
+        Refusal::fillSite,Refusal::fillDevice,Refusal::fillLayout,Refusal::fillMap,
+        Refusal::tiltPatch,Refusal::tiltCreate,Refusal::tiltBuffer,Refusal::tiltMap};
     std::uint64_t seen = 0;
     for (const auto code : all) {
         // The wave 1 once-mask holds codes below 64; these have their own.
@@ -141,9 +158,12 @@ void codes() {
     // The fourth pass continues at 91, the fifth at 93 up to 97, Stage 3.1 at 98 up to 101 (the once-mask is 64 bits since).
     assert(static_cast<unsigned>(Refusal::styleBuffers) == 91 && static_cast<unsigned>(Refusal::styleMap) == 92 &&
         static_cast<unsigned>(Refusal::frameSite) == 93 && static_cast<unsigned>(Refusal::frameRun) == 97 &&
-        static_cast<unsigned>(Refusal::fillSite) == 98 && static_cast<unsigned>(Refusal::fillMap) == 101 && lastRefusal == 101);
-    assert(seen == (std::uint64_t{1} << 36)-1u); // all 36 codes 66..101 in use
-    assert(refusalBit(Refusal::fillMap) == std::uint64_t{1} << 35);
+        static_cast<unsigned>(Refusal::fillSite) == 98 && static_cast<unsigned>(Refusal::fillMap) == 101);
+    // Stage 3.2 continues at 102 up to 105.
+    assert(static_cast<unsigned>(Refusal::tiltPatch) == 102 && static_cast<unsigned>(Refusal::tiltCreate) == 103 &&
+        static_cast<unsigned>(Refusal::tiltBuffer) == 104 && static_cast<unsigned>(Refusal::tiltMap) == 105 && lastRefusal == 105);
+    assert(seen == (std::uint64_t{1} << 40)-1u); // all 40 codes 66..105 in use
+    assert(refusalBit(Refusal::fillMap) == std::uint64_t{1} << 35 && refusalBit(Refusal::tiltMap) == std::uint64_t{1} << 39);
     // A shader preparation reports through its own group's codes.
     for (std::size_t i = 0;i < 2;++i) {
         const auto& c = prepareCodes[i];
@@ -591,6 +611,284 @@ void traces() {
     assert(!formatLook(tiny,sizeof(tiny),k));
 }
 
+// ---- Stage 3.2: the tilted cut ------------------------------------------------
+// A small Shader Model 5 interpreter for the instructions the cuts insert (dp4, mad, mov, min, max on temps,
+// one output, constant-buffer rows and 32-bit immediates). It decodes the operand tokens from their bit fields
+// (type 12..19, components 0..1, selection mode 2..3, mask/swizzle/select 4..11, index dimension 20..21), not
+// from the patcher's constants, so it checks the encoding as well as the arithmetic.
+using Lane = std::array<float,4>;
+struct Machine {
+    std::map<std::uint32_t,Lane> temps;
+    std::map<std::pair<std::uint32_t,std::uint32_t>,Lane> rows; // (buffer, row)
+    Lane output16{};
+    bool unsupported{};
+};
+struct Operand { std::uint32_t type{},mode{},select{},index0{},index1{}; float value{}; std::size_t length{}; };
+Operand operandAt(const Tokens& t,std::size_t at) {
+    Operand o;
+    const std::uint32_t head = t[at];
+    o.type = (head >> 12) & 0xffu; o.mode = (head >> 2) & 3u; o.select = (head >> 4) & 0xffu;
+    const std::uint32_t dimension = (head >> 20) & 3u,components = head & 3u;
+    o.length = 1;
+    if (o.type == 4) { o.mode = 3; o.value = std::bit_cast<float>(t[at+1]); o.length = 2; assert(components == 1); return o; }
+    if (dimension >= 1) o.index0 = t[at+o.length++];
+    if (dimension >= 2) o.index1 = t[at+o.length++];
+    return o;
+}
+Lane fetch(Machine& m,const Operand& o) {
+    Lane source{};
+    if (o.type == 0) source = m.temps[o.index0];
+    else if (o.type == 8) source = m.rows[{o.index0,o.index1}];
+    else if (o.type == 4) return {o.value,o.value,o.value,o.value};
+    else m.unsupported = true;
+    if (o.mode == 2) { const float v = source[o.select & 3u]; return {v,v,v,v}; }              // select-1
+    if (o.mode == 1) return {source[o.select & 3u],source[(o.select >> 2) & 3u],source[(o.select >> 4) & 3u],source[(o.select >> 6) & 3u]};
+    m.unsupported = true; return {};
+}
+void put(Machine& m,const Operand& o,const Lane& value) {
+    Lane& target = o.type == 0 ? m.temps[o.index0] : m.output16;
+    if (o.type == 2 && o.index0 != 16u) m.unsupported = true;
+    if (o.type != 0 && o.type != 2) m.unsupported = true;
+    for (std::size_t i = 0;i < 4;++i) if (o.select & (1u << i)) target[i] = value[i];
+}
+// Runs `count` instructions from token `at`; false on anything the interpreter does not know.
+bool run(Machine& m,const Tokens& t,std::size_t at,std::size_t count) {
+    for (std::size_t n = 0;n < count;++n) {
+        const std::uint32_t code = t[at] & 0x7ffu,length = (t[at] >> 24) & 0x7fu;
+        std::size_t p = at+1;
+        const Operand dest = operandAt(t,p); p += dest.length;
+        std::vector<Lane> in;
+        while (p < at+length) { const Operand o = operandAt(t,p); in.push_back(fetch(m,o)); p += o.length; }
+        if (p != at+length) return false;
+        Lane result{};
+        if (code == 17 && in.size() == 2) { const float d = in[0][0]*in[1][0]+in[0][1]*in[1][1]+in[0][2]*in[1][2]+in[0][3]*in[1][3]; result = {d,d,d,d}; }
+        else if (code == 54 && in.size() == 1) result = in[0];
+        else if (code == 50 && in.size() == 3) for (std::size_t i = 0;i < 4;++i) result[i] = in[0][i]*in[1][i]+in[2][i];
+        else if (code == 51 && in.size() == 2) for (std::size_t i = 0;i < 4;++i) result[i] = (std::min)(in[0][i],in[1][i]);
+        else if (code == 52 && in.size() == 2) for (std::size_t i = 0;i < 4;++i) result[i] = (std::max)(in[0][i],in[1][i]);
+        else return false;
+        put(m,dest,result);
+        at += length;
+    }
+    return !m.unsupported;
+}
+float rowDot4(const Lane& a,const Lane& b) { return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]+a[3]*b[3]; }
+// The tilted block of a patched output: the nine instructions starting at the first dp4 into the added temp.
+std::size_t tiltedBlock(const Tokens& t,const Patched& made) {
+    Instruction ins;
+    for (std::size_t at = 2;at < t.size();at += ins.length) {
+        assert(decode(t,at,ins));
+        if (t[at] == 0x08000011u && t[at+1] == 0x00100012u && t[at+2] == made.temp && t[at+3] == token::row && t[at+4] == perGeometryBuffer &&
+            t[at+5] == made.xRow && t[at+6] == token::tempRead && t[at+7] == made.position) return at;
+    }
+    return 0;
+}
+// The interpreter on the block, against tiltClip on the same world position; a few positions per call.
+unsigned interpretTilted(const Tokens& t,const Patched& made,unsigned seed) {
+    const std::size_t at = tiltedBlock(t,made);
+    assert(at);
+    unsigned checked = 0;
+    for (unsigned k = 0;k < 6;++k) {
+        const float a = static_cast<float>((seed*7u+k*13u)%97u)-48.0f,b = static_cast<float>((seed*11u+k*5u)%89u)-44.0f;
+        Machine m;
+        // World rows: a rotation about z by a quarter turn and a scale, translated (posAdjust-relative).
+        m.rows[{2u,made.xRow}] = {0.0f,-1.25f,0.0f,a*10.0f};
+        m.rows[{2u,made.yRow}] = {1.25f,0.0f,0.0f,b*10.0f};
+        m.rows[{2u,made.worldRow}] = {0.0f,0.0f,1.25f,static_cast<float>(k)*40.0f-100.0f};
+        const Lane position{b,a,static_cast<float>(seed%50u),1.0f};
+        m.temps[made.position] = position;
+        View v; v.feet = {a*3.0f,b*3.0f,-10.0f}; v.eye = {v.feet.x+((seed+k) & 1u ? 237.3f : -237.3f),v.feet.y+((seed+k) & 2u ? 237.3f : -237.3f),660.0f};
+        v.planeZ = -10.0f+160.0f;
+        const auto planes = tiltPlanes(v,160.0f,0.5f,400.0f);
+        assert(planes);
+        const TiltConstant c = tiltConstant(*planes,Vec{0.0f,0.0f,0.0f});
+        for (std::uint32_t r = 0;r < 3;++r) m.rows[{13u,r}] = c.rows[r];
+        assert(run(m,t,at,9));
+        const Vec q{rowDot4(m.rows[{2u,made.xRow}],position),rowDot4(m.rows[{2u,made.yRow}],position),rowDot4(m.rows[{2u,made.worldRow}],position)};
+        assert(m.output16[0] == tiltClip(c,q));
+        ++checked;
+    }
+    return checked;
+}
+View tiltView(int quadrant) {
+    View v;
+    v.feet = {1000.0f,-2000.0f,100.0f};
+    v.eye = {v.feet.x+((quadrant & 1) ? 237.3f : -237.3f),v.feet.y+((quadrant & 2) ? 237.3f : -237.3f),v.feet.z+683.8f};
+    v.planeZ = 96.0f+160.0f; // held floor 96 (CutPlane), fShaderCutHeight 160
+    return v;
+}
+void tilt() {
+    // Settings: off by default; only with Stage 1; slope and ceiling bounded; the ceiling never under the near plane.
+    {
+        const Config d = validate(Config{});
+        assert(d.tilt == tiltOff && d.tiltSlope == 0.5f && d.tiltMax == 400.0f);
+        Config c; c.tilt = 1; bool adjusted = true;
+        assert(validate(c,&adjusted).tilt == tiltFlatCells && !adjusted);
+        c.style = flatStyle; adjusted = false;
+        assert(validate(c,&adjusted).tilt == tiltOff && adjusted);
+        c = Config{}; c.tilt = 2; adjusted = false;
+        assert(validate(c,&adjusted).tilt == tiltOff && adjusted);
+        c = Config{}; c.tilt = 1; c.tiltSlope = 9.0f; c.tiltMax = 10.0f; adjusted = false;
+        const Config v = validate(c,&adjusted);
+        assert(v.tiltSlope == 4.0f && v.tiltMax == v.height && adjusted);
+        c.tiltSlope = nan; c.tiltMax = nan;
+        assert(validate(c).tiltSlope == 0.5f && validate(c).tiltMax == 400.0f);
+        c.tiltSlope = 0.0f; c.tiltMax = 1e6f;
+        assert(validate(c).tiltSlope == 0.05f && validate(c).tiltMax == 2048.0f);
+        // With iCutTilt=0 the slope and ceiling are clamped silently (no FCS-66 for keys that are not used).
+        c = Config{}; c.tiltSlope = 9.0f; adjusted = true;
+        assert(validate(c,&adjusted).tilt == tiltOff && !adjusted);
+    }
+    // The four locked headings: the camera's diagonal quadrant around the feet, and the unit ground vector towards it.
+    for (int q = 0;q < 4;++q) {
+        const View v = tiltView(q);
+        const Heading h = tiltHeading(v.feet,v.eye);
+        assert(h.quadrant == q && std::fabs(h.x*h.x+h.y*h.y-1.0f) < 1e-6f);
+        assert((h.x > 0.0f) == (v.eye.x > v.feet.x) && (h.y > 0.0f) == (v.eye.y > v.feet.y));
+        const auto p = tiltPlanes(v,160.0f,0.5f,400.0f);
+        assert(p && p->lowZ == 256.0f && p->capZ == 96.0f+400.0f && p->feet.x == v.feet.x && p->feet.y == v.feet.y);
+        // At the feet and anywhere on the camera side: the flat cut's height. Behind: rising by the slope, capped.
+        const auto at = [&](float distance) { return tiltHeight(*p,v.feet.x-distance*h.x,v.feet.y-distance*h.y); };
+        assert(at(0.0f) == 256.0f && at(-500.0f) == 256.0f && at(-50.0f) == 256.0f);
+        assert(std::fabs(at(100.0f)-306.0f) < 1e-3f && std::fabs(at(400.0f)-456.0f) < 1e-3f);
+        assert(at(480.0f) >= 495.99f && at(500.0f) == 496.0f && at(5000.0f) == 496.0f);
+        // Sideways (perpendicular to the heading) the plane does not rise.
+        assert(std::fabs(tiltHeight(*p,v.feet.x+300.0f*h.y,v.feet.y-300.0f*h.x)-256.0f) < 1e-3f);
+        // The shader form agrees with the height: a point 300 behind at 350 (kept), the same point in front (cut).
+        for (const Vec adjust : {Vec{0.0f,0.0f,0.0f},Vec{v.eye.x,v.eye.y,v.eye.z},Vec{-40960.0f,81920.0f,-2048.0f}}) {
+            const TiltConstant k = tiltConstant(*p,adjust);
+            const auto clip = [&](float distance,float z) {
+                return tiltClip(k,Vec{v.feet.x-distance*h.x-adjust.x,v.feet.y-distance*h.y-adjust.y,z-adjust.z});
+            };
+            assert(clip(300.0f,350.0f) > 0.0f && clip(-300.0f,350.0f) < 0.0f && clip(0.0f,250.0f) > 0.0f && clip(0.0f,262.0f) < 0.0f);
+            assert(clip(2000.0f,490.0f) > 0.0f && clip(2000.0f,502.0f) < 0.0f); // the ceiling
+            for (const float d : {-700.0f,-100.0f,0.0f,60.0f,200.0f,480.0f,900.0f})
+                for (const float z : {-100.0f,200.0f,300.0f,400.0f,600.0f}) {
+                    const float height = at(d);
+                    if (std::fabs(z-height) > 1.0f) assert((clip(d,z) >= 0.0f) == (z <= height));
+                }
+        }
+    }
+    // A snap: the eye moves to the next quadrant and the heading switches at once (no blend).
+    {
+        const View a = tiltView(3),b = tiltView(1);
+        const auto pa = tiltPlanes(a,160.0f,0.5f,400.0f),pb = tiltPlanes(b,160.0f,0.5f,400.0f);
+        assert(pa && pb && pa->heading.quadrant == 3 && pb->heading.quadrant == 1 && pa->heading.y == -pb->heading.y && pa->heading.x == pb->heading.x);
+        View bad = a; bad.eye.x = nan;
+        assert(!tiltPlanes(bad,160.0f,0.5f,400.0f));
+        bad = a; bad.planeZ = infinity;
+        assert(!tiltPlanes(bad,160.0f,0.5f,400.0f));
+        // A ceiling under the near plane is raised to it (validate prevents it; the maths does not depend on that).
+        const auto low = tiltPlanes(a,160.0f,0.5f,50.0f);
+        assert(low && low->capZ == low->lowZ && tiltHeight(*low,a.feet.x-1000.0f*low->heading.x,a.feet.y-1000.0f*low->heading.y) == low->lowZ);
+    }
+    // Exact flat equivalence: with slope 0 the tilted rows give bit for bit the flat cut's clip distance
+    // (mad z, -1, offset), at every position and position adjustment.
+    for (int q = 0;q < 4;++q) {
+        const View v = tiltView(q);
+        const auto p = tiltPlanes(v,160.0f,0.0f,400.0f);
+        assert(p);
+        for (const Vec adjust : {Vec{0.0f,0.0f,0.0f},Vec{v.eye.x,v.eye.y,v.eye.z},Vec{12345.5f,-6789.25f,-333.0f}}) {
+            const TiltConstant k = tiltConstant(*p,adjust);
+            const Constant flat = cutConstant(v.planeZ,adjust.z);
+            assert(k.rows[0][3] == flat.offset && k.rows[0][2] == flat.scale);
+            for (unsigned i = 0;i < 2000;++i) {
+                const Vec world{static_cast<float>(i%37u)*91.7f-1700.0f,static_cast<float>(i%53u)*-77.3f+900.0f,static_cast<float>(i)*0.731f-400.0f};
+                const Vec rel{world.x-adjust.x,world.y-adjust.y,world.z-adjust.z};
+                const float expected = rel.z*flat.scale+flat.offset;
+                assert(std::bit_cast<std::uint32_t>(tiltClip(k,rel)) == std::bit_cast<std::uint32_t>(expected));
+            }
+        }
+    }
+    // The synthetic shader: the tilted patch makes exactly the expected token stream.
+    for (const std::uint32_t worldFirst : {1u,0u}) {
+        Shape s; s.worldFirst = worldFirst; s.geometryRows = worldFirst+4u;
+        const Bytes blob = make(s);
+        const Patched flat = patchVertexShader(blob.data(),blob.size());
+        const Patched made = patchVertexShader(blob.data(),blob.size(),Cut::tilted);
+        assert(flat.result == Patch::ok && flat.axes && flat.xRow == worldFirst && flat.yRow == worldFirst+1u);
+        assert(made.result == Patch::ok && made.worldRow == worldFirst+2u && made.xRow == worldFirst && made.yRow == worldFirst+1u &&
+            made.position == 2 && made.temp == 3);
+        Shape expected = s; expected.patched = true; expected.tilted = true;
+        assert(tokensOf(made.code) == body(expected));
+        assert(tokensOf(made.code).size() == tokensOf(blob).size()+8u+tiltTokens);
+        assert(made.code.size() == blob.size()+(8u+tiltTokens)*4u+elementSize+16u && checksumMatches(made.code.data(),made.code.size()));
+        // Signature and container exactly as the flat patch's: only the code chunk differs.
+        const std::size_t code0 = word(flat.code.data()+containerHeader+8),code1 = word(made.code.data()+containerHeader+8);
+        assert(code0 == code1);
+        assert(std::memcmp(flat.code.data()+word(flat.code.data()+containerHeader),made.code.data()+word(made.code.data()+containerHeader),
+            code0-word(flat.code.data()+containerHeader)) == 0);
+        assert(result(made.code) == Patch::signature);
+        // The flat patch is unchanged by the tilt's existence.
+        Shape flatShape = s; flatShape.patched = true;
+        assert(tokensOf(flat.code) == body(flatShape) && flat.code.size() == blob.size()+27*4+elementSize+16);
+        assert(interpretTilted(tokensOf(made.code),made,worldFirst+1u) == 6);
+        // The flat block under the interpreter: mad o16.x = z*scale+offset, the flat cut's clip distance.
+        {
+            const Tokens t = tokensOf(flat.code);
+            Instruction ins;
+            std::size_t at = 2;
+            for (;at < t.size();at += ins.length) { assert(decode(t,at,ins)); if (t[at] == 0x08000011u && t[at+2] == flat.temp) break; }
+            Machine m;
+            m.rows[{2u,flat.worldRow}] = {0.5f,-0.25f,1.0f,-30.0f};
+            m.rows[{13u,0u}] = {-1.0f,123.5f,0.0f,0.0f};
+            m.temps[flat.position] = {10.0f,20.0f,300.0f,1.0f};
+            assert(run(m,t,at,2) && m.output16[0] == -(0.5f*10.0f-0.25f*20.0f+300.0f-30.0f)+123.5f);
+        }
+    }
+    // An ambiguous World x row: the flat cut is unaffected, the tilted patch refuses (Patch::axes; FCS-102 at run time).
+    {
+        Shape s; s.axisClash = true;
+        const Bytes blob = make(s);
+        const Patched flat = patchVertexShader(blob.data(),blob.size());
+        assert(flat.result == Patch::ok && !flat.axes);
+        assert(patchVertexShader(blob.data(),blob.size(),Cut::tilted).result == Patch::axes);
+        assert(std::string(patchNames[static_cast<std::size_t>(Patch::axes)]) == "axes");
+        // Every other refusal is the flat patch's own.
+        Shape u; u.insideIf = true;
+        const Bytes other = make(u);
+        assert(patchVertexShader(other.data(),other.size(),Cut::tilted).result == patchVertexShader(other.data(),other.size()).result);
+    }
+    // The frame pass's band: off in a tilted cell (tilt), a kit cell still reports kit; the falloff is unchanged.
+    {
+        float floor = 0.0f;
+        assert(bandState(FrameConfig{},160.0f,256.0f,false,&floor,true) == BandState::tilt);
+        assert(bandState(FrameConfig{},160.0f,256.0f,true,&floor,true) == BandState::kit);
+        assert(bandState(FrameConfig{},160.0f,256.0f,false,&floor,false) == BandState::on);
+        FrameConfig none; none.band = 0.0f;
+        assert(bandState(none,160.0f,256.0f,false,&floor,true) == BandState::off);
+        assert(std::string(bandNames[static_cast<std::size_t>(BandState::tilt)]) == "tilt");
+    }
+    // FixedShaderTilt.
+    {
+        TiltSample s;
+        s.seconds = 12.5; s.frame = 900; s.mode = 1; s.state = Feature::installed; s.cell = CellStyle::flat;
+        s.haveView = s.havePlanes = true;
+        s.planes = *tiltPlanes(tiltView(2),160.0f,0.5f,400.0f);
+        s.slope = 0.5f; s.maxAbove = 400.0f; s.made = 31; s.refused = 0;
+        s.window.tilted = 4000; s.window.kitFlat = 0; s.window.uploads = 3; s.window.created = 12; s.window.rebuilt = 1;
+        char line[sizeof(TraceRow)]{};
+        assert(formatTilt(line,sizeof(line),s));
+        const std::string row = line;
+        assert(row.rfind("FixedShaderTilt t=12.500 frame=900 tilt=1 state=installed cell=flat quadrant=2 heading=-0.707,0.707 slope=0.500 "
+            "max=400.0 lowZ=256.00 capZ=496.00 atFeet=256.00 behind500=496.00 front500=256.00 tilted=4000 ",0) == 0);
+        assert(row.find(" uploads=3 made=31 refused=0 rebuilt=1 created=12 sample=window") != std::string::npos);
+        s.havePlanes = false;
+        assert(formatTilt(line,sizeof(line),s) && std::string(line).find("quadrant=-1 heading=nan,nan") != std::string::npos);
+        TiltSample huge = s;
+        huge.havePlanes = true; huge.seconds = 1e7; huge.frame = ~0ull; huge.made = huge.refused = ~0u;
+        huge.planes.lowZ = huge.planes.capZ = -1e9f; huge.planes.feet = {-1e9f,-1e9f,-1e9f};
+        huge.slope = 4.0f; huge.maxAbove = 2048.0f;
+        huge.window = {9999999999ull,9999999999ull,9999999999ull,9999999999ull,9999999999ull,9999999999ull,9999999999ull,9999999999ull,
+            9999999999ull,9999999999ull,~0u,~0u};
+        assert(formatTilt(line,sizeof(line),huge) && std::strlen(line) < sizeof(TraceRow));
+        std::printf("longest FixedShaderTilt row: %zu of %zu bytes\n",std::strlen(line),sizeof(TraceRow));
+        char tiny[64]{};
+        assert(!formatTilt(tiny,sizeof(tiny),s));
+    }
+    std::printf("tilt PASS\n");
+}
+
 // ---- the shipped archive, when present --------------------------------------
 bool archive() {
     const char* path = std::getenv("SKYCRPG_SHADER_ARCHIVE");
@@ -605,6 +903,10 @@ bool archive() {
     std::array<unsigned,static_cast<std::size_t>(Patch::count)> effectOutcome{};
     std::vector<std::uint64_t> hashes,effectHashes;
     unsigned blobs = 0,sums = 0,vertex = 0,productAgrees = 0,temporaryAgrees = 0,effectProducts = 0;
+    std::uint64_t flatDigest = 0xcbf29ce484222325ull,tiltDigest = 0xcbf29ce484222325ull;
+    std::size_t flatBytes = 0,tiltOutputs = 0;
+    unsigned axesBelow = 0,tiltChecks = 0;
+    const char* dump = std::getenv("SKYCRPG_TILT_DUMP"); // a directory: every tilted output written there, for vkd3d-shader
     std::size_t cls = 0,inClass = 0;
     for (std::size_t p = 0;p+containerHeader <= d.size();) {
         if (std::memcmp(&d[p],"DXBC",4) != 0) { ++p; continue; }
@@ -647,6 +949,40 @@ bool archive() {
             }
             if (made.result == Patch::ok) {
                 if (cls == 6 || cls == 7) hashes.push_back(codeHash(&d[p],total));
+                // Stage 3.2: every flat-cut output, in archive order, folded into one FNV-1a digest. The value
+                // asserted below was printed by this test at 9ba6e86 (before the tilted patcher existed).
+                for (const std::uint8_t byte : made.code) { flatDigest ^= byte; flatDigest *= 0x100000001b3ull; }
+                flatBytes += made.code.size();
+                // Stage 3.2: every patched shader has a tilted copy; the research claim that .xxxx and .yyyy multiply
+                // the two cb2 rows before World's z row is counted, not assumed (the patcher reads the rows it finds).
+                const Patched tilted = patchVertexShader(&d[p],total,Cut::tilted);
+                assert(tilted.result == Patch::ok && made.axes && tilted.worldRow == made.worldRow && tilted.position == made.position &&
+                    tilted.xRow == made.xRow && tilted.yRow == made.yRow);
+                if (tilted.xRow+2u == tilted.worldRow && tilted.yRow+1u == tilted.worldRow) ++axesBelow;
+                assert(tilted.code.size() == total+(8u+tiltTokens)*4u+elementSize+16u && checksumMatches(tilted.code.data(),tilted.code.size()));
+                assert(patchVertexShader(tilted.code.data(),tilted.code.size(),Cut::tilted).result == Patch::signature);
+                const Tokens tt = tokensOf(tilted.code);
+                {
+                    Instruction step;
+                    std::size_t at = 2;
+                    unsigned rows13 = 0,temps = 0;
+                    for (;at < tt.size();at += step.length) {
+                        assert(decode(tt,at,step));
+                        if (step.code == op::constantBuffer && tt[at+2] == cutBuffer) rows13 = tt[at+3];
+                        if (step.code == op::temps) temps = tt[at+1];
+                    }
+                    assert(at == tt.size() && tt[1] == tt.size() && rows13 == 3 && temps == tilted.temp+2u);
+                }
+                tiltChecks += interpretTilted(tt,tilted,static_cast<unsigned>(tiltOutputs));
+                for (const std::uint8_t byte : tilted.code) { tiltDigest ^= byte; tiltDigest *= 0x100000001b3ull; }
+                ++tiltOutputs;
+                if (dump && *dump) {
+                    char name[512]{};
+                    std::snprintf(name,sizeof(name),"%s/%c%016llx.dxbc",dump,cls == 5 ? 'e' : cls == 6 ? 'l' : 'u',
+                        static_cast<unsigned long long>(codeHash(&d[p],total)));
+                    std::ofstream out(name,std::ios::binary);
+                    out.write(reinterpret_cast<const char*>(tilted.code.data()),static_cast<std::streamsize>(tilted.code.size()));
+                }
                 assert(made.code.size() == total+27*4+elementSize+16 && checksumMatches(made.code.data(),made.code.size()));
                 assert(patchVertexShader(made.code.data(),made.code.size()).result == Patch::signature);
                 const Tokens t = tokensOf(made.code);
@@ -704,6 +1040,12 @@ bool archive() {
     assert(outcome[1][static_cast<std::size_t>(Patch::ok)] == 125 && outcome[1][static_cast<std::size_t>(Patch::pattern)] == 53 && outcome[1][static_cast<std::size_t>(Patch::skinned)] == 161);
     assert(entries == 195 && hashes.size() == auditedVertexShaders.size() && std::equal(hashes.begin(),hashes.end(),auditedVertexShaders.begin()));
     assert(productAgrees == 50 && temporaryAgrees == 20); // every patched Lighting shader
+    std::printf("archive: flat-cut outputs %zu bytes, digest %016llx\n",flatBytes,static_cast<unsigned long long>(flatDigest));
+    // Stage 3.2: the flat cut's 527 outputs (195 Lighting/Utility, 332 Effect), byte for byte as 9ba6e86 built them.
+    assert(flatBytes == 1453384u && flatDigest == 0x8faac9f14d633edbull);
+    std::printf("archive: tilted outputs %zu, x/y rows directly before the z row in %u, interpreter checks %u, digest %016llx\n",tiltOutputs,
+        axesBelow,tiltChecks,static_cast<unsigned long long>(tiltDigest));
+    assert(tiltOutputs == 527 && axesBelow == 527 && tiltChecks == 6u*527u);
     return true;
 }
 }
@@ -1385,5 +1727,6 @@ int main() {
     traces();
     skyVoid();
     styleRules();
+    tilt();
     if (!archive()) std::printf("archive rows skipped: SKYCRPG_SHADER_ARCHIVE is not set\n");
 }

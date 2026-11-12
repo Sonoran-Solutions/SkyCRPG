@@ -274,7 +274,10 @@ inline void styledPass(void* pass,std::size_t shaderClass,Vec eye) {
     // An interactable given the flat cut instead of a removal is counted on interactCut only.
     // ... and a tall object around the player given the flat cut, on fallback (aroundCut).
     if (d.bucket != Bucket::interactCut && d.bucket != Bucket::aroundCut && (e ? e->piece == Piece::object : kind == Kind::object)) ++sw.slicedObjects;
-    if (height == r.view.planeZ) { apply(*entry,plane,shaderClass); return; } // the plane buffer: the flat cut itself
+    if (height == r.view.planeZ) { // the plane buffer: the flat cut itself, or Stage 3.2's tilted cut in a flat cell
+        if (!tiltPass(*entry,eye,shaderClass)) apply(*entry,plane,shaderClass);
+        return;
+    }
     if (!uploadStorey(cutConstant(height,eye.z))) return;
     bindStyle(*entry,s.storeyBuffer,shaderClass,true);
 }

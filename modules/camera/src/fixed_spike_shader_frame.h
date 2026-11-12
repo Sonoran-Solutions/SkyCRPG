@@ -201,9 +201,10 @@ inline void drawFrame() {
     BandState band{};
     float bandFloor{};
     const bool kitCell = styled() && r.style->cellStyle == CellStyle::kit;
+    const bool tilted = tiltCell(); // Stage 3.2: the band is off where the cut is tilted
     std::optional<FrameConstants> constants;
     if (skip == FrameSkip::none) {
-        constants = frameConstants(r.config.frame,r.config.height,r.view,f.capture,r.config.color,kitCell,band,bandFloor);
+        constants = frameConstants(r.config.frame,r.config.height,r.view,f.capture,r.config.color,kitCell,band,bandFloor,tilted);
         if (!constants) skip = FrameSkip::matrix;
     }
     if (skip != FrameSkip::none) { ++w.skips[static_cast<std::size_t>(skip)]; return; }

@@ -226,18 +226,23 @@ constexpr float voidDepth = 9.99998987e-01f;
 // Around the player's feet the band is faded out (ground distance 48 -> 96): the player is never darkened
 // by it, whatever the plane's lag on stairs. Other actors are protected by the headroom.
 constexpr float guardInner = 48.0f, guardOuter = 96.0f, vignetteStart = .35f;
-enum class BandState : unsigned { off, on, kit, count };
-constexpr std::array bandNames{"off","on","kit"};
+enum class BandState : unsigned { off, on, kit, tilt, count };
+constexpr std::array bandNames{"off","on","kit","tilt"};
 static_assert(bandNames.size() == static_cast<std::size_t>(BandState::count));
 // The band's floor: N under the plane, but never below the held feet + headroom, so an actor standing on
 // the player's floor keeps its head out of it. In a kit cell with Stage 1 (iCutStyle=1, cell=kit) back
 // walls stand above the plane on purpose and are not cut: the band would darken them, so it is off.
-inline BandState bandState(const FrameConfig& c,float height,float planeZ,bool kitCell,float* floor) {
+// Stage 3.2: in a cell drawn with the tilted cut (iCutTilt=1, cell=flat) the band is off as well (tilt):
+// the band is one level slab under the flat plane, and behind the player the kept wall now rises above
+// that plane, so a level band would darken the foot of every kept far wall. The radial falloff and the
+// vignette are unchanged.
+inline BandState bandState(const FrameConfig& c,float height,float planeZ,bool kitCell,float* floor,bool tiltCell = false) {
     const float held = planeZ-height;
     const float low = (std::max)(planeZ-c.band,held+c.headroom);
     if (floor) *floor = low;
     if (c.band <= 0.0f || !std::isfinite(low)) return BandState::off;
     if (kitCell) return BandState::kit;
+    if (tiltCell) return BandState::tilt;
     return low < planeZ-1.0f ? BandState::on : BandState::off;
 }
 constexpr bool falloffOn(const FrameConfig& c) { return c.radiusOuter > c.radiusInner; }
@@ -269,7 +274,7 @@ inline std::optional<std::array<double,16>> invert(const Matrix& in) {
 // The constants for one frame, or none when the capture cannot be used (singular matrix, empty
 // viewport, empty depth range, a non-finite snapshot). `band` reports what the band does this frame.
 inline std::optional<FrameConstants> frameConstants(const FrameConfig& c,float height,const View& view,const FrameCapture& capture,Color color,
-    bool kitCell,BandState& band,float& bandFloor) {
+    bool kitCell,BandState& band,float& bandFloor,bool tiltCell = false) {
     band = BandState::off; bandFloor = std::numeric_limits<float>::quiet_NaN();
     const auto inverse = invert(capture.viewProjection);
     const Viewport& v = capture.viewport;
@@ -281,7 +286,7 @@ inline std::optional<FrameConstants> frameConstants(const FrameConfig& c,float h
         for (std::size_t i = 0;i < 4;++i) k.inverseColumn[j][i] = static_cast<float>((*inverse)[i*4u+j]);
     k.viewport = {v.x,v.y,2.0f/v.width,2.0f/v.height};
     k.depthRange = {capture.depthMin,1.0f/(capture.depthMax-capture.depthMin),voidDepth,0.0f};
-    band = bandState(c,height,view.planeZ,kitCell,&bandFloor);
+    band = bandState(c,height,view.planeZ,kitCell,&bandFloor,tiltCell);
     const float plane = view.planeZ-capture.posAdjust.z;
     k.cut = {view.feet.x-capture.posAdjust.x,view.feet.y-capture.posAdjust.y,plane,band == BandState::on ? bandFloor-capture.posAdjust.z : plane};
     k.shape = {band == BandState::on ? 1.0f : 0.0f,c.radiusInner,c.radiusOuter,falloffOn(c) ? 1.0f : 0.0f};
