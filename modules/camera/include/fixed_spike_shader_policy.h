@@ -131,8 +131,8 @@ struct FrameConfig {
     bool enabled{true};          // bFramePass
     float band{96.0f};           // fFrameBand: soft cut edge, world units under the plane; 0 = off
     float headroom{136.0f};      // fFrameBandHeadroom: the band never reaches below the held feet + this (actors' heads)
-    float radiusInner{900.0f};   // fFrameRadiusInner: full brightness inside this ground distance of the feet
-    float radiusOuter{1400.0f};  // fFrameRadiusOuter: the void colour beyond it; outer <= inner = falloff off
+    float radiusInner{500.0f};   // fFrameRadiusInner: full brightness inside this ground distance of the feet
+    float radiusOuter{900.0f};  // fFrameRadiusOuter: the void colour beyond it; outer <= inner = falloff off
     float vignette{.25f};        // fFrameVignette: darkening towards the frame's corners, 0..1; 0 = off
 };
 // Out of range: band 0 or 8..512 (a positive band under 8 is 8), headroom 0..512, radii 0..16384,
@@ -142,8 +142,8 @@ inline FrameConfig validateFrame(FrameConfig f,bool& adjusted) {
     const FrameConfig in = f;
     f.band = !std::isfinite(f.band) ? 96.0f : f.band <= 0.0f ? 0.0f : std::clamp(f.band,8.0f,512.0f);
     f.headroom = bounded(f.headroom,136.0f,0.0f,512.0f);
-    f.radiusInner = bounded(f.radiusInner,900.0f,0.0f,16384.0f);
-    f.radiusOuter = bounded(f.radiusOuter,1400.0f,0.0f,16384.0f);
+    f.radiusInner = bounded(f.radiusInner,500.0f,0.0f,16384.0f);
+    f.radiusOuter = bounded(f.radiusOuter,900.0f,0.0f,16384.0f);
     f.vignette = bounded(f.vignette,.25f,0.0f,1.0f);
     adjusted = adjusted || f.band != in.band || f.headroom != in.headroom || f.radiusInner != in.radiusInner ||
         f.radiusOuter != in.radiusOuter || f.vignette != in.vignette;

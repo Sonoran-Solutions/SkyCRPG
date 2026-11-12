@@ -31,17 +31,17 @@ void settings() {
     bool adjusted = true;
     const Config defaults = validate(Config{},&adjusted);
     const FrameConfig& f = defaults.frame;
-    assert(!adjusted && f.enabled && f.band == 96.0f && f.headroom == 136.0f && f.radiusInner == 900.0f && f.radiusOuter == 1400.0f && f.vignette == .25f);
+    assert(!adjusted && f.enabled && f.band == 96.0f && f.headroom == 136.0f && f.radiusInner == 500.0f && f.radiusOuter == 900.0f && f.vignette == .25f);
     assert(falloffOn(f));
     Config c;
     c.frame.band = 3.0f; c.frame.headroom = -1.0f; c.frame.radiusInner = nan; c.frame.radiusOuter = -5.0f; c.frame.vignette = 2.0f;
     c = validate(c,&adjusted);
-    assert(adjusted && c.frame.band == 8.0f && c.frame.headroom == 0.0f && c.frame.radiusInner == 900.0f && c.frame.radiusOuter == 0.0f &&
+    assert(adjusted && c.frame.band == 8.0f && c.frame.headroom == 0.0f && c.frame.radiusInner == 500.0f && c.frame.radiusOuter == 0.0f &&
         c.frame.vignette == 1.0f);
     assert(!falloffOn(c.frame)); // outer <= inner is the documented off value, not an error
     c = {}; c.frame.band = -4.0f; c = validate(c,&adjusted);
     assert(adjusted && c.frame.band == 0.0f);
-    c = {}; c.frame.band = 0.0f; c.frame.vignette = 0.0f; c.frame.radiusOuter = 900.0f; c = validate(c,&adjusted);
+    c = {}; c.frame.band = 0.0f; c.frame.vignette = 0.0f; c.frame.radiusOuter = 500.0f; c = validate(c,&adjusted);
     assert(!adjusted && c.frame.band == 0.0f && c.frame.vignette == 0.0f && !falloffOn(c.frame)); // every part off is valid
     c = {}; c.frame.band = infinity; c.frame.headroom = 9000.0f; c.frame.radiusOuter = 1e9f; c = validate(c,&adjusted);
     assert(adjusted && c.frame.band == 96.0f && c.frame.headroom == 512.0f && c.frame.radiusOuter == 16384.0f);
@@ -170,14 +170,14 @@ void shading() {
     // The floor at the feet: no band (under the band floor), no falloff, only the vignette at that screen position.
     const Projected atFeet = project(s.matrix,s.capture,feet);
     assert(close(framePixel(*k,atFeet.px,atFeet.py,atFeet.depth).amount,expectAmount(*k,atFeet,0,0),1e-4f));
-    // Radial falloff: 1200 from the feet on the floor; beyond the outer radius everything is the void colour.
+    // Radial falloff: 700 from the feet on the floor; beyond the outer radius everything is the void colour.
     // (With this test camera the top of the frame is about 1,150 ground units ahead of the feet.)
-    const Vec farFloor{feet.x+1000.0f*.7071f,feet.y+1000.0f*.7071f,feet.z};
+    const Vec farFloor{feet.x+700.0f*.7071f,feet.y+700.0f*.7071f,feet.z};
     const Projected atFar = project(s.matrix,s.capture,farFloor);
-    assert(atFar.visible && close(framePixel(*k,atFar.px,atFar.py,atFar.depth).amount,expectAmount(*k,atFar,0,smooth(900,1400,1000)),2e-3f));
+    assert(atFar.visible && close(framePixel(*k,atFar.px,atFar.py,atFar.depth).amount,expectAmount(*k,atFar,0,smooth(500,900,700)),2e-3f));
     FrameConfig tight; tight.radiusInner = 300.0f; tight.radiusOuter = 600.0f;
     const auto ks = frameConstants(tight,160.0f,s.view,s.capture,voidColor,false,band,floor);
-    const Vec beyond{feet.x+800.0f*.7071f,feet.y+800.0f*.7071f,feet.z};
+    const Vec beyond{feet.x+620.0f*.7071f,feet.y+620.0f*.7071f,feet.z};
     const Projected atBeyond = project(s.matrix,s.capture,beyond);
     assert(atBeyond.visible && framePixel(*ks,atBeyond.px,atBeyond.py,atBeyond.depth).amount == 1.0f);
     assert(close(framePixel(*ks,atFar.px,atFar.py,atFar.depth).amount,1.0f,0.0f) && framePixel(*k,atBeyond.px,atBeyond.py,atBeyond.depth).amount < .5f);
@@ -438,7 +438,7 @@ void trace() {
     assert(formatFrame(line,sizeof(line),s));
     assert(std::string(line) == "FixedShaderFrame t=1234.500 frame=99 pass=installed calls=6 drawn=5 skipLatched=0 skipInactive=0 skipStale=0 "
         "skipCapture=1 skipTargets=0 skipMatrix=0 skipShared=0 offMain=0 band=on bandN=96.0 headroom=136.0 bandFrom=9396.25 planeZ=9420.25 falloff=on "
-        "radii=900.0,1400.0 vignette=0.250 depth=read target=1920x1080 formats=10,44 mismatch=0 micros=31.0 sample=window");
+        "radii=500.0,900.0 vignette=0.250 depth=read target=1920x1080 formats=10,44 mismatch=0 micros=31.0 sample=window");
     // Nothing drawn: no band, no heights, depth not read.
     FrameSample idle;
     idle.state = Feature::pending; idle.window.calls = 6; idle.window.skips[static_cast<std::size_t>(FrameSkip::inactive)] = 6;
