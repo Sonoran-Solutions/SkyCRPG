@@ -362,6 +362,9 @@ void loadSettings() {
         shaderCut.styleShadows = flag("FixedCameraSpike","bCutStyleShadows",1);
         // Stage 3 step 3.0: column stacks with an open top at the cut (iCutStyle=1 only).
         shaderCut.stacks = number("FixedCameraSpike","iCutStacks",shaderCut.stacks);
+        // Stage 3 step 3.1: solid caps by back-face fill, caves and ruins only; off unless asked for.
+        shaderCut.fill = number("FixedCameraSpike","iCutFill",shaderCut.fill);
+        shaderCut.fillColorText = read("FixedCameraSpike","sCutFillColor","0,0,0");
         // Fifth pass (owner go 2026-11-11, Stage 2 of the seamless cutaway): the frame pass, on by default in mode 3.
         shaderCut.frame.enabled = flag("FixedCameraSpike","bFramePass",1);
         shaderCut.frame.band = number("FixedCameraSpike","fFrameBand",shaderCut.frame.band);

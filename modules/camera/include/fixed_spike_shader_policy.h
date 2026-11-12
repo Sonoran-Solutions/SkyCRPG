@@ -81,19 +81,21 @@ constexpr std::uint32_t ammoForm = 0x2a; // the engine looks past an ammunition 
 // are the second pass's: the Effect class and the void colour; 89..90 the
 // third pass's: the sky dome over the void (fixed_spike_shader_sky_policy.h);
 // 91..92 the fourth pass's: the Stage 1 style (fixed_spike_shader_style_policy.h); 93..97 the fifth pass's: the
-// Stage 2 frame pass (fixed_spike_shader_frame_policy.h). 97 is the last code the 32-bit once-mask can hold.
+// Stage 2 frame pass (fixed_spike_shader_frame_policy.h); 98..101 Stage 3.1's back-face fill
+// (fixed_spike_shader_fill_policy.h). The once-mask is 64 bits wide since 98 (codes 66..129).
 enum class Refusal : unsigned { settings = 66, foreign = 67, address = 68, table = 69, device = 70, thread = 71, bracket = 72,
     create = 73, patch = 74, unaudited = 75, view = 76, map = 77, object = 78, context = 79,
     effectTable = 80, voidSite = 81, voidMemory = 82, voidThread = 83, effectCreate = 84, effectPatch = 85, effectUnaudited = 86,
     effectObject = 87, effectThread = 88, skySite = 89, skyLeft = 90, styleBuffers = 91, styleMap = 92,
-    frameSite = 93, frameMemory = 94, frameDevice = 95, frameThread = 96, frameRun = 97 };
-constexpr unsigned firstRefusal = 66, lastRefusal = 97;
-static_assert(lastRefusal-firstRefusal < 32);
+    frameSite = 93, frameMemory = 94, frameDevice = 95, frameThread = 96, frameRun = 97,
+    fillSite = 98, fillDevice = 99, fillLayout = 100, fillMap = 101 };
+constexpr unsigned firstRefusal = 66, lastRefusal = 101;
+static_assert(lastRefusal-firstRefusal < 64);
 // The refusals a shader preparation can end in, per group.
 struct PrepareCodes { Refusal object,unaudited,patch,create; };
 constexpr std::array<PrepareCodes,2> prepareCodes{{{Refusal::object,Refusal::unaudited,Refusal::patch,Refusal::create},
     {Refusal::effectObject,Refusal::effectUnaudited,Refusal::effectPatch,Refusal::effectCreate}}};
-constexpr std::uint32_t refusalBit(Refusal code) { return 1u << (static_cast<unsigned>(code)-firstRefusal); }
+constexpr std::uint64_t refusalBit(Refusal code) { return std::uint64_t{1} << (static_cast<unsigned>(code)-firstRefusal); }
 
 // ---- [FixedCameraSpike] shader-cut keys ------------------------------------
 constexpr unsigned traceLines = 6000;
@@ -167,6 +169,9 @@ struct Config {
     unsigned style{1};          // iCutStyle: 0 the flat cut exactly as the third pass, 1 Stage 1
     bool keepFarGallery{};      // bCutKeepFarGallery: the back half of the storey above is kept whole
     bool styleShadows{true};    // bCutStyleShadows: what the main view removes whole casts no shadow
+    unsigned fill{0};           // iCutFill (Stage 3.1): 0 off, 1 back-face fill in flat (non-kit) cells
+    std::string fillColorText{"0,0,0"}; // sCutFillColor as read
+    Color fillColor{};          // parsed from fillColorText by validate
     unsigned stacks{1};         // iCutStacks (Stage 3.0): 0 off, 1 open-topped columns removed on the camera side, 2 also kept whole behind
     FrameConfig frame{};        // fifth pass: bFramePass and the fFrame* keys
 };
@@ -184,10 +189,13 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;
     if (c.style > stageOneStyle) c.style = stageOneStyle;
     if (c.stacks > 2u) c.stacks = 1u;
+    if (c.fill > 1u) c.fill = 0u;
+    const bool fillColorChanged = c.fill && parseColor(c.fillColorText,c.fillColor) != ColorText::ok;
     bool frameChanged = false;
     c.frame = validateFrame(c.frame,frameChanged);
     if (adjusted) *adjusted = c.height != in.height || c.radius != in.radius || c.maxPerFrame != in.maxPerFrame || c.shaders != in.shaders ||
-        colorChanged || c.style != in.style || c.stacks != in.stacks || frameChanged;
+        colorChanged || c.style != in.style || c.stacks != in.stacks || frameChanged ||
+        c.fill != in.fill || fillColorChanged;
     return c;
 }
 // iShaderCutShaders selects Lighting and Utility only; Effect has its own key.
@@ -769,3 +777,4 @@ inline bool formatLook(char* out,std::size_t size,const LookSample& s) {
 #include "fixed_spike_shader_sky_policy.h" // third pass: the sky dome over the void, Effect passes clipped whole
 #include "fixed_spike_shader_style_policy.h" // fourth pass: Stage 1 of the seamless cutaway (iCutStyle=1)
 #include "fixed_spike_shader_frame_policy.h" // fifth pass: Stage 2, the frame pass (bFramePass=1)
+#include "fixed_spike_shader_fill_policy.h"  // Stage 3.1: the back-face fill (iCutFill=1)
