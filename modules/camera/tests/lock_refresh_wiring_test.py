@@ -699,8 +699,8 @@ for constant in ("constexpr Address postWorldAddress{107148,0x153ac00};", "const
     assert constant in frame_policy, constant
 assert '#include "fixed_spike_shader_frame_shaders.h"' in frame_policy and \
     '#include "fixed_spike_shader_frame_policy.h" // fifth pass: Stage 2, the frame pass (bFramePass=1)' in cut_policy
-for key, default in (("bFramePass", "1"), ("fFrameBand", "96"), ("fFrameBandHeadroom", "136"), ("fFrameRadiusInner", "900"),
-                     ("fFrameRadiusOuter", "1400"), ("fFrameVignette", "0.25")):
+for key, default in (("bFramePass", "1"), ("fFrameBand", "96"), ("fFrameBandHeadroom", "136"), ("fFrameRadiusInner", "500"),
+                     ("fFrameRadiusOuter", "900"), ("fFrameVignette", "0.25")):
     assert gate.count('"FixedCameraSpike","' + key + '"') == 1 and ("\n" + key + "=" + default + "\n") in ini, key
 assert (Path(__file__).resolve().parents[1] / "shaders/fixed_spike_frame_vs.hlsl").exists() and \
     (Path(__file__).resolve().parents[1] / "shaders/fixed_spike_frame_ps.hlsl").exists()
