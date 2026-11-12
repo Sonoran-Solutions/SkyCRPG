@@ -25,11 +25,28 @@ constexpr std::uint32_t cullBack = 1, cullFront = 2, depthTestWrite = 3, depthEq
 // creation with the defaults, RGBA on all eight targets (jump table at 102B0DC of the blend builder ID 77649, RVA 102ABD0;
 // entry 2 = 102AFFB; the defaults at 102AE60..); the others mask channels or targets.
 constexpr std::uint32_t allTargetsMask = 2;
+// Batch F1 (shader 12a702d) found filled=0: every Lighting draw in Embershard and Bleak Falls Barrow was rejected
+// by the write mask or the alpha-test byte. From the binary:
+//  - Write mask 1 = target 0 RGB only, every other target 0xF (the blend builder's entry 1, 102AF87: target 0
+//    mask 7). Lighting SetupGeometry sets it (1549689..15496A3) for every pass of pass type 3 whose material has
+//    shader flag bit 32 (the bit without which depth mode 1, no write, is forced: 154A738): a depth-writing lit
+//    draw that does not write the colour target's alpha. Such a draw is a normal opaque draw; the cap still
+//    writes through its own blend state.
+//  - The alpha-test byte (+0xB4) is set by the batch renderer ID 107642 per pass group (groups 1, 3, 4:
+//    1560123, 15600C5, 156017C), with the reference +0xB8 written into the pixel constant buffer bound at slot 11
+//    (101117A..10111C0; bound at 10107E3). The Lighting pixel shaders discard when alpha * material alpha -
+//    reference < 0 (e.g. Lighting pixel run index 6212: `mad r0.x, cb2[3].z, r0.w, -cb11[0].x; lt r0.x, r0.x, 0;
+//    discard_nz`). With a reference <= 0 nothing is ever discarded, so such a draw is opaque.
+// iCutFill=2 admits both; iCutFill=1 keeps the strict gates.
+constexpr std::uint32_t colourRgbMask = 1;
+constexpr unsigned strictFill = 1, widenedFill = 2;
 namespace fill_offset {
 // RendererShadowState (ID 388819): the fields the flush reads (above, and blend 10110FF..101114C, alpha test
 // 101118D..10111AB).
 constexpr std::size_t depthMode = 0x88, stencilMode = 0x90, stencilRef = 0x94, fillMode = 0x98, cullMode = 0x9c, depthBias = 0xa0,
-    scissor = 0xa4, blendMode = 0xa8, alphaToCoverage = 0xac, writeMask = 0xb0, alphaTest = 0xb4;
+    scissor = 0xa4, blendMode = 0xa8, alphaToCoverage = 0xac, writeMask = 0xb0, alphaTest = 0xb4, alphaRef = 0xb8;
+// BSRenderPass: the pass-type byte Lighting SetupGeometry (154965E) and RestoreGeometry (154A900) test.
+constexpr std::size_t passType = 0x1c;
 // BSGeometry: the type byte ID 107637 switches on (155F05D), and for type 3 the triangle count and the
 // renderer data it passes to ID 77263 (155F1D4..155F1F1), which draws DrawIndexed(3*triangles, 0, 0) (100BD9E..100BDAC).
 constexpr std::size_t geometryType = 0x150, geometryTriangles = 0x158, geometryData = 0x138;
@@ -56,7 +73,19 @@ constexpr std::array<std::uint8_t,21> depthWriteBytes{
     0xc7,0x45,0xc0,0x01,0x00,0x00,0x00,0xc7,0x45,0xc4,0x01,0x00,0x00,0x00,0xc7,0x45,0xc8,0x04,0x00,0x00,0x00};
 constexpr std::array<std::uint8_t,4> writeMaskAllBytes{0xfb,0xaf,0x02,0x01};    // 102B0E4: entry 2 -> 102AFFB
 constexpr std::array<std::uint8_t,10> writeMaskDefaultBytes{0xc6,0x44,0x24,0x44,0x0f,0xc6,0x44,0x24,0x64,0x0f}; // 102AE60: target 0, 1 masks 0xF
-constexpr std::array<Evidence,10> fillEvidence{{
+// Batch F1 widening: the write-mask entry 1 (102B0E0 -> 102AF87, target 0 mask 7), the alpha-test buffer bound at
+// pixel slot 11 (10107C9..10107E8) and its reference written only when the test is on, else 0 (1011178..10111C2).
+constexpr std::array<std::uint8_t,4> writeMaskRgbEntryBytes{0x87,0xaf,0x02,0x01};
+constexpr std::array<std::uint8_t,5> writeMaskRgbBytes{0xc6,0x44,0x24,0x44,0x07};
+constexpr std::array<std::uint8_t,32> alphaSlotBytes{
+    0x4c,0x8d,0x0d,0xd8,0x12,0x32,0x02,0x48,0x8b,0x0d,0x59,0x17,0x32,0x02,0xba,0x0b,0x00,0x00,0x00,0x48,0x8b,0x01,0x44,0x8d,
+    0x42,0xf6,0xff,0x90,0x80,0x00,0x00,0x00};
+constexpr std::array<std::uint8_t,75> alphaRefBytes{
+    0x48,0x8b,0x15,0x29,0x09,0x32,0x02,0x45,0x33,0xc0,0x44,0x89,0x7c,0x24,0x20,0x48,0x8b,0x01,0xff,0x50,0x70,0x44,0x38,0x3d,
+    0x20,0xeb,0x0b,0x01,0x74,0x0a,0xf3,0x0f,0x10,0x05,0x1a,0xeb,0x0b,0x01,0xeb,0x03,0x0f,0x57,0xc0,0x48,0x8b,0x44,0x24,0x30,
+    0x45,0x33,0xc0,0xf3,0x0f,0x11,0x00,0x48,0x8b,0x0d,0x7a,0x0d,0x32,0x02,0x48,0x8b,0x15,0xeb,0x08,0x32,0x02,0x48,0x8b,0x01,
+    0xff,0x50,0x78};
+constexpr std::array<Evidence,14> fillEvidence{{
     {"depth-stencil table index (ID 77386)",0x1010fd1,depthTableBytes.data(),depthTableBytes.size()},
     {"rasteriser table index (ID 77386)",0x1011019,rasterizerTableBytes.data(),rasterizerTableBytes.size()},
     {"geometry type switch (ID 107637)",0x155f059,typeSwitchBytes.data(),typeSwitchBytes.size()},
@@ -66,7 +95,11 @@ constexpr std::array<Evidence,10> fillEvidence{{
     {"rasteriser cull 2 FRONT, 1 BACK, 0 NONE (ID 77652)",0x102b775,cullMapBytes.data(),cullMapBytes.size()},
     {"depth mode 3: test LESS_EQUAL, write (depth table builder)",0x102b1ad,depthWriteBytes.data(),depthWriteBytes.size()},
     {"blend write-mask index 2: the defaults (blend table builder)",0x102b0e4,writeMaskAllBytes.data(),writeMaskAllBytes.size()},
-    {"blend defaults: masks 0xF (blend table builder)",0x102ae60,writeMaskDefaultBytes.data(),writeMaskDefaultBytes.size()}}};
+    {"blend defaults: masks 0xF (blend table builder)",0x102ae60,writeMaskDefaultBytes.data(),writeMaskDefaultBytes.size()},
+    {"blend write-mask index 1 entry (blend table builder)",0x102b0e0,writeMaskRgbEntryBytes.data(),writeMaskRgbEntryBytes.size()},
+    {"blend write-mask index 1: target 0 RGB (blend table builder)",0x102af87,writeMaskRgbBytes.data(),writeMaskRgbBytes.size()},
+    {"alpha-test buffer at pixel slot 11",0x10107c9,alphaSlotBytes.data(),alphaSlotBytes.size()},
+    {"alpha-test reference, 0 when off (ID 77386)",0x1011178,alphaRefBytes.data(),alphaRefBytes.size()}}};
 // 0 = both tables' IDs resolve to the audited RVAs and every evidence window is the audited code. Otherwise
 // 1 the depth-stencil table ID, 2 the rasteriser table ID, 10+i evidence window i.
 template<class Image>
@@ -101,6 +134,8 @@ struct FillFacts {
     std::uint8_t type{};  // geometry type byte
     std::uint32_t cull{},blend{},alphaToCoverage{},depth{},writeMask{allTargetsMask};
     std::uint8_t alphaTest{};
+    float alphaRef{};     // +0xB8: the alpha-test reference
+    unsigned mode{strictFill}; // iCutFill
     bool budget{true};    // the per-frame fill budget has room
     bool layout{true};    // triangles > 0, renderer data present, table entries in range and present
 };
@@ -111,9 +146,11 @@ constexpr FillSkip fillGate(const FillFacts& f) {
     if (f.type != triShapeType) return FillSkip::type;
     if (f.cull != cullBack) return FillSkip::cull;        // two-sided materials (cull none) would cover their own lit back faces
     if (f.blend != 0 || f.alphaToCoverage != 0) return FillSkip::blend;
-    if (f.alphaTest != 0) return FillSkip::alpha;          // cards, foliage, cobwebs: the cap has no alpha
+    // Cards, foliage, cobwebs: the cap has no alpha. Widened: a test whose reference cannot discard anything is no test.
+    if (f.alphaTest != 0 && !(f.mode == widenedFill && f.alphaRef <= 0.0f)) return FillSkip::alpha;
     if (f.depth != depthTestWrite && f.depth != depthEqual) return FillSkip::depth; // decals and transparent draws write no depth
-    if (f.writeMask != allTargetsMask) return FillSkip::mask; // a draw that writes only some channels or targets
+    // A draw that writes only some channels or targets; widened: also target 0 RGB with every other target written.
+    if (f.writeMask != allTargetsMask && !(f.mode == widenedFill && f.writeMask == colourRgbMask)) return FillSkip::mask;
     if (!f.budget) return FillSkip::budget;
     if (!f.layout) return FillSkip::layout;
     return FillSkip::none;
@@ -182,26 +219,46 @@ inline FillConstants fillConstants(Color colour,const Guard& g) {
     k.guardDepth = {g.depth,g.on ? 1.0f : 0.0f,0.0f,0.0f};
     return k;
 }
-// The blend state of the fill: no blending; writes the colour (0xF) and the normal target (0xF), keeps the
+// The blend state of the fill: no blending; writes the colour's RGB (7: target 0's alpha stays as it was, as the
+// mask-1 draws the widened gate admits leave it; review of the widened gates) and the normal target (0xF), keeps the
 // motion vectors (0) and the optional fourth target (0) of whatever was drawn there before.
 inline BlendDescription fillBlend() {
     BlendDescription d{};
     d.independent = 1;
     for (auto& t : d.targets) { t.source = 2; t.destination = 1; t.operation = 1; t.sourceAlpha = 2; t.destinationAlpha = 1; t.operationAlpha = 1; t.mask = 0; }
-    d.targets[0].mask = 0xf; d.targets[2].mask = 0xf;
+    d.targets[0].mask = 0x7; d.targets[2].mask = 0xf;
     return d;
 }
 
 // ---- trace ------------------------------------------------------------------
+// Diagnostics for the FixedShaderFill2 row: over the Lighting-class passes that reach the gate in a flat cell,
+// the write-mask index (+0xB0, 0..12, then "other"), the same for alpha-tested ones, the alpha-test reference in
+// four buckets (<= 0, <= 0.25, <= 0.5, above or not finite), and the pass-type byte (0..15, then "other").
+constexpr std::size_t maskBins = 14, refBins = 4, passBins = 17;
+struct FillDiagnostics {
+    std::array<unsigned long long,maskBins> mask{},alphaMask{};
+    std::array<unsigned long long,refBins> alphaRef{};
+    std::array<unsigned long long,passBins> passType{};
+    void note(std::uint32_t writeMask,bool alphaTest,float reference,std::uint8_t pass) {
+        const std::size_t m = writeMask < maskBins-1u ? writeMask : maskBins-1u;
+        ++mask[m];
+        ++passType[pass < passBins-1u ? pass : passBins-1u];
+        if (!alphaTest) return;
+        ++alphaMask[m];
+        ++alphaRef[!std::isfinite(reference) ? 3u : reference <= 0.0f ? 0u : reference <= .25f ? 1u : reference <= .5f ? 2u : 3u];
+    }
+};
 struct FillWindow {
     unsigned long long sliced{},filled{},guarded{},restores{};
     std::array<unsigned long long,static_cast<std::size_t>(FillSkip::count)> skips{};
     double seconds{};
+    FillDiagnostics diagnostics{};
     bool haveGuard{};
     Guard guard{};
 };
 struct FillSample {
     double seconds{};
+    unsigned mode{};
     unsigned long long frame{},mismatch{};
     Feature state{};
     Color colour{};
@@ -223,6 +280,25 @@ inline bool formatFill(char* out,std::size_t size,const FillSample& s) {
         skip(FillSkip::budget),skip(FillSkip::layout),skip(FillSkip::guard),w.guarded,w.restores,s.mismatch,guard ? static_cast<double>(w.guard.x0) : none,
         guard ? static_cast<double>(w.guard.y0) : none,guard ? static_cast<double>(w.guard.x1) : none,guard ? static_cast<double>(w.guard.y1) : none,
         w.seconds*1e6);
+    return written > 0 && static_cast<std::size_t>(written) < size;
+}
+template<std::size_t N>
+inline int listCounts(char* out,std::size_t size,const std::array<unsigned long long,N>& values) {
+    int used = 0;
+    for (std::size_t i = 0;i < N;++i) {
+        const int n = std::snprintf(out+used,size-static_cast<std::size_t>(used),i ? ",%llu" : "%llu",values[i]);
+        if (n < 0 || static_cast<std::size_t>(used+n) >= size) return -1;
+        used += n;
+    }
+    return used;
+}
+inline bool formatFill2(char* out,std::size_t size,const FillSample& s) {
+    const auto& d = s.window.diagnostics;
+    char mask[256]{},alphaMask[256]{},refs[96]{},pass[320]{};
+    if (listCounts(mask,sizeof(mask),d.mask) < 0 || listCounts(alphaMask,sizeof(alphaMask),d.alphaMask) < 0 ||
+        listCounts(refs,sizeof(refs),d.alphaRef) < 0 || listCounts(pass,sizeof(pass),d.passType) < 0) return false;
+    const int written = std::snprintf(out,size,"FixedShaderFill2 t=%.3f frame=%llu mode=%u mask=%s alphaMask=%s alphaRef=%s passType=%s sample=window",
+        s.seconds,s.frame,s.mode,mask,alphaMask,refs,pass);
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 } // namespace skycrpg::camera::fixed::shader

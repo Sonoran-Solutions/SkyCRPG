@@ -23,6 +23,8 @@ void settings() {
     Config c; c.fill = 1; c.fillColorText = "0.1, 0.2,0.3"; c = validate(c,&adjusted);
     assert(!adjusted && c.fill == 1 && c.fillColor.red == .1f && c.fillColor.green == .2f && c.fillColor.blue == .3f);
     c = {}; c.fill = 2; c = validate(c,&adjusted);
+    assert(!adjusted && c.fill == widenedFill);                  // the widened gates (after batch F1)
+    c = {}; c.fill = 3; c = validate(c,&adjusted);
     assert(adjusted && c.fill == 0);                             // out of range: off, reported (FCS-66)
     c = {}; c.fill = 1; c.fillColorText = "grey"; c = validate(c,&adjusted);
     assert(adjusted && c.fillColor.red == 0.0f);                 // unreadable: black, reported
@@ -49,6 +51,17 @@ void gate() {
     x = ok; x.depth = 1; x.writeMask = 0; assert(fillGate(x) == FillSkip::depth);          // depth before mask
     x = ok; x.writeMask = 0; x.budget = false; assert(fillGate(x) == FillSkip::mask);      // mask before budget
     x = ok; x.budget = false; assert(fillGate(x) == FillSkip::budget);
+    // Widened (iCutFill=2): target-0-RGB draws and alpha tests that cannot discard; strict (1) keeps rejecting both.
+    FillFacts wide = ok; wide.mode = widenedFill;
+    x = wide; x.writeMask = colourRgbMask; assert(fillGate(x) == FillSkip::none);
+    x = ok; x.writeMask = colourRgbMask; assert(fillGate(x) == FillSkip::mask);
+    for (const std::uint32_t mask : {0u,3u,8u,11u,12u}) { x = wide; x.writeMask = mask; assert(fillGate(x) == FillSkip::mask); }
+    x = wide; x.alphaTest = 1; x.alphaRef = 0.0f; assert(fillGate(x) == FillSkip::none);
+    x = wide; x.alphaTest = 1; x.alphaRef = -1.0f; assert(fillGate(x) == FillSkip::none);
+    x = wide; x.alphaTest = 1; x.alphaRef = .5f; assert(fillGate(x) == FillSkip::alpha);
+    x = wide; x.alphaTest = 1; x.alphaRef = nan; assert(fillGate(x) == FillSkip::alpha);
+    x = ok; x.alphaTest = 1; x.alphaRef = 0.0f; assert(fillGate(x) == FillSkip::alpha);
+    x = wide; x.alphaTest = 1; x.alphaRef = 0.0f; x.writeMask = colourRgbMask; x.cull = 0; assert(fillGate(x) == FillSkip::cull); // the rest unchanged
     x = ok; x.layout = false; assert(fillGate(x) == FillSkip::layout);
     x = ok; x.lighting = false; x.flatCell = false; x.skinned = true; assert(fillGate(x) == FillSkip::shaderClass);
     x = ok; x.flatCell = false; x.type = 1; assert(fillGate(x) == FillSkip::cell);         // a kit cell is counted as such first
@@ -79,7 +92,15 @@ void tables() {
     assert(counterClockwiseBytes[3] == 1 && counterClockwiseBytes[10] == 1 && cullMapBytes[3] == 2 && cullMapBytes[12] == 3 && cullMapBytes[21] == 1);
     assert(depthWriteBytes[3] == 1 && depthWriteBytes[10] == 1 && depthWriteBytes[17] == 4); // enable, write all, LESS_EQUAL
     assert(depthStencilTableAddress.id == 411362 && depthStencilTableAddress.rva == 0x3330230 && rasterizerTableAddress.id == 411363 &&
-        rasterizerTableAddress.rva == 0x33309b0 && fillEvidence.size() == 10);
+        rasterizerTableAddress.rva == 0x33309b0 && fillEvidence.size() == 14);
+    // The widened gates' windows: entry 1 -> 102AF87 sets target 0's mask to 7; slot 11 holds the alpha-test buffer;
+    // the flush writes +0xB8 only when +0xB4 is set.
+    assert(displacementAt(writeMaskRgbEntryBytes.data()) == 0x102af87 && writeMaskRgbBytes[3] == 0x44 && writeMaskRgbBytes[4] == 0x07);
+    assert(alphaSlotBytes[14] == 0xba && displacementAt(alphaSlotBytes.data()+15) == 11 && displacementAt(alphaSlotBytes.data()+28) == 0x80 &&
+        static_cast<std::uintptr_t>(0x10107c9+7+displacementAt(alphaSlotBytes.data()+3)) == 0x3331aa8);
+    assert(static_cast<std::uintptr_t>(0x101118d+7+displacementAt(alphaRefBytes.data()+24)) == 0x20cfc00+fill_offset::alphaTest &&
+        static_cast<std::uintptr_t>(0x1011196+8+displacementAt(alphaRefBytes.data()+34)) == 0x20cfc00+fill_offset::alphaRef &&
+        alphaRefBytes[40] == 0x0f && alphaRefBytes[41] == 0x57);        // xorps: 0 when the test is off
     // Write-mask index 2 jumps (table at 102B0DC, entry 2) straight to the creation at 102AFFB, with the defaults 0xF.
     assert(displacementAt(writeMaskAllBytes.data()) == 0x102affb && writeMaskDefaultBytes[4] == 0x0f && writeMaskDefaultBytes[9] == 0x0f &&
         writeMaskDefaultBytes[3] == 0x44 && writeMaskDefaultBytes[8] == 0x64);
@@ -159,7 +180,7 @@ void blend() {
     const BlendDescription b = fillBlend();
     assert(!b.alphaToCoverage && b.independent == 1);
     for (const auto& t : b.targets) assert(!t.enable);
-    assert(b.targets[0].mask == 0xf && b.targets[1].mask == 0 && b.targets[2].mask == 0xf && b.targets[3].mask == 0);
+    assert(b.targets[0].mask == 0x7 && b.targets[1].mask == 0 && b.targets[2].mask == 0xf && b.targets[3].mask == 0);
     for (std::size_t i = 4;i < b.targets.size();++i) assert(b.targets[i].mask == 0);
 }
 
@@ -214,6 +235,26 @@ void trace() {
     wide.window.guard = {true,-1e7f,-1e7f,-1e7f,-1e7f,1};
     assert(formatFill(line,sizeof(line),wide));
     std::printf("longest FixedShaderFill row: %zu of %zu bytes\n",std::strlen(line),sizeof(line));
+    // FixedShaderFill2: the diagnostics row.
+    FillSample d; d.seconds = 1234.5; d.frame = 99; d.mode = widenedFill;
+    d.window.diagnostics.note(2,false,0.0f,3); d.window.diagnostics.note(1,false,0.0f,3); d.window.diagnostics.note(1,true,0.0f,3);
+    d.window.diagnostics.note(2,true,.5f,1); d.window.diagnostics.note(40,true,nan,200);
+    assert(formatFill2(line,sizeof(line),d));
+    assert(std::string(line) == "FixedShaderFill2 t=1234.500 frame=99 mode=2 mask=0,2,2,0,0,0,0,0,0,0,0,0,0,1 alphaMask=0,1,1,0,0,0,0,0,0,0,0,0,0,1 "
+        "alphaRef=1,0,1,1 passType=0,1,0,3,0,0,0,0,0,0,0,0,0,0,0,0,1 sample=window");
+    FillSample big = d;
+    for (auto& v : big.window.diagnostics.mask) v = ~0ull;
+    for (auto& v : big.window.diagnostics.alphaMask) v = ~0ull;
+    for (auto& v : big.window.diagnostics.alphaRef) v = ~0ull;
+    for (auto& v : big.window.diagnostics.passType) v = 99999999ull;
+    big.frame = ~0ull;
+    const bool fits = formatFill2(line,sizeof(line),big);
+    assert(!fits); // 49 counts of 20 digits cannot fit: such a row is not written (counts per 0.1 s window are far smaller)
+    for (auto& v : big.window.diagnostics.mask) v = 99999999ull;
+    for (auto& v : big.window.diagnostics.alphaMask) v = 99999999ull;
+    for (auto& v : big.window.diagnostics.alphaRef) v = 99999999ull;
+    assert(formatFill2(line,sizeof(line),big) && std::strlen(line) < sizeof(line));
+    std::printf("FixedShaderFill2 with 8-digit counts: %zu of %zu bytes\n",std::strlen(line),sizeof(line));
 }
 } // namespace
 

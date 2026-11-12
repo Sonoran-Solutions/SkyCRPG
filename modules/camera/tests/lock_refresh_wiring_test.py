@@ -549,7 +549,7 @@ assert "if (!runtime || !runtime->style || !cell || !thin::onMain()) return;" in
 assert trace_body.index("if (formatVoid(line,sizeof(line),voids)) r.voidEmitter(line);") < trace_body.index("traceStyle(now,voids.window);")
 assert "if (!r.style) return;" in style_body("inline void traceStyle(", "} // namespace")
 assert "LineBudget shaderStyleLines{shader::traceLines};" in spike
-assert "    return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u)+(runtime && runtime->fill ? 1u : 0u);" in cut
+assert "    return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u)+(runtime && runtime->fill ? 2u : 0u);" in cut
 assert "LineBudget shaderStyle2Lines{shader::traceLines};" in spike
 # W5 fixes: FixedShaderStyle2 after FixedShaderStyle; the style row's format is unchanged; roofs never kept; kit overhead removed;
 # back pieces kept only standing and within the cap, else cut at the cap and not counted as slicedFar; gallery keeps that exceed
@@ -745,14 +745,20 @@ assert cut.count("cutFill(") == 2  # declaration and the one call
 assert setup_hook.index("consider(pass,Index);") < \
     setup_hook.index("if (r.opened.load(std::memory_order_relaxed) && thin::onMain()) r.openPass = pass;")
 assert "r.openFill = false; r.openPass = nullptr;" in finish
-assert "if (f.writeMask != allTargetsMask) return FillSkip::mask;" in fill_policy and "constexpr std::uint32_t allTargetsMask = 2;" in fill_policy
+assert "if (f.writeMask != allTargetsMask && !(f.mode == widenedFill && f.writeMask == colourRgbMask)) return FillSkip::mask;" in fill_policy and \
+    "constexpr std::uint32_t allTargetsMask = 2;" in fill_policy and "constexpr std::uint32_t colourRgbMask = 1;" in fill_policy
+assert "if (f.alphaTest != 0 && !(f.mode == widenedFill && f.alphaRef <= 0.0f)) return FillSkip::alpha;" in fill_policy
+trace_fill = fill_body("inline void traceFill(double now) {", "} // namespace")
+assert trace_fill.index("if (formatFill(line,sizeof(line),sample)) r.fillEmitter(line);") < trace_fill.index("if (formatFill2(line,sizeof(line),sample)) r.fillEmitter(line);")
+assert "if (c.fill > 2u) c.fill = 0u;" in cut_policy
 assert "    r.openFill = usable(wanted); // Stage 3.1: a plane cut, not the whole-draw constant" in apply and "r.openFill = false;" in finish
 assert "r.openFill = mainView && buffer != runtime->style->removeBuffer;" in style
 draw_fill = fill_body("inline void cutFill(void* pass,std::size_t shaderClass) {", "inline Feature fillState()")
 order = ["if (!thin::onMain() || f.state != Feature::installed || f.broken || !r.openFill || !r.opened.load(std::memory_order_acquire) ||\n"
          "        r.openPass != pass || r.latched.load(std::memory_order_acquire)) return;",
          "++w.sliced;", "x.lighting = shaderClass == 0;", "x.flatCell = styled() && r.style->cellStyle == CellStyle::flat;",
-         "x.writeMask = peek<std::uint32_t>(r.state,fill_offset::writeMask);", "const FillSkip skip = fillGate(x);", "fillFrameConstants()",
+         "x.writeMask = peek<std::uint32_t>(r.state,fill_offset::writeMask);", "x.mode = r.config.fill;",
+         "if (x.lighting && x.flatCell) w.diagnostics.note(", "const FillSkip skip = fillGate(x);", "fillFrameConstants()",
          "if (!f.guard.on) {", "++w.skips[static_cast<std::size_t>(FillSkip::guard)];", "frame_method::rsGetState,&savedRaster",
          "fill_method::omGetDepthStencilState,&savedDepth,&savedRef", "frame_method::omGetBlendState,&savedBlend,",
          "frame_method::psGetShader,&savedPixel,", "frame_method::psGetConstantBuffers,fillBuffer,1u,",
@@ -779,7 +785,7 @@ for constant in ("constexpr Address depthStencilTableAddress{411362,0x3330230};"
                  "constexpr std::uint32_t cullBack = 1, cullFront = 2, depthTestWrite = 3, depthEqual = 4;",
                  "constexpr std::size_t geometryType = 0x150, geometryTriangles = 0x158, geometryData = 0x138;", "constexpr unsigned fillBuffer = 13;"):
     assert constant in fill_policy, constant
-assert "LineBudget shaderFillLines{shader::traceLines};" in spike and gate.count('"FixedCameraSpike","iCutFill"') == 1 and \
+assert "LineBudget shaderFillLines{2*shader::traceLines};" in spike and gate.count('"FixedCameraSpike","iCutFill"') == 1 and \
     gate.count('"FixedCameraSpike","sCutFillColor"') == 1 and "\niCutFill=0\n" in ini and "\nsCutFillColor=0,0,0\n" in ini
 assert "unsigned fill{0};" in cut_policy and "std::uint64_t refusalBit(Refusal code)" in cut_policy and "std::atomic<std::uint64_t> refusals{};" in cut
 assert (Path(__file__).resolve().parents[1] / "shaders/fixed_spike_cut_fill_ps.hlsl").exists()

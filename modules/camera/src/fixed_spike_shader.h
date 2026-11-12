@@ -631,7 +631,7 @@ inline bool tracing() { return runtime && runtime->config.trace; }
 // Shader trace line kinds: FixedShader, FixedShaderLook, FixedShaderVoid, FixedShaderStyle and
 // FixedShaderStyle2 with iCutStyle=1, FixedShaderFrame with bFramePass=1, and FixedShaderFill with iCutFill=1.
 inline unsigned traceKinds() {
-    return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u)+(runtime && runtime->fill ? 1u : 0u);
+    return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u)+(runtime && runtime->fill ? 2u : 0u);
 }
 inline const char* status() { return !runtime ? "off" : runtime->installed ? "installed" : "pending"; }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1 and iSeeThroughMode=3.
