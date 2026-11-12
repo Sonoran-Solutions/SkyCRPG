@@ -167,6 +167,7 @@ struct Config {
     unsigned style{1};          // iCutStyle: 0 the flat cut exactly as the third pass, 1 Stage 1
     bool keepFarGallery{};      // bCutKeepFarGallery: the back half of the storey above is kept whole
     bool styleShadows{true};    // bCutStyleShadows: what the main view removes whole casts no shadow
+    unsigned stacks{1};         // iCutStacks (Stage 3.0): 0 off, 1 open-topped columns removed on the camera side, 2 also kept whole behind
     FrameConfig frame{};        // fifth pass: bFramePass and the fFrame* keys
 };
 constexpr unsigned flatStyle = 0, stageOneStyle = 1;
@@ -182,10 +183,11 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     // Clamped or unreadable colours are reported once as FCS-66; unreadable is black.
     const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;
     if (c.style > stageOneStyle) c.style = stageOneStyle;
+    if (c.stacks > 2u) c.stacks = 1u;
     bool frameChanged = false;
     c.frame = validateFrame(c.frame,frameChanged);
     if (adjusted) *adjusted = c.height != in.height || c.radius != in.radius || c.maxPerFrame != in.maxPerFrame || c.shaders != in.shaders ||
-        colorChanged || c.style != in.style || frameChanged;
+        colorChanged || c.style != in.style || c.stacks != in.stacks || frameChanged;
     return c;
 }
 // iShaderCutShaders selects Lighting and Utility only; Effect has its own key.
