@@ -540,6 +540,14 @@ inline void commit() {
             static_cast<double>(r.config.frame.radiusOuter),static_cast<double>(r.config.frame.vignette),
             static_cast<unsigned>(frame_bytes::vertexShader.size()),static_cast<unsigned>(frame_bytes::pixelShader.size()));
         r.logger(text);
+        // The door void rides on the frame pass (iDoorVoid=1; the census is Stage 1's).
+        if (r.config.frame.doorVoid) {
+            std::snprintf(text,sizeof(text),"FixedCameraSpike shader door void installed pass=%s depth=%.1f edge=%.1f radius=%.1f models=%u "
+                "wrongFacing=%u slots=%u",featureNames[static_cast<std::size_t>(frameState())],static_cast<double>(r.config.frame.doorDepth),
+                static_cast<double>(r.config.frame.doorEdge),static_cast<double>(r.config.frame.doorRadius),
+                static_cast<unsigned>(loadDoorModels.size()),static_cast<unsigned>(wrongFacingDoors.size()),static_cast<unsigned>(maxDoorVoids));
+            r.logger(text);
+        }
     }
     // Stage 3.1: only with iCutFill=1; refuses on its own (FCS-98/99) and leaves everything above as it is.
     if (r.fill) {

@@ -20,6 +20,14 @@
 // reference (ownerOf, as the flat cut), its base object, its 3D root's world
 // transform and bound, the base OBND, the base's TESModel path; and once per
 // cell TESObjectCELL::ForEachReference for the census.
+//
+// The door void (iDoorVoid=1, include/fixed_spike_shader_door_policy.h) adds
+// one branch to that walk: a Door reference whose model is in the generated
+// table is noted from its position, angles and scale (as noteUpright) after
+// two more reads, its form flags (TESObjectREFR::IsDisabled / TESForm::IsDeleted,
+// as cursor_mode.h) and the ExtraTeleport presence bit of its extra list, read
+// exactly as plugin.cpp callbackMount reads ExtraInteraction (teleportBit).
+#include "precision_policy.h"
 
 namespace skycrpg::camera::fixed::shader {
 struct StyleEntry {
@@ -68,6 +76,7 @@ struct StyleRuntime {
     std::array<std::uint16_t,maxUprights> stackOf{};
     std::size_t uprightCount{};
     unsigned stacks{},openStacks{},uprightOverflow{};
+    DoorCensus doors{}; // the door void's load doors of the cell (iDoorVoid=1 only)
     StyleWindow window{};
 };
 inline Feature styleState() { return runtime && runtime->style ? runtime->style->state : Feature::off; }
@@ -349,6 +358,36 @@ inline void noteUpright(RE::TESObjectREFR* ref,RE::TESBoundObject* base) {
     if (s.uprightCount >= maxUprights) { ++s.uprightOverflow; return; }
     s.uprights[s.uprightCount++] = {ref->GetFormID(),box,openTopModel(modelPath(base))};
 }
+// ExtraTeleport (a load door) on the reference's extra list (TESObjectREFR+0x70), read as plugin.cpp
+// callbackMount reads ExtraInteraction on 1.7.104: the presence bits' pointer at +0x10 and the list's
+// read-lock count word at +0x1C (ExtraDataList 0x20 on 1.6.629+; AL 68233/68239: owner +0, count +4), taken
+// with one CAS and never waited for (the census holds the cell's reference lock). Busy: a writer holds it.
+inline Teleport teleportBit(RE::TESObjectREFR* ref) {
+    static_assert(sizeof(RE::ExtraDataList) == 0x20);
+    static_assert(offsetof(RE::TESObjectREFR,extraList) == 0x70);
+    auto* const extra = reinterpret_cast<std::byte*>(&ref->extraList);
+    constexpr auto teleport = static_cast<std::uint32_t>(RE::ExtraDataType::kTeleport);
+    static_assert(teleport == 0x2b);
+    // A CAS lost to another reader is retried (bounded; the engine's CE3250 retries at once too).
+    for (int attempt = 0;attempt < 16;++attempt) {
+        const PrecisionMountReadLock lock(*reinterpret_cast<std::uint32_t*>(extra+0x1c));
+        if (!lock) continue;
+        const RE::BaseExtraList::PresenceBitfield* presence = nullptr;
+        std::memcpy(&presence,extra+0x10,sizeof(presence));
+        return presence && (presence->bits[teleport >> 3] & (1u << (teleport % 8))) != 0 ? Teleport::present : Teleport::absent;
+    }
+    return Teleport::busy;
+}
+// The door void, census: a Door reference. ExtraTeleport is read only for a model in the table.
+inline void noteDoorRef(DoorCensus& doors,RE::TESObjectREFR* ref,RE::TESBoundObject* base) {
+    const DoorModel* model = doorModel(modelPath(base));
+    const bool off = ref->IsDisabled() || ref->IsDeleted();
+    const Teleport teleport = model && !off ? teleportBit(ref) : Teleport::absent;
+    const auto angle = ref->GetAngle();
+    const auto position = ref->GetPosition();
+    static_cast<void>(noteDoor(doors,ref->GetFormID(),model,teleport,off,{position.x,position.y,position.z},{angle.x,angle.y,angle.z},
+        model && teleport == Teleport::present ? ref->GetScale() : 1.0f));
+}
 // Stage 3.0, after the census: sorted by form ID for the per-pass lookup, then grouped into stacks.
 inline void linkCellStacks() {
     auto& s = *runtime->style;
@@ -371,17 +410,21 @@ inline void noteCell(RE::TESObjectCELL* cell) {
         s.cell = id; s.cellStyle = CellStyle::unknown; s.census = {}; s.censusTries = 0;
         s.storey.reset(); s.found = std::numeric_limits<float>::infinity();
         s.uprightCount = 0; s.stacks = s.openStacks = s.uprightOverflow = 0;
+        s.doors = {};
         s.entries.fill(StyleEntry{});
         for (auto& set : s.removed) set.fill(nullptr);
     }
     if (s.cellStyle != CellStyle::unknown || !cell->IsInteriorCell()) return;
     if (s.censusTries++ >= censusRetries) { s.cellStyle = CellStyle::flat; return; }
     Census c;
+    DoorCensus doors;
+    const bool doorVoid = runtime->config.frame.enabled && runtime->config.frame.doorVoid != 0u; // nothing is drawn without the frame pass
     s.uprightCount = 0; s.uprightOverflow = 0;
     cell->ForEachReference([&](RE::TESObjectREFR* ref) {
         const auto base = ref ? ref->GetBaseObject() : nullptr;
         if (!base) return RE::BSContainer::ForEachResult::kContinue;
         const auto type = base->GetFormType();
+        if (type == RE::FormType::Door && doorVoid) { noteDoorRef(doors,ref,base); return RE::BSContainer::ForEachResult::kContinue; }
         if (type != RE::FormType::Static && type != RE::FormType::MovableStatic) return RE::BSContainer::ForEachResult::kContinue;
         ++c.statics;
         const Family family = modelFamily(modelPath(base));
@@ -392,7 +435,14 @@ inline void noteCell(RE::TESObjectCELL* cell) {
     });
     s.census = c;
     s.cellStyle = cellStyle(c);
+    s.doors = doors;
     linkCellStacks();
+    // Once per cell, when the census has decided the cell's style: the door void's doors (the frame pass
+    // draws them only in flat cells).
+    if (doorVoid && s.cellStyle != CellStyle::unknown) {
+        char line[512]{};
+        if (formatDoorCensus(line,sizeof(line),id,cellNames[static_cast<std::size_t>(s.cellStyle)],s.doors)) runtime->logger(line);
+    }
 }
 // configure, after validate: only iCutStyle=1 has a style runtime.
 inline void configureStyle() {
