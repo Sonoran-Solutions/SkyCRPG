@@ -62,6 +62,12 @@ struct StyleRuntime {
     std::array<StyleEntry,styleEntries> entries{};
     std::array<std::array<const void*,removedSlots>,2> removed{}; // geometry removed whole: [current] this frame, the other the last
     std::size_t current{};
+    // Stage 3.0 (iCutStacks): the cell's untilted upright architecture members from the census, sorted by form ID,
+    // and the stack each belongs to (linkStacks).
+    std::array<Upright,maxUprights> uprights{};
+    std::array<std::uint16_t,maxUprights> stackOf{};
+    std::size_t uprightCount{};
+    unsigned stacks{},openStacks{},uprightOverflow{};
     StyleWindow window{};
 };
 inline Feature styleState() { return runtime && runtime->style ? runtime->style->state : Feature::off; }
@@ -104,6 +110,15 @@ inline StyleEntry* entryFor(const RE::TESObjectREFR* ref) {
         if (!e.used) { e = {}; e.used = true; e.ref = ref; e.formId = id; return &e; }
     }
     return nullptr;
+}
+// Stage 3.0: the census piece with this form ID belongs to a stack that is open at this frame's cut.
+inline bool openStackOf(std::uint32_t id) {
+    const auto& s = *runtime->style;
+    const auto end = s.uprights.begin()+static_cast<std::ptrdiff_t>(s.uprightCount);
+    const auto at = std::lower_bound(s.uprights.begin(),end,id,[](const Upright& u,std::uint32_t value) { return u.id < value; });
+    if (at == end || at->id != id) return false;
+    return openAtCut(s.uprights.data(),s.uprightCount,s.stackOf.data(),static_cast<std::size_t>(at-s.uprights.begin()),
+        memberCut(s.lineZ,s.headroomZ),s.headroomZ+standSlack);
 }
 inline void refresh(StyleEntry& e,RE::TESObjectREFR* ref,Kind kind) {
     auto& r = *runtime;
@@ -151,6 +166,8 @@ inline void refresh(StyleEntry& e,RE::TESObjectREFR* ref,Kind kind) {
     f.walkable = box.valid && box.high.z <= feet.z+floorTop;
     f.standing = box.valid && box.low.z <= s.base+standSlack;
     f.overCap = box.valid && box.high.z > s.capZ+capSlack;
+    f.stackMode = r.config.stacks;
+    f.openStack = r.config.stacks != noStacks && e.piece == Piece::member && openStackOf(ref->GetFormID());
     e.interact = f.interact; e.walkable = f.walkable;
     e.decision = decide(f);
     e.frame = r.frame;
@@ -237,7 +254,7 @@ inline void styledPass(void* pass,std::size_t shaderClass,Vec eye) {
     if (below && d.treat != Treat::remove) { skipped(Skip::below); return; }
     const bool sliced = d.treat == Treat::flat || d.treat == Treat::slice || d.treat == Treat::low || d.treat == Treat::cap;
     const float height = sliced ? sliceHeight(d.treat,r.view.planeZ,s.lineZ,s.capZ) : r.view.planeZ;
-    if (d.treat == Treat::keep) { ++sw.buckets[static_cast<std::size_t>(d.bucket)]; return; }
+    if (d.treat == Treat::keep) { ++sw.buckets[static_cast<std::size_t>(d.bucket)]; ++sw.notes[static_cast<std::size_t>(d.note)]; return; }
     if (sliced && bound.centre.z+bound.radius <= height) { ++sw.underLine; return; }
     const Entry* entry = shaderFor(0);
     if (!entry || !entry->patched) { skipped(Skip::shader); return; }
@@ -315,6 +332,32 @@ inline void styleFrame() {
     s.shadowBudget.frame();
     ++s.window.frames;
 }
+// Stage 3.0, census: an untilted upright architecture member, placed from its reference data (no 3D needed).
+inline void noteUpright(RE::TESObjectREFR* ref,RE::TESBoundObject* base) {
+    auto& s = *runtime->style;
+    const auto& bounds = base->boundData;
+    const auto angle = ref->GetAngle();
+    const auto position = ref->GetPosition();
+    const Box box = uprightBox({static_cast<float>(bounds.boundMin.x),static_cast<float>(bounds.boundMin.y),static_cast<float>(bounds.boundMin.z)},
+        {static_cast<float>(bounds.boundMax.x),static_cast<float>(bounds.boundMax.y),static_cast<float>(bounds.boundMax.z)},
+        {angle.x,angle.y,angle.z},ref->GetScale(),{position.x,position.y,position.z});
+    if (!uprightMember(box)) return;
+    if (s.uprightCount >= maxUprights) { ++s.uprightOverflow; return; }
+    s.uprights[s.uprightCount++] = {ref->GetFormID(),box,openTopModel(modelPath(base))};
+}
+// Stage 3.0, after the census: sorted by form ID for the per-pass lookup, then grouped into stacks.
+inline void linkCellStacks() {
+    auto& s = *runtime->style;
+    const auto end = s.uprights.begin()+static_cast<std::ptrdiff_t>(s.uprightCount);
+    std::sort(s.uprights.begin(),end,[](const Upright& a,const Upright& b) { return a.id < b.id; });
+    s.stacks = linkStacks(s.uprights.data(),s.uprightCount,s.stackOf.data());
+    s.openStacks = 0;
+    for (std::size_t i = 0;i < s.uprightCount;++i) {
+        if (static_cast<std::size_t>(s.stackOf[i]) != i) continue; // one count per stack, at its representative
+        for (std::size_t j = 0;j < s.uprightCount;++j)
+            if (static_cast<std::size_t>(s.stackOf[j]) == i && s.uprights[j].open) { ++s.openStacks; break; }
+    }
+}
 // endFrame, eligible frames, before publish: the census of a newly entered cell.
 inline void noteCell(RE::TESObjectCELL* cell) {
     if (!runtime || !runtime->style || !cell || !thin::onMain()) return;
@@ -323,12 +366,14 @@ inline void noteCell(RE::TESObjectCELL* cell) {
     if (id != s.cell) {
         s.cell = id; s.cellStyle = CellStyle::unknown; s.census = {}; s.censusTries = 0;
         s.storey.reset(); s.found = std::numeric_limits<float>::infinity();
+        s.uprightCount = 0; s.stacks = s.openStacks = s.uprightOverflow = 0;
         s.entries.fill(StyleEntry{});
         for (auto& set : s.removed) set.fill(nullptr);
     }
     if (s.cellStyle != CellStyle::unknown || !cell->IsInteriorCell()) return;
     if (s.censusTries++ >= censusRetries) { s.cellStyle = CellStyle::flat; return; }
     Census c;
+    s.uprightCount = 0; s.uprightOverflow = 0;
     cell->ForEachReference([&](RE::TESObjectREFR* ref) {
         const auto base = ref ? ref->GetBaseObject() : nullptr;
         if (!base) return RE::BSContainer::ForEachResult::kContinue;
@@ -338,10 +383,12 @@ inline void noteCell(RE::TESObjectCELL* cell) {
         const Family family = modelFamily(modelPath(base));
         if (family == Family::architecture) ++c.kit;
         else if (family == Family::dungeons) ++c.dungeon;
+        if (family == Family::architecture && runtime->config.stacks != noStacks) noteUpright(ref,base);
         return RE::BSContainer::ForEachResult::kContinue;
     });
     s.census = c;
     s.cellStyle = cellStyle(c);
+    linkCellStacks();
 }
 // configure, after validate: only iCutStyle=1 has a style runtime.
 inline void configureStyle() {
@@ -392,6 +439,7 @@ inline void traceStyle(double now,const VoidWindow& effect) {
     Style2Sample second;
     second.seconds = now; second.frame = r.frame; second.haveView = sample.haveView; second.capZ = s.capZ; second.window = s.window;
     second.headroomZ = s.headroomZ; second.heldMinusFeet = s.base-r.view.feet.z;
+    second.stacks = s.stacks; second.openStacks = s.openStacks;
     s.window = {};
     char line[sizeof(TraceRow)]{};
     if (formatStyle(line,sizeof(line),sample)) r.styleEmitter(line);

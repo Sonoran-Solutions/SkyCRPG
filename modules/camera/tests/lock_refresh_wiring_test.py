@@ -552,7 +552,19 @@ assert "LineBudget shaderStyle2Lines{shader::traceLines};" in spike
 # their box are removed, never flat-cut.
 trace_style = style_body("inline void traceStyle(", "} // namespace")
 assert trace_style.index("if (formatStyle(line,sizeof(line),sample)) r.styleEmitter(line);") < trace_style.index("if (formatStyle2(line,sizeof(line),second)) r.style2Emitter(line);")
-assert '"FixedShaderStyle2 t=%.3f frame=%llu capZ=%.2f cappedFar=%llu roofRemoved=%llu overheadRemoved=%llu galleryRemoved=%llu headroomZ=%.2f "\n        "heldMinusFeet=%.2f sample=window",' in style_policy
+assert '"FixedShaderStyle2 t=%.3f frame=%llu capZ=%.2f cappedFar=%llu roofRemoved=%llu overheadRemoved=%llu galleryRemoved=%llu headroomZ=%.2f "\n        "heldMinusFeet=%.2f stackRemoved=%llu stackKept=%llu stacks=%u openStacks=%u sample=window",' in style_policy
+# Stage 3.0 (iCutStacks): the census builds the uprights once per cell (only with the key on), the per-pass decision only
+# reads them; the stack rule comes right after the roof rule and before the storey/overhead rule.
+census = style_body("inline void noteCell(", "// configure, after validate")
+assert "if (family == Family::architecture && runtime->config.stacks != noStacks) noteUpright(ref,base);" in census and \
+    census.index("s.cellStyle = cellStyle(c);") < census.index("linkCellStacks();") and "s.uprightCount = 0;" in census
+assert "f.openStack = r.config.stacks != noStacks && e.piece == Piece::member && openStackOf(ref->GetFormID());" in style
+assert "memberCut(s.lineZ,s.headroomZ),s.headroomZ+standSlack);" in style_body("inline bool openStackOf(", "inline void refresh(")
+stack_rules = style_policy[style_policy.index("constexpr Decision rules(const Facts& f) {"):style_policy.index("constexpr Decision decide(const Facts& f) {")]
+assert stack_rules.index("Note::roof};") < stack_rules.index("if (f.openStack && f.piece == Piece::member && f.stackMode != noStacks) {") < \
+    stack_rules.index("if (f.above || (!object && f.overhead)) {")
+assert gate.count('"FixedCameraSpike","iCutStacks"') == 1 and "\niCutStacks=1\n" in ini and "unsigned stacks{1};" in cut_policy
+assert '#include "fixed_spike_shader_stack_audit.h"' in style_policy
 # Fix after batch T2: the head-height rules measure from the lower of the held floor and the feet, set once per frame.
 assert "f.overhead = box.valid && box.low.z >= s.headroomZ+storeyHeadroom;" in style and \
     "storeyCandidate(e.piece,box,feet,s.headroomZ)" in style and "s.base+storeyHeadroom" not in style and \

@@ -838,6 +838,94 @@ Vec eyeAt(Vec feet,unsigned heading) { // headings 45, 135, 225, 315: camera at 
     return {feet.x+237.3f*sx,feet.y+237.3f*sy,feet.z+683.8f};
 }
 Box box(Vec low,Vec high) { return worldBox(low,high,{Vec{1,0,0},Vec{0,1,0},Vec{0,0,1}},1.0f,{0,0,0}); }
+// Stage 3.0: column stacks (iCutStacks). Numbers from Skyrim.esm placements and the vanilla meshes
+// (modules/camera/tools/open_tops.py).
+void stacks() {
+    // The audited list: sorted, unique; the castle pillar pieces are open, the Mare's capped column is not.
+    assert(std::is_sorted(openTopModels.begin(),openTopModels.end()) &&
+        std::adjacent_find(openTopModels.begin(),openTopModels.end()) == openTopModels.end() && openTopModels.size() == 37);
+    assert(openTopModel("architecture\\whiterun\\wrinteriors\\wrcastle\\wrintcastlefreepillar01.nif"));
+    assert(openTopModel("Meshes\\Architecture/Whiterun/WRInteriors/WRCastle/WRIntCastleFreePillar01Mid.nif")); // as a game path may spell it
+    assert(openTopModel("architecture\\whiterun\\wrinteriors\\wrcastle\\wrintcastlefreepillar01top.nif"));
+    assert(!openTopModel("architecture\\whiterun\\wrinteriors\\wrcastle\\wrintcastlefreepillar01midendnubs.nif"));       // capped
+    assert(!openTopModel("architecture\\whiterun\\wrinteriors\\wrintfreewallcolum01.nif") && !openTopModel(nullptr));      // Mare: capped
+    assert(!openTopModel("architecture\\solitude\\interiors\\smdecolcor01.nif")); // Skeever: a down-wound top face counts as a cap
+    assert(modelHash("a/B") == modelHash("a\\b") && modelHash("meshes\\a") == modelHash("a"));
+    // Boxes from placement: untilted only; the union of both rotation signs; scale.
+    const Box pillar = uprightBox({-34,-36,0},{35,36,545},{0,0,1.5708f},1.0f,{-640,-128,-351});
+    assert(pillar.valid && std::abs(pillar.low.z+351.0f) < .01f && std::abs(pillar.high.z-194.0f) < .01f && uprightMember(pillar));
+    assert(!uprightBox({-34,-36,0},{35,36,545},{.2f,0,0},1.0f,{0,0,0}).valid && uprightBox({-34,-36,0},{35,36,545},{.005f,0,3},1.0f,{0,0,0}).valid);
+    assert(std::abs(uprightBox({-10,-10,0},{10,10,100},{0,0,0},2.0f,{0,0,0}).high.z-200.0f) < .01f);
+    assert(!uprightMember(uprightBox({-11,-256,0},{11,256,116},{0,0,0},1.0f,{0,0,0})));   // a beam
+    assert(!uprightMember(uprightBox({-124,-124,0},{124,124,288},{0,0,0},1.0f,{0,0,0}))); // a corner
+    // Dragonsreach hall column (base -351..194, mid 215..729, top 711..1225), a Mare column (32..324 under 324..575),
+    // a lone post, and a piece beside the base (footprint apart): two stacks.
+    std::array<Upright,7> pieces{{
+        {0x8783c,box({-163,-164,-351},{-94,-92,194}),true},{0xdcdac,box({-158,-155,215},{-96,-101,729}),true},
+        {0xdcdad,box({-154,-151,711},{-100,-105,1225}),true},{0x5d67b,box({-31,-165,32},{31,-92,324}),false},
+        {0x6031e,box({-27,-152,324},{27,-104,575}),false},{0x9dcb8,box({-132,2484,-18},{-108,2508,39}),false},
+        {0x87838,box({-675,-164,-351},{-606,-92,194}),true}}};
+    for (const auto& u : pieces) assert(u.box.valid);
+    assert(stackedOn(pieces[0].box,pieces[1].box) && stackedOn(pieces[1].box,pieces[2].box) && !stackedOn(pieces[1].box,pieces[0].box));
+    assert(stackedOn(pieces[3].box,pieces[4].box) && !stackedOn(pieces[0].box,pieces[6].box));
+    Box gap = pieces[1].box; gap.low.z = 194+40; gap.high.z = 729; assert(!stackedOn(pieces[0].box,gap)); // more than stackJoint apart
+    Box aside = pieces[1].box; aside.low.x += 60; aside.high.x += 60; assert(!stackedOn(pieces[0].box,aside));
+    std::array<std::uint16_t,7> stackOf{};
+    assert(linkStacks(pieces.data(),pieces.size(),stackOf.data()) == 2);
+    assert(stackOf[0] == stackOf[1] && stackOf[1] == stackOf[2] && stackOf[3] == stackOf[4] && stackOf[0] != stackOf[3]);
+    assert(stackOf[5] == loneUpright && stackOf[6] == loneUpright);
+    // Dragonsreach hall pose (feet -318, held -310, line 192): the cut is head height -190; the base is kept, the rest
+    // removed, and the base's top is open: the column is open at the cut, all three pieces of it.
+    const float drHead = headroomFloor(-310.0f,-318.0f),drCut = memberCut(192.0f,drHead);
+    assert(drCut == -190.0f);
+    for (const std::size_t i : {0u,1u,2u}) assert(openAtCut(pieces.data(),pieces.size(),stackOf.data(),i,drCut,drHead+standSlack));
+    assert(!openAtCut(pieces.data(),pieces.size(),stackOf.data(),5,drCut,drHead+standSlack)); // lone
+    // Upstairs (feet 1000): the stack does not stand on that storey.
+    assert(!openAtCut(pieces.data(),pieces.size(),stackOf.data(),0,memberCut(1500.0f,1000.0f),1000.0f+standSlack));
+    // The Mare hearth (feet 68, line 310): the cut is 196, the column's lower piece is kept but capped: not open.
+    assert(!openAtCut(pieces.data(),pieces.size(),stackOf.data(),3,memberCut(310.0f,68.0f),68.0f+standSlack));
+    // The Mare loft (feet 321.5, line 555): nothing of the column is removed.
+    assert(memberCut(555.0f,321.5f) == 449.5f && !openAtCut(pieces.data(),pieces.size(),stackOf.data(),3,449.5f,321.5f+standSlack));
+    // The same Dragonsreach column if every piece were capped: not open.
+    auto capped = pieces; for (auto& u : capped) u.open = false;
+    assert(!openAtCut(capped.data(),capped.size(),stackOf.data(),0,drCut,drHead+standSlack));
+    // Rules. A member of an open column: removed on the camera side and across, in every mode but 0.
+    const auto member = [](Side side,bool openStack,unsigned mode,bool above) {
+        Facts f; f.kitCell = true; f.piece = Piece::member; f.side = side; f.openStack = openStack; f.stackMode = mode; f.above = above;
+        f.overhead = above; f.low = false;
+        return decide(f);
+    };
+    const auto is = [](Decision d,Treat t,Bucket b) { return d.treat == t && d.bucket == b; };
+    for (const unsigned mode : {nearStacks,wholeStacks})
+        for (const bool above : {false,true}) {
+            assert(is(member(Side::front,true,mode,above),Treat::remove,Bucket::removedWhole) && member(Side::front,true,mode,above).note == Note::stack);
+            assert(is(member(Side::across,true,mode,above),Treat::remove,Bucket::removedWhole) && member(Side::across,true,mode,above).note == Note::stack);
+        }
+    // Behind the player, mode 1: exactly the rules without the stack (base kept, upper pieces removed by `above`).
+    for (const bool above : {false,true}) {
+        const Decision with = member(Side::back,true,nearStacks,above),without = member(Side::back,false,nearStacks,above);
+        assert(with.treat == without.treat && with.bucket == without.bucket && with.note == without.note);
+    }
+    assert(is(member(Side::back,true,nearStacks,true),Treat::remove,Bucket::removedWhole) && is(member(Side::back,true,nearStacks,false),Treat::keep,Bucket::keptMember));
+    // Mode 2: behind the player the whole column is kept, the pieces above the line too.
+    assert(is(member(Side::back,true,wholeStacks,true),Treat::keep,Bucket::keptMember) && member(Side::back,true,wholeStacks,true).note == Note::stackKept);
+    // Mode 0, or a member not in an open column: today's decisions on every side.
+    for (const Side side : {Side::front,Side::across,Side::back})
+        for (const bool above : {false,true}) {
+            const Decision off = member(side,true,noStacks,above),plain = member(side,false,nearStacks,above);
+            assert(off.treat == plain.treat && off.bucket == plain.bucket && off.note == plain.note && off.note != Note::stack);
+        }
+    // A kit piece flagged open (never set by the adapter) is not affected.
+    Facts kitPiece; kitPiece.kitCell = true; kitPiece.piece = Piece::kit; kitPiece.side = Side::front; kitPiece.openStack = true; kitPiece.stackMode = nearStacks;
+    assert(decide(kitPiece).note != Note::stack);
+    // iCutStacks: default 1; out of range is 1 and reported (FCS-66).
+    bool adjusted = true;
+    assert(validate(Config{},&adjusted).stacks == nearStacks && !adjusted);
+    Config c; c.stacks = 7; assert(validate(c,&adjusted).stacks == nearStacks && adjusted);
+    c.stacks = 2; assert(validate(c,&adjusted).stacks == wholeStacks && !adjusted);
+    c.stacks = 0; assert(validate(c,&adjusted).stacks == noStacks && !adjusted);
+}
+
 void styleRules() {
     // Removal: a constant `usable` accepts, below zero at every height of this world; the plane constant unchanged.
     assert(usable(removeConstant) && !usable(wholeConstant));
@@ -1262,16 +1350,19 @@ void styleRules() {
     two.window.notes[static_cast<std::size_t>(Note::overhead)] = 12; two.window.galleryRemoved = 1;
     assert(formatStyle2(line,sizeof(line),two));
     two.headroomZ = 68; two.heldMinusFeet = 16.96f;
+    two.window.notes[static_cast<std::size_t>(Note::stack)] = 24; two.window.notes[static_cast<std::size_t>(Note::stackKept)] = 0;
+    two.stacks = 19; two.openStacks = 16;
     assert(formatStyle2(line,sizeof(line),two));
     assert(std::string(line) == "FixedShaderStyle2 t=1234.500 frame=99 capZ=310.00 cappedFar=3 roofRemoved=40 overheadRemoved=12 galleryRemoved=1 "
-        "headroomZ=68.00 heldMinusFeet=16.96 sample=window");
+        "headroomZ=68.00 heldMinusFeet=16.96 stackRemoved=24 stackKept=0 stacks=19 openStacks=16 sample=window");
     Style2Sample idle2;
     assert(formatStyle2(line,sizeof(line),idle2) && std::string(line).find(" capZ=nan ") != std::string::npos &&
         std::string(line).find(" headroomZ=nan heldMinusFeet=nan ") != std::string::npos);
     Style2Sample big2; big2.seconds = 1e7; big2.frame = ~0ull; big2.haveView = true; big2.capZ = -1e7f;
     for (auto& value : big2.window.notes) value = ~0ull;
-    big2.window.buckets[static_cast<std::size_t>(Bucket::cappedFar)] = ~0ull; big2.window.galleryRemoved = ~0ull; big2.headroomZ = -1e7f; big2.heldMinusFeet = -1e7f;
+    big2.window.buckets[static_cast<std::size_t>(Bucket::cappedFar)] = ~0ull; big2.window.galleryRemoved = ~0ull; big2.headroomZ = -1e7f; big2.heldMinusFeet = -1e7f; big2.stacks = ~0u; big2.openStacks = ~0u;
     assert(formatStyle2(line,sizeof(line),big2) && std::strlen(line) < sizeof(TraceRow));
+    stacks();
     std::printf("style rules PASS\n");
 }
 } // namespace

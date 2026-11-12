@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <limits>
 #include <utility>
+#include "fixed_spike_shader_stack_audit.h"
 
 namespace skycrpg::camera::fixed::shader {
 // ---- whole-draw removal -------------------------------------------------------
@@ -320,6 +321,112 @@ inline float boxReach(const Box& b,Vec feet) {
 // Taking the lower of the two removes what is above the player's head now; while the feet are above the
 // held floor (a jump, the step up a stair) the held floor stays the reference, so nothing changes there.
 constexpr float headroomFloor(float heldZ,float feetZ) { return feetZ < heldZ ? feetZ : heldZ; }
+
+// ---- column stacks (Stage 3 step 3.0, iCutStacks) -------------------------------------------
+// A hall column is often a stack of upright members (Dragonsreach: WRIntCastleFreePillar01 -351..194,
+// ...Mid 215..729, ...Top 711..1225). The storey and overhead rules remove the pieces above the storey line and
+// keep the one below whole; where that piece's mesh has no cap at its top (tools/open_tops.py:
+// fixed_spike_shader_stack_audit.h), its hollow end shows. The Bannered Mare's hall columns are stacks too
+// (WRIntFreeWallColum01 32..324 under ...ColumExt01 324..575) but the lower piece is capped, so the rule
+// leaves them as they are. Measured on Skyrim.esm placements: real joints overlap or gap by up to 26 units.
+constexpr float stackJoint = 32.0f, stackOverlap = .5f, uprightTilt = .01f;
+constexpr std::size_t maxUprights = 512;
+constexpr unsigned noStacks = 0, nearStacks = 1, wholeStacks = 2; // iCutStacks
+constexpr std::uint16_t loneUpright = 0xffff;
+struct Upright { std::uint32_t id{}; Box box{}; bool open{}; };
+// The model path as the CK stores it, lower case, without "meshes", backslashes; FNV-1a-64.
+inline std::uint64_t modelHash(const char* path) {
+    if (!path) return 0;
+    const char* at = path;
+    if (folderIs(at,"meshes")) at += 7;
+    std::uint64_t hash = 14695981039346656037ull;
+    for (;*at;++at) {
+        const char c = *at == '/' ? '\\' : lowered(*at);
+        hash ^= static_cast<unsigned char>(c); hash *= 1099511628211ull;
+    }
+    return hash;
+}
+inline bool openTopModel(const char* path) {
+    return path && std::binary_search(openTopModels.begin(),openTopModels.end(),modelHash(path));
+}
+// An upright member: horizontal spans at most memberSpan, at least twice as tall as the larger one.
+inline bool uprightMember(const Box& b) {
+    const Spans s = spansOf(b);
+    return b.valid && (std::max)(s.x,s.y) <= memberSpan && s.z >= 2.0f*(std::max)(s.x,s.y);
+}
+// The world box of an untilted reference from its placement (census time: no 3D needed): position, Euler
+// angles in radians, scale and the base OBND. Only a rotation about z is accepted; since the sign
+// convention of that rotation is not needed for a column, the box is the union of both signs (exact for an
+// OBND centred on the origin, slightly larger otherwise). Tilted: no box.
+inline Box uprightBox(Vec low,Vec high,Vec angle,float scale,Vec position) {
+    if (!finite(angle) || std::abs(angle.x) > uprightTilt || std::abs(angle.y) > uprightTilt) return {};
+    Box out;
+    for (const float sign : {1.0f,-1.0f}) {
+        const float c = std::cos(sign*angle.z),s = std::sin(sign*angle.z);
+        const Box b = worldBox(low,high,{Vec{c,-s,0.0f},Vec{s,c,0.0f},Vec{0.0f,0.0f,1.0f}},scale,position);
+        if (!b.valid) return {};
+        if (!out.valid) { out = b; continue; }
+        out.low = {(std::min)(out.low.x,b.low.x),(std::min)(out.low.y,b.low.y),(std::min)(out.low.z,b.low.z)};
+        out.high = {(std::max)(out.high.x,b.high.x),(std::max)(out.high.y,b.high.y),(std::max)(out.high.z,b.high.z)};
+    }
+    return out;
+}
+// `upper` sits on `lower`: its bottom within stackJoint of lower's top, and their footprints overlap by at
+// least half of the smaller one.
+inline bool stackedOn(const Box& lower,const Box& upper) {
+    if (!lower.valid || !upper.valid || !(std::abs(upper.low.z-lower.high.z) <= stackJoint)) return false;
+    const float ix = (std::min)(lower.high.x,upper.high.x)-(std::max)(lower.low.x,upper.low.x);
+    const float iy = (std::min)(lower.high.y,upper.high.y)-(std::max)(lower.low.y,upper.low.y);
+    if (!(ix > 0.0f) || !(iy > 0.0f)) return false;
+    const float a = (lower.high.x-lower.low.x)*(lower.high.y-lower.low.y),b = (upper.high.x-upper.low.x)*(upper.high.y-upper.low.y);
+    return ix*iy >= stackOverlap*(std::min)(a,b);
+}
+// Groups the pieces into stacks (connected by stackedOn either way): stackOf[i] is the index of the stack's
+// representative, or loneUpright for a piece in no stack. Returns the number of stacks. O(n^2), once per cell.
+inline unsigned linkStacks(const Upright* pieces,std::size_t count,std::uint16_t* stackOf) {
+    if (count > maxUprights) count = maxUprights;
+    std::array<std::uint16_t,maxUprights> parent{};
+    for (std::size_t i = 0;i < count;++i) parent[i] = static_cast<std::uint16_t>(i);
+    const auto root = [&](std::size_t i) {
+        while (static_cast<std::size_t>(parent[i]) != i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+        return i;
+    };
+    std::array<bool,maxUprights> linked{};
+    for (std::size_t i = 0;i < count;++i)
+        for (std::size_t j = 0;j < count;++j)
+            if (i != j && stackedOn(pieces[i].box,pieces[j].box)) {
+                parent[root(i)] = static_cast<std::uint16_t>(root(j));
+                linked[i] = linked[j] = true;
+            }
+    unsigned stacks = 0;
+    for (std::size_t i = 0;i < count;++i) {
+        stackOf[i] = linked[i] ? static_cast<std::uint16_t>(root(i)) : loneUpright;
+        if (linked[i] && root(i) == i) ++stacks;
+    }
+    return stacks;
+}
+// The stack of piece `index` is open at the cut: the storey and overhead rules remove the pieces whose bottom
+// is at or above `cutZ` and keep the others; at least one piece is removed, the highest kept piece has an
+// open top, and the stack stands on the player's storey (its lowest bottom at most `standZ`).
+inline bool openAtCut(const Upright* pieces,std::size_t count,const std::uint16_t* stackOf,std::size_t index,float cutZ,float standZ) {
+    if (index >= count || stackOf[index] == loneUpright || !std::isfinite(cutZ) || !std::isfinite(standZ)) return false;
+    const std::uint16_t stack = stackOf[index];
+    bool removed = false;
+    float lowest = std::numeric_limits<float>::infinity(),keptTop = -std::numeric_limits<float>::infinity();
+    bool keptOpen = false;
+    for (std::size_t i = 0;i < count;++i) {
+        if (stackOf[i] != stack) continue;
+        const Box& b = pieces[i].box;
+        lowest = (std::min)(lowest,b.low.z);
+        if (b.low.z >= cutZ) { removed = true; continue; }
+        if (b.high.z > keptTop) { keptTop = b.high.z; keptOpen = pieces[i].open; }
+    }
+    return removed && keptOpen && lowest <= standZ;
+}
+// The cut the rules apply to a member: the storey line (less aboveTolerance) or head height, whichever is lower.
+constexpr float memberCut(float lineZ,float headroomZ) {
+    return (lineZ-aboveTolerance) < (headroomZ+storeyHeadroom) ? lineZ-aboveTolerance : headroomZ+storeyHeadroom;
+}
 inline bool storeyCandidate(Piece piece,const Box& b,Vec feet,float base) {
     if (piece != Piece::kit || !b.valid || !std::isfinite(base)) return false;
     const Spans s = spansOf(b);
@@ -382,9 +489,11 @@ struct Facts {
     bool walkable{};  // box top at most feet + floorTop: a surface at or below the player's feet (never removed by its name)
     bool standing{};  // box bottom at most feet + standSlack: it stands on the player's storey
     bool overCap{};   // box top above the back-side cap + capSlack
+    bool openStack{}; // a member of a column stack open at the cut (openAtCut)
+    unsigned stackMode{}; // iCutStacks: noStacks, nearStacks, wholeStacks
 };
 // Why a removal or a cap happened, for the FixedShaderStyle2 row.
-enum class Note : unsigned { none, roof, overhead, cap, count };
+enum class Note : unsigned { none, roof, overhead, cap, stack, stackKept, count };
 struct Decision { Treat treat{Treat::flat}; Bucket bucket{Bucket::flat}; Note note{Note::none}; };
 constexpr float standSlack = 64.0f, capSlack = 64.0f, topStoreyCap = 350.0f;
 // Rules 1-4 of the owner decision, in this order:
@@ -417,6 +526,13 @@ constexpr Decision rules(const Facts& f) {
     // a walked-on roof). The floor of the storey above is removed while the player is below it (by this rule or
     // the overhead rule) and drawn again once its top is within floorTop of the feet.
     if (f.roof && f.piece == Piece::kit && !f.walkable) return {Treat::remove,Bucket::removedWhole,Note::roof};
+    // Stage 3.0 (iCutStacks): a column whose kept part would end in an open top at the cut is removed whole
+    // on the camera side and across (every piece of it); on the back side it stays as the rules below leave
+    // it, or, with iCutStacks=2, the whole column is kept to its top.
+    if (f.openStack && f.piece == Piece::member && f.stackMode != noStacks) {
+        if (f.side != Side::back) return {Treat::remove,Bucket::removedWhole,Note::stack};
+        if (f.stackMode == wholeStacks) return {Treat::keep,Bucket::keptMember,Note::stackKept};
+    }
     // W5: every architecture piece whose bottom is above head height belongs to the storey above,
     // at once and wherever the storey line is (the loft floor's edge over a player beside the hall).
     if (f.above || (!object && f.overhead)) {
@@ -519,17 +635,19 @@ struct Style2Sample {
     float capZ{};         // the back-side cap in use
     float headroomZ{};    // headroomFloor at the last frame: what overhead and storey candidates measure from
     float heldMinusFeet{}; // held floor minus the feet's height at the last frame (CutPlane band: |x| <= 24 settled)
+    unsigned stacks{},openStacks{}; // column stacks in the cell census, and those whose pieces include an open top
     StyleWindow window{};
 };
 inline bool formatStyle2(char* out,std::size_t size,const Style2Sample& s) {
     const auto note = [&](Note which) { return s.window.notes[static_cast<std::size_t>(which)]; };
     const int written = std::snprintf(out,size,
         "FixedShaderStyle2 t=%.3f frame=%llu capZ=%.2f cappedFar=%llu roofRemoved=%llu overheadRemoved=%llu galleryRemoved=%llu headroomZ=%.2f "
-        "heldMinusFeet=%.2f sample=window",
+        "heldMinusFeet=%.2f stackRemoved=%llu stackKept=%llu stacks=%u openStacks=%u sample=window",
         s.seconds,s.frame,s.haveView ? static_cast<double>(s.capZ) : static_cast<double>(std::numeric_limits<float>::quiet_NaN()),
         s.window.buckets[static_cast<std::size_t>(Bucket::cappedFar)],note(Note::roof),note(Note::overhead),s.window.galleryRemoved,
         s.haveView ? static_cast<double>(s.headroomZ) : static_cast<double>(std::numeric_limits<float>::quiet_NaN()),
-        s.haveView ? static_cast<double>(s.heldMinusFeet) : static_cast<double>(std::numeric_limits<float>::quiet_NaN()));
+        s.haveView ? static_cast<double>(s.heldMinusFeet) : static_cast<double>(std::numeric_limits<float>::quiet_NaN()),
+        note(Note::stack),note(Note::stackKept),s.stacks,s.openStacks);
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 } // namespace skycrpg::camera::fixed::shader
