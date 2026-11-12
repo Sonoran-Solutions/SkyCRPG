@@ -20,6 +20,12 @@
 // read before and set back after, with each reference released; nothing is
 // allocated per frame. The policy and the audit behind each offset are in
 // include/fixed_spike_shader_frame_policy.h.
+//
+// The door void (iDoorVoid=1): in a cell Stage 1's census calls flat, each
+// drawn frame takes the nearest load doors of the census the player is in
+// front of (selectDoors, include/fixed_spike_shader_door_policy.h) into the
+// same constant buffer; no other state, read or write. FixedDoorVoid rows go
+// out with the frame row, only when the doors drawn change.
 
 namespace skycrpg::camera::fixed::shader {
 // ID 105674 as the call at 153ADE7 makes it: (manager, source 1, destination, 1); every register argument is
@@ -45,6 +51,8 @@ struct FrameRuntime {
     TextureDescription colour{},depth{};
     unsigned long long mismatch{}; // restores whose read-back differed (cumulative)
     FrameWindow window{};
+    DoorSelection doors{};   // the door void: the doors of the last drawn frame (iDoorVoid=1)
+    DoorSelection doorsTraced{}; // ... as last written to the trace
 };
 // FCS-97, once: cause 1..5 the targets (targetCheck: the pass skips while they hold), 10 the constant
 // buffer could not be mapped (the pass is off for the session).
@@ -208,6 +216,13 @@ inline void drawFrame() {
         if (!constants) skip = FrameSkip::matrix;
     }
     if (skip != FrameSkip::none) { ++w.skips[static_cast<std::size_t>(skip)]; return; }
+    // The door void: only in a cell the census calls flat (never a kit building), from that census's doors.
+    if (r.config.frame.doorVoid) {
+        const bool flatCell = styled() && r.style->cellStyle == CellStyle::flat;
+        f.doors = flatCell ? selectDoors(r.style->doors,r.view.feet,r.config.frame.doorRadius) : DoorSelection{};
+        f.doors.cell = styled() ? r.style->cell : 0u;
+        applyDoors(*constants,f.doors,f.capture.posAdjust,r.config.frame.doorEdge,r.config.frame.doorDepth);
+    }
     MappedBuffer mapped{};
     const std::int32_t answer = invoke<std::int32_t>(r.context,method::map,f.constants,0u,mapWriteDiscard,0u,&mapped);
     if (answer < 0 || !mapped.data) {
@@ -360,5 +375,10 @@ inline void traceFrame(double now) {
     f.window = {};
     char line[sizeof(TraceRow)]{};
     if (formatFrame(line,sizeof(line),sample)) r.frameEmitter(line);
+    // The door void: the doors drawn, on change only (one row per door, or one active=0 row when the last leaves).
+    if (!r.config.frame.doorVoid || sameDoors(f.doors,f.doorsTraced)) return;
+    f.doorsTraced = f.doors;
+    for (std::size_t slot = 0;slot < (std::max)(f.doors.count,std::size_t{1});++slot)
+        if (formatDoorVoid(line,sizeof(line),{now,r.frame,&f.doors,slot})) r.frameEmitter(line);
 }
 } // namespace skycrpg::camera::fixed::shader

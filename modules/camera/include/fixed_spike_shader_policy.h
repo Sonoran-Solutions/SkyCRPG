@@ -138,9 +138,15 @@ struct FrameConfig {
     float radiusInner{500.0f};   // fFrameRadiusInner: full brightness inside this ground distance of the feet
     float radiusOuter{900.0f};  // fFrameRadiusOuter: the void colour beyond it; outer <= inner = falloff off
     float vignette{.25f};        // fFrameVignette: darkening towards the frame's corners, 0..1; 0 = off
+    // The door void (fixed_spike_shader_door_policy.h): off unless asked for; needs iCutStyle=1 (the cell census).
+    unsigned doorVoid{0};        // iDoorVoid: 0 off (the frame pass exactly as before), 1 behind nearby load doors
+    float doorDepth{900.0f};     // fDoorVoidDepth: how far behind the door's plane the void reaches (the report's lane)
+    float doorEdge{48.0f};       // fDoorVoidEdge: the soft edge, world units
+    float doorRadius{1500.0f};   // fDoorVoidRadius: doors within this distance of the feet
 };
 // Out of range: band 0 or 8..512 (a positive band under 8 is 8), headroom 0..512, radii 0..16384,
-// vignette 0..1; NaN or infinite takes the default. Each change is reported once as FCS-66.
+// vignette 0..1; NaN or infinite takes the default. Each change is reported once as FCS-66. The door
+// keys are read only with iDoorVoid=1: depth 128..4096, edge 8..256, radius 256..8192; iDoorVoid above 1 is 0.
 inline FrameConfig validateFrame(FrameConfig f,bool& adjusted) {
     if (!f.enabled) return f;
     const FrameConfig in = f;
@@ -149,8 +155,15 @@ inline FrameConfig validateFrame(FrameConfig f,bool& adjusted) {
     f.radiusInner = bounded(f.radiusInner,500.0f,0.0f,16384.0f);
     f.radiusOuter = bounded(f.radiusOuter,900.0f,0.0f,16384.0f);
     f.vignette = bounded(f.vignette,.25f,0.0f,1.0f);
+    if (f.doorVoid > 1u) f.doorVoid = 0u;
+    if (f.doorVoid) {
+        f.doorDepth = bounded(f.doorDepth,900.0f,128.0f,4096.0f);
+        f.doorEdge = bounded(f.doorEdge,48.0f,8.0f,256.0f);
+        f.doorRadius = bounded(f.doorRadius,1500.0f,256.0f,8192.0f);
+    }
     adjusted = adjusted || f.band != in.band || f.headroom != in.headroom || f.radiusInner != in.radiusInner ||
-        f.radiusOuter != in.radiusOuter || f.vignette != in.vignette;
+        f.radiusOuter != in.radiusOuter || f.vignette != in.vignette || f.doorVoid != in.doorVoid ||
+        (f.doorVoid && (f.doorDepth != in.doorDepth || f.doorEdge != in.doorEdge || f.doorRadius != in.doorRadius));
     return f;
 }
 struct Config {
@@ -199,6 +212,8 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     const bool fillColorChanged = c.fill && parseColor(c.fillColorText,c.fillColor) != ColorText::ok;
     bool frameChanged = false;
     c.frame = validateFrame(c.frame,frameChanged);
+    // The door void reads Stage 1's census of the cell (fixed_spike_shader_style.h noteCell).
+    if (c.frame.enabled && c.frame.doorVoid && c.style != stageOneStyle) { c.frame.doorVoid = 0u; frameChanged = true; }
     // Stage 3.2: only with Stage 1 (the census says which cells are flat); the far side's ceiling never under the near plane.
     if (c.tilt > 1u || c.style != stageOneStyle) c.tilt = 0u;
     c.tiltSlope = bounded(c.tiltSlope,0.5f,0.05f,4.0f);

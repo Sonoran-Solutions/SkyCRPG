@@ -7,7 +7,9 @@
 // it, never adds. Built offline by modules/camera/tools/frame_shaders.py
 // (vkd3d-shader, ps_5_0); the bytes are in
 // include/fixed_spike_shader_frame_shaders.h. The constant layout is
-// FrameConstants in include/fixed_spike_shader_frame_policy.h.
+// FrameConstants in include/fixed_spike_shader_frame_policy.h. The door void
+// (iDoorVoid=1, include/fixed_spike_shader_door_policy.h) is read only when
+// doorShape.x (the doors drawn) is at least 1.
 cbuffer FramePass : register(b0)
 {
     float4 inverseColumn[4]; // clip position -> world position relative to the engine's position adjustment
@@ -17,8 +19,35 @@ cbuffer FramePass : register(b0)
     float4 shape;            // band on, inner radius, outer radius, falloff on
     float4 guard;            // player guard inner and outer radius, vignette strength, vignette start
     float4 voidColor;        // linear, as the main view's clear colour
+    float4 doorShape;        // doors drawn (0..4), soft edge, depth behind the plane, unused
+    float4 door[8];          // per door: plane point x, y, normal x, y; lane low z, high z, half width, start
 };
 Texture2D<float> sceneDepth : register(t0);
+
+// Behind a load door's plane past its start (soft over the edge) and short of the depth, inside its lane
+// (soft over the edge beyond the half width) and between its heights (soft over the edge outside them).
+float doorFade(float3 world)
+{
+    float fade = 0.0;
+    for (int i = 0; i < 4; ++i)
+    {
+        if (float(i) < doorShape.x)
+        {
+            float4 a = door[2 * i];
+            float4 b = door[2 * i + 1];
+            float dx = world.x - a.x;
+            float dy = world.y - a.y;
+            float back = -(dx * a.z + dy * a.w);
+            float across = abs(dx * a.w - dy * a.z);
+            float edge = doorShape.y;
+            float depth = doorShape.z;
+            float lane = smoothstep(b.w, b.w + edge, back) * (1.0 - smoothstep(depth, depth + edge, back)) * (1.0 - smoothstep(b.z, b.z + edge, across)) *
+                smoothstep(b.x - edge, b.x, world.z) * (1.0 - smoothstep(b.y, b.y + edge, world.z));
+            fade = max(fade, lane);
+        }
+    }
+    return fade;
+}
 
 float4 main(float4 position : SV_Position) : SV_Target
 {
@@ -42,6 +71,9 @@ float4 main(float4 position : SV_Position) : SV_Target
         if (shape.w > 0.5)
             fall = smoothstep(shape.y, shape.z, reach);
         amount = 1.0 - (1.0 - band) * (1.0 - fall);
+        // Door void: the passage behind a nearby load door goes to the void colour.
+        if (doorShape.x > 0.5)
+            amount = max(amount, doorFade(world));
     }
     // Vignette: a light darkening towards the frame's corners.
     float edge = guard.z * smoothstep(guard.w, 1.0, length(ndc) * 0.70710678);

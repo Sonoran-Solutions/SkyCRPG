@@ -19,7 +19,13 @@
 // No engine headers, no engine pointers; the native side is
 // src/fixed_spike_shader_frame.h and the audit behind every number here is
 // docs/evidence/p5.5/spike-wave2-shader.md, "Fifth pass".
+// The door void (iDoorVoid=1, fixed_spike_shader_door_policy.h) adds a third
+// term: surfaces behind a nearby load door's plane, in the doorway's lane,
+// move to the void colour (the strongest of the doors' fades, taken with max
+// so the frame is the same as before when no door is drawn).
 #include "fixed_spike_shader_frame_shaders.h"
+#include "fixed_spike_shader_door_policy.h"
+#include <cstddef>
 
 namespace skycrpg::camera::fixed::shader {
 // ---- audited engine facts (SkyrimSE.exe 1.7.104) ----------------------------
@@ -218,8 +224,12 @@ struct FrameConstants {
     std::array<float,4> shape{};      // band on, inner radius, outer radius, falloff on
     std::array<float,4> guard{};      // player guard inner, outer, vignette strength, vignette start
     std::array<float,4> voidColor{};  // r, g, b, 1
+    // The door void (iDoorVoid=1): zero, and unread by the shader, unless doors are drawn.
+    std::array<float,4> doorShape{};  // doors drawn (0..maxDoorVoids), soft edge, depth behind the plane, unused
+    std::array<std::array<float,4>,2*maxDoorVoids> door{}; // per door: plane point x, y, normal x, y; lane low z, high z, half width, start
 };
-static_assert(sizeof(FrameConstants) == 160 && sizeof(FrameConstants)%16 == 0);
+static_assert(sizeof(FrameConstants) == 304 && sizeof(FrameConstants)%16 == 0);
+static_assert(offsetof(FrameConstants,doorShape) == 160 && offsetof(FrameConstants,door) == 176);
 // Depth at or above this is the void: the engine's own "no geometry" test in its image-space fog
 // composite (shader entries 16002/16004: lt depth, 0.999999); depth is cleared to 1.0 (1010F8C, 100A534).
 constexpr float voidDepth = 9.99998987e-01f;
@@ -294,11 +304,42 @@ inline std::optional<FrameConstants> frameConstants(const FrameConfig& c,float h
     k.voidColor = {color.red,color.green,color.blue,1.0f};
     return k;
 }
+// The door void's rows for the doors chosen this frame (selectDoors), relative to the position adjustment
+// like the cut. Not called with iDoorVoid=0: the rows stay zero and the shader skips them.
+inline void applyDoors(FrameConstants& k,const DoorSelection& s,Vec posAdjust,float edge,float depth) {
+    const std::size_t count = (std::min)(s.count,maxDoorVoids);
+    k.doorShape = {static_cast<float>(count),edge,depth,0.0f};
+    for (std::size_t i = 0;i < count;++i) {
+        const DoorChoice& c = s.chosen[i];
+        const DoorPlane& p = c.door.plane;
+        k.door[2*i] = {p.point.x-posAdjust.x,p.point.y-posAdjust.y,p.nx,p.ny};
+        k.door[2*i+1] = {p.low-posAdjust.z,p.high-posAdjust.z,p.half,c.start};
+    }
+}
 // ---- a C++ copy of the pixel shader (shaders/fixed_spike_frame_ps.hlsl), for the portable tests -------
 // It follows the HLSL statement for statement; the reviewer compares the two by reading.
 constexpr float smooth(float edge0,float edge1,float x) {
     const float t = std::clamp((x-edge0)/(edge1-edge0),0.0f,1.0f);
     return t*t*(3.0f-2.0f*t);
+}
+// The door void: behind the plane past `start` (soft over the edge) and short of the depth, inside the lane
+// (soft over the edge beyond its half width) and between its heights (soft over the edge outside them).
+inline float doorFade(const FrameConstants& k,Vec world) {
+    float fade = 0.0f;
+    for (std::size_t i = 0;i < maxDoorVoids;++i) {
+        if (static_cast<float>(i) < k.doorShape[0]) {
+            const std::array<float,4>& a = k.door[2*i];
+            const std::array<float,4>& b = k.door[2*i+1];
+            const float dx = world.x-a[0],dy = world.y-a[1];
+            const float back = -(dx*a[2]+dy*a[3]);
+            const float across = std::abs(dx*a[3]-dy*a[2]);
+            const float edge = k.doorShape[1],depth = k.doorShape[2];
+            const float lane = smooth(b[3],b[3]+edge,back)*(1.0f-smooth(depth,depth+edge,back))*(1.0f-smooth(b[2],b[2]+edge,across))*
+                smooth(b[0]-edge,b[0],world.z)*(1.0f-smooth(b[1],b[1]+edge,world.z));
+            fade = (std::max)(fade,lane);
+        }
+    }
+    return fade;
 }
 struct FramePixel { float amount{}; bool voidPixel{}; Vec world{}; };
 inline FramePixel framePixel(const FrameConstants& k,float px,float py,float depth) {
@@ -317,6 +358,7 @@ inline FramePixel framePixel(const FrameConstants& k,float px,float py,float dep
         float fall = 0.0f;
         if (k.shape[3] > .5f) fall = smooth(k.shape[1],k.shape[2],reach);
         amount = 1.0f-(1.0f-band)*(1.0f-fall);
+        if (k.doorShape[0] > .5f) amount = (std::max)(amount,doorFade(k,out.world));
     }
     const float edge = k.guard[2]*smooth(k.guard[3],1.0f,std::hypot(ndcX,ndcY)*.70710678f);
     amount = 1.0f-(1.0f-amount)*(1.0f-edge);
