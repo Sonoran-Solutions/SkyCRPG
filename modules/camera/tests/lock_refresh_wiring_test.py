@@ -966,10 +966,10 @@ for term in ("rigTraceLines", "roomTraceLines+roomPassTraceLines", "hideTraceLin
 # Every LineBudget of both runtimes is sized by one of the terms above (shader: traceKinds() counts its 3 to 6 budgets).
 runtime_struct = spike_body("struct Runtime {", "inline Runtime* runtime")
 light_struct = light_body("struct LightRuntime {", "inline LightRuntime* lights")
-budget_sizes = re.findall(r"(\w+)\{(\w+(?:::\w+)?)\}", "".join(l for l in (runtime_struct + light_struct).splitlines(True) if "LineBudget " in l))
+budget_sizes = re.findall(r"(\w+)\{((?:\d+\*)?\w+(?:::\w+)?)\}", "".join(l for l in (runtime_struct + light_struct).splitlines(True) if "LineBudget " in l))
 assert sorted(budget_sizes) == sorted([("rigLines", "rigTraceLines"), ("roomLines", "roomTraceLines"), ("hideLines", "hideTraceLines"),
     ("shaderLines", "shader::traceLines"), ("shaderLookLines", "shader::traceLines"), ("shaderVoidLines", "shader::traceLines"),
-    ("shaderStyleLines", "shader::traceLines"), ("shaderStyle2Lines", "shader::traceLines"), ("shaderFrameLines", "shader::traceLines"), ("shaderFillLines", "shader::traceLines"), ("fadeLines", "fadeTraceLines"),
+    ("shaderStyleLines", "shader::traceLines"), ("shaderStyle2Lines", "shader::traceLines"), ("shaderFrameLines", "shader::traceLines"), ("shaderFillLines", "2*shader::traceLines"), ("fadeLines", "fadeTraceLines"),
     ("roomPassLines", "roomPassTraceLines"), ("lines", "lightTraceLines"), ("levelLines", "lightLevelTraceLines")]), budget_sizes
 # Refusal numbers: the spike's enum (base, FCS-15 fade, FCS-51..59 light) and the shader's own enum (FCS-66..101,
 # its own once-mask) are disjoint, and every number fits the mask that logs it.
