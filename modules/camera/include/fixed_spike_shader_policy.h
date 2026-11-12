@@ -169,7 +169,7 @@ struct Config {
     unsigned style{1};          // iCutStyle: 0 the flat cut exactly as the third pass, 1 Stage 1
     bool keepFarGallery{};      // bCutKeepFarGallery: the back half of the storey above is kept whole
     bool styleShadows{true};    // bCutStyleShadows: what the main view removes whole casts no shadow
-    unsigned fill{0};           // iCutFill (Stage 3.1): 0 off, 1 back-face fill in flat (non-kit) cells
+    unsigned fill{0};           // iCutFill (Stage 3.1): 0 off, 1 back-face fill in flat (non-kit) cells, 2 the same with the F1 gates widened
     std::string fillColorText{"0,0,0"}; // sCutFillColor as read
     Color fillColor{};          // parsed from fillColorText by validate
     unsigned stacks{1};         // iCutStacks (Stage 3.0): 0 off, 1 open-topped columns removed on the camera side, 2 also kept whole behind
@@ -189,7 +189,7 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;
     if (c.style > stageOneStyle) c.style = stageOneStyle;
     if (c.stacks > 2u) c.stacks = 1u;
-    if (c.fill > 1u) c.fill = 0u;
+    if (c.fill > 2u) c.fill = 0u;
     const bool fillColorChanged = c.fill && parseColor(c.fillColorText,c.fillColor) != ColorText::ok;
     bool frameChanged = false;
     c.frame = validateFrame(c.frame,frameChanged);

@@ -79,6 +79,9 @@ inline void cutFill(void* pass,std::size_t shaderClass) {
     x.alphaTest = peek<std::uint8_t>(r.state,fill_offset::alphaTest);
     x.depth = peek<std::uint32_t>(r.state,fill_offset::depthMode);
     x.writeMask = peek<std::uint32_t>(r.state,fill_offset::writeMask);
+    x.alphaRef = peek<float>(r.state,fill_offset::alphaRef);
+    x.mode = r.config.fill;
+    if (x.lighting && x.flatCell) w.diagnostics.note(x.writeMask,x.alphaTest != 0,x.alphaRef,peek<std::uint8_t>(pass,fill_offset::passType));
     x.budget = f.used < fillPerFrame;
     const std::uint16_t triangles = geometry ? peek<std::uint16_t>(geometry,fill_offset::geometryTriangles) : std::uint16_t{0};
     const void* data = geometry ? peek<const void*>(geometry,fill_offset::geometryData) : nullptr;
@@ -203,9 +206,11 @@ inline void traceFill(double now) {
     auto& f = *r.fill;
     FillSample sample;
     sample.seconds = now; sample.frame = r.frame; sample.mismatch = f.mismatch; sample.state = f.state; sample.colour = r.config.fillColor;
+    sample.mode = r.config.fill;
     sample.window = f.window;
     f.window = {};
     char line[sizeof(TraceRow)]{};
     if (formatFill(line,sizeof(line),sample)) r.fillEmitter(line);
+    if (formatFill2(line,sizeof(line),sample)) r.fillEmitter(line); // F1 diagnostics: write masks, alpha test, pass types
 }
 } // namespace skycrpg::camera::fixed::shader

@@ -1267,6 +1267,44 @@ No claim failed, so the draw path is the research's option (a).
 3. **Write mask.** The blend index's write-mask factor (`+0xB0`) must be **2**. In the blend builder ID 77649 (RVA 102ABD0), the jump table at 102B0DC sends index 2 (entry at 102B0E4) straight to the creation (102AFFB) with the defaults: masks 0xF on all eight targets (102AE60..). The other indices mask channels (7, 3, 0xC, 1, 2, 4, 8 on target 0), target 1, or targets 1..7. ID 36555 sets `+0xB0 = 2` before the main frame (65698E). Draws with any other value are counted as `skipMask` (gate order: … depth, mask, budget, layout, then guard). Both bytes are now evidence windows 18 and 19 (FCS-98).
 4. **Target 2.** The smallest shipped Lighting pixel shader (Lighting pixel run index 5550; vkd3d disassembly) writes `o2 = (n.xy / sqrt(8 − 8·n.z) + 0.5, 0, smoothstep(cb2[7].x, cb2[7].y, …)·cb2[7].w)`. That is a spheremap-encoded view normal, z = 0, and w = the specular/reflection mask, which is 0 for a material with `cb2[7].w = 0`. (When `cb2[7].z > 1e-5`, a different branch copies the colour into o2.) The cap's (0.5, 0.5, 0, 0) is what the engine writes for a non-reflective surface whose view normal is (0, 0, 1). It is kept; the cap shader is unchanged (956 bytes).
 
+### After batch F1: why nothing was filled, and `iCutFill=2`
+
+**Result (shader 12a702d).** The fill installed cleanly and `mismatch` stayed 0, but `filled = 0` everywhere. In Embershard, each window had `sliced=322 skipClass=133 skipAlpha=84 skipMask=105`; in Bleak Falls Barrow `861 / 448 / 70 / 343`. Every Lighting draw passed type, cull, blend and depth.
+
+**`+0xB0` (write mask).** In the blend builder ID 77649 (102ABD0), index 1 is target 0's mask 7, i.e. RGB without alpha (jump-table entry at 102B0E0 → 102AF87); every other target keeps the default 0xF (102AE60..). Lighting `SetupGeometry` sets index 1 (1549689..15496A3) for every pass whose pass-type byte (`pass+0x1C`) is 3 and whose material carries shader flag bit 32. That is the bit without which depth mode 1 (no write) is forced (154A738). So these are ordinary depth-writing lit draws that skip the colour target's alpha. They are almost certainly the 105/343 non-alpha rejects: the F1 build cannot show the value, so the new row will confirm it. They are not prepass, decal or z-only draws: the depth-only pass (Utility class) is already `skipClass`, and the depth/blend gates passed. The cap writes through its own blend state, so filling them is safe.
+
+**Other mask indices are not admitted:**
+- 0: target 0 not written;
+- 3..8: single channels of target 0;
+- 9: target 0 blue plus target 1 RGB;
+- 10: target 1 off;
+- 11: targets 1..7 off;
+- 12: targets 2..7 off.
+
+**`+0xB4` (alpha test).** The batch renderer ID 107642 sets it per pass group: 1 in groups 1, 3 and 4 (1560123, 15600C5, 156017C), 0 in groups 0 and 2. The material's alpha property decides the group (Hypothesis by name). The reference `+0xB8` goes into the pixel constant buffer bound at slot 11 (10107C9..10107E8): written when the test is on, 0 otherwise (1011178..10111C2). The Lighting pixel shaders discard when `alpha · material alpha − reference < 0` (Lighting pixel run index 6212: `mad r0.x, cb2[3].z, r0.w, -cb11[0].x; lt r0.x, r0.x, 0; discard_nz r0.x`). With a reference ≤ 0 nothing is ever discarded, so such a draw is opaque.
+
+**Options for an alpha test with a reference above 0:**
+- Fill anyway: wrong for grates, foliage and cards.
+- Fill with the same test: needs the diffuse texture and the texcoord in the cap shader. The texcoord's register differs between vertex shaders, so this is not cheap.
+- Skip.
+
+Recommended and built: **skip**, except where the reference cannot discard anything.
+
+**`iCutFill=2`** (`widenedFill`) admits write mask 1 as well as 2, and alpha-tested draws whose reference is ≤ 0. Everything else, and `iCutFill=1`, is unchanged, so the next run can A/B the two. Four more evidence windows (FCS-98 checks 20..23): the mask-1 jump-table entry, the mask-1 store, the slot-11 binding, and the reference write.
+
+**New row `FixedShaderFill2`**, written right after `FixedShaderFill` and sharing its doubled budget (12,000 lines). It covers the Lighting-class passes that reach the gate in a flat cell:
+
+```
+FixedShaderFill2 t=%.3f frame=%llu mode=%u mask=%s alphaMask=%s alphaRef=%s passType=%s sample=window
+```
+
+- `mask`: 14 counts, write-mask index 0..12 then "other".
+- `alphaMask`: the same, for alpha-tested passes only.
+- `alphaRef`: 4 counts: reference ≤ 0, ≤ 0.25, ≤ 0.5, then above 0.5 or not finite.
+- `passType`: 17 counts, pass-type byte 0..15 then "other".
+
+All lists are comma-separated. A row with 8-digit counts takes 549 of 768 bytes; a row that does not fit is not written.
+
 ### Log line (once, after the frame line, only with `iCutFill=1`)
 
 ```
@@ -1285,7 +1323,7 @@ FixedShaderFill t=%.3f frame=%llu fill=%s colour=%.3f,%.3f,%.3f sliced=%llu fill
 
 | Code | Site | Meaning; what stays in force |
 | --- | --- | --- |
-| FCS-98 `check=N` | `installFill` | 1 depth-stencil table ID, 2 rasteriser table ID, 10..19 an evidence window (the flush's two index computations, the type switch, the type-3 arguments, DrawIndexed, the rasteriser builder's FrontCounterClockwise and cull map, depth mode 3, the blend builder's write-mask entry 2 and its 0xF defaults). No fill; the cut is unchanged. |
+| FCS-98 `check=N` | `installFill` | 1 depth-stencil table ID, 2 rasteriser table ID, 10..23 an evidence window (the flush's two index computations, the type switch, the type-3 arguments, DrawIndexed, the rasteriser builder's FrontCounterClockwise and cull map, depth mode 3, the blend builder's write-mask entry 2 and its 0xF defaults, write-mask entry 1 and its store, the alpha-test buffer at slot 11 and its reference write). No fill; the cut is unchanged. |
 | FCS-99 `object=N` | `installFill` | The device refused the cap shader (1), the blend state (2) or the constant buffer (3). Anything made is released. No fill. |
 | FCS-100 | `cutFill` | Informative: a gated draw had no triangles, no renderer data, or a state index or table entry missing. That draw is not filled (`skipLayout`). |
 | FCS-101 | `cutFill` | The fill's constant buffer could not be mapped. The fill is off for the session; the cut is unchanged. |

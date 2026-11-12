@@ -87,7 +87,7 @@ struct Runtime {
     LineBudget shaderStyleLines{shader::traceLines}; // wave 2 shader, fourth pass: FixedShaderStyle (iCutStyle=1)
     LineBudget shaderStyle2Lines{shader::traceLines}; // wave 2 shader, fourth pass W5 fixes: FixedShaderStyle2 (iCutStyle=1)
     LineBudget shaderFrameLines{shader::traceLines}; // wave 2 shader, fifth pass: FixedShaderFrame (bFramePass=1)
-    LineBudget shaderFillLines{shader::traceLines}; // Stage 3.1: FixedShaderFill (iCutFill=1)
+    LineBudget shaderFillLines{2*shader::traceLines}; // Stage 3.1: FixedShaderFill and FixedShaderFill2 (iCutFill=1/2)
     // Player fade hold (fixed_spike_fade_policy.h). Main thread only, except the pointer set at install.
     float* fadeValue{};          // the Setting's value; null: not installed
     FadeFeature fadeState{FadeFeature::off};
