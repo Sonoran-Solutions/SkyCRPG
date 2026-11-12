@@ -124,8 +124,9 @@ void codes() {
         Refusal::bracket,Refusal::create,Refusal::patch,Refusal::unaudited,Refusal::view,Refusal::map,Refusal::object,Refusal::context,
         Refusal::effectTable,Refusal::voidSite,Refusal::voidMemory,Refusal::voidThread,Refusal::effectCreate,Refusal::effectPatch,
         Refusal::effectUnaudited,Refusal::effectObject,Refusal::effectThread,Refusal::skySite,Refusal::skyLeft,Refusal::styleBuffers,Refusal::styleMap,
-        Refusal::frameSite,Refusal::frameMemory,Refusal::frameDevice,Refusal::frameThread,Refusal::frameRun};
-    std::uint32_t seen = 0;
+        Refusal::frameSite,Refusal::frameMemory,Refusal::frameDevice,Refusal::frameThread,Refusal::frameRun,
+        Refusal::fillSite,Refusal::fillDevice,Refusal::fillLayout,Refusal::fillMap};
+    std::uint64_t seen = 0;
     for (const auto code : all) {
         // The wave 1 once-mask holds codes below 64; these have their own.
         assert(static_cast<unsigned>(code) >= firstRefusal && static_cast<unsigned>(code) <= lastRefusal && static_cast<unsigned>(code) > 65);
@@ -136,11 +137,13 @@ void codes() {
     assert(all.size() == lastRefusal-firstRefusal+1u && static_cast<unsigned>(Refusal::context) == 79 && static_cast<unsigned>(Refusal::effectTable) == 80);
     // The third pass continues at 89 without a gap; 32 codes is the once-mask's limit.
     assert(static_cast<unsigned>(Refusal::effectThread) == 88 && static_cast<unsigned>(Refusal::skySite) == 89 &&
-        static_cast<unsigned>(Refusal::skyLeft) == 90 && lastRefusal-firstRefusal < 32u);
-    // The fourth pass continues at 91, the fifth at 93 up to 97, the once-mask's last code.
+        static_cast<unsigned>(Refusal::skyLeft) == 90 && lastRefusal-firstRefusal < 64u);
+    // The fourth pass continues at 91, the fifth at 93 up to 97, Stage 3.1 at 98 up to 101 (the once-mask is 64 bits since).
     assert(static_cast<unsigned>(Refusal::styleBuffers) == 91 && static_cast<unsigned>(Refusal::styleMap) == 92 &&
-        static_cast<unsigned>(Refusal::frameSite) == 93 && static_cast<unsigned>(Refusal::frameRun) == 97 && lastRefusal == 97);
-    assert(seen == 0xffffffffu); // all 32 codes 66..97 in use
+        static_cast<unsigned>(Refusal::frameSite) == 93 && static_cast<unsigned>(Refusal::frameRun) == 97 &&
+        static_cast<unsigned>(Refusal::fillSite) == 98 && static_cast<unsigned>(Refusal::fillMap) == 101 && lastRefusal == 101);
+    assert(seen == (std::uint64_t{1} << 36)-1u); // all 36 codes 66..101 in use
+    assert(refusalBit(Refusal::fillMap) == std::uint64_t{1} << 35);
     // A shader preparation reports through its own group's codes.
     for (std::size_t i = 0;i < 2;++i) {
         const auto& c = prepareCodes[i];

@@ -63,6 +63,7 @@ using ClearColor = void(*)(void*,float,float,float,float);
 struct Made { unsigned patched{},rejected{},unaudited{}; };
 struct StyleRuntime; // fixed_spike_shader_style.h: only with iCutStyle=1
 struct FrameRuntime; // fixed_spike_shader_frame.h: only with bFramePass=1
+struct FillRuntime;  // fixed_spike_shader_fill.h: only with iCutFill=1
 struct Runtime {
     Config config;
     void (*logger)(const char*){};
@@ -72,7 +73,8 @@ struct Runtime {
     void (*styleEmitter)(const char*){};
     void (*style2Emitter)(const char*){};
     void (*frameEmitter)(const char*){};
-    std::atomic<std::uint32_t> refusals{};
+    void (*fillEmitter)(const char*){};
+    std::atomic<std::uint64_t> refusals{};
     std::atomic_bool pending{};  // hooks to be installed by the next main-thread camera frame
     std::atomic_bool active{};   // a snapshot is published
     std::atomic_bool latched{};  // a run-time refusal: native for the rest of the session
@@ -107,6 +109,9 @@ struct Runtime {
     double clock{},nextTrace{};
     StyleRuntime* style{}; // fourth pass; null with iCutStyle=0
     FrameRuntime* framePass{}; // fifth pass; null with bFramePass=0
+    FillRuntime* fill{};       // Stage 3.1; null with iCutFill=0
+    bool openFill{};           // the open pass is cut at a plane (not removed whole) in the main view: a fill candidate
+    const void* openPass{};    // the pass the open cut belongs to (set by its SetupGeometry hook; the fill draws only for it)
 };
 // Process lifetime, like the spike runtime: device objects are never released.
 inline Runtime* runtime = nullptr;
@@ -124,7 +129,7 @@ Result invoke(void* object,std::size_t slot,Arguments... arguments) {
 // Main thread only. One line per code: FixedCameraSpike refused code=FCS-NN.
 inline void refuse(Refusal code,const char* text) {
     auto& r = *runtime;
-    const std::uint32_t bit = refusalBit(code);
+    const std::uint64_t bit = refusalBit(code);
     if (r.refusals.fetch_or(bit,std::memory_order_acq_rel) & bit) return;
     char line[448]{};
     std::snprintf(line,sizeof(line),"FixedCameraSpike refused code=FCS-%02u %s",static_cast<unsigned>(code),text);
@@ -145,6 +150,7 @@ inline bool finish() {
     void* none[1]{};
     invoke<void>(r.context,method::vsSetConstantBuffers,cutBuffer,1u,static_cast<void* const*>(none));
     r.openObject = nullptr;
+    r.openFill = false; r.openPass = nullptr;
     r.opened.store(false,std::memory_order_release);
     return same;
 }
@@ -243,6 +249,8 @@ inline void styledPass(void* pass,std::size_t shaderClass,Vec eye);
 inline void shadowPass(void* pass,std::size_t shaderClass);
 // fixed_spike_shader_frame.h (included at the end of this file).
 inline void captureFrame(Vec eye);
+// fixed_spike_shader_fill.h (included at the end of this file).
+inline void cutFill(void* pass,std::size_t shaderClass);
 // The pass is drawn with the patched shader and the plane in slot 13. Both
 // device calls that can fail come before anything is bound.
 inline void apply(const Entry& entry,Constant wanted,std::size_t shaderClass) {
@@ -266,6 +274,7 @@ inline void apply(const Entry& entry,Constant wanted,std::size_t shaderClass) {
     invoke<void>(r.context,method::vsSetConstantBuffers,cutBuffer,1u,static_cast<void* const*>(buffers));
     invoke<void>(r.context,method::vsSetShader,entry.patched,static_cast<void* const*>(nullptr),0u);
     r.openObject = entry.object;
+    r.openFill = usable(wanted); // Stage 3.1: a plane cut, not the whole-draw constant
     r.opened.store(true,std::memory_order_release);
     auto& w = r.windows[groupOf(shaderClass)];
     ++w.cut; ++w.byClass[shaderClass];
@@ -325,6 +334,7 @@ std::uintptr_t hookSetup(void* self,void* pass,std::uintptr_t flags,std::uintptr
     if (pass && r.active.load(std::memory_order_acquire)) {
         const double started = r.config.trace ? thin::seconds() : 0.0;
         consider(pass,Index);
+        if (r.opened.load(std::memory_order_relaxed) && thin::onMain()) r.openPass = pass; // Stage 3.1: the pass this cut belongs to
         if (r.config.trace && thin::onMain()) r.windows[groupOf(Index)].seconds += thin::seconds()-started;
     }
     return result;
@@ -332,6 +342,7 @@ std::uintptr_t hookSetup(void* self,void* pass,std::uintptr_t flags,std::uintptr
 template<std::size_t Index>
 std::uintptr_t hookRestore(void* self,void* pass,std::uintptr_t flags,std::uintptr_t extra) {
     auto& r = *runtime;
+    if (r.fill) cutFill(pass,Index); // Stage 3.1: the second draw goes before the engine restores its state
     const auto result = r.restore[Index](self,pass,flags,extra);
     if (r.opened.load(std::memory_order_acquire)) {
         if (!thin::onMain()) r.offMain[groupOf(Index)].fetch_add(1ull,std::memory_order_relaxed);
@@ -419,6 +430,10 @@ inline Feature frameState();
 inline void configureFrame();
 inline void frameStartFrame();
 inline void traceFrame(double now);
+inline void installFill(std::uintptr_t base);
+inline Feature fillState();
+inline void configureFill();
+inline void traceFill(double now);
 // Main thread, from commit, after the Lighting/Utility hooks. The Effect class
 // is hooked only with bShaderCutEffect=1 and when its own guard passes.
 inline void installEffect(std::uintptr_t base) {
@@ -501,6 +516,15 @@ inline void commit() {
             static_cast<double>(r.config.frame.headroom),static_cast<double>(r.config.frame.radiusInner),
             static_cast<double>(r.config.frame.radiusOuter),static_cast<double>(r.config.frame.vignette),
             static_cast<unsigned>(frame_bytes::vertexShader.size()),static_cast<unsigned>(frame_bytes::pixelShader.size()));
+        r.logger(text);
+    }
+    // Stage 3.1: only with iCutFill=1; refuses on its own (FCS-98/99) and leaves everything above as it is.
+    if (r.fill) {
+        installFill(base);
+        std::snprintf(text,sizeof(text),"FixedCameraSpike shader fill installed fill=%s colour=%.3f,%.3f,%.3f cap=%u",
+            featureNames[static_cast<std::size_t>(fillState())],static_cast<double>(r.config.fillColor.red),
+            static_cast<double>(r.config.fillColor.green),static_cast<double>(r.config.fillColor.blue),
+            static_cast<unsigned>(frame_bytes::capPixelShader.size()));
         r.logger(text);
     }
 }
@@ -601,19 +625,23 @@ inline void trace(double now) {
     if (formatVoid(line,sizeof(line),voids)) r.voidEmitter(line);
     traceStyle(now,voids.window); // fourth pass: FixedShaderStyle, only with iCutStyle=1
     traceFrame(now); // fifth pass: FixedShaderFrame, only with bFramePass=1
+    traceFill(now); // Stage 3.1: FixedShaderFill, only with iCutFill=1
 }
 inline bool tracing() { return runtime && runtime->config.trace; }
 // Shader trace line kinds: FixedShader, FixedShaderLook, FixedShaderVoid, FixedShaderStyle and
-// FixedShaderStyle2 with iCutStyle=1, and FixedShaderFrame with bFramePass=1.
-inline unsigned traceKinds() { return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u); }
+// FixedShaderStyle2 with iCutStyle=1, FixedShaderFrame with bFramePass=1, and FixedShaderFill with iCutFill=1.
+inline unsigned traceKinds() {
+    return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u)+(runtime && runtime->fill ? 1u : 0u);
+}
 inline const char* status() { return !runtime ? "off" : runtime->installed ? "installed" : "pending"; }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1 and iSeeThroughMode=3.
 inline void configure(const Config& requested,void (*logger)(const char*),void (*emitter)(const char*),void (*lookEmitter)(const char*),
-    void (*voidEmitter)(const char*),void (*styleEmitter)(const char*),void (*style2Emitter)(const char*),void (*frameEmitter)(const char*)) {
+    void (*voidEmitter)(const char*),void (*styleEmitter)(const char*),void (*style2Emitter)(const char*),void (*frameEmitter)(const char*),
+    void (*fillEmitter)(const char*)) {
     runtime = new Runtime;
     auto& r = *runtime;
     r.logger = logger; r.emitter = emitter; r.lookEmitter = lookEmitter; r.voidEmitter = voidEmitter; r.styleEmitter = styleEmitter;
-    r.style2Emitter = style2Emitter; r.frameEmitter = frameEmitter;
+    r.style2Emitter = style2Emitter; r.frameEmitter = frameEmitter; r.fillEmitter = fillEmitter;
     bool adjusted = false;
     r.config = validate(requested,&adjusted);
     for (auto& budget : r.budgets) budget.limit = r.config.maxPerFrame;
@@ -622,6 +650,7 @@ inline void configure(const Config& requested,void (*logger)(const char*),void (
     r.skyState = r.config.hideSky ? Feature::pending : Feature::off;
     configureStyle();
     configureFrame();
+    configureFill();
     if (adjusted) refuse(Refusal::settings,"one or more shader-cut values were out of range; safe values applied");
 }
 } // namespace skycrpg::camera::fixed::shader
@@ -629,3 +658,4 @@ inline void configure(const Config& requested,void (*logger)(const char*),void (
 #include "fixed_spike_shader_sky.h"  // third pass: the sky dome over the void
 #include "fixed_spike_shader_style.h" // fourth pass: Stage 1 of the seamless cutaway
 #include "fixed_spike_shader_frame.h" // fifth pass: Stage 2, the frame pass
+#include "fixed_spike_shader_fill.h" // Stage 3.1: the back-face fill

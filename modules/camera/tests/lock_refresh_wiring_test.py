@@ -355,17 +355,19 @@ assert "inline bool publishes(bool installed,bool latched,bool interiorCell,floa
     "std::isfinite(feetZ);" in cut_policy
 void = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_void.h").read_text()
 cut_codes = dict(re.findall(r"(\w+) = (\d+)", cut_policy[cut_policy.index("enum class Refusal : unsigned {"):cut_policy.index("constexpr unsigned firstRefusal")]))
-assert len(cut_codes) == 32 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 98))
+assert len(cut_codes) == 36 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 102))
 sky = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_sky.h").read_text()
 sky_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_sky_policy.h").read_text()
 style = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_style.h").read_text()
 style_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_style_policy.h").read_text()
 frame = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_frame.h").read_text()
 frame_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_frame_policy.h").read_text()
+fill = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_fill.h").read_text()
+fill_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_fill_policy.h").read_text()
 prepare_table = cut_policy[cut_policy.index("constexpr std::array<PrepareCodes,2> prepareCodes{{"):cut_policy.index("// ---- [FixedCameraSpike] shader-cut keys")]
 for name in cut_codes:
     sites = cut.count("Refusal::" + name) + void.count("Refusal::" + name) + sky.count("Refusal::" + name) + style.count("Refusal::" + name) + \
-        frame.count("Refusal::" + name) + prepare_table.count("Refusal::" + name)
+        frame.count("Refusal::" + name) + fill.count("Refusal::" + name) + prepare_table.count("Refusal::" + name)
     assert sites == 1, name  # one site per code
 for field in ("object", "unaudited", "patch", "create"):
     assert prepare.count("refuse(codes." + field + ",text); return;") == 1, field
@@ -382,7 +384,7 @@ for constant in ("constexpr Address stateAddress{388819,0x20cfc00};", "constexpr
                  "constexpr Address clearColorAddress{77249,0x100a3f0};", "constexpr std::uintptr_t voidCallRva = 0x656daa;"):
     assert constant in cut_policy, constant
 print("PASS shader cut wiring: no runtime outside mode 3; main-thread install after every guard; no code or engine-state write; "
-      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..97")
+      "engine function called once per hook; audited bytecode only; fail-before-bind; own shader and empty slot restored; one site per FCS-66..101")
 
 # Wave 2 shader, second pass (owner decision 2026-11-10): the Effect class and
 # the void colour. Both exist only inside the shader runtime (mode 3), are
@@ -392,7 +394,8 @@ print("PASS shader cut wiring: no runtime outside mode 3; main-thread install af
 assert cut.endswith('#include "fixed_spike_shader_void.h" // second pass: the void colour\n'
                     '#include "fixed_spike_shader_sky.h"  // third pass: the sky dome over the void\n'
                     '#include "fixed_spike_shader_style.h" // fourth pass: Stage 1 of the seamless cutaway\n'
-                    '#include "fixed_spike_shader_frame.h" // fifth pass: Stage 2, the frame pass\n')
+                    '#include "fixed_spike_shader_frame.h" // fifth pass: Stage 2, the frame pass\n'
+                    '#include "fixed_spike_shader_fill.h" // Stage 3.1: the back-face fill\n')
 assert "inline void installVoid(std::uintptr_t base);" in cut and cut.count("installVoid(base);") == 1 and cut.count("installEffect(base);") == 1
 assert void.count("inline void installVoid(std::uintptr_t base) {") == 1 and "runtime = " not in void
 install_effect = cut_body("inline void installEffect(std::uintptr_t base) {", "// Main thread, inside the camera frame service.")
@@ -439,7 +442,8 @@ assert '"relPlane=%.2f passes=%llu cut=%llu byClass=%llu,%llu peak=%u cap=%u upl
 assert "LineBudget shaderLines{shader::traceLines},shaderLookLines{shader::traceLines};" in spike and \
     "[](const char* text) { emit(runtime->shaderLookLines,text); },[](const char* text) { emit(runtime->shaderVoidLines,text); },\n" \
     "            [](const char* text) { emit(runtime->shaderStyleLines,text); },[](const char* text) { emit(runtime->shaderStyle2Lines,text); },\n" \
-    "            [](const char* text) { emit(runtime->shaderFrameLines,text); });" in configure_spike and \
+    "            [](const char* text) { emit(runtime->shaderFrameLines,text); },[](const char* text) { emit(runtime->shaderFillLines,text); });" \
+    in configure_spike and \
     "(shader::tracing() ? shader::traceKinds()*shader::traceLines : 0u)" in configure_spike
 assert 'shaderCut.colorText = read("FixedCameraSpike","sVoidColor","0,0,0");' in gate and \
     "const bool colorChanged = parseColor(c.colorText,c.color) != ColorText::ok;" in cut_policy
@@ -545,7 +549,7 @@ assert "if (!runtime || !runtime->style || !cell || !thin::onMain()) return;" in
 assert trace_body.index("if (formatVoid(line,sizeof(line),voids)) r.voidEmitter(line);") < trace_body.index("traceStyle(now,voids.window);")
 assert "if (!r.style) return;" in style_body("inline void traceStyle(", "} // namespace")
 assert "LineBudget shaderStyleLines{shader::traceLines};" in spike
-assert "inline unsigned traceKinds() { return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u); }" in cut
+assert "    return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u)+(runtime && runtime->fill ? 1u : 0u);" in cut
 assert "LineBudget shaderStyle2Lines{shader::traceLines};" in spike
 # W5 fixes: FixedShaderStyle2 after FixedShaderStyle; the style row's format is unchanged; roofs never kept; kit overhead removed;
 # back pieces kept only standing and within the cap, else cut at the cap and not counted as slicedFar; gallery keeps that exceed
@@ -723,3 +727,63 @@ print("PASS shader fifth-pass wiring: frame runtime only with bFramePass=1; inst
       "normal-play destination and active cut only; no view of the colour target on other stages; targets, constants and "
       "map before any bind; depth-stencil view unbound before the depth is read; all touched state saved, set back and released; "
       "no allocation per frame; one site per FCS-93..97")
+
+# Stage 3.1 (owner go "Start solid caps"): the back-face fill (iCutFill=1). Its runtime exists only with the key;
+# it is installed by the cut's commit after every earlier pass, writes no engine code and adds no hook; it draws
+# only inside the Lighting RestoreGeometry hook, before the engine's RestoreGeometry, on the main thread, for a
+# pass the cut opened with a plane in the main view; it changes four pieces of device state and sets each back.
+def fill_body(start, end):
+    return fill[fill.index(start):fill.index(end, fill.index(start))]
+configure_fill = fill_body("inline void configureFill() {", "inline void traceFill(")
+assert "if (r.config.fill) r.fill = new FillRuntime;" in configure_fill and fill.count("new FillRuntime") == 1 and "runtime = " not in fill
+assert cut.count("configureFill();") == 2 and cut.count("installFill(base);") == 1 and cut.count("traceFill(now);") == 1
+assert commit.index("installFrame(base);") < commit.index("if (r.fill) {") < commit.index("installFill(base);") < \
+    commit.index('"FixedCameraSpike shader fill installed fill=%s colour=%.3f,%.3f,%.3f cap=%u"')
+assert restore_hook.index("if (r.fill) cutFill(pass,Index);") < restore_hook.index("r.restore[Index](self,pass,flags,extra)")
+assert cut.count("cutFill(") == 2  # declaration and the one call
+# Review MINOR-1 of the fill: the fill draws only for the pass whose SetupGeometry opened the cut, and never after a latch.
+assert setup_hook.index("consider(pass,Index);") < \
+    setup_hook.index("if (r.opened.load(std::memory_order_relaxed) && thin::onMain()) r.openPass = pass;")
+assert "r.openFill = false; r.openPass = nullptr;" in finish
+assert "if (f.writeMask != allTargetsMask) return FillSkip::mask;" in fill_policy and "constexpr std::uint32_t allTargetsMask = 2;" in fill_policy
+assert "    r.openFill = usable(wanted); // Stage 3.1: a plane cut, not the whole-draw constant" in apply and "r.openFill = false;" in finish
+assert "r.openFill = mainView && buffer != runtime->style->removeBuffer;" in style
+draw_fill = fill_body("inline void cutFill(void* pass,std::size_t shaderClass) {", "inline Feature fillState()")
+order = ["if (!thin::onMain() || f.state != Feature::installed || f.broken || !r.openFill || !r.opened.load(std::memory_order_acquire) ||\n"
+         "        r.openPass != pass || r.latched.load(std::memory_order_acquire)) return;",
+         "++w.sliced;", "x.lighting = shaderClass == 0;", "x.flatCell = styled() && r.style->cellStyle == CellStyle::flat;",
+         "x.writeMask = peek<std::uint32_t>(r.state,fill_offset::writeMask);", "const FillSkip skip = fillGate(x);", "fillFrameConstants()",
+         "if (!f.guard.on) {", "++w.skips[static_cast<std::size_t>(FillSkip::guard)];", "frame_method::rsGetState,&savedRaster",
+         "fill_method::omGetDepthStencilState,&savedDepth,&savedRef", "frame_method::omGetBlendState,&savedBlend,",
+         "frame_method::psGetShader,&savedPixel,", "frame_method::psGetConstantBuffers,fillBuffer,1u,",
+         "frame_method::rsSetState,raster", "fill_method::omSetDepthStencilState,depth,", "frame_method::omSetBlendState,f.blend,",
+         "frame_method::psSetShader,f.cap,", "frame_method::psSetConstantBuffers,fillBuffer,1u,static_cast<void* const*>(constants)",
+         "fill_method::drawIndexed,3u*static_cast<std::uint32_t>(triangles),0u,0", "static_cast<void* const*>(savedConstants)",
+         "frame_method::psSetShader,savedPixel,", "frame_method::omSetBlendState,savedBlend,", "fill_method::omSetDepthStencilState,savedDepth,savedRef",
+         "frame_method::rsSetState,savedRaster", "if (checkRaster != savedRaster || checkPixel != savedPixel) ++f.mismatch;",
+         "releaseObject(object);", "++w.filled; ++w.restores;"]
+assert all(draw_fill.index(a) < draw_fill.index(b) for a, b in zip(order, order[1:]))
+assert "for (void* object : {checkRaster,checkPixel,savedRaster,savedDepth,savedBlend,savedPixel,savedConstants[0]}) releaseObject(object);" in draw_fill
+for forbidden in ("new ", "std::vector", "malloc", "make_unique", "std::string"):
+    assert forbidden not in draw_fill, forbidden
+for forbidden in ("safe_write", "VirtualAlloc", "VirtualProtect", "write_vfunc", "write_call", "write_branch", "AllocTrampoline", "GetSingleton",
+                  "AddTask(", "BSFixedString", "ClearState", "OMSetRenderTargets", "omSetRenderTargets", "iaSet"):
+    assert forbidden not in fill, forbidden
+install_fill = fill_body("inline void installFill(std::uintptr_t base) {", "// configure, after validate")
+order = ["if (!r.fill) return;", "fillSiteCheck(base,depthTable,rasterizerTable,image)", "Refusal::fillSite", "frame_method::createPixelShader",
+         "frame_method::createBlendState", "method::createBuffer", "Refusal::fillDevice", "f.depthTable = ", "f.state = Feature::installed;"]
+assert all(install_fill.index(a) < install_fill.index(b) for a, b in zip(order, order[1:]))
+map_fill = fill_body("inline bool fillFrameConstants() {", "// RestoreGeometry hook")
+assert map_fill.index("method::map,f.constants,") < map_fill.index("Refusal::fillMap") < map_fill.index("std::memcpy(mapped.data,&k,sizeof(FillConstants));")
+for constant in ("constexpr Address depthStencilTableAddress{411362,0x3330230};", "constexpr Address rasterizerTableAddress{411363,0x33309b0};",
+                 "constexpr std::uint32_t cullBack = 1, cullFront = 2, depthTestWrite = 3, depthEqual = 4;",
+                 "constexpr std::size_t geometryType = 0x150, geometryTriangles = 0x158, geometryData = 0x138;", "constexpr unsigned fillBuffer = 13;"):
+    assert constant in fill_policy, constant
+assert "LineBudget shaderFillLines{shader::traceLines};" in spike and gate.count('"FixedCameraSpike","iCutFill"') == 1 and \
+    gate.count('"FixedCameraSpike","sCutFillColor"') == 1 and "\niCutFill=0\n" in ini and "\nsCutFillColor=0,0,0\n" in ini
+assert "unsigned fill{0};" in cut_policy and "std::uint64_t refusalBit(Refusal code)" in cut_policy and "std::atomic<std::uint64_t> refusals{};" in cut
+assert (Path(__file__).resolve().parents[1] / "shaders/fixed_spike_cut_fill_ps.hlsl").exists()
+print("PASS shader Stage 3.1 fill wiring: fill runtime only with iCutFill=1; installed after every earlier pass with its guards and objects "
+      "first; no code write, no new hook; drawn in the Lighting RestoreGeometry hook before the engine's, main thread, plane-cut passes "
+      "only; rasteriser, depth-stencil, blend, pixel shader and pixel slot 13 saved, set back in reverse and released; no allocation "
+      "per frame; one site per FCS-98..101")

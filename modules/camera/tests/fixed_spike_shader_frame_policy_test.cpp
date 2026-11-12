@@ -21,7 +21,7 @@ void codes() {
     // The fifth pass continues at 93 without a gap; 97 fills the once-mask.
     constexpr std::array frame{Refusal::frameSite,Refusal::frameMemory,Refusal::frameDevice,Refusal::frameThread,Refusal::frameRun};
     for (std::size_t i = 0;i < frame.size();++i) assert(static_cast<unsigned>(frame[i]) == 93u+i);
-    assert(lastRefusal == 97 && lastRefusal-firstRefusal == 31 && refusalBit(Refusal::frameRun) == 0x80000000u);
+    assert(lastRefusal >= 97 && refusalBit(Refusal::frameRun) == std::uint64_t{1} << 31);
     assert(frameSkipNames.size() == 8 && std::string(frameSkipNames[static_cast<std::size_t>(FrameSkip::capture)]) == "capture" &&
         std::string(frameSkipNames[static_cast<std::size_t>(FrameSkip::shared)]) == "shared");
     assert(std::string(bandNames[static_cast<std::size_t>(BandState::kit)]) == "kit");

@@ -202,6 +202,7 @@ inline void bindStyle(const Entry& entry,void* buffer,std::size_t shaderClass,bo
     invoke<void>(r.context,method::vsSetConstantBuffers,cutBuffer,1u,static_cast<void* const*>(buffers));
     invoke<void>(r.context,method::vsSetShader,entry.patched,static_cast<void* const*>(nullptr),0u);
     r.openObject = entry.object;
+    r.openFill = mainView && buffer != runtime->style->removeBuffer; // Stage 3.1: sliced, not removed whole, main view
     r.opened.store(true,std::memory_order_release);
     if (!mainView) return;
     auto& w = r.windows[0];

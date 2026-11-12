@@ -8,6 +8,8 @@
 
 **Stage 2 (2026-11-11, base `3528e92`).** Owner go "Start Stage 2": one full-screen frame pass of our own after the main world render and before image space (soft cut edge, radial falloff, vignette, exact void colour), behind `bFramePass` (default on in mode 3). Everything about it is in **"Stage 2: the frame pass"** below. Its game rows are **NOT_RUN**.
 
+**Stage 3.1 (2026-11-11, base `9573098`).** Owner go "Start solid caps": a back-face fill of plane-cut Lighting draws in caves and ruins, behind `iCutFill` (default 0). See **"Stage 3.1: solid caps by back-face fill"** below. The shader runtime's once-mask is now 64 bits wide (codes 66..101). Its game rows are **NOT_RUN**.
+
 **Status.** Source, portable tests, wiring audit, offline binary audit and offline shader-archive audit are complete and uncommitted. The Windows `/W4 /WX` build is **NOT_RUN** (no MSVC here). **Every in-game row is NOT_RUN**: nothing was launched, no shader was created on a device. The mode is default-off: with `iSeeThroughMode` absent or 0..2 no shader-cut runtime is allocated and no hook is installed.
 
 Each claim is marked **Source** (file:line, binary RVA, Address Library ID, the shipped shader archive, or a URL and revision) or **Hypothesis**. RVAs are relative to image base `0x140000000` of `SkyrimSE.exe`, SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`; IDs are resolved through `session-p4/stage-camera-rc1/Data/SKSE/Plugins/versionlib-1-7-104-0.bin`, SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842` (ID *n* at file offset `96 + 4n`). Shader archive: `Data/Skyrim - Shaders.bsa`, SHA-256 `fd1ba630f443353ed21ed4ca0380968f9c7091c8434518ea3cc79bc6d38c18e7`, one uncompressed file `shadersfx\shaders011.fxp` (67,768,128 bytes at archive offset 0x66). Disassembly: `objdump -d -M intel`. Scratch tools (ID resolver, PE reader, a scanner for vtable calls on a global COM object, a DXBC disassembler, a reference checksum, a ctypes wrapper for vkd3d-shader) stayed outside the worktree.
@@ -1216,6 +1218,147 @@ From the first pass, still valid per the review: the target and depth tables, th
 - Eye adaptation, banding and TAA behaviour; frame cost (one full-screen triangle, one depth load and about 60 ALU per pixel, ~40 COM calls on the CPU; invisible under the 60 fps cap).
 - The name `kFreezeFrameBackground` for menu flag 0x20.
 
+## Stage 3.1: solid caps by back-face fill (2026-11-11, base `9573098`)
+
+Owner go "Start solid caps". Specification: the orchestrator's brief, and `session-p55/research/stage3-feasibility.md` Q1/Q2. Key `iCutFill` (default 0). Every game row is **NOT_RUN**, and so is the Windows build.
+
+### Research claims re-checked in the binary (SkyrimSE.exe 1.7.104)
+
+| Claim | Result |
+| --- | --- |
+| ID 107644 (1560340) calls `SetupGeometry`, the draw ID 107637 (155F050), then `RestoreGeometry` through vtable `+0x38` at 1560586, 15605FC and 1560668 (rdx = the pass). Between the draw and `RestoreGeometry`, the first branch calls 140F074D0 on a stack object (1560575; not followed: no device call is expected there); the other two call nothing. | **Confirmed** (1560560..15606A0). |
+| ID 107637 reads the type byte `geometry+0x150` (155F05D, geometry = pass `+0x10`) and jumps through 155F7B8. Type 3 → 155F1D4: `ID 77263(renderer, [geometry+0x138], 0, u16 [geometry+0x158])`. The handler then only restores registers (155F78A..155F7B6). | **Confirmed**: the table decoded (type 3 = 155F1D4; types 1..13 listed in the scratch notes); type 12 passes the count in r8 (different), so it is not admitted. |
+| ID 77263 (100BCD0): vertex description → state `+0x340` (bit 0x400), topology 4 → `+0x358` (bit 0x800), flush ID 77386, IASetIndexBuffer (`+0x98`, R16_UINT), IASetVertexBuffers (`+0x90`), **DrawIndexed(3·n, start, 0)** (`+0x60` at 100BDAA). | **Confirmed** (100BCD0..100BDBC). |
+| The flush clears the dirty word (1011301) and binds depth-stencil from table ID 411362 (3330230) at `mode(+0x88)·40 + stencil(+0x90)` with ref `+0x94` (1010FD1..1011006), and the rasteriser from table ID 411363 (33309B0) at `((fill(+0x98)·3 + cull(+0x9C))·12 + bias(+0xA0))·2 + scissor(+0xA4)` (1011019..1011060); blend from ID 411364 by `+0xA8`, `+0xAC` (alpha to coverage), `+0xB0`, `+0x5D0` (101110A..101114C); the alpha-test constant from `+0xB4`/`+0xB8` (101118D..10111AB). | **Confirmed**; the review confirmed 140F074D0 is a destructor in the skinned branch only. |
+| ID 77652 (102B6C0) creates 144 rasteriser states through device `+0xB0` into 33309B0: fill 0→SOLID, 1→WIREFRAME; **cull 0→NONE, 1→BACK, 2→FRONT**; FrontCounterClockwise 1 and DepthClipEnable 1 in every entry; scissor by the last index. | **Confirmed** (102B6DF..102B88E). |
+| The depth table (102B120, device `+0xA8` into 3330230): mode 0 off/ALWAYS, 1 test LESS_EQUAL no write, 2 write ALWAYS, **3 test LESS_EQUAL + write**, 4 EQUAL no write, 5 GREATER_EQUAL no write; 40 stencil modes each. | **Confirmed** (jump table 102B5B4). |
+| Lighting `SetupGeometry` overrides `+0x88` per material (to 1 without bit 32, to 0 without bit 31; 154A721..154A799); Lighting `RestoreGeometry` (154A900) restores `+0x88` and `+0xB0` and the stencil for pass type 0xA in the shadow state only. So, read before the engine's `RestoreGeometry`, the shadow state holds the draw's values. | **Confirmed**. |
+| `SetPixelShader` ID 77356 (1010290) stores state `+0x350` and calls `PSSetShader` at once. | **Confirmed**. |
+| Pixel constant-buffer slot for the cap. | **New**: no shipped pixel shader declares cb13 (archive census of all 12,635 pixel shaders: slots 0, 1, 2, 11, 12 only). |
+
+No claim failed, so the draw path is the research's option (a).
+
+### Design as built
+
+- `iCutFill=1` creates a fill runtime. `commit` checks the two table IDs and eight evidence windows (FCS-98), then creates the cap pixel shader, a blend state and a 48-byte constant buffer (FCS-99). Nothing in the engine is written and nothing new is hooked. With `iCutFill=0` nothing exists: the only difference from `9573098` is one null test in the RestoreGeometry hook and two INI reads.
+- `apply` (the flat-cut bind) and `bindStyle` (Stage 1's binds) note whether the open pass is a plane cut in the main view (`openFill`). Whole removals and shadow passes are not.
+- In the RestoreGeometry hook of every class, **before** the engine's `RestoreGeometry`, `cutFill` counts every such pass on the main thread (`sliced`) and gates it. The gate order is: class (Lighting only), cell (Stage 1 on and the census says flat: caves and ruins, never kit buildings, never with `iCutStyle=0`), actor (skinned), type 3, cull 1 (back), blend 0 and no alpha-to-coverage, no alpha test, depth mode 3 or 4, budget 2,048 per frame, layout (triangles, renderer data, table entries). The first failing gate is counted.
+- An admitted pass is drawn again with `DrawIndexed(3·triangles, 0, 0)`. The fill changes four things, each read first with Get, set back in reverse order, and released:
+  - the rasteriser: the engine's table entry for the draw's fill, bias and scissor, with cull 2 (front);
+  - the depth-stencil state: the engine's entry for mode 3 (test and write) with the draw's stencil mode and reference;
+  - the blend state: ours. No blending. Masks: target 0 RGBA, target 1 (motion vectors) 0, target 2 (normal) RGBA, target 3 0;
+  - the pixel shader, with its constants in pixel slot 13.
+
+  The patched vertex shader, the plane in slot 13, the buffers, the targets and the viewport are the draw's own and are not touched. A read-back compares the rasteriser state and the pixel shader (`mismatch`).
+- **Cap shader** (`shaders/fixed_spike_cut_fill_ps.hlsl`, from scratch, built and checked like the frame shaders: vkd3d, ISGN/OSGN/SHEX, source hash in the header):
+  - target 0: the cap colour, alpha 1;
+  - target 2: (0.5, 0.5, 0, 0), a neutral normal with no specular or reflection;
+  - targets 1 and 3: masked.
+- **Player guard.** I chose a per-pixel guard because a per-draw one fails in caves: Embershard is one mesh whose bound always contains the player, so "no fill when the bound meets the player" would fill nothing there.
+  - Once per frame, at the first fill, the guard projects a box around the player (feet ±48 in x and y, up to feet + 144) with the main view's matrix and viewport from the render state (the pass is a published-view pass), pads it by 16 pixels, and takes its farthest depth.
+  - The cap shader discards any cap pixel inside the rectangle's inscribed ellipse at or in front of that depth.
+  - So a low ceiling or the outside of a near wall never covers the player; behind the player, caps are drawn. Each filled draw whose bound meets the box is counted as `guarded` (informative).
+- Keys: `iCutFill` 0/1 (default 0; anything else becomes 0, reported as FCS-66) and `sCutFillColor` (three numbers 0..1, default `0,0,0`; read only with the fill on).
+
+### Fix pass after the review of the fill (PASS, 0/0/4)
+
+1. **Only the pass that opened the cut.** The SetupGeometry hook records the pass whose `consider` opened the cut (`openPass`, cleared by `finish`). `cutFill` draws only when the restoring pass is that pass, and never after a latch. Previously, after a nested SetupGeometry fault, the nested pass could have been filled once with its own unpatched vertex shader.
+2. **No guard, no fill.** When the guard cannot be placed (a corner of the player's box behind the eye), that frame's admitted draws are not filled and are counted as `skipGuard`. Previously they would have been filled without the hole around the player.
+3. **Write mask.** The blend index's write-mask factor (`+0xB0`) must be **2**. In the blend builder ID 77649 (RVA 102ABD0), the jump table at 102B0DC sends index 2 (entry at 102B0E4) straight to the creation (102AFFB) with the defaults: masks 0xF on all eight targets (102AE60..). The other indices mask channels (7, 3, 0xC, 1, 2, 4, 8 on target 0), target 1, or targets 1..7. ID 36555 sets `+0xB0 = 2` before the main frame (65698E). Draws with any other value are counted as `skipMask` (gate order: … depth, mask, budget, layout, then guard). Both bytes are now evidence windows 18 and 19 (FCS-98).
+4. **Target 2.** The smallest shipped Lighting pixel shader (Lighting pixel run index 5550; vkd3d disassembly) writes `o2 = (n.xy / sqrt(8 − 8·n.z) + 0.5, 0, smoothstep(cb2[7].x, cb2[7].y, …)·cb2[7].w)`. That is a spheremap-encoded view normal, z = 0, and w = the specular/reflection mask, which is 0 for a material with `cb2[7].w = 0`. (When `cb2[7].z > 1e-5`, a different branch copies the colour into o2.) The cap's (0.5, 0.5, 0, 0) is what the engine writes for a non-reflective surface whose view normal is (0, 0, 1). It is kept; the cap shader is unchanged (956 bytes).
+
+### Log line (once, after the frame line, only with `iCutFill=1`)
+
+```
+FixedCameraSpike shader fill installed fill=%s colour=%.3f,%.3f,%.3f cap=%u
+```
+
+### Trace: `FixedShaderFill` (new optional kind, only with `iCutFill=1`; every other row is unchanged)
+
+```
+FixedShaderFill t=%.3f frame=%llu fill=%s colour=%.3f,%.3f,%.3f sliced=%llu filled=%llu skipClass=%llu skipCell=%llu skipActor=%llu skipType=%llu skipCull=%llu skipBlend=%llu skipAlpha=%llu skipDepth=%llu skipMask=%llu skipBudget=%llu skipLayout=%llu skipGuard=%llu guarded=%llu restores=%llu mismatch=%llu guardRect=%.0f,%.0f,%.0f,%.0f micros=%.1f sample=window
+```
+
+`sliced` = `filled` + every `skip*`: plane-cut passes of the main view of all three classes that reached the gate. `restores` = filled (one save/restore each). `mismatch` is cumulative and must stay 0. `guardRect` is the last frame's guard in pixels (nan before the first fill). Longest row: 684 of 768 bytes. For the checker: register the kind in `OPTIONAL_KINDS` with `CAPS = 6000`; FCS-98, 99 and 101 are faults; FCS-100 is informative.
+
+### Refusal codes (FCS-98..101). The once-mask is now 64 bits wide (codes 66..129); 66..101 are in use.
+
+| Code | Site | Meaning; what stays in force |
+| --- | --- | --- |
+| FCS-98 `check=N` | `installFill` | 1 depth-stencil table ID, 2 rasteriser table ID, 10..19 an evidence window (the flush's two index computations, the type switch, the type-3 arguments, DrawIndexed, the rasteriser builder's FrontCounterClockwise and cull map, depth mode 3, the blend builder's write-mask entry 2 and its 0xF defaults). No fill; the cut is unchanged. |
+| FCS-99 `object=N` | `installFill` | The device refused the cap shader (1), the blend state (2) or the constant buffer (3). Anything made is released. No fill. |
+| FCS-100 | `cutFill` | Informative: a gated draw had no triangles, no renderer data, or a state index or table entry missing. That draw is not filled (`skipLayout`). |
+| FCS-101 | `cutFill` | The fill's constant buffer could not be mapped. The fill is off for the session; the cut is unchanged. |
+
+### Tests (g++ 15.2.0, Python 3.14.4)
+
+- **18 portable tests: PASS.** The new `fixed_spike_shader_fill_policy_test` covers:
+  - settings;
+  - each gate and their order;
+  - the table indices;
+  - the evidence bytes decoded to the offsets used;
+  - `fillSiteCheck` at three image bases with every guarded byte flipped;
+  - the guard against an engine-shaped view-projection at the Embershard pose (lid over the head and near-wall outside discarded; floor behind kept; corners outside the ellipse; no guard when the eye is inside the box);
+  - the blend description;
+  - the cap shader's bytes and source hash;
+  - the trace row.
+- The shader policy test's refusal-range rows are updated to 66..101.
+- **Wiring audit, 12 sections: PASS.** The new `shader Stage 3.1 fill wiring` section is included, and four hand mutations each failed it (fill after the engine restore, raster not restored, kit cells filled, no thread check).
+- `frame_shaders.py --check`: MATCH (three shaders). `open_tops.py --check`: MATCH.
+- Strict g++ check of the adapter against stand-ins: 0 warnings.
+
+### First-run protocol (for the orchestrator; nothing here was run)
+
+Routes `p55-comb-cave-*` (Embershard Mine, W12 pose) and `p55-comb-bfb-*` (Bleak Falls Barrow), with `iCutFill=1`, `iCutStyle=1`, `iShaderCutTrace=1`, four headings each. Expected log line: `shader fill installed fill=installed colour=0.000,0.000,0.000 cap=956`. No FCS-98/99/101.
+
+**Counters.**
+- `FixedShaderStyle cell=flat` in both cells.
+- `FixedShaderFill`:
+  - `sliced` about the `FixedShader cut` count (Embershard about 308 per window in W3, with Utility and Effect counted under `skipClass`);
+  - `filled > 0`;
+  - `skipCell = 0`; `skipType` small (answers the research's first unknown);
+  - `skipCull` / `skipBlend` / `skipAlpha` / `skipDepth` show what share is two-sided, decals or cards;
+  - `mismatch = 0`;
+  - `guardRect` around the screen centre.
+- The Mare with `iCutFill=1`: `skipCell` equals `sliced` and `filled = 0` (no change on screen).
+
+**Embershard picture, against `results/wave12/cave-nofill-vs-fill.png`.** The outer sides of the near rock shell, up to the plane, are solid black instead of showing the floor through the walls. Cut wooden posts and beams show dark tops. Elsewhere the black void continues, so the cave reads as black rock cut at the plane. The player is never covered: an ellipse around the player shows through any cap. Floor and props behind the player are unchanged.
+
+**Bleak Falls Barrow.** The chamber walls' cut tops and the outer side of the near walls go solid black. Low passages near the player may become black lids except around the player.
+
+**A/B:** `iCutFill=0` reproduces 9573098 exactly.
+
+### Risks
+
+| Risk | How it would show |
+| --- | --- |
+| Black lids over low ceilings and overhangs under the plane | Large black areas over passages and loot away from the player; the guard only keeps the player clear. Needs a lower plane in caves or a ceiling rule (Stage 3.2). |
+| Near-wall outer slabs hide floor | About 0.7·h (about 112 units) of floor behind each near wall at pitch 55. |
+| TAA ghosting at cap edges | Motion vectors are kept from what was drawn before; a cap edge can trail while the camera follows the player. Step 3.4 if it shows. |
+| Fog and SAO | Image-space fog may tint distant caps toward the cell's fog colour; SAO can only darken. Stage 2's frame pass darkens further. |
+| z-fighting | A back face lying on another piece's front face; LESS_EQUAL lets the later draw win. |
+| Stencil | The fill uses the draw's own stencil mode and reference, so it writes the same stencil bits the draw did, over the cap pixels. |
+| Cost | About 15 device calls per fill and a second vertex pass of every filled draw. Measured only under the 60 fps cap. |
+
+### What the reviewer must check
+
+1. The re-checked rows above, especially that nothing between ID 107637's return and the hook changes device state (140F074D0 in the first branch was not followed).
+2. That `+0xAC` is alpha to coverage and `+0xB4` the alpha-test enable (read from the flush only).
+3. The index arithmetic in `frontCullIndex` and `depthWriteIndex` against the flush.
+4. The save/restore in `cutFill`: every Get with its Set and its release.
+5. Pixel slot 13 against the engine's `PSSetConstantBuffers` start slots (not scanned; the archive census says no shader reads 13, and the slot is saved and restored anyway).
+6. The blend description (independent masks; slot 1 masked).
+7. MSVC `/W4 /WX`.
+
+### Unverified
+
+- Every game row.
+- That cave shells and ruin walls are type 3, cull 1, opaque, depth mode 3 or 4 (the counters answer it).
+- That `DrawIndexed` with the device state left by the engine's draw redraws the same triangles (by construction for type 3).
+- DXVK linking the cap pixel shader (SV_Position only) with every patched vertex shader, and writes to an unbound slot 3.
+- The look: lids, slabs, ghosting, fog tint.
+- That the guard's farthest depth also covers the player's weapon and cape (box ±48 and 144 high).
+
 ## Reproduce the offline checks
 
 ```sh
@@ -1268,6 +1411,14 @@ objdump -d -M intel --start-address=0x14100f8b0 --stop-address=0x14100f91a "$E" 
 objdump -d -M intel --start-address=0x14100ae80 --stop-address=0x14100b521 "$E"   # ID 77258: rows 8..11 = transpose(state+0x430), Map and copy
 objdump -d -M intel --start-address=0x1400e97b0 --stop-address=0x1400e97d3 "$E"   # global 3330188 = renderer + 0x10
 python3 -B -I modules/camera/tools/frame_shaders.py --check                         # the shader header equals a fresh vkd3d-shader build
+# Stage 3.1 (the back-face fill)
+objdump -d -M intel --start-address=0x141560560 --stop-address=0x1415606a1 "$E"   # ID 107644: draw 155F050, then RestoreGeometry via +0x38
+objdump -d -M intel --start-address=0x14155f050 --stop-address=0x14155f0a2 "$E"   # ID 107637: type byte +0x150, jump table 155F7B8
+objdump -d -M intel --start-address=0x14155f1d4 --stop-address=0x14155f1f7 "$E"   # type 3: ID 77263(renderer, +0x138, 0, u16 +0x158)
+objdump -d -M intel --start-address=0x14100bcd0 --stop-address=0x14100bdbd "$E"   # ID 77263: flush, IA, DrawIndexed(3n, start, 0)
+objdump -d -M intel --start-address=0x14102b6c0 --stop-address=0x14102b8d7 "$E"   # ID 77652: rasteriser table, cull 0/1/2 -> NONE/BACK/FRONT, FCCW 1
+objdump -d -M intel --start-address=0x14102b120 --stop-address=0x14102b5b2 "$E"   # depth-stencil table: mode 3 = LESS_EQUAL + write
+objdump -d -M intel --start-address=0x14154a700 --stop-address=0x14154a9ad "$E"   # Lighting Setup/RestoreGeometry: depth-mode overrides in the shadow state
 python3 -B -I modules/camera/tools/frame_shaders.py --validate "$TMPDIR/frame"      # disassembly and SPIR-V of both blobs
 ```
 
