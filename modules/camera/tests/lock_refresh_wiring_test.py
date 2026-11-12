@@ -1052,7 +1052,7 @@ assert {n for n in spike_numbers if 51 <= n <= 59} == set(range(51, 60)) and 15 
 # INI: one [FixedCameraSpike] section, every key of both sides once, defaults as on each branch.
 section = ini[ini.index("[FixedCameraSpike]"):]
 assert ini.count("[FixedCameraSpike]") == 1 and "\n[" not in section[1:]
-for key, value in (("iSeeThroughMode", "0"), ("iRoomSeedMode", "0"), ("bHoldPlayerFade", "1"), ("fShaderCutHeight", "160"),
+for key, value in (("iSeeThroughMode", "0"), ("iRoomSeedMode", "1"), ("bHoldPlayerFade", "1"), ("fShaderCutHeight", "160"),
                    ("bShaderCutEffect", "1"), ("bVoidColor", "1"), ("sVoidColor", "0,0,0"), ("bVoidHideSky", "1"),
                    ("bShaderCutEffectWhole", "1"), ("iCutStyle", "1"), ("bCutKeepFarGallery", "0"), ("bCutStyleShadows", "1"),
                    ("iShaderCutTrace", "0"), ("iLightFillMode", "0"), ("fLightFillHeight", "192"), ("fLightFillRadius", "640"),
