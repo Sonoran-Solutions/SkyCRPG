@@ -25,7 +25,8 @@ void settings() {
     assert(!configured(defaults));
     LightConfig c; c.trace = true; assert(configured(c));
     c = {}; c.fillMode = 1; assert(configured(c));
-    c = {}; c.fillMode = 2; c.fillHeight = -5; c.fillRadius = 1e9f; c.fillFade = 0; c.fillRed = 3; c.fillGreen = -1; c.fillBlue = nan;
+    c = {}; c.fillMode = 2; assert(configured(c) && validate(c,&adjusted).fillMode == 2 && !adjusted); // the dungeon gate
+    c = {}; c.fillMode = 3; c.fillHeight = -5; c.fillRadius = 1e9f; c.fillFade = 0; c.fillRed = 3; c.fillGreen = -1; c.fillBlue = nan;
     c = validate(c,&adjusted);
     assert(adjusted && c.fillMode == 0 && c.fillHeight == 0.0f && c.fillRadius == 4096.0f && c.fillFade == .1f);
     assert(c.fillRed == 1.0f && c.fillGreen == 0.0f && c.fillBlue == .70f);
@@ -39,14 +40,117 @@ void settings() {
 }
 
 void wanted() {
-    // Every input must hold; mode 0 never wants the light.
-    for (unsigned mode : {0u,1u,2u})
+    // Every input must hold; mode 0 never wants the light. Mode 1 ignores the
+    // dungeon gate (unchanged); mode 2 needs it, and without it is exactly the
+    // exterior case (unwanted).
+    for (unsigned mode : {0u,1u,2u,3u})
         for (bool eligible : {false,true})
             for (bool interior : {false,true})
-                for (bool ready : {false,true})
+                for (bool ready : {false,true}) {
                     assert(fillWanted(mode,eligible,interior,ready) == (mode == 1 && eligible && interior && ready));
+                    for (bool dungeon : {false,true}) {
+                        const bool want = fillWanted(mode,eligible,interior,ready,dungeon);
+                        assert(want == ((mode == 1 || (mode == 2 && dungeon)) && eligible && interior && ready));
+                        if (mode == 1) assert(want == fillWanted(1,eligible,interior,ready));
+                        if (mode == 2 && !dungeon) assert(!want && want == fillWanted(2,eligible,false,ready,true));
+                    }
+                }
     const Vec at = fillPoint({10,20,30},192);
     assert(at.x == 10 && at.y == 20 && at.z == 222);
+}
+
+// Index of a gate keyword by name; asserts it exists.
+std::size_t kw(const char* name) {
+    for (std::size_t i = 0;i < gateKeywords.size();++i) if (std::string(gateKeywords[i].name) == name) return i;
+    assert(false && "unknown gate keyword");
+    return 0;
+}
+std::uint64_t bits(std::initializer_list<const char*> names) {
+    std::uint64_t out{};
+    for (const char* name : names) out |= std::uint64_t{1} << kw(name);
+    return out;
+}
+void gate() {
+    // The table: unique names and form IDs, every name a vanilla LocType keyword,
+    // both classes present and disjoint, LocTypeMine deliberately absent.
+    for (std::size_t i = 0;i < gateKeywords.size();++i) {
+        assert(std::string(gateKeywords[i].name).rfind("LocType",0) == 0 && gateKeywords[i].skyrimId != 0u);
+        for (std::size_t j = i+1;j < gateKeywords.size();++j)
+            assert(std::string(gateKeywords[i].name) != gateKeywords[j].name && gateKeywords[i].skyrimId != gateKeywords[j].skyrimId);
+    }
+    for (const char* missing : {"LocTypeMine","LocTypeHold","LocTypeClearable"})
+        for (const auto& entry : gateKeywords) assert(std::string(entry.name) != missing);
+    assert(dungeonMask != 0u && settledMask != 0u && (dungeonMask & settledMask) == 0u);
+    assert((dungeonMask | settledMask) == (gateKeywords.size() == 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << gateKeywords.size())-1u));
+    for (const char* name : {"LocTypeDungeon","LocTypeDraugrCrypt","LocTypeAnimalDen","LocTypeFalmerHive","LocTypeDwarvenAutomatons",
+        "LocTypeVampireLair","LocTypeWarlockLair","LocTypeDragonPriestLair","LocTypeHagravenNest","LocTypeGiantCamp","LocTypeForswornCamp",
+        "LocTypeBanditCamp","LocTypeMilitaryFort"})
+        assert(gateKeywords[kw(name)].kind == GateClass::dungeon);
+    for (const char* name : {"LocTypeHabitation","LocTypeDwelling","LocTypeInn","LocTypeCastle","LocTypeCity","LocTypeTown",
+        "LocTypePlayerHouse","LocTypeStore","LocTypeTemple"})
+        assert(gateKeywords[kw(name)].kind == GateClass::settled);
+    assert(gateKeywords[kw("LocTypeDungeon")].skyrimId == 0x000130DBu && gateKeywords[kw("LocTypeHabitation")].skyrimId == 0x00039793u);
+
+    // No location: off, reported as nolocation (also with a null array).
+    GateResult g = dungeonGate(nullptr,0);
+    assert(!g.dungeon && g.keyword < 0 && g.levels == 0 && std::string(gateKeywordName(g)) == "nolocation");
+    g = dungeonGate(nullptr,3);
+    assert(!g.dungeon && g.levels == 0 && std::string(gateKeywordName(g)) == "nolocation");
+    // A location chain without any listed keyword (Helgen Keep: Helgen < Falkreath hold < Tamriel): off, kw=none.
+    std::array<std::uint64_t,3> plain{0u,0u,0u};
+    g = dungeonGate(plain.data(),3);
+    assert(!g.dungeon && g.keyword < 0 && g.levels == 3 && std::string(gateKeywordName(g)) == "none");
+    assert(std::string(gateName(g)) == "notdungeon");
+    // Embershard Mine: [Dungeon, BanditCamp] < Falkreath hold < Tamriel. LocTypeDungeon is reported first.
+    std::array<std::uint64_t,3> embershard{bits({"LocTypeBanditCamp","LocTypeDungeon"}),0u,0u};
+    g = dungeonGate(embershard.data(),3);
+    assert(g.dungeon && std::string(gateKeywordName(g)) == "LocTypeDungeon" && g.level == 0 && g.levels == 3);
+    assert(std::string(gateName(g)) == "dungeon");
+    // Fort Greymoor: [MilitaryFort] only.
+    std::array<std::uint64_t,2> fort{bits({"LocTypeMilitaryFort"}),0u};
+    g = dungeonGate(fort.data(),2);
+    assert(g.dungeon && std::string(gateKeywordName(g)) == "LocTypeMilitaryFort");
+    // Settled wins on the same level: Left Hand Mine [Dwelling, Mine (unlisted)] < [Settlement, Habitation].
+    std::array<std::uint64_t,3> leftHand{bits({"LocTypeDwelling"}),bits({"LocTypeSettlement","LocTypeHabitation"}),0u};
+    g = dungeonGate(leftHand.data(),3);
+    assert(!g.dungeon && std::string(gateKeywordName(g)) == "LocTypeDwelling" && g.level == 0);
+    // ... even with a dungeon keyword on that level (Soljund's Sinkhole's own location).
+    std::array<std::uint64_t,1> mixed{bits({"LocTypeDraugrCrypt","LocTypeDungeon","LocTypeHabitation","LocTypeSettlement"})};
+    g = dungeonGate(mixed.data(),1);
+    assert(!g.dungeon && std::string(gateKeywordName(g)) == "LocTypeSettlement");
+    // The bannered mare: [Dwelling, Inn] < Whiterun [Habitation, City]: the most specific settled name.
+    std::array<std::uint64_t,2> inn{bits({"LocTypeDwelling","LocTypeInn"}),bits({"LocTypeHabitation","LocTypeCity"})};
+    g = dungeonGate(inn.data(),2);
+    assert(!g.dungeon && std::string(gateKeywordName(g)) == "LocTypeInn");
+    // Innermost decides: a barrow parented to a town (Shroud Hearth Barrow < Ivarstead) is a dungeon ...
+    std::array<std::uint64_t,3> barrow{bits({"LocTypeDraugrCrypt","LocTypeDungeon"}),bits({"LocTypeTown","LocTypeHabitation"}),0u};
+    g = dungeonGate(barrow.data(),3);
+    assert(g.dungeon && g.level == 0 && std::string(gateKeywordName(g)) == "LocTypeDungeon");
+    // ... a town mine with only LocTypeMine falls through to its town (Quicksilver < Dawnstar) ...
+    std::array<std::uint64_t,3> townMine{0u,bits({"LocTypeTown","LocTypeHabitation","LocTypeHabitationHasInn"}),0u};
+    g = dungeonGate(townMine.data(),3);
+    assert(!g.dungeon && g.level == 1 && std::string(gateKeywordName(g)) == "LocTypeTown");
+    // ... an unkeyworded room inside a dungeon location inherits it ...
+    std::array<std::uint64_t,2> inner{0u,bits({"LocTypeFalmerHive"})};
+    g = dungeonGate(inner.data(),2);
+    assert(g.dungeon && g.level == 1 && std::string(gateKeywordName(g)) == "LocTypeFalmerHive");
+    // ... and a home inside a dungeon location stays unlit.
+    std::array<std::uint64_t,2> hut{bits({"LocTypeHouse"}),bits({"LocTypeDungeon"})};
+    g = dungeonGate(hut.data(),2);
+    assert(!g.dungeon && g.level == 0 && std::string(gateKeywordName(g)) == "LocTypeHouse");
+    // Bits outside the table never decide; the walk is bounded.
+    std::array<std::uint64_t,1> stray{gateKeywords.size() < 64 ? std::uint64_t{1} << 63 : 0u};
+    g = dungeonGate(stray.data(),1);
+    assert(!g.dungeon && g.keyword < 0 && std::string(gateKeywordName(g)) == "none");
+    std::array<std::uint64_t,maxLocationLevels+2> deep{};
+    deep[maxLocationLevels] = bits({"LocTypeDungeon"});
+    g = dungeonGate(deep.data(),static_cast<unsigned>(deep.size()));
+    assert(!g.dungeon && g.levels == maxLocationLevels && std::string(gateKeywordName(g)) == "none");
+    deep[maxLocationLevels-1] = bits({"LocTypeDungeon"});
+    g = dungeonGate(deep.data(),static_cast<unsigned>(deep.size()));
+    assert(g.dungeon && g.level == maxLocationLevels-1);
+    GateResult bad; bad.keyword = 999; bad.levels = 1;
+    assert(std::string(gateKeywordName(bad)) == "none");
 }
 
 void duty() {
@@ -500,6 +604,15 @@ void lines() {
     assert(formatFillEvent(line,sizeof(line),3.25,9,"hide","menu",Presence::active,2,1,0));
     assert(std::string(line) == "FixedLight t=3.250 frame=9 event=hide cause=menu presence=active adds=2 removes=1 drops=0");
     assert(!formatFillEvent(tiny,sizeof(tiny),3.25,9,"hide","menu",Presence::active,2,1,0));
+    // The dungeon gate: its own line kind (FixedLight keeps its exact field lists).
+    GateResult open; open.dungeon = true; open.keyword = static_cast<int>(kw("LocTypeDungeon")); open.level = 0; open.levels = 3;
+    assert(formatGate(line,sizeof(line),12.5,77,0x000371DEu,0x0001E83Au,open));
+    assert(std::string(line) == "FixedLightGate t=12.500 frame=77 cell=000371DE location=0001E83A gate=dungeon kw=LocTypeDungeon level=0 levels=3 sample=cell");
+    assert(formatGate(line,sizeof(line),1.0,2,0x00016BD9u,0u,GateResult{}));
+    assert(std::string(line) == "FixedLightGate t=1.000 frame=2 cell=00016BD9 location=00000000 gate=notdungeon kw=nolocation level=0 levels=0 sample=cell");
+    GateResult longest; longest.keyword = static_cast<int>(kw("LocTypeDwarvenAutomatons")); longest.level = 99999; longest.levels = 99999;
+    assert(formatGate(line,std::tuple_size<TraceRow>::value,999999.999,99999999999ull,0xffffffffu,0xffffffffu,longest));
+    assert(!formatGate(tiny,sizeof(tiny),1.0,2,1u,1u,open));
     assert(lightTraceLines > 0 && culled == 0xffu && noChannel == 0xffu);
     // The widest census line still fits one trace row.
     LightSample wide = s;
@@ -530,6 +643,7 @@ void lines() {
 int main() {
     settings();
     wanted();
+    gate();
     duty();
     silence();
     presence();

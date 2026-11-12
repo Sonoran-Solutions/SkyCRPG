@@ -98,6 +98,7 @@ import re
 spike = (Path(__file__).resolve().parents[1] / "src/fixed_spike.h").read_text()
 thin = (Path(__file__).resolve().parents[1] / "src/thin_occluder.h").read_text()
 light = (Path(__file__).resolve().parents[1] / "src/fixed_spike_light.h").read_text()
+light_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_light_policy.h").read_text()
 
 
 def spike_body(start, end):
@@ -950,7 +951,7 @@ frame_light = light_body("inline void frameLight(", "} // namespace")
 assert frame_light.index("auto& l = *lights;") < frame_light.index("if (eligible) l.silence.reset();") < \
     frame_light.index("const auto settled = settle(")
 assert frame_light.index("serviceFill(node,wanted,feet,cause);") < frame_light.index("if (!l.config.trace || !node || !eligible")
-assert "fillWanted(l.config.fillMode,duty == FillDuty::keep && finite(feet),interior,l.fillReady && node != nullptr)" in frame_light
+assert "fillWanted(l.config.fillMode,duty == FillDuty::keep && finite(feet),interior,l.fillReady && node != nullptr,dungeon)" in frame_light
 assert "if (cellId != l.cell || loadExit) { l.cell = cellId; l.track.newCell(); }" in frame_light
 # A hold never survives a cell change or a game load; it is settled (with its
 # exit cause) before anything else uses the duty, and the load flag is consumed
@@ -980,6 +981,31 @@ for pin in ("static_assert(offsetof(RE::TESCamera,currentState) == 0x28);", "sta
 # Outdoors the exit is named for it.
 assert frame_light.index("const bool interior = parent && parent->IsInteriorCell();") < \
     frame_light.index('if (eligible && !interior) cause = "exterior";') < frame_light.index("serviceFill(node,wanted,feet,cause);")
+# Dungeon gate (iLightFillMode=2): keywords resolved once at kDataLoaded (mode 2
+# only, after the fill light is ready); the cell's location read once per entered
+# cell, only in mode 2 and only for an interior; no string lookup per frame; a
+# non-dungeon interior is named like an exterior; the gate rides on its own line
+# kind (FixedLight's field lists stay exact) in the FixedLight budget.
+install_light_gate = light_body("inline void installLight(", "// endFrame(), main thread")
+assert install_light_gate.index("l.fillReady = true;") < install_light_gate.index("if (l.config.fillMode == 2) resolveGate();")
+assert light.count("resolveGate()") == 2 and light.count("gateOpen(") == 2
+for lookup in ("LookupByEditorID<RE::BGSKeyword>(", "LookupByID<RE::BGSKeyword>("):
+    assert light.count(lookup) == 1 and lookup in light_body("inline void resolveGate() {", "// Main thread, frameLight, mode 2"), lookup
+gate_read = light_body("inline bool gateOpen(", "// ---- fill light")
+assert gate_read.index("if (l.gateRead && l.gateCell == cellId) return l.gate.dungeon;") < gate_read.index("parent->GetLocation()") < \
+    gate_read.index("l.gate = dungeonGate(levels.data(),count);") < gate_read.index("l.gateCell = cellId; l.gateRead = true;")
+assert "count < maxLocationLevels" in gate_read and "at = at->parentLoc" in gate_read and "at->GetKeywords()" in gate_read
+assert "if (l.config.trace && formatGate(" in gate_read and "emitLight(line)" in gate_read and "l.gateNotes < maxGateNotes" in gate_read
+assert light.count("GetLocation()") == 1 and "Lookup" not in frame_light and "strcmp" not in gate_read
+assert "const bool dungeon = l.config.fillMode == 2 && interior && l.fillReady && gateOpen(parent,cellId);" in frame_light
+assert frame_light.index("if (cellId != l.cell || loadExit) { l.cell = cellId; l.track.newCell(); }") < \
+    frame_light.index('if (eligible && !interior) cause = "exterior";') < frame_light.index("const bool dungeon = ") < \
+    frame_light.index('cause = "notdungeon";') < frame_light.index("fillWanted(") < frame_light.index("serviceFill(node,wanted,feet,cause);")
+for pin in ("static_assert(offsetof(RE::BGSKeywordForm,keywords) == 0x08);", "static_assert(offsetof(RE::BGSKeywordForm,numKeywords) == 0x10);",
+            "static_assert(offsetof(RE::BGSLocation,parentLoc) == 0x48);", "static_assert(offsetof(RE::BGSKeyword,formEditorID) == 0x20);"):
+    assert pin in light, pin
+assert "FixedLightGate " in light_policy and "FixedLightGate" not in light_policy[light_policy.index("inline bool formatLight("):light_policy.index("inline bool formatLightLevel(")]
+assert "LineBudget" not in light_body("// ---- dungeon gate", "// ---- fill light")
 # Light level on its own line kind and budget; FixedLight carries none of it.
 assert "formatLightLevel(line,sizeof(line),s.seconds,s.frame,level)) emit(l.levelLines,line);" in frame_light
 assert "light::lightTraceLines+light::lightLevelTraceLines" in configure

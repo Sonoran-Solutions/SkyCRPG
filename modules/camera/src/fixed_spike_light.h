@@ -2,12 +2,14 @@
 #pragma once
 // Included by fixed_spike.h after its runtime helpers. P5.5-02 wave 2 package
 // "light" (DYL-217). Nothing is allocated, read or installed unless
-// [FixedCameraSpike] iLightFillMode=1 or iLightTrace=1. The light trace reads
-// the main ShadowSceneNode under its own light lock, and the fill light is an
-// ordinary dynamic point light handed to the engine's AddLight. One code patch,
-// only with iLightFillMode=1: the two light-level summers (IDs 106362 and
-// 107776, each with a single caller in ID 39946) are wrapped at their entry so
-// the fill light's own term can be taken out of every actor's light level.
+// [FixedCameraSpike] iLightFillMode=1 or 2, or iLightTrace=1. The light trace
+// reads the main ShadowSceneNode under its own light lock, and the fill light is
+// an ordinary dynamic point light handed to the engine's AddLight. One code
+// patch, only with iLightFillMode=1 or 2: the two light-level summers (IDs 106362
+// and 107776, each with a single caller in ID 39946) are wrapped at their entry
+// so the fill light's own term can be taken out of every actor's light level.
+// iLightFillMode=2 adds the dungeon gate (policy: dungeonGate): read-only, once
+// per entered cell, from the cell's location and its parents' keywords.
 #include "fixed_spike_light_policy.h"
 
 namespace skycrpg::camera::fixed::light {
@@ -74,6 +76,23 @@ static_assert(offsetof(RE::UI,numPausesGame) == 0x160);
 static_assert(offsetof(RE::TESCamera,currentState) == 0x28);
 static_assert(offsetof(RE::TESCameraState,id) == 0x18);
 static_assert(RE::CameraState::kTween == 7);
+// Dungeon gate (iLightFillMode=2), read on the main thread once per entered cell.
+// TESObjectCELL::GetLocation (ID 18905, RVA 2BB180 on 1.7.104; CommonLib 7.2.0
+// RELOCATION_ID(18474, 18905)) takes the cell and returns a BGSLocation*: the
+// encounter zone's location (loaded data +160, else ExtraEncounterZone 0x70 in
+// the cell's extra list at +48; +28 in the zone), else ExtraLocation (0x89, +10),
+// else for an exterior the worldspace's; at 2BB186-2BB2BF.
+// BGSLocation: BGSKeywordForm subobject at +30 (the ctor at 297E63-297E88 builds
+// it there and writes VTABLE_BGSLocation[2], ID 189920, at +30); keywords +38 and
+// numKeywords +40 (BGSKeywordForm ctor 1D85E0 zeroes +8 / +10); parentLoc +48
+// (PNAM; zeroed by the ctor at 297F2B). Read as plain members, no virtual call.
+// BGSKeyword: formEditorID +20 (BGSKeyword vtable ID 195248 slot 32 at 29E710
+// returns [rcx+20]; slot 33 at 29E720 stores there), read only at kDataLoaded.
+static_assert(offsetof(RE::BGSKeywordForm,keywords) == 0x08);
+static_assert(offsetof(RE::BGSKeywordForm,numKeywords) == 0x10);
+static_assert(offsetof(RE::BGSLocation,parentLoc) == 0x48);
+static_assert(offsetof(RE::BGSKeyword,formEditorID) == 0x20);
+static_assert(sizeof(RE::BGSLocation) == 0xf0);
 
 // ID 106362: (scene node, position, light count out, sun term out, ambient term
 // out, exclude light, shadow-light mask) -> sum of ID 108292 (726414-726423 sets
@@ -112,7 +131,15 @@ struct LightRuntime {
     SilenceHold silence; // which hook-silent frames belong to a menu (fillDuty)
     double nextCheck{},nextTrace{},nextShadows{},nextLevel{};
     LineBudget lines{lightTraceLines},levelLines{lightLevelTraceLines};
+    // Dungeon gate (iLightFillMode=2): keywords resolved at kDataLoaded (null =
+    // not found; never matches), and the result for the cell it was read in.
+    std::array<const RE::BGSKeyword*,gateKeywords.size()> gateForms{};
+    RE::FormID gateCell{};
+    bool gateRead{};
+    GateResult gate;
+    unsigned gateNotes{}; // plugin log lines written for entered cells (capped)
 };
+constexpr unsigned maxGateNotes = 200;
 constexpr unsigned maxPlayerRooms = 8;
 inline LightRuntime* lights = nullptr;
 
@@ -246,7 +273,7 @@ inline float hookListLevel(RE::BSShaderPropertyLightData* data,const RE::NiPoint
     stealth.npcAdjusted.fetch_add(1ull,std::memory_order_relaxed);
     return stealth.neutral ? withoutFill(total,fill) : total;
 }
-// installLight(), kDataLoaded, only with iLightFillMode=1. True = both wrappers
+// installLight(), kDataLoaded, only with iLightFillMode=1 or 2. True = both wrappers
 // are in place. Every check precedes the first write; the gateways are sealed
 // execute-read before either entry is patched.
 inline bool installStealth(std::uintptr_t base) {
@@ -294,6 +321,61 @@ inline bool installStealth(std::uintptr_t base) {
     }
     stealth.installed = true;
     return true;
+}
+
+// ---- dungeon gate (iLightFillMode=2) -------------------------------------------
+// installLight(), kDataLoaded, mode 2 only. By editor ID; if the editor-ID map
+// has no entry, the Skyrim.esm form (load index 00, so the local ID is the form
+// ID) is taken only when its own editor ID is the expected one.
+inline void resolveGate() {
+    auto& l = *lights;
+    unsigned byName{},byId{},dungeons{};
+    for (std::size_t i = 0;i < gateKeywords.size();++i) {
+        const auto& entry = gateKeywords[i];
+        const RE::BGSKeyword* form = RE::TESForm::LookupByEditorID<RE::BGSKeyword>(entry.name);
+        if (form) ++byName;
+        else if (const auto byForm = RE::TESForm::LookupByID<RE::BGSKeyword>(entry.skyrimId)) {
+            const char* text = byForm->formEditorID.c_str();
+            if (text && std::strcmp(text,entry.name) == 0) { form = byForm; ++byId; }
+        }
+        l.gateForms[i] = form;
+        if (form && entry.kind == GateClass::dungeon) ++dungeons;
+    }
+    char line[256]{};
+    std::snprintf(line,sizeof(line),"fill gate keywords=%u/%u byEditorId=%u bySkyrimId=%u dungeon=%u%s",byName+byId,
+        static_cast<unsigned>(gateKeywords.size()),byName,byId,dungeons,dungeons ? "" : " (no dungeon keyword: iLightFillMode=2 lights nothing)");
+    note(line);
+}
+// Main thread, frameLight, mode 2, interior cells only: read once per entered
+// cell (the result is static editor data, so a load into the same cell keeps it).
+// Returns whether the fill light may be lit in this cell.
+inline bool gateOpen(RE::TESObjectCELL* parent,RE::FormID cellId) {
+    auto& l = *lights;
+    if (l.gateRead && l.gateCell == cellId) return l.gate.dungeon;
+    std::array<std::uint64_t,maxLocationLevels> levels{};
+    unsigned count{};
+    const RE::BGSLocation* own = parent->GetLocation();
+    for (const RE::BGSLocation* at = own;at && count < maxLocationLevels;at = at->parentLoc) {
+        std::uint64_t bits{};
+        for (const RE::BGSKeyword* keyword : at->GetKeywords()) {
+            if (!keyword) continue;
+            for (std::size_t i = 0;i < gateKeywords.size();++i)
+                if (l.gateForms[i] == keyword) bits |= std::uint64_t{1} << i;
+        }
+        levels[count++] = bits;
+    }
+    l.gate = dungeonGate(levels.data(),count);
+    l.gateCell = cellId; l.gateRead = true;
+    const std::uint32_t location = own ? own->GetFormID() : 0u;
+    char line[320]{};
+    if (l.config.trace && formatGate(line,sizeof(line),runtime->now,runtime->frame,cellId,location,l.gate)) emitLight(line);
+    if (l.gateNotes < maxGateNotes) {
+        ++l.gateNotes;
+        std::snprintf(line,sizeof(line),"fill gate cell=%08X location=%08X gate=%s kw=%s level=%u levels=%u%s",cellId,location,
+            gateName(l.gate),gateKeywordName(l.gate),l.gate.level,l.gate.levels,l.gateNotes == maxGateNotes ? " (last gate line)" : "");
+        note(line);
+    }
+    return l.gate.dungeon;
 }
 
 // ---- fill light ----------------------------------------------------------------
@@ -407,6 +489,7 @@ inline void installLight(std::uintptr_t base) {
     // Neutral by default: without the wrappers the fill light is refused, not added unneutralised.
     if (!installStealth(base) && l.config.stealthNeutral) return;
     l.fillReady = true;
+    if (l.config.fillMode == 2) resolveGate();
 }
 // endFrame(), main thread, after the lifecycle requests are taken: a load
 // request (kPreLoadGame, kPostLoadGame, TESLoadGameEvent) ends any hold.
@@ -441,8 +524,11 @@ inline void frameLight(bool eligible,FillDuty duty,bool loadExit,RE::TESObjectCE
     if (cellId != l.cell || loadExit) { l.cell = cellId; l.track.newCell(); }
     const bool interior = parent && parent->IsInteriorCell();
     if (eligible && !interior) cause = "exterior"; // unwanted only because it is outdoors
+    // Mode 2: read only for an interior with the fill light usable; mode 1 never reads it.
+    const bool dungeon = l.config.fillMode == 2 && interior && l.fillReady && gateOpen(parent,cellId);
+    if (eligible && interior && l.config.fillMode == 2 && l.fillReady && !dungeon) cause = "notdungeon"; // as "exterior"
     const auto node = scene();
-    const bool wanted = fillWanted(l.config.fillMode,duty == FillDuty::keep && finite(feet),interior,l.fillReady && node != nullptr);
+    const bool wanted = fillWanted(l.config.fillMode,duty == FillDuty::keep && finite(feet),interior,l.fillReady && node != nullptr,dungeon);
     serviceFill(node,wanted,feet,cause);
     if (!l.config.trace || !node || !eligible || runtime->now < l.nextTrace) return;
     l.nextTrace = runtime->now+.1;

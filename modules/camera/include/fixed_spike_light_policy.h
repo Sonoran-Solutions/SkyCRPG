@@ -9,8 +9,10 @@ namespace skycrpg::camera::fixed::light {
 // ---- [FixedCameraSpike] light keys -----------------------------------------
 struct Config {
     // 0 off; 1 = a fill light that follows the player in interior cells while
-    // the rig is engaged. A PRESENTATION AID: it adds light the cell does not
-    // have, so it changes the look instead of restoring it.
+    // the rig is engaged; 2 = the same, but only in interior cells whose
+    // location counts as a dungeon (dungeonGate below). A PRESENTATION AID: it
+    // adds light the cell does not have, so it changes the look instead of
+    // restoring it.
     unsigned fillMode{};
     float fillHeight{192.0f};  // above the feet
     float fillRadius{640.0f};  // NiLight radius
@@ -28,7 +30,7 @@ struct Config {
 constexpr float engineFadeFloor = .05f;
 inline Config validate(Config c,bool* adjusted = nullptr) {
     const Config in = c;
-    if (c.fillMode > 1) c.fillMode = 0;
+    if (c.fillMode > 2) c.fillMode = 0;
     c.fillHeight = bounded(c.fillHeight,192.0f,0.0f,1024.0f);
     c.fillRadius = bounded(c.fillRadius,640.0f,64.0f,4096.0f);
     c.fillFade = bounded(c.fillFade,.6f,.1f,4.0f);
@@ -42,13 +44,137 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
 // Nothing is allocated, read or installed for the light package unless this holds.
 constexpr bool configured(const Config& c) { return c.fillMode != 0 || c.trace; }
 constexpr unsigned lightTraceLines = 6000;
-constexpr unsigned lightLevelTraceLines = 1500; // FixedLightLevel, 1 Hz, iLightTrace=1 and iLightFillMode=1
+constexpr unsigned lightLevelTraceLines = 1500; // FixedLightLevel, 1 Hz, iLightTrace=1 and iLightFillMode=1 or 2
 
 // ---- fill light --------------------------------------------------------------
 // Interior cells only: outdoors the sun lights the scene and a light that follows
-// the player would read as a lantern.
-constexpr bool fillWanted(unsigned mode,bool eligible,bool interior,bool ready) {
-    return mode == 1 && eligible && interior && ready;
+// the player would read as a lantern. Mode 2 also needs the cell's dungeon gate
+// open (dungeonGate below); a mode 2 cell that is not a dungeon is treated
+// exactly as an exterior: unwanted, so hidden at once and handed back after
+// removeDelaySeconds. Mode 1 ignores the gate.
+constexpr bool fillWanted(unsigned mode,bool eligible,bool interior,bool ready,bool dungeon = false) {
+    return (mode == 1 || (mode == 2 && dungeon)) && eligible && interior && ready;
+}
+
+// ---- dungeon gate (iLightFillMode=2) -------------------------------------------
+// Is the player's interior cell a dungeon? Decided from the vanilla location-type
+// keywords (LocType*) on the cell's location and its parent locations, innermost
+// first. Why the cell's location and not PlayerCharacter's current location: the
+// fill light is decided per cell anyway, the cell's location is static editor data
+// (XEZN encounter zone location, else XLCN; TESObjectCELL::GetLocation, ID 18905),
+// so it is read once per cell change with no race against the engine's own
+// location update, and no member of PlayerCharacter (whose runtime block moved in
+// AE 1.7.99) is read.
+// Rule, per location level from the cell's own location up through parentLoc:
+//   - the level carries a settled keyword (a home, inn, shop, temple, castle,
+//     town, city ...): NOT a dungeon, decided here;
+//   - else it carries a dungeon keyword: a dungeon, decided here;
+//   - else go up one level. No keyword on any level: not a dungeon (kw=none);
+//     a cell without a location: not a dungeon (kw=nolocation).
+// Settled wins on the same level, and the innermost deciding level wins, so a
+// dungeon parented to a town (Shroud Hearth Barrow < Ivarstead) stays a dungeon
+// and a home inside a dungeon location would stay unlit.
+// Data (Skyrim.esm e198c3b8, Update.esm, the three DLC masters; 759 interior
+// cells, by this exact rule): 301 dungeon cells, e.g. Embershard [Dungeon, BanditCamp], Bleak Falls
+// Barrow [Dungeon, DraugrCrypt], Mzulft, Blackreach, Fort Greymoor
+// [MilitaryFort]; settled: Left Hand Mine and every other working mine
+// [Dwelling, Mine], inns, player homes, palaces [Dwelling, Castle], temples,
+// Cidhna Mine [Jail]. LocTypeMine is deliberately in neither list: every mine
+// that is a dungeon also carries LocTypeDungeon (Embershard, Bilegulch, Broken
+// Tusk), while three working town mines carry only LocTypeMine (Dawnstar
+// Quicksilver and Iron-Breaker, Shor's Stone Redbelly) and fall through to their
+// town. Known misses (no LocType keyword anywhere, so unlit): Helgen Keep,
+// Twilight Sepulcher, Lost Prospect Mine, Volkihar's dungeon, Darkfall Cave,
+// Apocrypha, Hrothmund's Barrow, Labyrinthian sanctuary; and two dungeons under a
+// settled location: the Ratway (< Riften) and the draugr part of Soljund's
+// Sinkhole, whose interior is the mine [Dwelling, Mine].
+// The keywords are resolved once at kDataLoaded by editor ID (falling back to the
+// Skyrim.esm form ID with the editor ID checked); never per frame, never by string
+// afterwards. Within each list, earlier entries are reported first (the most
+// specific name for the harness).
+enum class GateClass : std::uint8_t { dungeon, settled };
+struct GateKeyword {
+    const char* name;
+    std::uint32_t skyrimId; // Skyrim.esm form ID (load index 00), e198c3b8
+    GateClass kind;
+};
+inline constexpr std::array<GateKeyword,36> gateKeywords{{
+    {"LocTypeDungeon",0x000130DB,GateClass::dungeon},
+    {"LocTypeDraugrCrypt",0x000130E2,GateClass::dungeon},
+    {"LocTypeDragonPriestLair",0x000130E1,GateClass::dungeon},
+    {"LocTypeFalmerHive",0x000130E4,GateClass::dungeon},
+    {"LocTypeDwarvenAutomatons",0x000130E3,GateClass::dungeon},
+    {"LocTypeVampireLair",0x000130EB,GateClass::dungeon},
+    {"LocTypeWarlockLair",0x000130EC,GateClass::dungeon},
+    {"LocTypeHagravenNest",0x000130E6,GateClass::dungeon},
+    {"LocTypeForswornCamp",0x000130EE,GateClass::dungeon},
+    {"LocTypeBanditCamp",0x000130DF,GateClass::dungeon},
+    {"LocTypeGiantCamp",0x000130E5,GateClass::dungeon},
+    {"LocTypeAnimalDen",0x000130DE,GateClass::dungeon},
+    {"LocTypeSprigganGrove",0x000130EA,GateClass::dungeon},
+    {"LocTypeWerewolfLair",0x000130ED,GateClass::dungeon},
+    {"LocTypeDragonLair",0x000130E0,GateClass::dungeon},
+    {"LocTypeShipwreck",0x0001929F,GateClass::dungeon},
+    {"LocTypeMilitaryFort",0x000130E7,GateClass::dungeon},
+    {"LocTypePlayerHouse",0x000FC1A3,GateClass::settled},
+    {"LocTypeInn",0x0001CB87,GateClass::settled},
+    {"LocTypeStore",0x0001CB86,GateClass::settled},
+    {"LocTypeTemple",0x0001CD56,GateClass::settled},
+    {"LocTypeCastle",0x0001CD57,GateClass::settled},
+    {"LocTypeJail",0x0001CD59,GateClass::settled},
+    {"LocTypeBarracks",0x0001CD55,GateClass::settled},
+    {"LocTypeGuild",0x0001CD5A,GateClass::settled},
+    {"LocTypeStewardsDwelling",0x000504F9,GateClass::settled},
+    {"LocTypeHouse",0x0001CB85,GateClass::settled},
+    {"LocTypeFarm",0x00018EF0,GateClass::settled},
+    {"LocTypeLumberMill",0x00018EF2,GateClass::settled},
+    {"LocTypeOrcStronghold",0x000130E9,GateClass::settled},
+    {"LocTypeDwelling",0x000130DC,GateClass::settled},
+    {"LocTypeSettlement",0x00013167,GateClass::settled},
+    {"LocTypeTown",0x00013166,GateClass::settled},
+    {"LocTypeCity",0x00013168,GateClass::settled},
+    {"LocTypeHabitationHasInn",0x000A6E84,GateClass::settled},
+    {"LocTypeHabitation",0x00039793,GateClass::settled},
+}};
+static_assert(gateKeywords.size() <= 64); // one bit per keyword in a level mask
+constexpr std::uint64_t gateMask(GateClass kind) {
+    std::uint64_t mask{};
+    for (std::size_t i = 0;i < gateKeywords.size();++i) if (gateKeywords[i].kind == kind) mask |= std::uint64_t{1} << i;
+    return mask;
+}
+constexpr std::uint64_t dungeonMask = gateMask(GateClass::dungeon), settledMask = gateMask(GateClass::settled);
+// Parent walk bound (vanilla chains are at most 4 deep: room < building < town < hold < Tamriel).
+constexpr unsigned maxLocationLevels = 8;
+struct GateResult {
+    bool dungeon{};
+    int keyword{-1};   // gateKeywords index that decided, -1 none
+    unsigned level{};  // level that decided (0 = the cell's own location)
+    unsigned levels{}; // levels walked; 0 = the cell has no location
+};
+constexpr int lowestBit(std::uint64_t bits) {
+    for (int i = 0;i < 64;++i) if (bits & (std::uint64_t{1} << i)) return i;
+    return -1;
+}
+// `levels[i]`: bit k set when level i (0 = the cell's own location) carries gateKeywords[k].
+constexpr GateResult dungeonGate(const std::uint64_t* levels,unsigned count) {
+    GateResult out;
+    if (!levels) count = 0;
+    out.levels = count < maxLocationLevels ? count : maxLocationLevels;
+    for (unsigned i = 0;i < out.levels;++i) {
+        const int settled = lowestBit(levels[i] & settledMask);
+        const int dungeon = lowestBit(levels[i] & dungeonMask);
+        if (settled < 0 && dungeon < 0) continue;
+        out.dungeon = settled < 0;
+        out.keyword = settled >= 0 ? settled : dungeon;
+        out.level = i;
+        return out;
+    }
+    return out;
+}
+constexpr const char* gateName(const GateResult& g) { return g.dungeon ? "dungeon" : "notdungeon"; }
+constexpr const char* gateKeywordName(const GateResult& g) {
+    if (g.keyword >= 0 && static_cast<std::size_t>(g.keyword) < gateKeywords.size()) return gateKeywords[static_cast<std::size_t>(g.keyword)].name;
+    return g.levels == 0 ? "nolocation" : "none";
 }
 // What the fill light does in a frame, by the reason the rig is (in)eligible.
 // keep: lit and following the player. hold: left exactly as it was (no hide,
@@ -370,6 +496,17 @@ inline bool formatLightLevel(char* out,std::size_t size,double seconds,unsigned 
         "npcAdjusted=%llu sample=second",
         seconds,frame,static_cast<unsigned>(l.hooked),static_cast<unsigned>(l.neutral),static_cast<double>(l.with),
         static_cast<double>(l.without),l.playerCalls,l.npcCalls,l.npcAdjusted);
+    return written > 0 && static_cast<std::size_t>(written) < size;
+}
+// Mode 2 only: one line per entered interior cell (the gate is static editor
+// data: a load into the same cell does not read it again), on its own line kind
+// so the FixedLight field lists stay exact (the route checker parses them as
+// exact lists; an unknown kind is counted, never malformed). Shares the FixedLight
+// budget (lightTraceLines). `location` is the cell's own location form ID, 0 none.
+inline bool formatGate(char* out,std::size_t size,double seconds,unsigned long long frame,std::uint32_t cell,std::uint32_t location,
+    const GateResult& g) {
+    const int written = std::snprintf(out,size,"FixedLightGate t=%.3f frame=%llu cell=%08X location=%08X gate=%s kw=%s level=%u levels=%u sample=cell",
+        seconds,frame,cell,location,gateName(g),gateKeywordName(g),g.level,g.levels);
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 // Fill transitions are traced as events, eligible or not, so a lifecycle exit
