@@ -888,18 +888,19 @@ assert "        if (k.doorShape[0] > .5f) amount = (std::max)(amount,doorFade(k,
 # Census: one branch in Stage 1's walk, before the statics filter, only with the key; the extra list is read only
 # for a table model that is not disabled or deleted; the cell's doors are replaced as a whole and reset on a new cell.
 note_cell = style_body("inline void noteCell(", "// configure, after validate")
-assert note_cell.index("const bool doorVoid = runtime->config.frame.doorVoid != 0u;") < \
+assert note_cell.index("const bool doorVoid = runtime->config.frame.enabled && runtime->config.frame.doorVoid != 0u;") < \
     note_cell.index("if (type == RE::FormType::Door && doorVoid) { noteDoorRef(doors,ref,base); return RE::BSContainer::ForEachResult::kContinue; }") < \
     note_cell.index("if (type != RE::FormType::Static") < note_cell.index("s.doors = doors;") < note_cell.index("formatDoorCensus(line,sizeof(line),id,")
 assert "        s.doors = {};\n" in note_cell and style.count("noteDoorRef(") == 2 and "HasType" not in style and style.count("teleportBit(") == 2
 note_door = style_body("inline void noteDoorRef(", "// Stage 3.0, after the census")
 assert "const Teleport teleport = model && !off ? teleportBit(ref) : Teleport::absent;" in note_door and \
     note_door.index("doorModel(modelPath(base))") < note_door.index("ref->IsDisabled() || ref->IsDeleted()") < note_door.index("teleportBit(ref)")
-# ExtraTeleport's bit is read as callbackMount reads ExtraInteraction: one CAS on the list's read count, never a wait.
+# ExtraTeleport's bit is read as callbackMount reads ExtraInteraction: a CAS on the list's read count (at most 16 tries), never a wait.
 bit = style_body("inline Teleport teleportBit(", "// The door void, census")
 assert bit.index("static_assert(sizeof(RE::ExtraDataList) == 0x20);") < bit.index("static_assert(offsetof(RE::TESObjectREFR,extraList) == 0x70);") < \
-    bit.index("const PrecisionMountReadLock lock(*reinterpret_cast<std::uint32_t*>(extra+0x1c));") < bit.index("if (!lock) return Teleport::busy;") < \
-    bit.index("std::memcpy(&presence,extra+0x10,sizeof(presence));") < bit.index("static_assert(teleport == 0x2b);")
+    bit.index("static_assert(teleport == 0x2b);") < bit.index("for (int attempt = 0;attempt < 16;++attempt) {") < \
+    bit.index("const PrecisionMountReadLock lock(*reinterpret_cast<std::uint32_t*>(extra+0x1c));") < bit.index("if (!lock) continue;") < \
+    bit.index("std::memcpy(&presence,extra+0x10,sizeof(presence));") < bit.index("return Teleport::busy;")
 assert "const PrecisionMountReadLock mountLock(*reinterpret_cast<std::uint32_t*>(extra+0x1c));" in source and "LockForRead" not in style
 # Draw: after the constants and every skip, before the Map; only in a flat cell of the census; no allocation.
 draw = frame_body("inline void drawFrame() {", "// The relay's target")

@@ -366,13 +366,17 @@ inline Teleport teleportBit(RE::TESObjectREFR* ref) {
     static_assert(sizeof(RE::ExtraDataList) == 0x20);
     static_assert(offsetof(RE::TESObjectREFR,extraList) == 0x70);
     auto* const extra = reinterpret_cast<std::byte*>(&ref->extraList);
-    const PrecisionMountReadLock lock(*reinterpret_cast<std::uint32_t*>(extra+0x1c));
-    if (!lock) return Teleport::busy;
-    const RE::BaseExtraList::PresenceBitfield* presence = nullptr;
-    std::memcpy(&presence,extra+0x10,sizeof(presence));
     constexpr auto teleport = static_cast<std::uint32_t>(RE::ExtraDataType::kTeleport);
     static_assert(teleport == 0x2b);
-    return presence && (presence->bits[teleport >> 3] & (1u << (teleport % 8))) != 0 ? Teleport::present : Teleport::absent;
+    // A CAS lost to another reader is retried (bounded; the engine's CE3250 retries at once too).
+    for (int attempt = 0;attempt < 16;++attempt) {
+        const PrecisionMountReadLock lock(*reinterpret_cast<std::uint32_t*>(extra+0x1c));
+        if (!lock) continue;
+        const RE::BaseExtraList::PresenceBitfield* presence = nullptr;
+        std::memcpy(&presence,extra+0x10,sizeof(presence));
+        return presence && (presence->bits[teleport >> 3] & (1u << (teleport % 8))) != 0 ? Teleport::present : Teleport::absent;
+    }
+    return Teleport::busy;
 }
 // The door void, census: a Door reference. ExtraTeleport is read only for a model in the table.
 inline void noteDoorRef(DoorCensus& doors,RE::TESObjectREFR* ref,RE::TESBoundObject* base) {
@@ -414,7 +418,7 @@ inline void noteCell(RE::TESObjectCELL* cell) {
     if (s.censusTries++ >= censusRetries) { s.cellStyle = CellStyle::flat; return; }
     Census c;
     DoorCensus doors;
-    const bool doorVoid = runtime->config.frame.doorVoid != 0u;
+    const bool doorVoid = runtime->config.frame.enabled && runtime->config.frame.doorVoid != 0u; // nothing is drawn without the frame pass
     s.uprightCount = 0; s.uprightOverflow = 0;
     cell->ForEachReference([&](RE::TESObjectREFR* ref) {
         const auto base = ref ? ref->GetBaseObject() : nullptr;
