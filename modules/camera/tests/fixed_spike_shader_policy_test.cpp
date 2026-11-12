@@ -1088,6 +1088,34 @@ void styleRules() {
     assert(!storeyCandidate(Piece::kit,box({600,-384,310},{856,-128,319}),hearth,base));     // 717 away
     assert(!storeyCandidate(Piece::kit,box({-256,-140,310},{0,-128,319}),hearth,base));      // a 12-unit strip
     assert(boxReach(loft,hearth) == 256.0f && boxReach(box({-200,-700,0},{0,-600,1}),hearth) == 0.0f && boxReach(box({600,-640,0},{700,-600,1}),hearth) > 716.0f);
+    // Fix after batch T2 (Mare hearth, held floor 84.96 after a landing, feet 68): head-height rules measure from the
+    // lower of the held floor and the feet. A rafter with its bottom at 205 (feet + 137, held + 120) is overhead.
+    assert(headroomFloor(84.96f,68.0f) == 68.0f && headroomFloor(68.0f,84.96f) == 68.0f && headroomFloor(68.0f,68.0f) == 68.0f);
+    assert(headroomFloor(68.0f,nan) == 68.0f);                         // no feet: the held floor
+    assert(headroomFloor(68.0f,68.0f+76.0f) == 68.0f);                 // a jump (apex ~76): unchanged, nothing flickers
+    assert(headroomFloor(68.0f,68.0f+20.0f) == 68.0f);                 // a step up inside the band, a stair being climbed: unchanged
+    assert(headroomFloor(160.0f,100.0f) == 100.0f);                    // a step down beyond the band, before the 0.6 s settle
+    {
+        const float held = 84.96f,feetZ = 68.0f,rafterLow = 205.0f;
+        const Box rafter = box({-300,-700,rafterLow},{100,-680,rafterLow+20});
+        const auto memberFacts = [&](float from,bool around) {
+            Facts f; f.kitCell = true; f.piece = Piece::member; f.side = Side::back; f.lane = false; f.around = around;
+            f.overhead = rafter.valid && rafter.low.z >= from+storeyHeadroom; f.low = rafter.high.z <= feetZ+laneHigh;
+            f.above = rafter.low.z >= 310.0f-aboveTolerance;
+            return decide(f);
+        };
+        // Before the fix (held floor): kept whole on the back side, flat-cut at the plane when around the player.
+        assert(is(memberFacts(held,false),Treat::keep,Bucket::keptMember) && is(memberFacts(held,true),Treat::flat,Bucket::aroundCut));
+        // After it: removed whole in both cases, as at a held floor of 68 (the good run).
+        const float from = headroomFloor(held,feetZ);
+        assert(is(memberFacts(from,false),Treat::remove,Bucket::removedWhole) && is(memberFacts(from,true),Treat::remove,Bucket::removedWhole));
+        assert(is(memberFacts(68.0f,false),Treat::remove,Bucket::removedWhole) && memberFacts(from,false).note == Note::overhead);
+        // A storey candidate the held floor would have missed (bottom 205 counts from 68, not from 84.96).
+        assert(!storeyCandidate(Piece::kit,box({-256,-384,205},{0,-128,214}),hearth,held) &&
+            storeyCandidate(Piece::kit,box({-256,-384,205},{0,-128,214}),hearth,from));
+        // The floor the player stood on before stepping down (top within 32 of the old floor) is never overhead.
+        assert(!(box({-300,-700,60},{100,-600,84.96f}).low.z >= from+storeyHeadroom));
+    }
     Storey storey;
     assert(storey.line(planeZ) == planeZ);
     storey.update(infinity,base,planeZ,0.0);                 // first frame in the cell: nothing drawn yet
@@ -1233,12 +1261,16 @@ void styleRules() {
     two.window.buckets[static_cast<std::size_t>(Bucket::cappedFar)] = 3; two.window.notes[static_cast<std::size_t>(Note::roof)] = 40;
     two.window.notes[static_cast<std::size_t>(Note::overhead)] = 12; two.window.galleryRemoved = 1;
     assert(formatStyle2(line,sizeof(line),two));
-    assert(std::string(line) == "FixedShaderStyle2 t=1234.500 frame=99 capZ=310.00 cappedFar=3 roofRemoved=40 overheadRemoved=12 galleryRemoved=1 sample=window");
+    two.headroomZ = 68; two.heldMinusFeet = 16.96f;
+    assert(formatStyle2(line,sizeof(line),two));
+    assert(std::string(line) == "FixedShaderStyle2 t=1234.500 frame=99 capZ=310.00 cappedFar=3 roofRemoved=40 overheadRemoved=12 galleryRemoved=1 "
+        "headroomZ=68.00 heldMinusFeet=16.96 sample=window");
     Style2Sample idle2;
-    assert(formatStyle2(line,sizeof(line),idle2) && std::string(line).find(" capZ=nan ") != std::string::npos);
+    assert(formatStyle2(line,sizeof(line),idle2) && std::string(line).find(" capZ=nan ") != std::string::npos &&
+        std::string(line).find(" headroomZ=nan heldMinusFeet=nan ") != std::string::npos);
     Style2Sample big2; big2.seconds = 1e7; big2.frame = ~0ull; big2.haveView = true; big2.capZ = -1e7f;
     for (auto& value : big2.window.notes) value = ~0ull;
-    big2.window.buckets[static_cast<std::size_t>(Bucket::cappedFar)] = ~0ull; big2.window.galleryRemoved = ~0ull;
+    big2.window.buckets[static_cast<std::size_t>(Bucket::cappedFar)] = ~0ull; big2.window.galleryRemoved = ~0ull; big2.headroomZ = -1e7f; big2.heldMinusFeet = -1e7f;
     assert(formatStyle2(line,sizeof(line),big2) && std::strlen(line) < sizeof(TraceRow));
     std::printf("style rules PASS\n");
 }
