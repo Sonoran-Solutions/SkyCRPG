@@ -82,14 +82,16 @@ constexpr std::uint32_t ammoForm = 0x2a; // the engine looks past an ammunition 
 // third pass's: the sky dome over the void (fixed_spike_shader_sky_policy.h);
 // 91..92 the fourth pass's: the Stage 1 style (fixed_spike_shader_style_policy.h); 93..97 the fifth pass's: the
 // Stage 2 frame pass (fixed_spike_shader_frame_policy.h); 98..101 Stage 3.1's back-face fill
-// (fixed_spike_shader_fill_policy.h). The once-mask is 64 bits wide since 98 (codes 66..129).
+// (fixed_spike_shader_fill_policy.h); 102..105 Stage 3.2's tilted cut (fixed_spike_shader_tilt_policy.h), each
+// falling back to the flat cut. The once-mask is 64 bits wide since 98 (codes 66..129).
 enum class Refusal : unsigned { settings = 66, foreign = 67, address = 68, table = 69, device = 70, thread = 71, bracket = 72,
     create = 73, patch = 74, unaudited = 75, view = 76, map = 77, object = 78, context = 79,
     effectTable = 80, voidSite = 81, voidMemory = 82, voidThread = 83, effectCreate = 84, effectPatch = 85, effectUnaudited = 86,
     effectObject = 87, effectThread = 88, skySite = 89, skyLeft = 90, styleBuffers = 91, styleMap = 92,
     frameSite = 93, frameMemory = 94, frameDevice = 95, frameThread = 96, frameRun = 97,
-    fillSite = 98, fillDevice = 99, fillLayout = 100, fillMap = 101 };
-constexpr unsigned firstRefusal = 66, lastRefusal = 101;
+    fillSite = 98, fillDevice = 99, fillLayout = 100, fillMap = 101,
+    tiltPatch = 102, tiltCreate = 103, tiltBuffer = 104, tiltMap = 105 };
+constexpr unsigned firstRefusal = 66, lastRefusal = 105;
 static_assert(lastRefusal-firstRefusal < 64);
 // The refusals a shader preparation can end in, per group.
 struct PrepareCodes { Refusal object,unaudited,patch,create; };
@@ -174,6 +176,10 @@ struct Config {
     Color fillColor{};          // parsed from fillColorText by validate
     unsigned stacks{1};         // iCutStacks (Stage 3.0): 0 off, 1 open-topped columns removed on the camera side, 2 also kept whole behind
     FrameConfig frame{};        // fifth pass: bFramePass and the fFrame* keys
+    // Stage 3.2 (fixed_spike_shader_tilt_policy.h). Read only in mode 3; needs iCutStyle=1 (the cell census).
+    unsigned tilt{0};           // iCutTilt: 0 the flat cut exactly as before, 1 the tilted cut in flat (non-kit) cells
+    float tiltSlope{0.5f};      // fCutTiltSlope: plane rise per unit of ground distance behind the feet (away from the camera)
+    float tiltMax{400.0f};      // fCutTiltMax: the far side's plane never above the held floor + this
 };
 constexpr unsigned flatStyle = 0, stageOneStyle = 1;
 // The camera stands about 336 ground units from the feet, so a radius under
@@ -193,9 +199,13 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     const bool fillColorChanged = c.fill && parseColor(c.fillColorText,c.fillColor) != ColorText::ok;
     bool frameChanged = false;
     c.frame = validateFrame(c.frame,frameChanged);
+    // Stage 3.2: only with Stage 1 (the census says which cells are flat); the far side's ceiling never under the near plane.
+    if (c.tilt > 1u || c.style != stageOneStyle) c.tilt = 0u;
+    c.tiltSlope = bounded(c.tiltSlope,0.5f,0.05f,4.0f);
+    c.tiltMax = bounded(c.tiltMax,400.0f,c.height,2048.0f);
     if (adjusted) *adjusted = c.height != in.height || c.radius != in.radius || c.maxPerFrame != in.maxPerFrame || c.shaders != in.shaders ||
         colorChanged || c.style != in.style || c.stacks != in.stacks || frameChanged ||
-        c.fill != in.fill || fillColorChanged;
+        c.fill != in.fill || fillColorChanged || c.tilt != in.tilt || (c.tilt && (c.tiltSlope != in.tiltSlope || c.tiltMax != in.tiltMax));
     return c;
 }
 // iShaderCutShaders selects Lighting and Utility only; Effect has its own key.
@@ -403,6 +413,13 @@ constexpr std::uint32_t tempReadX = 0x0010000au;   // rN.x read as a scalar
 constexpr std::uint32_t row = 0x00208e46u;         // cbS[row].xyzw
 constexpr std::uint32_t rowZ = 0x00208aa6u;        // cbS[row].zzzz
 constexpr std::uint32_t rowX = 0x0020800au, rowY = 0x0020801au; // cbS[row].x and .y read as scalars
+// Stage 3.2 (the tilted cut): cbS[row].xxxx and .yyyy, the other two columns of a World-View-Projection row;
+// rN.y and rN.z read as scalars; rN.y, rN.z, rN.w written; one 32-bit immediate scalar; mov, min, max.
+constexpr std::uint32_t rowXxxx = 0x00208006u, rowYyyy = 0x00208556u;
+constexpr std::uint32_t tempReadY = 0x0010001au, tempReadZ = 0x0010002au;
+constexpr std::uint32_t tempY = 0x00100022u, tempZ = 0x00100042u, tempW = 0x00100082u;
+constexpr std::uint32_t immediate = 0x00004001u, one = 0x3f800000u;
+constexpr std::uint32_t movImmediate = 0x05000036u, minScalars = 0x07000033u, maxScalars = 0x07000034u;
 constexpr std::uint32_t mulRows = 0x09000038u, addTemps = 0x07000000u, dot4Temps = 0x07000011u; // matched without the precise bits
 constexpr std::uint32_t dot4Row = 0x08000011u, madScalars = 0x0b000032u;
 constexpr std::uint32_t declareBuffer = 0x04000059u, declareOutputValue = 0x04000067u, declareTemps = 0x02000068u;
@@ -410,12 +427,15 @@ constexpr std::uint32_t outputOperand = 0x00102000u, outputOperandMask = 0xfffff
 constexpr std::uint32_t written = 0x00100002u, writtenMask = 0xffffdf0fu;            // a temp or output written through a mask
 constexpr std::uint32_t clipDistanceName = 2;      // D3D10_SB_NAME_CLIP_DISTANCE, also D3D_NAME_CLIP_DISTANCE in the signature
 }
-enum class Patch : unsigned { ok, container, checksum, chunks, version, skinned, signature, declarations, pattern, flow, count };
-constexpr std::array patchNames{"ok","container","checksum","chunks","version","skinned","signature","declarations","pattern","flow"};
+// axes (Stage 3.2, tilted patch only): the World x or y row could not be told from the .xxxx/.yyyy products.
+enum class Patch : unsigned { ok, container, checksum, chunks, version, skinned, signature, declarations, pattern, flow, axes, count };
+constexpr std::array patchNames{"ok","container","checksum","chunks","version","skinned","signature","declarations","pattern","flow","axes"};
 static_assert(patchNames.size() == static_cast<std::size_t>(Patch::count));
 struct Patched {
     Patch result{Patch::container};
     std::uint32_t worldRow{},position{},temp{}; // cb2 row holding World's z row, register holding the model position, the temp added
+    std::uint32_t xRow{},yRow{}; // Stage 3.2: cb2 rows of World's x and y rows (from the .xxxx/.yyyy products; recorded, not required, by the flat patch)
+    bool axes{};                 // both found, each the same in every product
     std::vector<std::uint8_t> code;
 };
 struct Chunk { std::size_t at{},size{}; }; // payload offset and length
@@ -432,6 +452,11 @@ struct Scan {
     Patch result{Patch::declarations};
     std::size_t afterBuffers{},afterOutputs{},temps{},insert{};
     std::uint32_t tempCount{},worldRow{},position{};
+    // Stage 3.2: the rows the .xxxx and .yyyy columns of the per-frame view-projection multiply, as the
+    // .zzzz rule finds worldRow. Recorded only; the flat patch does not read them, so its result and bytes
+    // do not depend on them. xKnown/yKnown: seen; axesClash: two different rows for one column.
+    std::uint32_t xRow{},yRow{};
+    bool xKnown{},yKnown{},axesClash{};
 };
 // Every shipped rigid vertex shader that positions its vertices with the
 // per-frame view-projection builds each row of World-View-Projection as
@@ -474,6 +499,16 @@ inline Scan scan(const std::vector<std::uint32_t>& t) {
         if (head == token::mulRows && ins.length == 9u && t[at+1u] == token::tempAll) {
             for (const std::size_t view : {at+3u,at+6u}) {
                 const std::size_t world = view == at+3u ? at+6u : at+3u;
+                // Stage 3.2: the x and y columns, recorded beside the z rule (which alone arms the scan).
+                const bool viewRow = t[view+1u] == perFrameBuffer && t[view+2u] >= firstViewProjectionRow && t[view+2u] <= lastViewProjectionRow &&
+                    t[world] == token::row && t[world+1u] == perGeometryBuffer;
+                if (viewRow && (t[view] == token::rowXxxx || t[view] == token::rowYyyy)) {
+                    const bool x = t[view] == token::rowXxxx;
+                    bool& known = x ? s.xKnown : s.yKnown;
+                    std::uint32_t& axis = x ? s.xRow : s.yRow;
+                    if (known && axis != t[world+2u]) s.axesClash = true;
+                    known = true; axis = t[world+2u];
+                }
                 if (t[view] != token::rowZ || t[view+1u] != perFrameBuffer || t[view+2u] < firstViewProjectionRow ||
                     t[view+2u] > lastViewProjectionRow || t[world] != token::row || t[world+1u] != perGeometryBuffer) continue;
                 if (rowKnown && s.worldRow != t[world+2u]) return fail(Patch::pattern);
@@ -518,8 +553,23 @@ inline bool named(const std::uint8_t* chunk,std::size_t size,std::size_t element
 // described above. The copy differs only by: constant buffer 13 declared (one
 // row), output register 16.x declared and listed as SV_ClipDistance0, one more
 // temp, and two instructions before the first World-View-Projection product.
-inline Patched patchVertexShader(const std::uint8_t* code,std::size_t size) {
+//
+// Stage 3.2, Cut::tilted: the same checks and the same changes, except that
+// constant buffer 13 is declared with three rows, two temps are added (T and
+// U), the World x and y rows must also be known (else Patch::axes), and the
+// nine instructions
+//   dp4 rT.x, cb2[xRow], rP      dp4 rT.y, cb2[yRow], rP      dp4 rT.z, cb2[worldRow], rP
+//   mov rT.w, l(1.0)
+//   dp4 rU.x, rT, cb13[0]        dp4 rU.y, rT, cb13[1]        dp4 rU.z, rT, cb13[2]
+//   min rU.y, rU.y, rU.z         max o16.x, rU.x, rU.y
+// stand where the flat cut's two go: o16.x = max(low, min(tilted, cap)) for
+// the three planes of TiltConstant (fixed_spike_shader_tilt_policy.h). The flat
+// path (Cut::flat, the default) builds exactly the bytes it built before Stage 3.2.
+enum class Cut : unsigned { flat, tilted };
+constexpr std::size_t flatTokens = 19, tiltTokens = 67; // instruction tokens each cut inserts
+inline Patched patchVertexShader(const std::uint8_t* code,std::size_t size,Cut cut = Cut::flat) {
     Patched out;
+    const bool tilted = cut == Cut::tilted;
     constexpr std::size_t chunkCount = 3,firstChunk = containerHeader+chunkCount*4u;
     if (!code || size < firstChunk || size > largestBlob || std::memcmp(code,"DXBC",4) != 0 || word(code+20u) != 1u ||
         word(code+24u) != size || word(code+28u) != chunkCount) return out;
@@ -556,14 +606,34 @@ inline Patched patchVertexShader(const std::uint8_t* code,std::size_t size) {
     const Scan plan = scan(t);
     if (plan.result != Patch::ok) { out.result = plan.result; return out; }
     out.worldRow = plan.worldRow; out.position = plan.position; out.temp = plan.tempCount;
+    out.xRow = plan.xRow; out.yRow = plan.yRow;
+    out.axes = plan.xKnown && plan.yKnown && !plan.axesClash && plan.xRow != plan.yRow && plan.xRow != plan.worldRow && plan.yRow != plan.worldRow;
+    if (tilted && (!out.axes || plan.tempCount+2u > mostTemps)) { out.result = Patch::axes; return out; }
+    const std::uint32_t T = plan.tempCount,U = plan.tempCount+1u;
     // The token stream with the additions.
     std::vector<std::uint32_t> body2;
-    body2.reserve(t.size()+27u);
+    body2.reserve(t.size()+8u+(tilted ? tiltTokens : flatTokens));
     body2.push_back(t[0]); body2.push_back(0u);
     Instruction ins;
     for (std::size_t at = 2;at < t.size();at += ins.length) {
         static_cast<void>(decode(t,at,ins)); // the scan accepted every instruction
-        if (at == plan.insert) {
+        if (at == plan.insert && tilted) {
+            // dp4 rT.x/.y/.z, cb2[xRow/yRow/worldRow].xyzw, rP.xyzw: the model position in world space (posAdjust-relative)
+            for (const auto& [mask,row] : {std::pair{token::tempX,plan.xRow},std::pair{token::tempY,plan.yRow},std::pair{token::tempZ,plan.worldRow}})
+                for (const std::uint32_t value : {token::dot4Row,mask,T,token::row,perGeometryBuffer,row,token::tempRead,plan.position})
+                    body2.push_back(value);
+            // mov rT.w, l(1.0)
+            for (const std::uint32_t value : {token::movImmediate,token::tempW,T,token::immediate,token::one}) body2.push_back(value);
+            // dp4 rU.x/.y/.z, rT.xyzw, cb13[0/1/2].xyzw: the low, tilted and cap planes
+            for (const auto& [mask,row] : {std::pair{token::tempX,0u},std::pair{token::tempY,1u},std::pair{token::tempZ,2u}})
+                for (const std::uint32_t value : {token::dot4Row,mask,U,token::tempRead,T,token::row,cutBuffer,row})
+                    body2.push_back(value);
+            // min rU.y, rU.y, rU.z
+            for (const std::uint32_t value : {token::minScalars,token::tempY,U,token::tempReadY,U,token::tempReadZ,U}) body2.push_back(value);
+            // max o16.x, rU.x, rU.y
+            for (const std::uint32_t value : {token::maxScalars,token::outputX,cutRegister,token::tempReadX,U,token::tempReadY,U}) body2.push_back(value);
+        }
+        if (at == plan.insert && !tilted) {
             // dp4 rT.x, cb2[worldRow].xyzw, rP.xyzw
             for (const std::uint32_t value : {token::dot4Row,token::tempX,plan.tempCount,token::row,perGeometryBuffer,plan.worldRow,token::tempRead,plan.position})
                 body2.push_back(value);
@@ -572,9 +642,9 @@ inline Patched patchVertexShader(const std::uint8_t* code,std::size_t size) {
                 body2.push_back(value);
         }
         body2.insert(body2.end(),t.begin()+static_cast<std::ptrdiff_t>(at),t.begin()+static_cast<std::ptrdiff_t>(at+ins.length));
-        if (at == plan.temps) body2.back() = plan.tempCount+1u;
+        if (at == plan.temps) body2.back() = plan.tempCount+(tilted ? 2u : 1u);
         if (at+ins.length == plan.afterBuffers)
-            for (const std::uint32_t value : {token::declareBuffer,token::row,cutBuffer,1u}) body2.push_back(value);
+            for (const std::uint32_t value : {token::declareBuffer,token::row,cutBuffer,tilted ? 3u : 1u}) body2.push_back(value);
         if (at+ins.length == plan.afterOutputs)
             for (const std::uint32_t value : {token::declareOutputValue,token::outputX,cutRegister,token::clipDistanceName}) body2.push_back(value);
     }
@@ -778,3 +848,4 @@ inline bool formatLook(char* out,std::size_t size,const LookSample& s) {
 #include "fixed_spike_shader_style_policy.h" // fourth pass: Stage 1 of the seamless cutaway (iCutStyle=1)
 #include "fixed_spike_shader_frame_policy.h" // fifth pass: Stage 2, the frame pass (bFramePass=1)
 #include "fixed_spike_shader_fill_policy.h"  // Stage 3.1: the back-face fill (iCutFill=1)
+#include "fixed_spike_shader_tilt_policy.h"  // Stage 3.2: the tilted cut (iCutTilt=1)

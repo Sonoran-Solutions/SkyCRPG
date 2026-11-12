@@ -38,6 +38,11 @@
 // the per-reference policy of fixed_spike_shader_style.h instead of the one
 // plane; iCutStyle=0 leaves this file's flat cut exactly as it was.
 //
+// Stage 3.2 (iCutTilt=1, fixed_spike_shader_tilt.h): in cells Stage 1's census
+// calls flat, a pass this file or Stage 1 would draw at the plane is drawn with
+// a tilted copy of its shader instead (tiltPass); with iCutTilt=0 nothing of it
+// exists.
+//
 // Fifth pass (owner go 2026-11-11, Stage 2 of the seamless cutaway): with
 // bFramePass=1 one full-screen pass of our own is drawn over the finished
 // scene after the main world render returns (fixed_spike_shader_frame.h); this
@@ -64,6 +69,7 @@ struct Made { unsigned patched{},rejected{},unaudited{}; };
 struct StyleRuntime; // fixed_spike_shader_style.h: only with iCutStyle=1
 struct FrameRuntime; // fixed_spike_shader_frame.h: only with bFramePass=1
 struct FillRuntime;  // fixed_spike_shader_fill.h: only with iCutFill=1
+struct TiltRuntime;  // fixed_spike_shader_tilt.h: only with iCutTilt=1
 struct Runtime {
     Config config;
     void (*logger)(const char*){};
@@ -74,6 +80,7 @@ struct Runtime {
     void (*style2Emitter)(const char*){};
     void (*frameEmitter)(const char*){};
     void (*fillEmitter)(const char*){};
+    void (*tiltEmitter)(const char*){};
     std::atomic<std::uint64_t> refusals{};
     std::atomic_bool pending{};  // hooks to be installed by the next main-thread camera frame
     std::atomic_bool active{};   // a snapshot is published
@@ -110,6 +117,7 @@ struct Runtime {
     StyleRuntime* style{}; // fourth pass; null with iCutStyle=0
     FrameRuntime* framePass{}; // fifth pass; null with bFramePass=0
     FillRuntime* fill{};       // Stage 3.1; null with iCutFill=0
+    TiltRuntime* tilt{};       // Stage 3.2; null with iCutTilt=0
     bool openFill{};           // the open pass is cut at a plane (not removed whole) in the main view: a fill candidate
     const void* openPass{};    // the pass the open cut belongs to (set by its SetupGeometry hook; the fill draws only for it)
 };
@@ -251,6 +259,11 @@ inline void shadowPass(void* pass,std::size_t shaderClass);
 inline void captureFrame(Vec eye);
 // fixed_spike_shader_fill.h (included at the end of this file).
 inline void cutFill(void* pass,std::size_t shaderClass);
+// fixed_spike_shader_tilt.h (included at the end of this file).
+inline bool tiltCell();
+inline bool tiltPass(const Entry& entry,Vec eye,std::size_t shaderClass);
+inline const TiltPlanes& tiltPlanesNow();
+inline void tiltNoteWhole();
 // The pass is drawn with the patched shader and the plane in slot 13. Both
 // device calls that can fail come before anything is bound.
 inline void apply(const Entry& entry,Constant wanted,std::size_t shaderClass) {
@@ -317,11 +330,16 @@ inline void consider(void* pass,std::size_t shaderClass) {
     if (skip == Skip::none && !r.budgets[group].take()) skip = Skip::cap;
     if (skip != Skip::none) { ++w.skips[static_cast<std::size_t>(skip)]; return; }
     // Third pass: an Effect pass centred in the upper half below the plane or higher is not drawn at all.
-    const bool whole = group && r.config.effectWhole && wholeEffect(r.view,bound);
+    // Stage 3.2: in a tilted cell "the plane" is the tilted plane's height above the bound centre.
+    const bool tilt = group && tiltCell();
+    const View local = tilt ? tiltedView(r.view,tiltPlanesNow(),bound.centre.x,bound.centre.y) : r.view;
+    const bool whole = group && r.config.effectWhole && wholeEffect(local,bound);
     if (group) { r.voidWindow.note(owner); if (whole) ++r.voidWindow.whole; }
     // Fourth pass: what the floor rule kept at the plane, and the largest radius clipped whole.
-    if (group && r.config.effectWhole && !whole && upperEffect(r.view,bound)) ++r.voidWindow.floorKept;
+    if (group && r.config.effectWhole && !whole && upperEffect(local,bound)) ++r.voidWindow.floorKept;
     if (whole && bound.radius > r.voidWindow.wholeRadius) r.voidWindow.wholeRadius = bound.radius;
+    if (tilt && whole) tiltNoteWhole();
+    if (!whole && group && tiltPass(*entry,eye,shaderClass)) return; // Stage 3.2: cut at the tilted plane
     apply(*entry,whole ? wholeConstant : wanted,shaderClass);
 }
 
@@ -434,6 +452,11 @@ inline void installFill(std::uintptr_t base);
 inline Feature fillState();
 inline void configureFill();
 inline void traceFill(double now);
+inline void installTilt();
+inline Feature tiltState();
+inline void configureTilt();
+inline void tiltFrame();
+inline void traceTilt(double now);
 // Main thread, from commit, after the Lighting/Utility hooks. The Effect class
 // is hooked only with bShaderCutEffect=1 and when its own guard passes.
 inline void installEffect(std::uintptr_t base) {
@@ -527,6 +550,14 @@ inline void commit() {
             static_cast<unsigned>(frame_bytes::capPixelShader.size()));
         r.logger(text);
     }
+    // Stage 3.2: only with iCutTilt=1; refuses on its own (FCS-104) and leaves the flat cut as it is.
+    if (r.tilt) {
+        installTilt();
+        std::snprintf(text,sizeof(text),"FixedCameraSpike shader tilt installed tilt=%s slope=%.3f max=%.1f height=%.1f",
+            featureNames[static_cast<std::size_t>(tiltState())],static_cast<double>(r.config.tiltSlope),static_cast<double>(r.config.tiltMax),
+            static_cast<double>(r.config.height));
+        r.logger(text);
+    }
 }
 
 // ---- called by the spike's frame bracket ------------------------------------
@@ -588,6 +619,7 @@ inline void publish(Vec eye,Vec forward,Vec feet,bool interiorCell,unsigned long
     r.view = *next; r.haveView = true; r.published = frame;
     for (auto& budget : r.budgets) budget.frame();
     styleFrame(); // fourth pass: the storey line from the frame just drawn
+    tiltFrame();  // Stage 3.2: this frame's tilted planes (iCutTilt=1 only)
     r.active.store(true,std::memory_order_release);
     settleSky(true);
 }
@@ -626,22 +658,25 @@ inline void trace(double now) {
     traceStyle(now,voids.window); // fourth pass: FixedShaderStyle, only with iCutStyle=1
     traceFrame(now); // fifth pass: FixedShaderFrame, only with bFramePass=1
     traceFill(now); // Stage 3.1: FixedShaderFill, only with iCutFill=1
+    traceTilt(now); // Stage 3.2: FixedShaderTilt, only with iCutTilt=1
 }
 inline bool tracing() { return runtime && runtime->config.trace; }
 // Shader trace line kinds: FixedShader, FixedShaderLook, FixedShaderVoid, FixedShaderStyle and
-// FixedShaderStyle2 with iCutStyle=1, FixedShaderFrame with bFramePass=1, and FixedShaderFill with iCutFill=1.
+// FixedShaderStyle2 with iCutStyle=1, FixedShaderFrame with bFramePass=1, FixedShaderFill with iCutFill=1, and
+// FixedShaderTilt with iCutTilt=1.
 inline unsigned traceKinds() {
-    return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u)+(runtime && runtime->fill ? 2u : 0u);
+    return (runtime && runtime->config.style == stageOneStyle ? 5u : 3u)+(runtime && runtime->framePass ? 1u : 0u)+(runtime && runtime->fill ? 2u : 0u)+
+        (runtime && runtime->tilt ? 1u : 0u);
 }
 inline const char* status() { return !runtime ? "off" : runtime->installed ? "installed" : "pending"; }
 // loadSettings, only when [FixedCameraSpike] bEnabled=1 and iSeeThroughMode=3.
 inline void configure(const Config& requested,void (*logger)(const char*),void (*emitter)(const char*),void (*lookEmitter)(const char*),
     void (*voidEmitter)(const char*),void (*styleEmitter)(const char*),void (*style2Emitter)(const char*),void (*frameEmitter)(const char*),
-    void (*fillEmitter)(const char*)) {
+    void (*fillEmitter)(const char*),void (*tiltEmitter)(const char*)) {
     runtime = new Runtime;
     auto& r = *runtime;
     r.logger = logger; r.emitter = emitter; r.lookEmitter = lookEmitter; r.voidEmitter = voidEmitter; r.styleEmitter = styleEmitter;
-    r.style2Emitter = style2Emitter; r.frameEmitter = frameEmitter; r.fillEmitter = fillEmitter;
+    r.style2Emitter = style2Emitter; r.frameEmitter = frameEmitter; r.fillEmitter = fillEmitter; r.tiltEmitter = tiltEmitter;
     bool adjusted = false;
     r.config = validate(requested,&adjusted);
     for (auto& budget : r.budgets) budget.limit = r.config.maxPerFrame;
@@ -651,6 +686,7 @@ inline void configure(const Config& requested,void (*logger)(const char*),void (
     configureStyle();
     configureFrame();
     configureFill();
+    configureTilt();
     if (adjusted) refuse(Refusal::settings,"one or more shader-cut values were out of range; safe values applied");
 }
 } // namespace skycrpg::camera::fixed::shader
@@ -659,3 +695,4 @@ inline void configure(const Config& requested,void (*logger)(const char*),void (
 #include "fixed_spike_shader_style.h" // fourth pass: Stage 1 of the seamless cutaway
 #include "fixed_spike_shader_frame.h" // fifth pass: Stage 2, the frame pass
 #include "fixed_spike_shader_fill.h" // Stage 3.1: the back-face fill
+#include "fixed_spike_shader_tilt.h" // Stage 3.2: the tilted cut

@@ -1397,6 +1397,136 @@ Routes `p55-comb-cave-*` (Embershard Mine, W12 pose) and `p55-comb-bfb-*` (Bleak
 - The look: lids, slabs, ghosting, fog tint.
 - That the guard's farthest depth also covers the player's weapon and cape (box ±48 and 144 high).
 
+## Stage 3.2: the tilted cut (2026-11-11, base `9ba6e86`)
+
+Coordinator brief "Stage 3.2, tilted cut for flat-cut cells"; research `session-p55/research/stage3-feasibility.md` Q4. Key `iCutTilt` (default 0). Every game row is **NOT_RUN**, and so is the Windows build.
+
+### Research claims re-checked
+
+| Claim | Result |
+| --- | --- |
+| In every rigid vertex shader that builds World-View-Projection from cb12[8..11], the `.xxxx` column multiplies cb2[k−2] and `.yyyy` cb2[k−1], where `.zzzz` multiplies cb2[k] (World's z row). | **Confirmed in all 527 patched entries** (195 Lighting/Utility, 332 Effect; 198 distinct bytecodes), 0 exceptions: the archive test counts it (`x/y rows directly before the z row in 527`). The patcher does not assume it: `scan` records the rows the `.xxxx`/`.yyyy` products read and the tilted patch refuses (`Patch::axes`, FCS-102) when a column reads two different rows or a row equals another axis's. |
+| The engine's World translation is relative to the position adjustment on all three axes, so x and y can be compared with posAdjust-relative plane rows exactly as z is today. | **Confirmed**: 141517140..141517178 subtracts state `+0x35C`, `+0x360`, `+0x364` (ID 388819 at 20CFC00) from the three translation components. |
+| A 9-instruction patch with cb13[3] and two more temps. | **Confirmed as built** (below). vkd3d-shader 2.1 disassembles and translates to SPIR-V (BuiltIn ClipDistance) every one of the 198 distinct tilted outputs. |
+| Plane `z ≤ feet + Hn + s·((feet − p)·h)`, h = normalize(eye.xy − feet.xy). | **Corrected anchor**: the flat cut is at the *held floor* (CutPlane) + `fShaderCutHeight`, not the feet; the tilt keeps that anchor so the near side is exactly today's plane. h is quantised to the locked heading's diagonal (the camera offset is (±237.3, ±237.3) at every locked heading, wave 1), which is the same vector. |
+| W13B `byClass=413,413` suggests Lighting has a Utility depth pre-pass, so both classes must clip identically. | **Not re-checked in the binary** (Hypothesis). Satisfied either way: Lighting and Utility passes of the main view take the same tilted shader and the same rows. |
+
+### Design as built
+
+- **Plane** (`include/fixed_spike_shader_tilt_policy.h`). With F the feet x, y of the published view, Z0 the held floor (CutPlane), H `fShaderCutHeight`, s `fCutTiltSlope`, M `fCutTiltMax` and h = (±1/√2, ±1/√2) the ground vector from the feet towards the camera's quadrant:
+
+  `kept  ⇔  z ≤ max(Z0 + H, min(Z0 + H + s·((F − p.xy)·h), Z0 + M))`
+
+  Near side (towards the camera) and the feet: Z0 + H, today's plane. Behind the player: rising s per unit of ground distance, capped at Z0 + M. Sideways it does not rise. Defaults s = 0.5, M = 400: with H = 160 the far side reaches the ceiling 480 units behind the feet. Anchors: feet x, y every published frame; Z0 held as today (a jump or a step does not move it). A 90° snap switches h at the next published frame (hard switch, no blend).
+- **Shader** (`patchVertexShader(code, size, Cut::tilted)`): the same checks and changes as the flat patch, except cb13 declared with three rows, two temps T and U added, and in place of the flat patch's two instructions:
+
+  ```
+  dp4 rT.x, cb2[xRow], rP     dp4 rT.y, cb2[yRow], rP     dp4 rT.z, cb2[zRow], rP     mov rT.w, l(1.0)
+  dp4 rU.x, rT, cb13[0]       dp4 rU.y, rT, cb13[1]       dp4 rU.z, rT, cb13[2]
+  min rU.y, rU.y, rU.z        max o16.x, rU.x, rU.y
+  ```
+
+  Rows (posAdjust-relative, `tiltConstant`): low (0, 0, −1, Z0+H−A.z), tilted (−s·h.x, −s·h.y, −1, Z0+H−A.z + s·((F−A)·h)), cap (0, 0, −1, Z0+M−A.z), A = posAdjust. 67 instruction tokens + 8 declaration tokens (the flat patch: 19 + 8).
+- **Runtime** (`src/fixed_spike_shader_tilt.h`). `iCutTilt=1` (validated only with `iCutStyle=1`; otherwise 0 and FCS-66) creates a tilt runtime and, in `commit` after the fill, one 48-byte dynamic buffer (FCS-104). Per published frame `tiltFrame` builds the planes. A pass that the flat cut or Stage 1 would bind with the plane buffer goes through `tiltPass` first: in a cell the census calls **flat** it is drawn with the tilted copy of the same audited shader (made on first use per shader object, counted `created`; FCS-102 patch, FCS-103 device) and the buffer in slot 13 (Mapped only when the rows change; FCS-105). Kit and unknown cells, removals, the storey line, Effect passes clipped whole and shadow passes are untouched (counted `kitFlat`, `unknownFlat`). **Every refusal (FCS-102..105) ends the tilt for the session** (state `refused`, every pass flat from then on, `refusedFlat` counts the flat cell's plane passes drawn flat) but never latches the cut: a refusal for one class's shader while its twin in the other class stayed tilted would cut depth and colour of one geometry at different planes (review minor, fix pass). Passes already drawn tilted earlier in that frame stay so for that one frame.
+- **Cache lifetime** (review minor, fix pass): each tilt cache entry stores the engine object, the bytecode size and the DXBC container checksum (bytes 4..20, an MD5-based digest of the whole container, checked against all 16,044 archive blobs), plus the FNV-1a-64 for log lines. A lookup compares object, size and checksum, all O(1); hashing the bytecode on every pass would cost kilobytes per pass. On a mismatch (an object freed and reused for other bytecode) the entry's copy is released and the entry **rebuilt in place** (counted `rebuilt`); a failed rebuild is an FCS-102/103 like any other. `finish` closes a tilted pass exactly like a flat one.
+- **Every reader of the plane agrees.**
+  - Lighting and Utility (depth): same shader shape, same rows.
+  - Effect: cut at the tilted plane; the whole rule (`wholeEffect`/`upperEffect`) reads the tilted height above the bound centre, so a fog card or glow on the kept far side is not removed whole by the old level plane.
+  - Native skips (`reach` below, `underLine`): still exact, since the tilted cut keeps everything the flat cut keeps (max with the low plane).
+  - Stage 1 "flat" bucket: in a flat cell every decision is `Treat::flat` (decide: not a kit cell), so every Stage 1 pass there is tilted.
+  - Stage 2 frame pass: the band is **off** in a tilted cell (`BandState::tilt`; the level band would darken the foot of every kept far wall). The radial falloff and vignette are unchanged; frame shader bytes unchanged (`frame_shaders.py --check` MATCH).
+  - Fill: a tilted pass never opens a fill (`openFill` false; counted `fillSkipped` when `iCutFill` is on). With `iCutTilt=1` and `iCutFill=0` nothing of the fill exists, as before.
+  - Void colour, sky and the player fade hold do not read the plane.
+- **`iCutTilt=0` is today's cut.** No tilt runtime, no tilted shader, no new buffer; the only runtime differences from `9ba6e86` are null tests (`tiltPass` returns at `tiltOn()`; `tiltFrame`/`traceTilt` at `r.tilt`), a `View` copy in `consider` and three INI reads. The flat shader bytes are proven identical (next section).
+
+### Audit: patched shader outputs
+
+- **Flat path byte-identical.** The archive test folds every flat-cut output (all 527, in archive order) into one FNV-1a-64 and asserts it equals the value printed by the same test at `9ba6e86` before the tilted patcher existed: `1,453,384 bytes, digest 8faac9f14d633edb`. One set of shaders is used for `iCutTilt=0` and kit cells; the tilted set is separate (two sets) because the shader shape differs (3 rows, 2 temps). The one-set alternative (tilt terms zeroed) is also exact, proven by test: with s = 0 the tilted rows give bit for bit the flat cut's clip distance for 24,000 positions at four headings and three position adjustments; it was not chosen because it would change every flat shader's bytes and cost 7 more instructions per vertex in kit cells.
+- **Hashes changed: none.** The audited lists (84 Lighting/Utility, 114 Effect) and the flat outputs are unchanged. **New**: 527 tilted outputs (198 distinct: 22 Lighting, 62 Utility, 114 Effect), digest `eb6fd2ccfc798a6e`. Each: patch `ok`, size = original + 75·4 + 24 + 16, checksum reproduced, re-patch refused (`signature`), cb13 rows 3, temps +2, and the inserted block run through an independent token interpreter (bit-field decoding, not the patcher's constants) against `tiltClip` at 6 positions (3,162 checks, exact).
+- **vkd3d-shader**: `tools/tilted_shaders.py DIR` — MATCH 198 (D3D assembly shows the block above; SPIR-V decorates BuiltIn ClipDistance). `frame_shaders.py --check` MATCH; `open_tops.py --check` MATCH (37 of 136).
+
+### Log line (once, after the fill line, only with `iCutTilt=1`)
+
+```
+FixedCameraSpike shader tilt installed tilt=%s slope=%.3f max=%.1f height=%.1f
+```
+
+### Trace: `FixedShaderTilt` (new optional kind, only with `iCutTilt=1`; every other row is unchanged)
+
+```
+FixedShaderTilt t=%.3f frame=%llu tilt=%u state=%s cell=%s quadrant=%d heading=%.3f,%.3f slope=%.3f max=%.1f lowZ=%.2f capZ=%.2f atFeet=%.2f behind500=%.2f front500=%.2f tilted=%llu effectTilted=%llu kitFlat=%llu unknownFlat=%llu refusedFlat=%llu fullFlat=%llu effectWhole=%llu fillSkipped=%llu noPlanes=%llu uploads=%llu made=%u refused=%u rebuilt=%u created=%u sample=window
+```
+
+World heights: `lowZ` = Z0+H, `capZ` = Z0+M, the plane at the feet, 500 behind and 500 in front (nan without planes). `tilted`/`effectTilted`: Lighting+Utility / Effect passes drawn tilted; `kitFlat`/`unknownFlat`: plane passes left flat because the cell is kit / not yet known; `refusedFlat`, `fullFlat`: left flat by a refusal / a full table (must stay 0); `effectWhole`: Effect passes of a tilted cell clipped whole; `made`/`refused` cumulative tilted shaders; `rebuilt` cache entries rebuilt for new bytecode and `created` tilted shaders created in the window (first-use creation stays inside the pass: `created` shows where a first-frame hitch can come from). Longest row 555 of 768 bytes. Checker: `OPTIONAL_KINDS` with `CAPS = 6000`; FCS-102..105 are faults (each falls back to the flat cut).
+
+### Refusal codes (FCS-102..105; 66..105 in use)
+
+| Code | Site | Meaning; what stays in force |
+| --- | --- | --- |
+| FCS-102 | `tiltEntryFor` | An audited shader has no tilted copy (`axes`, or any patch failure). The tilt is off for the session; the flat cut everywhere. |
+| FCS-103 | `tiltEntryFor` | The device refused a tilted shader. The tilt is off for the session; the flat cut everywhere. |
+| FCS-104 | `installTilt` | The device refused the tilt buffer. No tilt; the flat cut as with `iCutTilt=0`. |
+| FCS-105 | `uploadTilt` | The tilt buffer could not be mapped. The tilt is off for the session; the flat cut goes on (no latch). |
+
+### Tests (g++ 15.2.0, Python 3.14.4)
+
+- **18 portable tests: PASS.** New `tilt()` in the shader policy test:
+  - settings (default off; only with `iCutStyle=1`; slope 0.05..4; max from `fShaderCutHeight` to 2048; nan → defaults; with tilt off no FCS-66);
+  - the four headings (quadrant, unit vector towards the camera), anchoring (lowZ = held + H, capZ = held + M, feet x, y), heights at the feet, in front, sideways, 100/400/480/500/5000 behind (clamp);
+  - shader form against heights at each heading and three position adjustments (kept/cut on both sides of the plane);
+  - snap (hard switch), non-finite inputs, a ceiling under the near plane;
+  - exact flat equivalence with s = 0 (bitwise);
+  - the synthetic shader's exact tilted token stream (hand-written hex), unchanged signatures, the flat stream unchanged, both blocks under the interpreter;
+  - `Patch::axes` on an ambiguous x row (flat still ok); other refusals identical to the flat patch's;
+  - band choice (`tilt`, kit wins, `off` with band 0);
+  - the trace row.
+- Refusal-range rows updated to 66..105. Archive rows as above.
+- **Wiring audit, 13 sections: PASS.** New `shader Stage 3.2 tilt wiring` section (after the fix pass also: FCS-102/103 set the session state, the cache identity check, release and rebuild); five hand mutations each failed it (fill opened on a tilted pass, kit cells tilted, band on under tilt, tilt without Stage 1, latch on a tilt map failure).
+- Strict g++ check of the adapter against stand-ins (`-Wshadow -Wconversion -Wsign-conversion -Wold-style-cast`): 0 warnings.
+
+### First-run protocol (for the orchestrator; nothing here was run)
+
+Routes `p55-comb-cave-*` (Embershard Mine) and `p55-comb-bfb-*` (Bleak Falls Barrow), four headings each, with `iCutStyle=1`, `iCutTilt=1`, `iCutFill=0`, `iShaderCutTrace=1`; then the Mare with the same keys. Expected log: `shader tilt installed tilt=installed slope=0.500 max=400.0 height=160.0`. No FCS-102..105.
+
+**Counters.**
+- `FixedShaderTilt cell=flat`, `tilted` ≈ the `FixedShader cut` count of the window minus whole removals, `effectTilted > 0` where Effect meshes are cut, `kitFlat = unknownFlat = refusedFlat = fullFlat = 0` once the census is done, `made` ≤ 527 (one per engine shader object), `refused = 0`, `rebuilt = 0` expected, `created` > 0 only in the first windows of a cell, `uploads` ≈ frames in the window (the rows move with the feet).
+- `atFeet = front500 = lowZ`, `behind500 = capZ` (defaults), `quadrant` changing on each snap with `heading` signs following the eye.
+- `FixedShaderFrame band=tilt` in both cells.
+- The Mare: `cell=kit`, `tilted = 0`, `kitFlat` > 0, Stage 1 counters as without the tilt.
+
+**Picture per heading (both cells).** On the camera side the cut is where it is today: the player is never covered. Behind the player the walls, pillars and cave shell rise with distance: about 50 units higher 100 units behind, full height (held floor + 400) from about 480 units behind; the far wall reads as a wall, not a strip. Each snap moves the tall side to the new far side at once. Bleak Falls Barrow: the chamber's back walls and their sconces stand; Embershard: the rock shell behind the player stands, its top at most 400 above the floor. The level dark band at the cut edge is gone (band off); the radial falloff still darkens beyond 500.
+
+**A/B:** `iCutTilt=0` reproduces `9ba6e86` exactly.
+
+### Risks
+
+| Risk | How it would show |
+| --- | --- |
+| Shadows through the opened far side | Shadow-map passes are never cut in flat cells (Stage 1's shadow rule is kit-only), so what the cut removes still casts, as today. The tilt keeps more, so it cannot add a shadow without a caster on screen; it can only make existing ones plausible. |
+| Lights, fog cards, light shafts above the old plane | Now kept on the far side up to the tilted height (the whole rule follows it). Cards that ended in a straight edge at the old plane now end at the tilted plane, sloped. |
+| Ceilings and overhangs far behind | Anything under held + 400 more than ~480 behind is kept, including low cave ceilings: they can hide the floor beyond the player (not the player). Lower `fCutTiltMax` if it shows. |
+| Water planes | Water is drawn by the Water shader class, which no stage hooks: never cut, unchanged. A water plane under a kept far wall shows as before. |
+| Stage 2 falloff | The falloff (inner 500, outer 900) darkens kept far walls from 500 out, about where they reach full height; the band is off. |
+| Stair lag | The tilt is anchored on the held floor like the flat cut: on stairs the near plane lags exactly as today. |
+| Lighting/Utility disagreement | Closed by the fix pass: any FCS-102/103 turns the whole tilt off; at most the frame of the refusal mixes. |
+| First-use creation hitch | Each tilted shader is created inside the first pass that needs it (`created` per window); measured in the run. |
+| Cost | Seven more vertex instructions per vertex in flat cells; one 48-byte Map per frame. |
+
+### What the reviewer must check
+
+1. The token encodings of the inserted block (tilted hex in the test's synthetic shader; vkd3d disassembly).
+2. Plane signs: h towards the camera, "behind" = (F − p)·h > 0, row 1 = (−s·h, −1, …).
+3. That every bind of the plane buffer in flat cells reaches `tiltPass` (`styledPass` and `consider`), and nothing else does.
+4. That `tiltPass` binds exactly as `apply` (buffer, shader, `openObject`, `opened`, counters) so `finish` closes it.
+5. The band choice (off under tilt) and the Effect whole rule at the tilted height.
+6. MSVC `/W4 /WX`.
+
+### Unverified
+
+- Every game row, the look, and DXVK linking the tilted shaders (vkd3d only).
+- The Utility depth pre-pass hypothesis (not needed by the design).
+- That the published eye is always in one of the four diagonal quadrants with |offset| well above 1 unit (true for the locked rig; a quadrant flip on the axis would be a hard switch).
+
 ## Reproduce the offline checks
 
 ```sh
@@ -1458,6 +1588,11 @@ objdump -d -M intel --start-address=0x14102b6c0 --stop-address=0x14102b8d7 "$E" 
 objdump -d -M intel --start-address=0x14102b120 --stop-address=0x14102b5b2 "$E"   # depth-stencil table: mode 3 = LESS_EQUAL + write
 objdump -d -M intel --start-address=0x14154a700 --stop-address=0x14154a9ad "$E"   # Lighting Setup/RestoreGeometry: depth-mode overrides in the shadow state
 python3 -B -I modules/camera/tools/frame_shaders.py --validate "$TMPDIR/frame"      # disassembly and SPIR-V of both blobs
+# Stage 3.2 (the tilted cut)
+objdump -d -M intel --start-address=0x1415170c0 --stop-address=0x14151717e "$E"   # World translation minus posAdjust x, y, z (+0x35C/+0x360/+0x364)
+mkdir -p "$TMPDIR/tilt" && SKYCRPG_TILT_DUMP="$TMPDIR/tilt" SKYCRPG_SHADER_ARCHIVE='/home/dq/.local/share/Steam/steamapps/common/Skyrim Special Edition/Data/Skyrim - Shaders.bsa' \
+  "$RUNNER_TEMP/fixed_spike_shader_policy_test"                                    # flat digest, 527 tilted outputs, axis rows, interpreter
+python3 -B modules/camera/tools/tilted_shaders.py "$TMPDIR/tilt"                    # vkd3d-shader: MATCH 198
 ```
 
 Sources read: the binary and Address Library above; `Data/Skyrim - Shaders.bsa` (read-only); `session-p55/research/shader-discard.md` and `p55-spike-clip` (`docs/evidence/p5.5/spike-wave2-clip.md`, `modules/camera/src/fixed_spike_clip.h`, `include/fixed_spike_clip_policy.h`, the wiring test) as leads, each fact used here re-derived except where marked; the coordinator's summary of the clip package's independent review; DXVK `src/dxbc/dxbc_compiler.cpp` at v2.7.1 (zlib/libpng licence) through a summarising fetch, for facts only; `libvkd3d-shader.so.1.19.0` (LGPL) of the Steam Linux Runtime as an offline validator, not linked or copied. No GPL source was opened and no code was copied from any third party. The MD5 block function is written from RFC 1321; the DXBC final-block rule is checked against the archive's own 16,044 stored checksums.
