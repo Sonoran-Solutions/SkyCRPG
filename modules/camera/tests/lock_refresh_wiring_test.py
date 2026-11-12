@@ -859,7 +859,7 @@ assert "const bool tilted = tiltCell();" in frame and "kitCell,band,bandFloor,ti
 assert "    if (kitCell) return BandState::kit;\n    if (tiltCell) return BandState::tilt;" in frame_policy
 assert "LineBudget shaderTiltLines{shader::traceLines};" in spike and gate.count('"FixedCameraSpike","iCutTilt"') == 1 and \
     gate.count('"FixedCameraSpike","fCutTiltSlope"') == 1 and gate.count('"FixedCameraSpike","fCutTiltMax"') == 1 and \
-    "\niCutTilt=0\n" in ini and "\nfCutTiltSlope=0.5\n" in ini and "\nfCutTiltMax=400\n" in ini
+    "\niCutTilt=1\n" in ini and "\nfCutTiltSlope=0.5\n" in ini and "\nfCutTiltMax=400\n" in ini
 assert cut_policy.endswith('#include "fixed_spike_shader_tilt_policy.h"  // Stage 3.2: the tilted cut (iCutTilt=1)\n') or \
     '#include "fixed_spike_shader_tilt_policy.h"' in cut_policy
 print("PASS shader Stage 3.2 tilt wiring: tilt runtime only with iCutTilt=1 and iCutStyle=1; installed after every earlier pass; no hook, "
