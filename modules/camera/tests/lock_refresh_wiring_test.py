@@ -552,7 +552,12 @@ assert "LineBudget shaderStyle2Lines{shader::traceLines};" in spike
 # their box are removed, never flat-cut.
 trace_style = style_body("inline void traceStyle(", "} // namespace")
 assert trace_style.index("if (formatStyle(line,sizeof(line),sample)) r.styleEmitter(line);") < trace_style.index("if (formatStyle2(line,sizeof(line),second)) r.style2Emitter(line);")
-assert '"FixedShaderStyle2 t=%.3f frame=%llu capZ=%.2f cappedFar=%llu roofRemoved=%llu overheadRemoved=%llu galleryRemoved=%llu sample=window",' in style_policy
+assert '"FixedShaderStyle2 t=%.3f frame=%llu capZ=%.2f cappedFar=%llu roofRemoved=%llu overheadRemoved=%llu galleryRemoved=%llu headroomZ=%.2f "\n        "heldMinusFeet=%.2f sample=window",' in style_policy
+# Fix after batch T2: the head-height rules measure from the lower of the held floor and the feet, set once per frame.
+assert "f.overhead = box.valid && box.low.z >= s.headroomZ+storeyHeadroom;" in style and \
+    "storeyCandidate(e.piece,box,feet,s.headroomZ)" in style and "s.base+storeyHeadroom" not in style and \
+    "s.headroomZ = headroomFloor(s.base,r.view.feet.z);" in style and \
+    "constexpr float headroomFloor(float heldZ,float feetZ) { return feetZ < heldZ ? feetZ : heldZ; }" in style_policy
 rules_fn = style_policy[style_policy.index("constexpr Decision rules(const Facts& f) {"):style_policy.index("constexpr Decision decide(const Facts& f) {")]
 assert rules_fn.index("if (f.roof && f.piece == Piece::kit && !f.walkable) return {Treat::remove,Bucket::removedWhole,Note::roof};") < \
     rules_fn.index("if (f.above || (!object && f.overhead)) {")

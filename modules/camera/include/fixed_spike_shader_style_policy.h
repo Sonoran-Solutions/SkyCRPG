@@ -311,6 +311,15 @@ inline float boxReach(const Box& b,Vec feet) {
     const float distance = std::hypot(dx,dy);
     return std::isfinite(distance) ? distance : std::numeric_limits<float>::infinity();
 }
+// The floor the head-height rules measure from (the overhead fact and the storey candidates): the held
+// floor (CutPlane), or the actual feet when they are lower. The held floor ignores moves within its 24-unit
+// band and follows larger ones after 0.6 s, so the plane does not jump with a jump or a step; but after a
+// step down (or a landing) inside the band it can stay up to 24 units above the feet indefinitely, and up
+// to 96 for 0.6 s. Measured from it, a rafter whose bottom lies between feet + 128 and held + 128 was no
+// longer "overhead" and was kept or flat-cut across the frame (batch T2, Mare hearth: held 84.96, feet 68).
+// Taking the lower of the two removes what is above the player's head now; while the feet are above the
+// held floor (a jump, the step up a stair) the held floor stays the reference, so nothing changes there.
+constexpr float headroomFloor(float heldZ,float feetZ) { return feetZ < heldZ ? feetZ : heldZ; }
 inline bool storeyCandidate(Piece piece,const Box& b,Vec feet,float base) {
     if (piece != Piece::kit || !b.valid || !std::isfinite(base)) return false;
     const Spans s = spansOf(b);
@@ -363,7 +372,7 @@ struct Facts {
     Side side{Side::across};
     bool lane{};      // in the lane (settledLane)
     bool above{};     // box bottom at or above the storey line (less aboveTolerance)
-    bool overhead{};  // box bottom at or above the held feet height + storeyHeadroom
+    bool overhead{};  // box bottom at or above headroomFloor(held feet, feet) + storeyHeadroom
     bool around{};    // the box contains the feet in the ground plane (the player stands in or under it)
     bool low{};       // the box's top is at most feet + laneHigh (a hearth, a rug, a bench: not a cabinet)
     bool interact{};  // an interactable reference (door, container, activator, furniture, flora, an item): never removed whole
@@ -508,14 +517,19 @@ struct Style2Sample {
     unsigned long long frame{};
     bool haveView{};
     float capZ{};         // the back-side cap in use
+    float headroomZ{};    // headroomFloor at the last frame: what overhead and storey candidates measure from
+    float heldMinusFeet{}; // held floor minus the feet's height at the last frame (CutPlane band: |x| <= 24 settled)
     StyleWindow window{};
 };
 inline bool formatStyle2(char* out,std::size_t size,const Style2Sample& s) {
     const auto note = [&](Note which) { return s.window.notes[static_cast<std::size_t>(which)]; };
     const int written = std::snprintf(out,size,
-        "FixedShaderStyle2 t=%.3f frame=%llu capZ=%.2f cappedFar=%llu roofRemoved=%llu overheadRemoved=%llu galleryRemoved=%llu sample=window",
+        "FixedShaderStyle2 t=%.3f frame=%llu capZ=%.2f cappedFar=%llu roofRemoved=%llu overheadRemoved=%llu galleryRemoved=%llu headroomZ=%.2f "
+        "heldMinusFeet=%.2f sample=window",
         s.seconds,s.frame,s.haveView ? static_cast<double>(s.capZ) : static_cast<double>(std::numeric_limits<float>::quiet_NaN()),
-        s.window.buckets[static_cast<std::size_t>(Bucket::cappedFar)],note(Note::roof),note(Note::overhead),s.window.galleryRemoved);
+        s.window.buckets[static_cast<std::size_t>(Bucket::cappedFar)],note(Note::roof),note(Note::overhead),s.window.galleryRemoved,
+        s.haveView ? static_cast<double>(s.headroomZ) : static_cast<double>(std::numeric_limits<float>::quiet_NaN()),
+        s.haveView ? static_cast<double>(s.heldMinusFeet) : static_cast<double>(std::numeric_limits<float>::quiet_NaN()));
     return written > 0 && static_cast<std::size_t>(written) < size;
 }
 } // namespace skycrpg::camera::fixed::shader

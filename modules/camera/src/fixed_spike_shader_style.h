@@ -52,6 +52,7 @@ struct StyleRuntime {
     Storey storey;
     float found{std::numeric_limits<float>::infinity()}; // lowest storey candidate of the frame being drawn
     float base{},lineZ{},capZ{};
+    float headroomZ{}; // headroomFloor(base, feet): the overhead fact and the storey candidates (fix after batch T2)
     int quadrant{-1};
     unsigned long long lastFrame{};
     Budget shadowBudget;
@@ -136,11 +137,11 @@ inline void refresh(StyleEntry& e,RE::TESObjectREFR* ref,Kind kind) {
     e.side = settledSide(box,e.thin,feet,eye,e.side,e.frame != 0 && e.quadrant == s.quadrant);
     e.lane = box.valid && settledLane(box,feet,eye,e.lane);
     e.quadrant = s.quadrant;
-    if (storeyCandidate(e.piece,box,feet,s.base) && box.low.z < s.found) s.found = box.low.z;
+    if (storeyCandidate(e.piece,box,feet,s.headroomZ) && box.low.z < s.found) s.found = box.low.z;
     Facts f;
     f.piece = e.piece; f.side = e.side; f.lane = e.lane; f.gallery = r.config.keepFarGallery; f.kitCell = s.cellStyle == CellStyle::kit;
     f.above = box.valid && box.low.z >= s.lineZ-aboveTolerance;
-    f.overhead = box.valid && box.low.z >= s.base+storeyHeadroom;
+    f.overhead = box.valid && box.low.z >= s.headroomZ+storeyHeadroom;
     f.around = box.valid && feet.x >= box.low.x && feet.x <= box.high.x && feet.y >= box.low.y && feet.y <= box.high.y;
     f.low = box.valid && box.high.z <= feet.z+laneHigh;
     // Every object form type the cursor can activate (all of kindOf's objects but Tree).
@@ -301,6 +302,7 @@ inline void styleFrame() {
     const bool resumed = s.lastFrame+1u != r.frame;
     s.lastFrame = r.frame;
     s.base = r.plane.base;
+    s.headroomZ = headroomFloor(s.base,r.view.feet.z); // fix after batch T2: never above the feet
     // After a gap (menu, load, any ineligible frame) the last frame drew nothing: the held line stays.
     if (!resumed) s.storey.update(s.found,s.base,r.view.planeZ,r.view.seconds);
     s.found = std::numeric_limits<float>::infinity();
@@ -389,6 +391,7 @@ inline void traceStyle(double now,const VoidWindow& effect) {
     sample.fxFloorKept = effect.floorKept; sample.fxWholeRadius = effect.wholeRadius;
     Style2Sample second;
     second.seconds = now; second.frame = r.frame; second.haveView = sample.haveView; second.capZ = s.capZ; second.window = s.window;
+    second.headroomZ = s.headroomZ; second.heldMinusFeet = s.base-r.view.feet.z;
     s.window = {};
     char line[sizeof(TraceRow)]{};
     if (formatStyle(line,sizeof(line),sample)) r.styleEmitter(line);
