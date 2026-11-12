@@ -86,8 +86,8 @@ static_assert(RE::CameraState::kTween == 7);
 // it there and writes VTABLE_BGSLocation[2], ID 189920, at +30); keywords +38 and
 // numKeywords +40 (BGSKeywordForm ctor 1D85E0 zeroes +8 / +10); parentLoc +48
 // (PNAM; zeroed by the ctor at 297F2B). Read as plain members, no virtual call.
-// BGSKeyword: formEditorID +20 (BGSKeyword vtable ID 195248 slot 32 at 29E710
-// returns [rcx+20]; slot 33 at 29E720 stores there), read only at kDataLoaded.
+// BGSKeyword: formEditorID +20 (BGSKeyword vtable ID 195248 slot 0x32 at 29E710
+// returns [rcx+20]; slot 0x33 at 29E720 stores there), read only at kDataLoaded.
 static_assert(offsetof(RE::BGSKeywordForm,keywords) == 0x08);
 static_assert(offsetof(RE::BGSKeywordForm,numKeywords) == 0x10);
 static_assert(offsetof(RE::BGSLocation,parentLoc) == 0x48);
@@ -324,20 +324,20 @@ inline bool installStealth(std::uintptr_t base) {
 }
 
 // ---- dungeon gate (iLightFillMode=2) -------------------------------------------
-// installLight(), kDataLoaded, mode 2 only. By editor ID; if the editor-ID map
-// has no entry, the Skyrim.esm form (load index 00, so the local ID is the form
-// ID) is taken only when its own editor ID is the expected one.
+// installLight(), kDataLoaded, mode 2 only. The Skyrim.esm form first (load
+// index 00, so the local ID is the form ID; vanilla locations point at these),
+// taken only when its own editor ID is the expected one; else by editor ID.
 inline void resolveGate() {
     auto& l = *lights;
     unsigned byName{},byId{},dungeons{};
     for (std::size_t i = 0;i < gateKeywords.size();++i) {
         const auto& entry = gateKeywords[i];
-        const RE::BGSKeyword* form = RE::TESForm::LookupByEditorID<RE::BGSKeyword>(entry.name);
-        if (form) ++byName;
-        else if (const auto byForm = RE::TESForm::LookupByID<RE::BGSKeyword>(entry.skyrimId)) {
+        const RE::BGSKeyword* form = nullptr;
+        if (const auto byForm = RE::TESForm::LookupByID<RE::BGSKeyword>(entry.skyrimId)) {
             const char* text = byForm->formEditorID.c_str();
             if (text && std::strcmp(text,entry.name) == 0) { form = byForm; ++byId; }
         }
+        if (!form && (form = RE::TESForm::LookupByEditorID<RE::BGSKeyword>(entry.name))) ++byName;
         l.gateForms[i] = form;
         if (form && entry.kind == GateClass::dungeon) ++dungeons;
     }
@@ -522,6 +522,7 @@ inline void frameLight(bool eligible,FillDuty duty,bool loadExit,RE::TESObjectCE
     loadExit = loadExit || l.loadPending;
     l.loadPending = false;
     if (cellId != l.cell || loadExit) { l.cell = cellId; l.track.newCell(); }
+    if (loadExit) l.gateRead = false; // re-read the gate after a load (one read, one log line)
     const bool interior = parent && parent->IsInteriorCell();
     if (eligible && !interior) cause = "exterior"; // unwanted only because it is outdoors
     // Mode 2: read only for an interior with the fill light usable; mode 1 never reads it.
