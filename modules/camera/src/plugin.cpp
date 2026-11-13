@@ -381,6 +381,7 @@ void loadSettings() {
         shaderCut.frame.doorDepth = number("FixedCameraSpike","fDoorVoidDepth",shaderCut.frame.doorDepth);
         shaderCut.frame.doorEdge = number("FixedCameraSpike","fDoorVoidEdge",shaderCut.frame.doorEdge);
         shaderCut.frame.doorRadius = number("FixedCameraSpike","fDoorVoidRadius",shaderCut.frame.doorRadius);
+        shaderCut.frame.doorSide = number("FixedCameraSpike","fDoorVoidSide",shaderCut.frame.doorSide);
         // Wave 2 package "light": default off; with both modes 0 nothing is allocated.
         fixed::light::Config l;
         l.fillMode = number("FixedCameraSpike","iLightFillMode",l.fillMode);

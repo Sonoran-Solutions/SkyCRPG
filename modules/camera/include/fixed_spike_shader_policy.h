@@ -143,10 +143,11 @@ struct FrameConfig {
     float doorDepth{900.0f};     // fDoorVoidDepth: how far behind the door's plane the void reaches (the report's lane)
     float doorEdge{48.0f};       // fDoorVoidEdge: the soft edge, world units
     float doorRadius{1500.0f};   // fDoorVoidRadius: doors within this distance of the feet
+    float doorSide{32.0f};       // fDoorVoidSide: the lane's half width beyond the doorway's, each side
 };
 // Out of range: band 0 or 8..512 (a positive band under 8 is 8), headroom 0..512, radii 0..16384,
 // vignette 0..1; NaN or infinite takes the default. Each change is reported once as FCS-66. The door
-// keys are read only with iDoorVoid=1: depth 128..4096, edge 8..256, radius 256..8192; iDoorVoid above 1 is 0.
+// keys are read only with iDoorVoid=1: depth 128..4096, edge 8..256, radius 256..8192, side 0..1024; iDoorVoid above 1 is 0.
 inline FrameConfig validateFrame(FrameConfig f,bool& adjusted) {
     if (!f.enabled) return f;
     const FrameConfig in = f;
@@ -160,10 +161,11 @@ inline FrameConfig validateFrame(FrameConfig f,bool& adjusted) {
         f.doorDepth = bounded(f.doorDepth,900.0f,128.0f,4096.0f);
         f.doorEdge = bounded(f.doorEdge,48.0f,8.0f,256.0f);
         f.doorRadius = bounded(f.doorRadius,1500.0f,256.0f,8192.0f);
+        f.doorSide = bounded(f.doorSide,32.0f,0.0f,1024.0f);
     }
     adjusted = adjusted || f.band != in.band || f.headroom != in.headroom || f.radiusInner != in.radiusInner ||
         f.radiusOuter != in.radiusOuter || f.vignette != in.vignette || f.doorVoid != in.doorVoid ||
-        (f.doorVoid && (f.doorDepth != in.doorDepth || f.doorEdge != in.doorEdge || f.doorRadius != in.doorRadius));
+        (f.doorVoid && (f.doorDepth != in.doorDepth || f.doorEdge != in.doorEdge || f.doorRadius != in.doorRadius || f.doorSide != in.doorSide));
     return f;
 }
 struct Config {

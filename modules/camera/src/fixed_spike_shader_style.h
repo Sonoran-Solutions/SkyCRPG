@@ -386,7 +386,7 @@ inline void noteDoorRef(DoorCensus& doors,RE::TESObjectREFR* ref,RE::TESBoundObj
     const auto angle = ref->GetAngle();
     const auto position = ref->GetPosition();
     static_cast<void>(noteDoor(doors,ref->GetFormID(),model,teleport,off,{position.x,position.y,position.z},{angle.x,angle.y,angle.z},
-        model && teleport == Teleport::present ? ref->GetScale() : 1.0f));
+        model && teleport == Teleport::present ? ref->GetScale() : 1.0f,runtime->config.frame.doorSide));
 }
 // Stage 3.0, after the census: sorted by form ID for the per-pass lookup, then grouped into stacks.
 inline void linkCellStacks() {

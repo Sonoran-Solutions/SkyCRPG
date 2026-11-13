@@ -46,6 +46,8 @@ void plane() {
     const DoorModel& mine = model("dungeons\\mines\\minedoorload01.nif");
     const DoorPlane d = doorPlane(mine,embershardDoor,embershardAngle,1.0f);
     assert(d.valid);
+    const DoorPlane wide = doorPlane(mine,embershardDoor,embershardAngle,1.0f,200.0f); // fDoorVoidSide
+    assert(wide.valid && close(wide.half-d.half,168.0f,1e-3f) && close(wide.start,d.start,1e-6f));
     // Normal: local y turned by z (sin z, cos z), times the front sign -1.
     assert(close(d.nx,-std::sin(3.393f),1e-5f) && close(d.ny,-std::cos(3.393f),1e-5f) && d.ny > .96f && close(std::hypot(d.nx,d.ny),1.0f,1e-5f));
     assert(close(d.point.x,2480.55f,.05f) && close(d.point.y,1309.56f,.05f) && close(d.point.z,9245.1f-3.72f,.01f));
@@ -223,6 +225,10 @@ void settings() {
     assert(!adjusted && c.frame.doorVoid == 1u);
     c = {}; c.frame.doorVoid = 1u; c.frame.doorDepth = 10.0f; c.frame.doorEdge = nan; c.frame.doorRadius = 1e9f; c = validate(c,&adjusted);
     assert(adjusted && c.frame.doorDepth == 128.0f && c.frame.doorEdge == 48.0f && c.frame.doorRadius == 8192.0f);
+    adjusted = false; c = {}; c.frame.doorVoid = 1u; c.frame.doorSide = -5.0f; c = validate(c,&adjusted);
+    assert(adjusted && c.frame.doorSide == 0.0f);
+    adjusted = false; c = {}; c.frame.doorVoid = 1u; c.frame.doorSide = 5000.0f; c = validate(c,&adjusted);
+    assert(adjusted && c.frame.doorSide == 1024.0f);
     c = {}; c.frame.doorVoid = 2u; c = validate(c,&adjusted);
     assert(adjusted && c.frame.doorVoid == 0u);
     // Off: the door keys are not read, so nothing is reported for them.
