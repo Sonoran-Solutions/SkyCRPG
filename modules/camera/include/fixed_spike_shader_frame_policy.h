@@ -26,6 +26,7 @@
 #include "fixed_spike_shader_frame_shaders.h"
 #include "fixed_spike_shader_door_policy.h"
 #include "fixed_spike_shader_door_light_policy.h" // the door void's lights (iDoorVoidLights=1)
+#include "fixed_spike_shader_door_glow_policy.h" // the door void's glow cards (iDoorVoidGlow=1/2)
 #include <cstddef>
 
 namespace skycrpg::camera::fixed::shader {

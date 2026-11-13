@@ -147,11 +147,13 @@ struct FrameConfig {
     float doorSide{32.0f};       // fDoorVoidSide: the lane's half width beyond the doorway's, each side
     // The door void's lights (fixed_spike_shader_door_light_policy.h): off unless asked for; needs iDoorVoid=1.
     unsigned doorLights{0};      // iDoorVoidLights: 0 off, 1 placed point lights inside a chosen door's lane are put out
+    // The door void's glow cards (fixed_spike_shader_door_glow_policy.h): off unless asked for; needs iDoorVoid=1 and the Effect class.
+    unsigned doorGlow{0};        // iDoorVoidGlow: 0 off, 1 fake-light cards behind a chosen door's plane not drawn, 2 also up to 512 in front
 };
 // Out of range: band 0 or 8..512 (a positive band under 8 is 8), headroom 0..512, radii 0..16384,
 // vignette 0..1; NaN or infinite takes the default. Each change is reported once as FCS-66. The door
 // keys are read only with iDoorVoid=1: depth 128..4096, edge 8..256, radius 256..8192, side 0..1024; iDoorVoid above 1 is 0.
-// iDoorVoidLights above 1, or set without iDoorVoid=1, is 0.
+// iDoorVoidLights above 1, or set without iDoorVoid=1, is 0; so is iDoorVoidGlow above 2.
 inline FrameConfig validateFrame(FrameConfig f,bool& adjusted) {
     if (!f.enabled) return f;
     const FrameConfig in = f;
@@ -168,10 +170,11 @@ inline FrameConfig validateFrame(FrameConfig f,bool& adjusted) {
         f.doorSide = bounded(f.doorSide,32.0f,0.0f,1024.0f);
     }
     if (f.doorLights > 1u || !f.doorVoid) f.doorLights = 0u;
+    if (f.doorGlow > 2u || !f.doorVoid) f.doorGlow = 0u;
     adjusted = adjusted || f.band != in.band || f.headroom != in.headroom || f.radiusInner != in.radiusInner ||
         f.radiusOuter != in.radiusOuter || f.vignette != in.vignette || f.doorVoid != in.doorVoid ||
         (f.doorVoid && (f.doorDepth != in.doorDepth || f.doorEdge != in.doorEdge || f.doorRadius != in.doorRadius || f.doorSide != in.doorSide)) ||
-        f.doorLights != in.doorLights;
+        f.doorLights != in.doorLights || f.doorGlow != in.doorGlow;
     return f;
 }
 struct Config {
@@ -221,7 +224,11 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     bool frameChanged = false;
     c.frame = validateFrame(c.frame,frameChanged);
     // The door void reads Stage 1's census of the cell (fixed_spike_shader_style.h noteCell).
-    if (c.frame.enabled && c.frame.doorVoid && c.style != stageOneStyle) { c.frame.doorVoid = 0u; c.frame.doorLights = 0u; frameChanged = true; }
+    if (c.frame.enabled && c.frame.doorVoid && c.style != stageOneStyle) {
+        c.frame.doorVoid = 0u; c.frame.doorLights = 0u; c.frame.doorGlow = 0u; frameChanged = true;
+    }
+    // The door void's glow cards are Effect-shader meshes: without the Effect class hooked (bShaderCutEffect=1) nothing can remove them.
+    if (c.frame.enabled && c.frame.doorGlow && !c.effect) { c.frame.doorGlow = 0u; frameChanged = true; }
     // Stage 3.2: only with Stage 1 (the census says which cells are flat); the far side's ceiling never under the near plane.
     if (c.tilt > 1u || c.style != stageOneStyle) c.tilt = 0u;
     c.tiltSlope = bounded(c.tiltSlope,0.5f,0.05f,4.0f);

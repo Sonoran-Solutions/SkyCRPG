@@ -351,7 +351,7 @@ publish = cut_body("inline void publish(", "inline void trace(double now) {")
 assert publish.index("if (r.published+1u != frame) r.plane.reset();") < \
     publish.index("if (publishes(r.installed,r.latched.load(std::memory_order_acquire),interiorCell,feet.z))") < \
     publish.index("makeView(r.config,eye,forward,feet,r.plane.update(feet.z,now),frame,now)") < \
-    publish.index("if (!next) { r.active.store(false,std::memory_order_release); settleSky(false); doorLightsFrame(false); return; }") < \
+    publish.index("if (!next) { r.active.store(false,std::memory_order_release); settleSky(false); doorLightsFrame(false); doorGlowFrame(false); return; }") < \
     publish.index("r.active.store(true,")
 assert "inline bool publishes(bool installed,bool latched,bool interiorCell,float feetZ) {\n    return installed && !latched && interiorCell && " \
     "std::isfinite(feetZ);" in cut_policy
@@ -404,7 +404,8 @@ assert cut.endswith('#include "fixed_spike_shader_void.h" // second pass: the vo
                     '#include "fixed_spike_shader_frame.h" // fifth pass: Stage 2, the frame pass\n'
                     '#include "fixed_spike_shader_fill.h" // Stage 3.1: the back-face fill\n'
                     '#include "fixed_spike_shader_tilt.h" // Stage 3.2: the tilted cut\n'
-                    '#include "fixed_spike_shader_door_light.h" // the door void\'s lights (iDoorVoidLights=1)\n')
+                    '#include "fixed_spike_shader_door_light.h" // the door void\'s lights (iDoorVoidLights=1)\n'
+                    '#include "fixed_spike_shader_door_glow.h" // the door void\'s glow cards (iDoorVoidGlow=1/2)\n')
 assert "inline void installVoid(std::uintptr_t base);" in cut and cut.count("installVoid(base);") == 1 and cut.count("installEffect(base);") == 1
 assert void.count("inline void installVoid(std::uintptr_t base) {") == 1 and "runtime = " not in void
 install_effect = cut_body("inline void installEffect(std::uintptr_t base) {", "// Main thread, inside the camera frame service.")
@@ -879,7 +880,7 @@ door_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader
 door_table = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_door_table.h").read_text()
 frame_ps = (Path(__file__).resolve().parents[1] / "shaders/fixed_spike_frame_ps.hlsl").read_text()
 assert "unsigned doorVoid{0};" in cut_policy and \
-    "if (c.frame.enabled && c.frame.doorVoid && c.style != stageOneStyle) { c.frame.doorVoid = 0u; c.frame.doorLights = 0u; frameChanged = true; }" in cut_policy
+    "if (c.frame.enabled && c.frame.doorVoid && c.style != stageOneStyle) {\n        c.frame.doorVoid = 0u; c.frame.doorLights = 0u; c.frame.doorGlow = 0u; frameChanged = true;\n    }" in cut_policy
 assert "    if (f.doorVoid > 1u) f.doorVoid = 0u;\n    if (f.doorVoid) {" in cut_policy
 for key, default in (("iDoorVoid", "1"), ("fDoorVoidDepth", "900"), ("fDoorVoidEdge", "48"), ("fDoorVoidRadius", "1500"), ("fDoorVoidSide", "320")):
     assert gate.count('"FixedCameraSpike","' + key + '"') == 1 and ("\n" + key + "=" + default + "\n") in ini, key
@@ -1008,7 +1009,7 @@ for forbidden in ("RE::", "REL::", "GetSingleton", "#include <windows", "std::ve
 # Paths: served by publish (eligible, after the sky), off when publish has no view, a lifecycle load/cell, the Loading Menu,
 # a latch or an off-thread request at frame start; an ineligible frame holds or restores by the fill light's rule.
 assert publish.index("settleSky(true);") < publish.index("doorLightsFrame(true);") and \
-    "settleSky(false); doorLightsFrame(false); return; }" in publish
+    "settleSky(false); doorLightsFrame(false); doorGlowFrame(false); return; }" in publish
 assert frame_start.index("frameStartFrame();") < frame_start.index("doorLightsStart();")
 assert trace_body.index("traceTilt(now);") < trace_body.index("traceDoorLights(now);")
 lifecycle_spike = spike_body("inline void lifecycle(Exit cause) {", "// Plain placed references only.")
@@ -1041,3 +1042,87 @@ print("PASS shader door void lights wiring: only with iDoorVoidLights=1 (INI 0) 
       "the Loading Menu, a latch and ineligible frames by the fill light's menu rule (at once; 0.5 s hysteresis only for an unchosen door); a reference held on "
       "every NiLight put out, the bit cleared through it even after its BSLight left the list, released after the lock; FixedDoorLight on change through "
       "the frame budget; one site per FCS-106..110")
+
+# The door void's glow cards (iDoorVoidGlow=1/2, include/fixed_spike_shader_door_glow_policy.h, src/fixed_spike_shader_door_glow.h):
+# off by default; only with the door void and the Effect class. One more census branch (inside the statics' branch, only
+# for an effects\ model with the key); this frame's cards taken in publish from the frame pass's own door choice; an
+# Effect pass of the published view whose owner is one of them is drawn with wholeConstant through the existing apply.
+# With iDoorVoidGlow=0 there is no runtime, the census branch is never taken and consider's new line is a null test:
+# every draw is exactly as before. No hook, code or engine-state write; no engine read the cut does not already make.
+door_glow = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_door_glow.h").read_text()
+door_glow_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_door_glow_policy.h").read_text()
+
+
+def door_glow_body(start, end):
+    return door_glow[door_glow.index(start):door_glow.index(end, door_glow.index(start))]
+
+
+# Settings: struct and INI default 0; 0..2, only with the door void (itself only with Stage 1) and the Effect class.
+assert "unsigned doorGlow{0};" in cut_policy and "    if (f.doorGlow > 2u || !f.doorVoid) f.doorGlow = 0u;" in cut_policy and \
+    "f.doorLights != in.doorLights || f.doorGlow != in.doorGlow;" in cut_policy and \
+    "if (c.frame.enabled && c.frame.doorGlow && !c.effect) { c.frame.doorGlow = 0u; frameChanged = true; }" in cut_policy
+assert gate.count('"FixedCameraSpike","iDoorVoidGlow"') == 1 and "\niDoorVoidGlow=0\n" in ini and ini.index("\niDoorVoidLights=0\n") < ini.index("\niDoorVoidGlow=0\n")
+assert '#include "fixed_spike_shader_door_glow_policy.h"' in frame_policy
+configure_glow = door_glow_body("inline void configureDoorGlow() {", "// Main thread, publish")
+assert "if (r.config.frame.enabled && r.config.frame.doorVoid && r.config.frame.doorGlow) r.doorGlow = new DoorGlowRuntime;" in configure_glow
+assert door_glow.count("= new ") == 1 and cut.count("\n    configureDoorGlow();\n") == 1 and "DoorGlowRuntime* doorGlow{};" in cut
+# Census: inside the statics' branch, after the kit and dungeon counts (the cell's style is unchanged), only with the key;
+# reset with the cell; logged once per cell after the style is decided.
+assert note_cell.index("const bool doorGlow = doorVoid && runtime->config.frame.doorGlow != 0u;") < note_cell.index("if (type != RE::FormType::Static") < \
+    note_cell.index("const char* const path = modelPath(base);") < note_cell.index("const Family family = modelFamily(path);") < \
+    note_cell.index("else if (family == Family::dungeons) ++c.dungeon;") < \
+    note_cell.index("else if (family == Family::effects && doorGlow) noteGlowRef(glows,ref,base,path);") < note_cell.index("s.glows = glows;") < \
+    note_cell.index("if (doorGlow && s.cellStyle != CellStyle::unknown) {") < note_cell.index("formatDoorGlowCensus(line,sizeof(line),id,")
+assert "        s.glows = {};\n" in note_cell and style.count("noteGlowRef(") == 2 and "GlowCensus glows{};" in style
+note_glow = style_body("inline void noteGlowRef(", "// Stage 3.0, after the census")
+assert note_glow.index("if (!glowModel(path)) return;") < note_glow.index("base->boundData") < note_glow.index("ref->GetPosition()") < \
+    note_glow.index("ref->GetScale()") < note_glow.index("ref->IsDisabled() || ref->IsDeleted()")
+for forbidden in ("Get3D", "GetBaseObject", "extraList", "teleportBit", "peek<", "invoke<"):
+    assert forbidden not in note_glow, forbidden
+# The draw: the only new line of consider, after the published-view test and the Lighting/Utility branches, before the plane
+# constant; Effect group only and only with a runtime.
+glow_line = "    if (group && r.doorGlow && doorGlowPass(geometry,shaderClass)) return;\n"
+assert consider.count(glow_line) == 1 and cut.count("doorGlowPass(") == 2 and \
+    consider.index("if (!sameView(r.view,eye,direction)) {") < consider.index("if (!group && styled()) { styledPass(pass,shaderClass,eye); return; }") < \
+    consider.index("const auto geometry = peek<const std::uint8_t*>(pass,offset::passGeometry);") < consider.index(glow_line) < \
+    consider.index("const Constant wanted = cutConstant(r.view.planeZ,eye.z);")
+glow_pass = door_glow_body("inline bool doorGlowPass(", "// FixedDoorGlow, through")
+assert glow_pass.index("if (!g.set.count || !geometry) return false;") < glow_pass.index("const auto ref = ownerOf(geometry);") < \
+    glow_pass.index("if (!ref || !g.set.hides(ref->GetFormID())) return false;") < glow_pass.index("shaderFor(group)") < \
+    glow_pass.index("!entry || !entry->patched || !r.budgets[group].take()") < glow_pass.index("apply(*entry,wholeConstant,shaderClass);")
+assert door_glow.count("apply(") == 1 and "removeConstant" not in door_glow and "cutConstant" not in door_glow and \
+    "constexpr Constant wholeConstant{0.0f,-1.0f,0.0f,0.0f};" in sky_policy
+# This frame's cards: the frame pass's own selection (same census, feet, radius), flat cells only, the frame pass and the
+# Effect class installed, nothing latched; empty on an inactive publish. Served after the door lights, after the sky.
+frame_glow = door_glow_body("inline void doorGlowFrame(bool active) {", "// consider, an Effect pass")
+assert frame_glow.index("r.framePass->state == Feature::installed && !r.framePass->broken") < \
+    frame_glow.index("r.effectState == Feature::installed && !r.latched.load(std::memory_order_acquire) && styled() && r.style->cellStyle == CellStyle::flat;") < \
+    frame_glow.index("if (!want) { g.set = {};") < frame_glow.index("selectDoors(r.style->doors,r.view.feet,r.config.frame.doorRadius)") < \
+    frame_glow.index("selectGlows(r.style->glows,chosen,r.config.frame.doorDepth,r.config.frame.doorGlow)")
+assert "f.doors = flatCell ? selectDoors(r.style->doors,r.view.feet,r.config.frame.doorRadius) : DoorSelection{};" in frame
+assert publish.index("settleSky(true);") < publish.index("doorLightsFrame(true);") < publish.index("doorGlowFrame(true);") and \
+    cut.count("doorGlowFrame(") == 3
+# Trace: FixedDoorGlow on change through the frame row's emitter (its budget); the census once per cell to the log.
+trace_glow = door_glow_body("inline void traceDoorGlow(double now) {", "} // namespace")
+assert trace_glow.index("if (!r.doorGlow || !r.config.trace) return;") < trace_glow.index("if (sameGlows(g.set,g.traced)) return;") < \
+    trace_glow.index("formatDoorGlow(line,sizeof(line),t)) r.frameEmitter(line);") < trace_glow.index("g.traced = g.set; g.window = {};")
+assert trace_body.index("traceDoorLights(now);") < trace_body.index("traceDoorGlow(now);")
+assert commit.index('"FixedCameraSpike shader door lights installed lights=%s') < commit.index("if (r.doorGlow) {") < \
+    commit.index('"FixedCameraSpike shader door glow installed mode=%u') < commit.index("if (r.fill) {")
+# The model set and the place rule (pinned: the survey's numbers rest on them).
+assert 'constexpr std::array<const char*,4> glowPrefixes{"fxglowfill","fxglowflat","fxambbeam","fx_rainandmistbeam"};' in door_glow_policy and \
+    "if (modelFamily(path) != Family::effects) return false;" in door_glow_policy and "constexpr float glowFrontReach = 512.0f;" in door_glow_policy
+assert "if (back >= 0.0f && back <= depth) return GlowPlace::behind;" in door_glow_policy and \
+    "if (mode >= glowFront && back < 0.0f && -back <= glowFrontReach) return GlowPlace::front;" in door_glow_policy and \
+    "if (!(doorAcross(d,at) <= d.half) || at.z < d.low-reach || at.z > d.high+reach) return GlowPlace::none;" in door_glow_policy
+door_glow_code = "\n".join(line.split("//")[0] for line in door_glow.splitlines())
+for forbidden in ("safe_write", "VirtualAlloc", "VirtualProtect", "write_vfunc", "write_call", "write_branch", "AllocTrampoline", "std::vector",
+                  "std::memcpy", "SetAppCulled", "REL::", "peek<", "invoke<", "Refusal::"):
+    assert forbidden not in door_glow_code, forbidden
+for forbidden in ("RE::", "REL::", "GetSingleton", "#include <windows", "std::vector", "near", "far"):
+    assert forbidden not in door_glow_policy.replace("Nearby", "").replace("nearest", "").replace("nearer", ""), forbidden
+print("PASS shader door void glow wiring: only with iDoorVoidGlow=1/2 (INI 0), the door void and the Effect class; one census branch inside the statics' "
+      "(an effects\\ model's position, scale, OBND and form flags, as noteUpright/noteDoorRef); with the key 0 no runtime, no census read and consider's "
+      "new line a null test; this frame's cards from the frame pass's own door choice in flat cells; a hidden card's Effect pass of the published view "
+      "drawn with wholeConstant through the existing apply (audited patched shader, Effect budget); FixedDoorGlow on change through the frame budget; "
+      "no hook, code, engine-state write or new engine read")

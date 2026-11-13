@@ -384,6 +384,8 @@ void loadSettings() {
         shaderCut.frame.doorSide = number("FixedCameraSpike","fDoorVoidSide",shaderCut.frame.doorSide);
         // The door void's lights (needs iDoorVoid=1): off unless asked for.
         shaderCut.frame.doorLights = number("FixedCameraSpike","iDoorVoidLights",shaderCut.frame.doorLights);
+        // The door void's glow cards (needs iDoorVoid=1 and bShaderCutEffect=1): off unless asked for.
+        shaderCut.frame.doorGlow = number("FixedCameraSpike","iDoorVoidGlow",shaderCut.frame.doorGlow);
         fixed::configure(f,shaderCut,settings,cursorSettings.enabled ? cursorSettings.toggleKey : -1,
             std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera_FixedSpike.log",log,thinGoal,fixedPreCollision,fixedCause);
     }

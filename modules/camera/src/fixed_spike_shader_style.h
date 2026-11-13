@@ -30,6 +30,10 @@
 // The door void's lights (iDoorVoidLights=1, fixed_spike_shader_door_light.h)
 // add one more: a reference whose base is a LIGH is noted from its position
 // and the same two form flags (noteLightRef); nothing else of it is read.
+// The door void's glow cards (iDoorVoidGlow=1/2, fixed_spike_shader_door_glow.h)
+// add one more, inside the statics' branch: a Static or MovableStatic under
+// effects\ whose model is a glow card is noted from its position, scale and
+// base OBND (as noteUpright) and the same two form flags (noteGlowRef).
 #include "precision_policy.h"
 
 namespace skycrpg::camera::fixed::shader {
@@ -81,6 +85,7 @@ struct StyleRuntime {
     unsigned stacks{},openStacks{},uprightOverflow{};
     DoorCensus doors{}; // the door void's load doors of the cell (iDoorVoid=1 only)
     LightCensus lights{}; // the cell's placed LIGH references (iDoorVoidLights=1 only)
+    GlowCensus glows{};   // the cell's glow cards (iDoorVoidGlow=1/2 only)
     StyleWindow window{};
 };
 inline Feature styleState() { return runtime && runtime->style ? runtime->style->state : Feature::off; }
@@ -397,6 +402,16 @@ inline void noteLightRef(LightCensus& lights,RE::TESObjectREFR* ref) {
     const auto position = ref->GetPosition();
     notePlacedLight(lights,ref->GetFormID(),ref->IsDisabled() || ref->IsDeleted(),{position.x,position.y,position.z});
 }
+// The door void's glow cards, census: a Static or MovableStatic whose model is a glow card (glowModel), from its
+// position, scale and base OBND (as noteUpright) and its form flags (as noteDoorRef). Nothing is read for another model.
+inline void noteGlowRef(GlowCensus& glows,RE::TESObjectREFR* ref,RE::TESBoundObject* base,const char* path) {
+    if (!glowModel(path)) return;
+    const auto& bounds = base->boundData;
+    const auto position = ref->GetPosition();
+    const float reach = glowReach({static_cast<float>(bounds.boundMin.x),static_cast<float>(bounds.boundMin.y),static_cast<float>(bounds.boundMin.z)},
+        {static_cast<float>(bounds.boundMax.x),static_cast<float>(bounds.boundMax.y),static_cast<float>(bounds.boundMax.z)},ref->GetScale());
+    static_cast<void>(noteGlowCard(glows,ref->GetFormID(),path,ref->IsDisabled() || ref->IsDeleted(),{position.x,position.y,position.z},reach));
+}
 // Stage 3.0, after the census: sorted by form ID for the per-pass lookup, then grouped into stacks.
 inline void linkCellStacks() {
     auto& s = *runtime->style;
@@ -421,6 +436,7 @@ inline void noteCell(RE::TESObjectCELL* cell) {
         s.uprightCount = 0; s.stacks = s.openStacks = s.uprightOverflow = 0;
         s.doors = {};
         s.lights = {};
+        s.glows = {};
         s.entries.fill(StyleEntry{});
         for (auto& set : s.removed) set.fill(nullptr);
     }
@@ -429,8 +445,10 @@ inline void noteCell(RE::TESObjectCELL* cell) {
     Census c;
     DoorCensus doors;
     LightCensus lights;
+    GlowCensus glows;
     const bool doorVoid = runtime->config.frame.enabled && runtime->config.frame.doorVoid != 0u; // nothing is drawn without the frame pass
     const bool doorLights = doorVoid && runtime->config.frame.doorLights != 0u; // the door void's lights
+    const bool doorGlow = doorVoid && runtime->config.frame.doorGlow != 0u; // the door void's glow cards
     s.uprightCount = 0; s.uprightOverflow = 0;
     cell->ForEachReference([&](RE::TESObjectREFR* ref) {
         const auto base = ref ? ref->GetBaseObject() : nullptr;
@@ -440,9 +458,11 @@ inline void noteCell(RE::TESObjectCELL* cell) {
         if (type == RE::FormType::Light && doorLights) { noteLightRef(lights,ref); return RE::BSContainer::ForEachResult::kContinue; }
         if (type != RE::FormType::Static && type != RE::FormType::MovableStatic) return RE::BSContainer::ForEachResult::kContinue;
         ++c.statics;
-        const Family family = modelFamily(modelPath(base));
+        const char* const path = modelPath(base);
+        const Family family = modelFamily(path);
         if (family == Family::architecture) ++c.kit;
         else if (family == Family::dungeons) ++c.dungeon;
+        else if (family == Family::effects && doorGlow) noteGlowRef(glows,ref,base,path);
         if (family == Family::architecture && runtime->config.stacks != noStacks) noteUpright(ref,base);
         return RE::BSContainer::ForEachResult::kContinue;
     });
@@ -450,6 +470,7 @@ inline void noteCell(RE::TESObjectCELL* cell) {
     s.cellStyle = cellStyle(c);
     s.doors = doors;
     s.lights = lights;
+    s.glows = glows;
     linkCellStacks();
     // Once per cell, when the census has decided the cell's style: the door void's doors (the frame pass
     // draws them only in flat cells).
@@ -461,6 +482,12 @@ inline void noteCell(RE::TESObjectCELL* cell) {
     if (doorLights && s.cellStyle != CellStyle::unknown) {
         char line[768]{};
         if (formatDoorLightCensus(line,sizeof(line),id,s.doors,s.lights,runtime->config.frame.doorDepth)) runtime->logger(line);
+    }
+    // The door void's glow cards, once per cell: the cards of the cell and those a door of the census places.
+    if (doorGlow && s.cellStyle != CellStyle::unknown) {
+        char line[1280]{};
+        if (formatDoorGlowCensus(line,sizeof(line),id,runtime->config.frame.doorGlow,s.doors,s.glows,runtime->config.frame.doorDepth))
+            runtime->logger(line);
     }
 }
 // configure, after validate: only iCutStyle=1 has a style runtime.
