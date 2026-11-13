@@ -218,6 +218,15 @@ void settings() {
     c = {}; c.radius = nan; assert(validate(c,&adjusted).radius == 0.0f && adjusted);
     c = {}; c.radius = -1; assert(validate(c).radius == minRadius);
     c = {}; c.height = 2000; assert(validate(c).height == 1024.0f);
+    // fShaderCutFollowDown (CutPlane follow-down, after the Embershard ramp): on at 480 by default; 0 or less off
+    // (the held floor's old rule exactly); otherwise 120..2048; unreadable = 480.
+    assert(defaults.followDown == 480.0f && followDownDefault == 480.0f);
+    c = {}; c.followDown = 0.0f; assert(validate(c,&adjusted).followDown == 0.0f && !adjusted);
+    c = {}; c.followDown = 1000.0f; assert(validate(c,&adjusted).followDown == 1000.0f && !adjusted);
+    c = {}; c.followDown = -5.0f; assert(validate(c,&adjusted).followDown == 0.0f && adjusted);
+    c = {}; c.followDown = 50.0f; assert(validate(c,&adjusted).followDown == 120.0f && adjusted);
+    c = {}; c.followDown = 1e6f; assert(validate(c,&adjusted).followDown == 2048.0f && adjusted);
+    c = {}; c.followDown = nan; assert(validate(c,&adjusted).followDown == 480.0f && adjusted);
     c = {}; c.radius = 1024; c.shaders = 1; c.trace = true;
     c = validate(c,&adjusted);
     assert(!adjusted && c.radius == 1024.0f && c.shaders == 1 && c.trace);

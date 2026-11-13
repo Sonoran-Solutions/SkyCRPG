@@ -666,11 +666,12 @@ inline void publish(Vec eye,Vec forward,Vec feet,bool interiorCell,unsigned long
     if (!runtime) return;
     auto& r = *runtime;
     r.frame = frame;
-    // The plane's reference height starts again after any frame without a plane.
+    // The plane's reference height starts again after any frame without a plane. It follows the feet down
+    // a ramp or a staircase at up to fShaderCutFollowDown units/s (CutPlane; after the Embershard ramp, S28).
     if (r.published+1u != frame) r.plane.reset();
     std::optional<View> next;
     if (publishes(r.installed,r.latched.load(std::memory_order_acquire),interiorCell,feet.z))
-        next = makeView(r.config,eye,forward,feet,r.plane.update(feet.z,now),frame,now);
+        next = makeView(r.config,eye,forward,feet,r.plane.update(feet.z,now,r.config.followDown),frame,now);
     if (!next) { r.active.store(false,std::memory_order_release); settleSky(false); doorLightsFrame(false); doorGlowFrame(false); return; }
     r.view = *next; r.haveView = true; r.published = frame;
     for (auto& budget : r.budgets) budget.frame();

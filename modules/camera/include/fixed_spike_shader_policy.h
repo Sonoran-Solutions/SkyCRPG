@@ -179,6 +179,7 @@ inline FrameConfig validateFrame(FrameConfig f,bool& adjusted) {
 }
 struct Config {
     float height{160.0f};       // cut plane above the player's feet
+    float followDown{480.0f};   // fShaderCutFollowDown: the held floor follows the feet down at up to this many units/s once they are a band below it (CutPlane); 0 = off
     float radius{0.0f};         // 0 = every piece in view; otherwise only pieces reaching within this ground distance of the feet
     unsigned maxPerFrame{4096}; // cut draws per frame (each group has its own budget)
     unsigned shaders{3};        // bit 0 lighting, bit 1 utility (depth passes)
@@ -209,9 +210,18 @@ constexpr unsigned flatStyle = 0, stageOneStyle = 1;
 // The camera stands about 336 ground units from the feet, so a radius under
 // 384 could leave a piece between camera and player whole.
 constexpr float minRadius = 384.0f;
+// fShaderCutFollowDown (after the Embershard ramp, S28): 0 or less = off (the held floor's old rule exactly),
+// otherwise 120..2048 units per second (walking down a 0.5 ramp drops about 60..150 per second; a rate under
+// the descent lets the lag grow again); unreadable = the default 480.
+constexpr float followDownDefault = 480.0f, followDownLowest = 120.0f, followDownHighest = 2048.0f;
+inline float followDownRate(float rate) {
+    if (!std::isfinite(rate)) return followDownDefault;
+    return rate <= 0.0f ? 0.0f : std::clamp(rate,followDownLowest,followDownHighest);
+}
 inline Config validate(Config c,bool* adjusted = nullptr) {
     const Config in = c;
     c.height = bounded(c.height,160.0f,64.0f,1024.0f);
+    c.followDown = followDownRate(c.followDown);
     c.radius = !std::isfinite(c.radius) || c.radius == 0.0f ? 0.0f : std::clamp(c.radius,minRadius,8192.0f);
     c.maxPerFrame = std::clamp(c.maxPerFrame,1u,16384u);
     if (!c.shaders || c.shaders > 3u) c.shaders = 3;
@@ -233,7 +243,7 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     if (c.tilt > 1u || c.style != stageOneStyle) c.tilt = 0u;
     c.tiltSlope = bounded(c.tiltSlope,0.5f,0.05f,4.0f);
     c.tiltMax = bounded(c.tiltMax,400.0f,c.height,2048.0f);
-    if (adjusted) *adjusted = c.height != in.height || c.radius != in.radius || c.maxPerFrame != in.maxPerFrame || c.shaders != in.shaders ||
+    if (adjusted) *adjusted = c.height != in.height || c.followDown != in.followDown || c.radius != in.radius || c.maxPerFrame != in.maxPerFrame || c.shaders != in.shaders ||
         colorChanged || c.style != in.style || c.stacks != in.stacks || frameChanged ||
         c.fill != in.fill || fillColorChanged || c.tilt != in.tilt || (c.tilt && (c.tiltSlope != in.tiltSlope || c.tiltMax != in.tiltMax));
     return c;

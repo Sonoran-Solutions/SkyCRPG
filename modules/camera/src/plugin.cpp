@@ -345,6 +345,7 @@ void loadSettings() {
         // Wave 2 shader cut (iSeeThroughMode=3); unused in every other mode.
         fixed::shader::Config shaderCut;
         shaderCut.height = number("FixedCameraSpike","fShaderCutHeight",shaderCut.height);
+        shaderCut.followDown = number("FixedCameraSpike","fShaderCutFollowDown",shaderCut.followDown);
         shaderCut.radius = number("FixedCameraSpike","fShaderCutRadius",shaderCut.radius);
         shaderCut.maxPerFrame = number("FixedCameraSpike","iShaderCutMaxPerFrame",shaderCut.maxPerFrame);
         shaderCut.shaders = number("FixedCameraSpike","iShaderCutShaders",shaderCut.shaders);

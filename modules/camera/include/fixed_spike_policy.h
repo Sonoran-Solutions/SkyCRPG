@@ -428,6 +428,25 @@ struct HideBudget {
 // `snap` it follows the feet after they have stayed there for `settle` seconds,
 // so a jump (apex about 76 units) or one stair step does not move it; beyond
 // `snap`, up or down, it follows at once (a teleport, a fall, a fast climb).
+//
+// Follow-down (`followRate` > 0; the shader cut's fShaderCutFollowDown, after
+// the Embershard ramp, S28: held floor up to 69 over the feet walking down a
+// ramp, because the feet left the band and the 0.6 s settle let them drop
+// another 45 before the base snapped, then again): once the feet are more than
+// `band` below the base, the base follows them down at up to `followRate`
+// units per second (never below the feet) on every update while they are below
+// it, and keeps following until they have not been below it for `settle`
+// seconds. A ramp or a staircase down is followed with the base at the feet
+// (the lag at most `band` + one frame's drop, then 0 while the rate exceeds the
+// descent); a fall is followed mid-fall (with the snap as before). Only the
+// feet height series is read, no grounded state. Unchanged: the up direction
+// (the settle and snap rules), a jump (the feet go above the base), any move
+// down inside the band (a single step down or a landing up to 24 lower latches
+// as before; headroomFloor covers the head-height rules there), and
+// `followRate` 0 is the old rule exactly. The base only ever moves down here,
+// so more is cut (the safe direction); after a dip at the bottom of a ramp it
+// rests at the dip's lowest feet height (below the feet by the dip) until a
+// move up.
 struct CutPlane {
     constexpr static float band = 24.0f;
     constexpr static float snap = 96.0f;
@@ -435,12 +454,34 @@ struct CutPlane {
     bool valid{};
     float base{};
     double outside{-1};
+    bool following{};   // follow-down engaged
+    double lowSeen{-1}; // the last update with the feet below the base while following
+    double last{};      // the previous update's time (the rate's interval)
     void reset() { *this = {}; }
-    float update(float feetZ,double now) {
+    float update(float feetZ,double now,float followRate = 0.0f) {
         if (!std::isfinite(feetZ)) return base;
-        if (!valid) { valid = true; base = feetZ; outside = -1; return base; }
-        if (std::abs(feetZ-base) <= band) { outside = -1; return base; }
-        if (std::abs(feetZ-base) > snap) { base = feetZ; outside = -1; return base; }
+        if (!valid) { valid = true; base = feetZ; outside = -1; following = false; lowSeen = -1; last = now; return base; }
+        const double interval = now > last ? now-last : 0.0;
+        last = now;
+        const bool follow = std::isfinite(followRate) && followRate > 0.0f;
+        const float rise = feetZ-base;
+        if (std::abs(rise) > snap) {
+            base = feetZ; outside = -1; following = follow && rise < 0.0f; lowSeen = now;
+            return base;
+        }
+        if (follow) {
+            if (rise < -band) following = true;
+            if (following && rise < 0.0f) {
+                const float step = followRate*static_cast<float>(interval);
+                base = (std::max)(feetZ,base-step);
+                outside = -1; lowSeen = now;
+                return base;
+            }
+            if (following && now-lowSeen >= settle) following = false;
+        } else {
+            following = false;
+        }
+        if (std::abs(rise) <= band) { outside = -1; return base; }
         if (outside < 0) outside = now;
         if (now-outside >= settle) { base = feetZ; outside = -1; }
         return base;

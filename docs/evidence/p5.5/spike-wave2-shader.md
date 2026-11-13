@@ -236,6 +236,7 @@ ENB and Community Shaders are absent from the game directory and from the staged
 | --- | --- | --- | --- |
 | `iSeeThroughMode` | 0 | 0, 1, 3 here | 3 = this mode |
 | `fShaderCutHeight` | 160 | 64-1024 | plane above the feet |
+| `fShaderCutFollowDown` | 480 | 0 or 120-2048 | the held floor (CutPlane) follows the feet down at up to this many units/s once they are 24 below it, while they keep going down (a ramp or stairs down, a fall); 0 = the old rule (24 band, 0.6 s settle, 96 snap). After the Embershard ramp (S28: lag up to 69) |
 | `fShaderCutRadius` | 0 | 0 or 384-8192 | 0 = every selected piece in view; otherwise only pieces whose bound reaches within this ground distance of the feet (the camera stands about 336 away, so less than 384 is not accepted) |
 | `iShaderCutMaxPerFrame` | 4096 | 1-16384 | cap on cut draws per frame |
 | `iShaderCutShaders` | 3 | 1-3 | 1 Lighting, 2 Utility |
