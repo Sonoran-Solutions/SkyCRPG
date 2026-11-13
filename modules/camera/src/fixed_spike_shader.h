@@ -280,6 +280,8 @@ inline bool tiltCell();
 inline bool tiltPass(const Entry& entry,Vec eye,std::size_t shaderClass);
 inline const TiltPlanes& tiltPlanesNow();
 inline void tiltNoteWhole();
+// fixed_spike_shader_door_glow.h (included at the end of this file).
+inline bool doorGlowPass(const std::uint8_t* geometry,std::size_t shaderClass);
 // The pass is drawn with the patched shader and the plane in slot 13. Both
 // device calls that can fail come before anything is bound.
 inline void apply(const Entry& entry,Constant wanted,std::size_t shaderClass) {
@@ -485,7 +487,6 @@ inline void traceDoorLights(double now);
 // fixed_spike_shader_door_glow.h (included at the end of this file).
 inline void configureDoorGlow();
 inline void doorGlowFrame(bool active);
-inline bool doorGlowPass(const std::uint8_t* geometry,std::size_t shaderClass);
 inline void traceDoorGlow(double now);
 // Main thread, from commit, after the Lighting/Utility hooks. The Effect class
 // is hooked only with bShaderCutEffect=1 and when its own guard passes.
