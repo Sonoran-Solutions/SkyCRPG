@@ -354,9 +354,15 @@ assert fault.index("finish()") < fault.index("latch();") < fault.index("Refusal:
 publish = cut_body("inline void publish(", "inline void trace(double now) {")
 assert publish.index("if (r.published+1u != frame) r.plane.reset();") < \
     publish.index("if (publishes(r.installed,r.latched.load(std::memory_order_acquire),interiorCell,feet.z))") < \
-    publish.index("makeView(r.config,eye,forward,feet,r.plane.update(feet.z,now),frame,now)") < \
+    publish.index("makeView(r.config,eye,forward,feet,r.plane.update(feet.z,now,r.config.followDown),frame,now)") < \
     publish.index("if (!next) { r.active.store(false,std::memory_order_release); settleSky(false); doorLightsFrame(false); doorGlowFrame(false); return; }") < \
     publish.index("r.active.store(true,")
+# The held floor's follow-down (fShaderCutFollowDown, after the Embershard ramp): read once, validated, the shader's
+# CutPlane only (the hide path's CutPlane keeps the old rule: no rate), on by default in the shipped INI.
+assert gate.count('"FixedCameraSpike","fShaderCutFollowDown"') == 1 and "\nfShaderCutFollowDown=480\n" in ini and \
+    "c.followDown = followDownRate(c.followDown);" in cut_policy and cut.count("r.plane.update(") == 1 and \
+    "const float cutZ = r.cut.update(feet.z,r.now)+r.config.cutHeight;" in spike and \
+    "float update(float feetZ,double now,float followRate = 0.0f) {" in spike_policy
 assert "inline bool publishes(bool installed,bool latched,bool interiorCell,float feetZ) {\n    return installed && !latched && interiorCell && " \
     "std::isfinite(feetZ);" in cut_policy
 void = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_void.h").read_text()

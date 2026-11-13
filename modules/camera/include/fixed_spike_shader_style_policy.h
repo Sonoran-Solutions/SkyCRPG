@@ -320,6 +320,8 @@ inline float boxReach(const Box& b,Vec feet) {
 // longer "overhead" and was kept or flat-cut across the frame (batch T2, Mare hearth: held 84.96, feet 68).
 // Taking the lower of the two removes what is above the player's head now; while the feet are above the
 // held floor (a jump, the step up a stair) the held floor stays the reference, so nothing changes there.
+// With fShaderCutFollowDown (CutPlane follow-down, after the Embershard ramp) the held floor follows a descent
+// beyond the band within frames; a step down or a landing inside the band still latches, so this stays.
 constexpr float headroomFloor(float heldZ,float feetZ) { return feetZ < heldZ ? feetZ : heldZ; }
 
 // ---- column stacks (Stage 3 step 3.0, iCutStacks) -------------------------------------------

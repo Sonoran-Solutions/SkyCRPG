@@ -1,6 +1,7 @@
 // Copyright (c) 2026 devils_17. SPDX-License-Identifier: MIT
 #include "fixed_spike_policy.h"
 #include <cassert>
+#include <cmath>
 #include <limits>
 #include <string>
 #include <vector>
@@ -468,6 +469,214 @@ void dwellAndCaps() {
     assert(segments == 12 && near(from.x,96,1e-3f)); // even a zero-fraction hit always makes progress
 }
 
+// ---- CutPlane follow-down (fShaderCutFollowDown, after the Embershard ramp, S28) -------------------------
+// A feet-height profile driven through a CutPlane at a fixed frame rate. lag = base - feet after each update.
+struct FollowRun {
+    float lagMost{-1e9f},lagLeast{1e9f},stepMost{},endLag{},endBase{};
+    unsigned frames{},overBand{},overEight{};
+    double settledAt{-1};     // the first time from which base == feet held to the end (within 0.01)
+    std::vector<float> bases;
+};
+template<class Feet>
+FollowRun follow(Feet feet,double seconds,float rate,double hz = 60.0,double from = 0.0,double to = 1e9) {
+    CutPlane cut;
+    FollowRun out;
+    float previous = nan;
+    const auto count = static_cast<unsigned>(seconds*hz);
+    for (unsigned k = 0;k <= count;++k) {
+        const double t = static_cast<double>(k)/hz;
+        const float z = feet(t),base = cut.update(z,t,rate);
+        out.bases.push_back(base);
+        const float lag = base-z;
+        if (t >= from && t <= to) {
+            ++out.frames;
+            out.lagMost = (std::max)(out.lagMost,lag); out.lagLeast = (std::min)(out.lagLeast,lag);
+            if (lag > CutPlane::band+.01f) ++out.overBand;
+            if (lag > 8.0f) ++out.overEight;
+        }
+        if (std::isfinite(previous)) out.stepMost = (std::max)(out.stepMost,std::abs(base-previous));
+        previous = base;
+        if (std::abs(lag) > .01f) out.settledAt = -1; else if (out.settledAt < 0) out.settledAt = t;
+        out.endLag = lag; out.endBase = base;
+    }
+    return out;
+}
+// Walking: 1 s level at 1000, then down a ramp of `slope` at `speed` ground units/s for `length` ground units,
+// then level to the end.
+struct Ramp {
+    float slope{},speed{},length{};
+    float operator()(double t) const {
+        const double start = 1.0,walk = static_cast<double>(length/speed);
+        const double along = t < start ? 0.0 : (std::min)(t-start,walk);
+        return 1000.0f-static_cast<float>(along)*speed*slope;
+    }
+    double end() const { return 1.0+static_cast<double>(length/speed); }
+};
+void cutFollow() {
+    constexpr float rate = 480.0f; // the INI default
+    // A ramp at walk and run speeds, 0.3..0.5 slope (descent 45..150 units/s): the old rule lags 24 + the drop
+    // in 0.6 s (the Embershard ramp: up to 69); with follow-down the lag never passes the band + one frame's drop,
+    // and from the frame after it engages the base is at the feet.
+    for (const float slope : {.3f,.4f,.5f}) for (const float speed : {150.0f,200.0f,300.0f}) {
+        const Ramp ramp{slope,speed,600.0f};
+        const float descent = slope*speed,frameDrop = descent/60.0f;
+        const FollowRun before = follow(ramp,ramp.end()+2.0,0.0f,60.0,1.0,ramp.end());
+        const FollowRun after = follow(ramp,ramp.end()+2.0,rate,60.0,1.0,ramp.end());
+        assert(before.lagMost > (std::min)(CutPlane::band+.6f*descent*.9f,CutPlane::snap-frameDrop) && before.lagMost > 40.0f); // 24 + 0.6 s of drop (or the snap)
+        assert(after.lagMost <= CutPlane::band+frameDrop+.01f && after.lagMost < 40.0f);
+        assert(after.overBand == 0 && after.lagLeast >= -.01f);  // never under the feet on a smooth ramp
+        // Lag over 8 only while the feet first go from 8 to 24 under the base (16 / descent seconds), then at the feet.
+        assert(static_cast<float>(after.overEight) <= 16.0f/descent*60.0f+3.0f && before.overEight > after.overEight*2u);
+        // Down at the feet at the end, no pop afterwards (the old rule settles 0.6 s later by up to 24 + more).
+        assert(std::abs(after.endLag) < .01f && after.settledAt <= ramp.end()+.01);
+        // The base moves at most rate/60 per frame (no step) while following.
+        assert(after.stepMost <= rate/60.0f+.01f && before.stepMost > 30.0f);
+    }
+    // At 30 frames per second the same, with the frame's drop.
+    {
+        const Ramp ramp{.5f,300.0f,600.0f};
+        const FollowRun after = follow(ramp,ramp.end()+2.0,rate,30.0,1.0,ramp.end());
+        assert(after.lagMost <= CutPlane::band+150.0f/30.0f+.01f && after.overBand == 0 && std::abs(after.endLag) < .01f);
+    }
+    // A descent faster than the rate (sprinting down a 1:1 staircase, 600/s): the lag grows past the band but the
+    // snap still bounds it, and the base still settles at the feet within the settle after the end.
+    {
+        const Ramp ramp{1.0f,600.0f,600.0f};
+        const FollowRun after = follow(ramp,ramp.end()+2.0,rate);
+        assert(after.lagMost <= CutPlane::snap+10.0f+.01f && std::abs(after.endLag) < .01f);
+        const FollowRun capped = follow(ramp,ramp.end()+2.0,2048.0f,60.0,1.0,ramp.end());
+        assert(capped.lagMost <= CutPlane::band+10.0f+.01f && capped.overBand == 0); // the highest rate keeps up
+    }
+    // A staircase down: 16-unit steps every 0.12 s (133/s). The first step stays in the band; from the second the
+    // base follows each step within two frames. The old rule: 24 + 0.6 s of steps.
+    {
+        const auto stairs = [](double t) {
+            const double into = t-1.0;
+            const int steps = into < 0 ? 0 : (std::min)(static_cast<int>(into/.12)+1,12);
+            return 500.0f-16.0f*static_cast<float>(steps);
+        };
+        const FollowRun before = follow(stairs,4.0,0.0f,60.0,1.0,2.5),after = follow(stairs,4.0,rate,60.0,1.0,2.5);
+        assert(before.lagMost > 40.0f && after.lagMost <= CutPlane::band+.01f && std::abs(after.endLag) < .01f);
+    }
+    // A jump on level ground (apex 76, 0.6 s in the air, landing exactly where it left or 2 lower): no change at
+    // all, with or without follow-down. A longer one (0.9 s: above the band for more than the settle) moves the
+    // base up close to the apex under the old rule (unchanged); coming down, follow-down brings it back to the floor
+    // within frames instead of after the settle (never higher than the old rule, the same at the end).
+    for (const double airtime : {.6,.9}) for (const float landing : {0.0f,-2.0f}) {
+        const auto jump = [landing,airtime](double t) {
+            if (t < 1.0) return 300.0f;
+            if (t > 1.0+airtime) return 300.0f+landing;
+            const float u = static_cast<float>((t-1.0)/airtime);
+            return 300.0f+4.0f*76.0f*u*(1.0f-u)+landing*u;
+        };
+        const FollowRun before = follow(jump,3.0,0.0f),after = follow(jump,3.0,rate);
+        if (airtime < .7) {
+            assert(before.bases == after.bases);
+            for (const float b : after.bases) assert(b == 300.0f);
+        } else {
+            assert(*std::max_element(before.bases.begin(),before.bases.end()) > 324.0f);
+            for (std::size_t i = 0;i < after.bases.size();++i) assert(after.bases[i] <= before.bases[i]);
+            assert(after.bases[static_cast<std::size_t>((1.0+airtime+.2)*60.0)] == 300.0f+landing && after.endBase == before.endBase);
+        }
+    }
+    // Single steps up (18 inside the band; 32 outside it): exactly the old rule (no move; after 0.6 s).
+    for (const float up : {18.0f,32.0f}) {
+        const auto step = [up](double t) { return t < 1.0 ? 200.0f : 200.0f+up; };
+        const FollowRun before = follow(step,3.0,0.0f),after = follow(step,3.0,rate);
+        assert(before.bases == after.bases);
+        assert(after.endBase == (up > CutPlane::band ? 200.0f+up : 200.0f));
+        assert(after.bases[60+30] == 200.0f); // half a second after the step: not moved
+    }
+    // A single step down inside the band (18): latches as before (headroomFloor covers the head-height rules).
+    {
+        const auto step = [](double t) { return t < 1.0 ? 200.0f : 182.0f; };
+        const FollowRun before = follow(step,3.0,0.0f),after = follow(step,3.0,rate);
+        assert(before.bases == after.bases && after.endBase == 200.0f);
+    }
+    // A step down outside the band (32): followed within frames (old: 0.6 s later, all at once).
+    {
+        const auto step = [](double t) { return t < 1.0 ? 200.0f : 168.0f; };
+        const FollowRun before = follow(step,3.0,0.0f),after = follow(step,3.0,rate);
+        assert(before.bases[60+30] == 200.0f && before.endBase == 168.0f && before.stepMost == 32.0f);
+        assert(after.bases[60] < 200.0f && after.bases[60+4] == 168.0f && after.stepMost <= rate/60.0f+.01f);
+    }
+    // The step-down latch (batch T2, Mare hearth; route p55-shader-frame-mare-stepdown): standing at 84.96, a jump
+    // that lands on the floor at 68 (17 lower, inside the band). The held floor stays 84.96 with follow-down on
+    // as before, and the head-height rules measure from the feet (shader::headroomFloor, 68: tested there).
+    {
+        const auto landing = [](double t) {
+            if (t < 1.0) return 84.96f;
+            if (t > 1.6) return 68.0f;
+            const float u = static_cast<float>((t-1.0)/.6);
+            return 84.96f+4.0f*60.0f*u*(1.0f-u)+(68.0f-84.96f)*u;
+        };
+        const FollowRun before = follow(landing,4.0,0.0f),after = follow(landing,4.0,rate);
+        assert(before.bases == after.bases && after.endBase == 84.96f && std::abs(after.endLag-16.96f) < 1e-3f);
+    }
+    // Falls of 300 and 1000 off a ledge (gravity about 686 units/s^2, a 9.8 m/s^2 fall at 70 units a metre):
+    // followed mid-fall (the base never under the feet, never more than the snap above them), at the landing
+    // floor within a few frames of landing (simulated: 300 drop, lag at most 21 mid-fall, at the floor 0.05 s
+    // after landing; 1000 drop, at most 86 mid-fall, at the floor 0.16 s after). The old rule follows in steps of
+    // up to 96 and leaves the base where its last snap put it: 1.2 over the floor for good (300), or 66 over it
+    // for 0.58 s (1000).
+    for (const float drop : {300.0f,1000.0f}) {
+        const float gravity = 686.0f,airborne = std::sqrt(2.0f*drop/gravity);
+        const auto fall = [drop,airborne,gravity](double t) {
+            if (t < 1.0) return 2000.0f;
+            const float u = static_cast<float>(t-1.0);
+            return u >= airborne ? 2000.0f-drop : 2000.0f-.5f*gravity*u*u;
+        };
+        const double land = 1.0+static_cast<double>(airborne);
+        const FollowRun before = follow(fall,land+3.0,0.0f,60.0,land,land+.6);
+        const FollowRun after = follow(fall,land+3.0,rate,60.0,land,land+.6);
+        const FollowRun mid = follow(fall,land+3.0,rate,60.0,1.0,land);
+        assert(mid.lagMost <= CutPlane::snap+.01f && mid.lagLeast >= -.01f);
+        assert(after.lagMost <= CutPlane::snap+.01f && after.lagLeast >= -.01f && std::abs(after.endLag) < .01f);
+        assert(after.settledAt >= 0 && after.settledAt <= land+.25);  // at the floor within 0.25 s of landing
+        assert(before.endLag >= -.01f && before.endLag <= CutPlane::band); // old: wherever its last 96 snap left it
+    }
+    // Follow-down ends `settle` after the feet were last below the base: a jump at the foot of a ramp, after it,
+    // does not move the base; a jump while still following (the feet above the base) does not either.
+    {
+        const Ramp ramp{.5f,200.0f,400.0f};
+        CutPlane cut;
+        double t = 0;
+        for (;t <= ramp.end()+.001;t += 1.0/60.0) cut.update(ramp(t),t,rate);
+        const float floor = ramp(ramp.end());
+        assert(cut.following && std::abs(cut.base-floor) < .01f);
+        assert(cut.update(floor+40.0f,t,rate) == cut.base && cut.update(floor+76.0f,t+.2,rate) == cut.base); // jump, still following
+        assert(cut.update(floor,t+.5,rate) == cut.base && cut.update(floor,t+.75,rate) == cut.base && !cut.following);
+        assert(cut.update(floor+76.0f,t+1.0,rate) == cut.base && cut.update(floor,t+1.4,rate) == cut.base);   // a jump later
+    }
+    // A dip at the foot of a ramp (Embershard: the feet 12 under the deck for about 0.2 s, then back): the base
+    // stays at the dip's lowest point (more cut; the safe direction), never moves up within the band.
+    {
+        CutPlane cut;
+        cut.update(100.0f,0.0,rate);
+        cut.update(70.0f,.1,rate); cut.update(60.0f,.2,rate); cut.update(55.0f,.3,rate); cut.update(55.0f,.4,rate);
+        assert(cut.base == 55.0f && cut.update(64.0f,.5,rate) == 55.0f && cut.update(67.0f,1.5,rate) == 55.0f && !cut.following);
+    }
+    // Off (0, or anything not a positive number): the old rule exactly, including the sequence in hide().
+    for (const float off : {0.0f,-5.0f,nan}) {
+        const Ramp ramp{.4f,300.0f,600.0f};
+        assert(follow(ramp,ramp.end()+2.0,off).bases == follow(ramp,ramp.end()+2.0,0.0f).bases);
+    }
+    {
+        CutPlane a,b;
+        const std::array<float,8> heights{100.0f,124.0f,160.0f,101.0f,180.0f,100.0f,90.0f,300.0f};
+        const std::array<double,8> times{0.0,1.0,2.0,2.5,3.61,5.0,5.7,6.0};
+        for (std::size_t i = 0;i < heights.size();++i) assert(a.update(heights[i],times[i]) == b.update(heights[i],times[i],0.0f));
+    }
+    // A reset (any frame without a plane) starts again at the feet, not following.
+    {
+        CutPlane cut;
+        cut.update(100.0f,0.0,rate); cut.update(60.0f,.1,rate);
+        assert(cut.following);
+        cut.reset();
+        assert(!cut.valid && !cut.following && cut.update(10.0f,5.0,rate) == 10.0f);
+    }
+}
+
 void restores() {
     assert(exitNames.size() == static_cast<std::size_t>(Exit::count));
     // Every lifecycle exit in the brief has its own cause and is immediate.
@@ -532,6 +741,7 @@ int main() {
     hide();
     dwellAndCaps();
     restores();
+    cutFollow();
     trace();
     return 0;
 }
