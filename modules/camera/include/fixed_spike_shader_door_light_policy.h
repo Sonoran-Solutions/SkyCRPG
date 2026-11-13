@@ -12,9 +12,14 @@
 // which the per-geometry light list skips (ID 107784) and, for a dynamic
 // light, the per-frame light update detaches (ID 106335 -> 108285); the
 // light's geometries are marked for a light-list rebuild exactly as the
-// engine's own camera cull marks them (ID 108278). The bit is cleared again,
-// with the same marking, as soon as the door is no longer chosen or the rig
-// leaves (src/fixed_spike_shader_door_light.h has the engine side).
+// engine's own camera cull marks them (ID 108278). A reference is held on each
+// such NiLight, so the bit is cleared again (with the same marking while the
+// light is listed) on every exit even after its BSLight left the scene's list:
+// the engine rebuilds a light from the same NiLight when the cell's 3D is
+// attached again (ID 17610) and never clears the bit itself. A held light whose
+// door stops being chosen is kept for half a second while the door stays
+// within the radius plus 128 (hysteresis); every real exit restores at once
+// (src/fixed_spike_shader_door_light.h has the engine side).
 //
 // Which lights. A light is put out only when all of these hold, read under the
 // ShadowSceneNode's light lock on the main thread:
@@ -29,7 +34,7 @@
 //     not see (the player's torch or magic light, an actor's torch, the fill
 //     light of another package, anything spawned later) is never matched,
 //   - its app-culled bit is clear (one already culled is someone else's: left
-//     alone and counted).
+//     alone and counted) and something besides its BSLight still holds it.
 // No engine headers, no engine pointers: entries and lights are opaque
 // pointers the policy only compares.
 #include "fixed_spike_shader_door_policy.h"
@@ -38,7 +43,7 @@ namespace skycrpg::camera::fixed::shader {
 // ---- the census: placed LIGH references of the cell ------------------------------------------------
 // Report (survey of Skyrim.esm, 2026-11-12): 16 placed lights sit in the 388 vanilla lanes at fDoorVoidSide=320,
 // none with a model (the NiLight is the reference's own position), one an omni shadow light (Bthardamz).
-constexpr std::size_t maxCellLights = 256, maxDoorLights = 16, maxSeenLights = 64, maxTracedLights = 6;
+constexpr std::size_t maxCellLights = 256, maxDoorLights = 16, maxSeenLights = 64, maxTracedLights = 5;
 constexpr float lightMatch = 8.0f; // a light's NiLight within this of a placed reference's position is that reference's
 struct PlacedLight { std::uint32_t id{}; Vec at{}; };
 struct LightCensus {
@@ -74,15 +79,22 @@ inline int laneOf(const DoorSelection& s,float depth,Vec p) {
 }
 
 // ---- the book: what we put out, and the plan for one frame --------------------------------------
-// One entry of the scene's active point lights as read under the light lock this frame (only the entries the
-// book holds and those inside a chosen lane are read into this list).
+// The engine side holds a reference on the NiLight of every light in the book (NiPointer, released on the main
+// thread after the light lock), so a held NiLight is never freed under us and its address is never reused while
+// held: the book is keyed by the NiLight. The BSLight entry is only where the light is listed this frame.
+// One light as read this frame: an entry of the scene's active point lights (only those the book holds and those
+// inside a chosen lane are read), or a held NiLight no active entry holds any more (entry null: read through our
+// reference).
 struct LightSeen {
-    const void* entry{}; // the BSLight (compared, never dereferenced here)
+    const void* entry{}; // the BSLight listing it this frame; null: not listed (compared, never dereferenced here)
     const void* light{}; // its NiLight
     Vec at{};            // NiLight world position
     float radius{};
     bool culled{};       // the NiLight's app-culled bit as read
     bool plain{};        // the entry is of exactly the BSLight class
+    bool dynamic{};      // BSLight +46: relinked by the engine every frame (ID 106335 -> 106342)
+    bool linked{};       // the BSLight's geometry list is not empty
+    bool orphan{};       // nobody but its BSLight (and our reference, when held) holds the NiLight any more
 };
 struct HeldLight {
     const void* entry{};
@@ -90,36 +102,63 @@ struct HeldLight {
     std::uint32_t door{},ref{}; // the chosen door and the placed reference it matched when it was put out
     Vec at{};
     float radius{};
+    double chosenAt{}; // the last frame its light was in a chosen door's lane
 };
-// Per frame and per window. dimmed/restored: our writes; lost: a held entry no longer in the active list (or holding
-// another NiLight): dropped, nothing written; conflict: our bit was already clear at restore, or cleared by another
-// writer while held (dropped, never written again in this stretch); foreign: in a lane and placed, but culled by
+// Per frame and per window. dimmed/restored: our writes; gone: restored although no active entry holds it any more
+// (or only its BSLight does): the bit cleared through our reference; unlinked: a static light restored with an empty
+// geometry list (the engine's ID 106342 detached it while the bit was set; only dynamic lights are linked again every
+// frame, so it stays dark until the engine re-adds it); conflict: our bit was already clear (another writer lit it);
+// lost: a held light not read this frame (kept, nothing written); foreign: in a lane and placed, but culled by
 // someone else; unplaced: in a lane, no placed reference there; shadow: a shadow light in a lane (never touched);
 // other: an active point entry of another class in a lane; full: no room in the book or the read list.
 struct LightCounts {
-    unsigned dimmed{},restored{},lost{},conflict{},foreign{},unplaced{},shadow{},other{},full{};
-    void add(const LightCounts& o) {
-        dimmed += o.dimmed; restored += o.restored; lost += o.lost; conflict += o.conflict; foreign += o.foreign;
-        unplaced += o.unplaced; shadow += o.shadow; other += o.other; full += o.full;
-    }
-    bool any() const { return dimmed || restored || lost || conflict; }
+    unsigned dimmed{},restored{},gone{},unlinked{},conflict{},lost{},foreign{},unplaced{},shadow{},other{},full{};
+    bool any() const { return dimmed || restored || gone || unlinked || conflict || lost; }
 };
 struct LightBook {
     std::array<HeldLight,maxDoorLights> held{};
     std::size_t count{};
-    // Entries we restored after a conflict while their door stayed chosen: never put out again until the book is
-    // emptied (no fight with another writer of the bit). A recycled address is at worst left lit.
+    // NiLights lit again by another writer while their door stayed chosen: never put out again until the book is
+    // emptied by an off frame (no fight with that writer). A recycled address is at worst left lit.
     std::array<const void*,maxDoorLights> left{};
     std::size_t leftCount{};
-    bool holds(const void* entry) const {
-        for (std::size_t i = 0;i < count;++i) if (held[i].entry == entry) return true;
+    bool holds(const void* light) const {
+        for (std::size_t i = 0;i < count && i < maxDoorLights;++i) if (held[i].light == light) return true;
         return false;
     }
-    bool leaves(const void* entry) const {
-        for (std::size_t i = 0;i < leftCount;++i) if (left[i] == entry) return true;
+    bool leaves(const void* light) const {
+        for (std::size_t i = 0;i < leftCount && i < maxDoorLights;++i) if (left[i] == light) return true;
         return false;
     }
 };
+// Hysteresis: a held light whose door stops being chosen is kept for lightKeepSeconds while that door is still within
+// fDoorVoidRadius + lightKeepMargin of the feet, the player in front of it and the light in its lane; nearer doors
+// taking the slots, the radius edge or a jittering player toggle it at most every half second. Every real exit (an
+// off frame) restores at once.
+constexpr double lightKeepSeconds = .5;
+constexpr float lightKeepMargin = 128.0f;
+struct LightFrame {
+    bool want{};                    // a door may hold lights this frame (false: everything held is restored)
+    const DoorSelection* chosen{};  // this frame's doors (the frame pass's selectDoors)
+    const DoorCensus* doors{};      // the cell's doors, for the hysteresis
+    const LightCensus* census{};    // the cell's placed lights
+    Vec feet{};
+    float depth{},radius{};         // fDoorVoidDepth, fDoorVoidRadius
+    double now{};
+};
+// The held light's door, unchosen this frame, still holds it: in front, within the radius plus the margin, in its lane
+// (the start pushed past the player's body as selectDoors pushes it).
+inline bool doorKeeps(const LightFrame& f,std::uint32_t door,Vec at) {
+    if (!f.doors) return false;
+    for (std::size_t i = 0;i < f.doors->count && i < maxCellDoors;++i) {
+        const CellDoor& d = f.doors->doors[i];
+        if (d.id != door) continue;
+        const float side = doorSide(d.plane,f.feet);
+        if (!d.plane.valid || !(side > 0.0f) || !(span(f.feet,d.plane.point) <= f.radius+lightKeepMargin)) return false;
+        return inLane(d.plane,(std::max)(d.plane.start,doorBodyClear-side),f.depth,at);
+    }
+    return false;
+}
 enum class LightAct : unsigned { dim, restore };
 struct LightAction { LightAct act{}; std::size_t seen{}; };
 struct LightPlan {
@@ -128,48 +167,72 @@ struct LightPlan {
     LightBook book{};
     LightCounts counts{};
 };
-inline const LightSeen* findSeen(const LightSeen* seen,std::size_t n,const void* entry,std::size_t& at) {
+inline const LightSeen* findEntry(const LightSeen* seen,std::size_t n,const void* entry,std::size_t& at) {
     for (std::size_t i = 0;i < n;++i) if (seen[i].entry == entry) { at = i; return &seen[i]; }
     return nullptr;
 }
-// One frame. `want`: a door may hold lights this frame (an eligible frame with the void drawn); false empties the
-// book. Every held entry is restored (bit set: clear it), lost (not in the list, or another NiLight: nothing
-// written) or kept; then, only when wanted, every unheld entry in a lane, placed, of the BSLight class and lit is
-// put out while the book has room. The policy never asks for a write on an entry it did not see this frame.
-inline LightPlan planLights(const LightBook& book,const LightSeen* seen,std::size_t n,bool want,const DoorSelection& s,float depth,
-    const LightCensus& census) {
+inline const LightSeen* findLight(const LightSeen* seen,std::size_t n,const void* light,std::size_t& at) {
+    for (std::size_t i = 0;i < n;++i) if (seen[i].light == light) { at = i; return &seen[i]; }
+    return nullptr;
+}
+// One frame. Every held light is kept, or restored (bit set: clear it; also when it is no longer listed, through our
+// reference), or dropped as a conflict (bit already clear); then, only when wanted, every unheld listed entry in a lane,
+// placed, of the BSLight class, lit and not orphaned is put out while the book has room. The policy never asks for a
+// write on a light it was not given this frame.
+inline LightPlan planLights(const LightBook& book,const LightSeen* seen,std::size_t n,const LightFrame& f) {
     LightPlan p;
     if (!seen) n = 0;
     n = (std::min)(n,maxSeenLights);
+    const DoorSelection none{};
+    const DoorSelection& s = f.chosen ? *f.chosen : none;
     const auto wanted = [&](const LightSeen& l,int& slot,const PlacedLight*& placed) {
-        slot = want ? laneOf(s,depth,l.at) : -1;
-        placed = slot >= 0 ? placedAt(census,l.at) : nullptr;
-        return slot >= 0 && placed && l.plain;
+        slot = f.want ? laneOf(s,f.depth,l.at) : -1;
+        placed = slot >= 0 && f.census ? placedAt(*f.census,l.at) : nullptr;
+        return slot >= 0 && placed && l.plain && !l.orphan;
     };
-    if (want) { p.book.left = book.left; p.book.leftCount = book.leftCount; }
+    if (f.want) { p.book.left = book.left; p.book.leftCount = book.leftCount; }
     for (std::size_t i = 0;i < book.count && i < maxDoorLights;++i) {
         const HeldLight& h = book.held[i];
         std::size_t at = 0;
-        const LightSeen* l = findSeen(seen,n,h.entry,at);
-        if (!l || l->light != h.light) { ++p.counts.lost; continue; }
+        const LightSeen* l = findLight(seen,n,h.light,at);
+        if (!l) { ++p.counts.lost; p.book.held[p.book.count++] = h; continue; }
+        const auto restore = [&] {
+            p.actions[p.count++] = {LightAct::restore,at};
+            ++p.counts.restored;
+        };
+        if (!l->entry || l->orphan) {
+            // No longer in the scene's active lights (or about to leave them): lit again now, never kept.
+            if (l->culled) { restore(); ++p.counts.gone; }
+            else ++p.counts.conflict;
+            continue;
+        }
         int slot = -1;
         const PlacedLight* placed = nullptr;
-        const bool keep = wanted(*l,slot,placed);
-        if (keep && l->culled) { p.book.held[p.book.count++] = h; continue; }
+        const bool chosenNow = wanted(*l,slot,placed);
+        const bool grace = f.want && l->plain && std::isfinite(f.now) && std::isfinite(h.chosenAt) && f.now >= h.chosenAt &&
+            f.now-h.chosenAt <= lightKeepSeconds && doorKeeps(f,h.door,l->at);
+        const bool keep = chosenNow || grace;
+        if (keep && l->culled) {
+            HeldLight k = h;
+            k.entry = l->entry;
+            if (chosenNow) { k.chosenAt = f.now; k.door = s.chosen[static_cast<std::size_t>(slot)].door.id; }
+            p.book.held[p.book.count++] = k;
+            continue;
+        }
         if (!l->culled) {
             // Someone else cleared our bit: never written again while this door stays chosen.
             ++p.counts.conflict;
-            if (keep && p.book.leftCount < maxDoorLights) p.book.left[p.book.leftCount++] = h.entry;
+            if (keep && p.book.leftCount < maxDoorLights) p.book.left[p.book.leftCount++] = h.light;
             continue;
         }
-        p.actions[p.count++] = {LightAct::restore,at};
-        ++p.counts.restored;
+        restore();
+        if (!l->dynamic && !l->linked) ++p.counts.unlinked;
     }
-    if (!want) return p;
+    if (!f.want) return p;
     for (std::size_t i = 0;i < n;++i) {
         const LightSeen& l = seen[i];
         std::size_t first = 0;
-        if (!l.entry || !l.light || (findSeen(seen,n,l.entry,first) && first != i) || book.holds(l.entry)) continue;
+        if (!l.entry || !l.light || (findEntry(seen,n,l.entry,first) && first != i) || book.holds(l.light) || p.book.holds(l.light)) continue;
         int slot = -1;
         const PlacedLight* placed = nullptr;
         if (!wanted(l,slot,placed)) {
@@ -178,9 +241,9 @@ inline LightPlan planLights(const LightBook& book,const LightSeen* seen,std::siz
             continue;
         }
         if (l.culled) { ++p.counts.foreign; continue; }
-        if (p.book.leaves(l.entry)) continue;
+        if (p.book.leaves(l.light)) continue;
         if (p.book.count >= maxDoorLights || p.count >= p.actions.size()) { ++p.counts.full; continue; }
-        p.book.held[p.book.count++] = {l.entry,l.light,s.chosen[static_cast<std::size_t>(slot)].door.id,placed->id,l.at,l.radius};
+        p.book.held[p.book.count++] = {l.entry,l.light,s.chosen[static_cast<std::size_t>(slot)].door.id,placed->id,l.at,l.radius,f.now};
         p.actions[p.count++] = {LightAct::dim,i};
         ++p.counts.dimmed;
     }
@@ -230,7 +293,7 @@ struct LightSilence {
 
 // ---- trace ----------------------------------------------------------------------------------------
 // FixedDoorLight, through the frame row's emitter and budget, only when the held set changed or something was
-// restored, lost or in conflict since the last row. Up to maxTracedLights held lights are listed as
+// put out, restored, gone, unlinked, in conflict or not read since the last row. Up to maxTracedLights held lights are listed as
 // door:reference@x,y,z/radius, whole units (more=N for the rest).
 struct LightTrace {
     double seconds{};
@@ -241,15 +304,16 @@ struct LightTrace {
     std::size_t doors{};     // doors chosen in the last served frame
     const LightBook* book{};
     LightCounts counts{};    // since the last row
-    unsigned long long dims{},restores{},lost{}; // session totals
+    unsigned long long dims{},restores{},gone{}; // session totals
 };
 inline bool formatDoorLight(char* out,std::size_t size,const LightTrace& t) {
     if (!t.book) return false;
     const LightBook& b = *t.book;
     const LightCounts& c = t.counts;
-    int written = std::snprintf(out,size,"FixedDoorLight t=%.3f frame=%llu cell=%08X duty=%s cause=%s doors=%zu held=%zu dimmed=%u restored=%u lost=%u "
-        "conflict=%u foreign=%u unplaced=%u shadow=%u other=%u full=%u total=%llu,%llu,%llu lights=",t.seconds,t.frame,t.cell,t.duty ? t.duty : "none",
-        t.cause ? t.cause : "none",t.doors,b.count,c.dimmed,c.restored,c.lost,c.conflict,c.foreign,c.unplaced,c.shadow,c.other,c.full,t.dims,t.restores,t.lost);
+    int written = std::snprintf(out,size,"FixedDoorLight t=%.3f frame=%llu cell=%08X duty=%s cause=%s doors=%zu held=%zu dimmed=%u restored=%u gone=%u "
+        "unlinked=%u conflict=%u lost=%u foreign=%u unplaced=%u shadow=%u other=%u full=%u total=%llu,%llu,%llu lights=",t.seconds,t.frame,t.cell,
+        t.duty ? t.duty : "none",t.cause ? t.cause : "none",t.doors,b.count,c.dimmed,c.restored,c.gone,c.unlinked,c.conflict,c.lost,c.foreign,c.unplaced,
+        c.shadow,c.other,c.full,t.dims,t.restores,t.gone);
     if (written <= 0 || static_cast<std::size_t>(written) >= size) return false;
     std::size_t used = static_cast<std::size_t>(written);
     if (!b.count) {
@@ -273,7 +337,7 @@ inline bool formatDoorLight(char* out,std::size_t size,const LightTrace& t) {
 // Same held entries in the same order (the trace's change test).
 inline bool sameHeld(const LightBook& a,const LightBook& b) {
     if (a.count != b.count) return false;
-    for (std::size_t i = 0;i < a.count && i < maxDoorLights;++i) if (a.held[i].entry != b.held[i].entry || a.held[i].door != b.held[i].door) return false;
+    for (std::size_t i = 0;i < a.count && i < maxDoorLights;++i) if (a.held[i].light != b.held[i].light || a.held[i].door != b.held[i].door) return false;
     return true;
 }
 // The plugin log, once per cell after the census: the placed lights that sit in a door's lane as the census places

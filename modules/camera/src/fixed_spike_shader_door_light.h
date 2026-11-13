@@ -20,24 +20,44 @@
 // frame for the many flickering lights (ID 17610's updater at 274EC0-274FE1);
 // the BSLight dimmer (+14) and camera-cull word (+5C) are rewritten by ID
 // 108278 in every render; RemoveLight / AddLight would hand engine-owned lights
-// back and forth and lose their BSLight state. The bit lives on the NiLight,
-// which outlives nothing it is not held by: the BSLight that holds it is the
-// only way we reach it, and only while that BSLight is in the active list.
+// back and forth and lose their BSLight state.
+//
+// The bit lives on the NiLight, and the NiLight can outlive its BSLight: a
+// RemoveLight request (queue +178) is drained by ID 106335 without a camera
+// from IDs 13316 (1A2C2A), 15691 (21B375), 19411 (2D7133), 35780 (6279BE) and
+// ResetScene 106385 (1511E97), so a held light can leave the active list before
+// any exit of ours runs; when the cell's 3D is attached again the light builder
+// (ID 17610) reuses the NiLight it finds under the attach node (call 2757E0 at
+// 27458F) and never clears bit 0. So a reference (NiPointer, IncRef) is held on
+// every NiLight we put out, and every restore clears the bit through it whether
+// or not an active entry still lists it; the marking is made on the entry that
+// lists it, if any. The references are released after the light lock, on the
+// main thread. A held NiLight is therefore never freed or reused while held.
+// ID 106342 also detaches a light whose bit is set (150E437 -> 108285 at
+// 150E4E9), static ones included, and only dynamic lights are linked again
+// every frame: a static light the engine re-added while we held it out comes
+// back with no geometry; that is counted (unlinked=, FCS-110), not repaired.
 //
 // Threads and locks: main thread only (the camera frame service, the shader's
 // frameStart and a lifecycle call made on the main thread); every read of the
 // scene's light arrays and every write is made while holding the scene node's
-// light lock (+1A8, the lock ID 106335 takes), with no engine call inside it.
-// The plan for the frame is pure (planLights); this file only reads the
-// entries into it and applies its writes.
+// light lock (+1A8, the lock ID 106335 takes), with no engine call inside it
+// (taking a reference is an inline atomic increment). Without a scene node of
+// the audited class there is no list and no lock: what is held is lit again
+// through the references alone. The plan for the frame is pure (planLights);
+// this file only reads the lights into it and applies its writes.
 //
 // Exits (lightDuty): an eligible frame serves this frame's chosen doors (the
 // frame pass's own selectDoors over the same census, feet and radius); a menu
 // frame, or a hook-silent one within the grace or explained by a pausing menu,
 // holds (nothing read or written); every other ineligible frame, an inactive
 // publish, a latch, a cell change, a game load and the Loading Menu restore
-// everything held. A held light whose BSLight left the active list, or holds
-// another NiLight, is dropped without any write (FCS-108 once, counted).
+// everything held at once. A held light whose door stops being chosen is kept
+// for half a second while the door stays within the radius plus 128
+// (hysteresis, planLights). A held light no active entry lists any more, or
+// that only its BSLight and our reference still hold (refcount +8 <= 2, the
+// engine drops such a light once it is 1: 106335 at 150DA97), is lit again and
+// released at once (gone=, FCS-108 once).
 // There is no plugin shutdown path; the bit is runtime state of the scene
 // graph, never saved.
 
@@ -56,7 +76,9 @@ constexpr Address lightCullAddress{108278,0x1575d20};   // point-light camera cu
 namespace light_offset {
 // ShadowSceneNode: activeLights +130, activeShadowLights +148, lightQueueLock +1A8 (static_asserts below).
 // BSLight: geometry list head +18 (108278 at 1575E8A), NiLight +48 (106335 at 150DA8E, 107784 at 156971C).
-constexpr std::size_t lightGeometry = 0x18, lightObject = 0x48;
+constexpr std::size_t lightGeometry = 0x18, lightObject = 0x48, lightDynamic = 0x46;
+// NiRefObject reference count +8 (106335 at 150DA97 compares it with 1).
+constexpr std::size_t refCount = 0x8;
 // NiTPointerList item: next +0, element +10 (108278 at 1575EA0-1575EA7).
 constexpr std::size_t itemNext = 0x0, itemElement = 0x10;
 // NiAVObject flags +F4, bit 0 app-culled (106335 at 150DAA9, 107784 at 1569720); world translate +A0 (108278 at
@@ -107,8 +129,9 @@ struct DoorLightRuntime {
     const std::uint8_t* stateSlot{};
     std::uintptr_t sceneVtable{},lightVtable{};
     LightBook book{};
+    std::array<RE::NiPointer<RE::NiLight>,maxDoorLights> refs{}; // a reference on each held NiLight (any order)
     LightBook traced{};          // the held set as last written to the trace
-    LightCounts window{};        // dimmed / restored / lost / conflict since the last row
+    LightCounts window{};        // dimmed / restored / gone / unlinked / conflict / lost since the last row
     LightCounts last{};          // the last served frame's foreign / unplaced / shadow / other / full
     LightSilence silence{};
     std::uint32_t cell{};        // the cell the book belongs to
@@ -117,7 +140,7 @@ struct DoorLightRuntime {
     const char* cause{"none"};
     std::atomic<unsigned> requests{}; // asked from a lifecycle event: 1 cell, 2 load, 4 Loading Menu
     bool loadPending{};
-    unsigned long long dims{},restores{},lost{};
+    unsigned long long dims{},restores{},gone{},unlinked{};
     unsigned long long truncated{}; // marking walks cut at maxLinkedGeometry
 };
 constexpr unsigned lightAskCell = 1u, lightAskLoad = 2u, lightAskLoading = 4u;
@@ -125,18 +148,29 @@ constexpr const char* lightAskName(unsigned asked) {
     return (asked & lightAskLoading) ? "loading-menu" : (asked & lightAskLoad) ? "load" : (asked & lightAskCell) ? "cell" : "none";
 }
 
-// The main ShadowSceneNode, or null. Another class in the slot ends the lights for the session; what is held is
-// dropped without a write (no list can be read to check it).
+// The main ShadowSceneNode, or null. Another class in the slot ends the lights for the session after this call,
+// which lights again what is held through the references alone.
 inline RE::ShadowSceneNode* lightScene() {
     auto& l = *runtime->doorLights;
     const auto node = peek<RE::ShadowSceneNode*>(l.stateSlot,0);
     if (!node) return nullptr;
     if (peek<std::uintptr_t>(node,0) == l.sceneVtable) return node;
-    l.lost += l.book.count; l.window.lost += static_cast<unsigned>(l.book.count);
-    l.book = {}; l.state = Feature::refused;
+    l.state = Feature::refused;
     refuse(Refusal::doorLightScene,"the main ShadowSceneNode slot holds another class; the door void's lights are off for the session, held lights "
-        "dropped without a write");
+        "lit again through their references");
     return nullptr;
+}
+// One light as the policy reads it. `entry` null: a held NiLight no active entry lists (read through our reference).
+inline LightSeen readLight(const void* entry,const std::uint8_t* light,bool held,std::uintptr_t lightVtable) {
+    LightSeen s{entry,light,peek<Vec>(light,light_offset::worldTranslate),peek<float>(light,light_offset::lightRadius),
+        (peek<std::uint32_t>(light,light_offset::objectFlags) & light_offset::appCulled) != 0u};
+    // 106335 at 150DA97 drops an entry whose NiLight only it still holds (+8 == 1); ours adds one while held.
+    s.orphan = peek<std::int32_t>(light,light_offset::refCount) <= (held ? 2 : 1);
+    if (!entry) { s.orphan = true; return s; }
+    s.plain = peek<std::uintptr_t>(entry,0) == lightVtable;
+    s.dynamic = peek<std::uint8_t>(entry,light_offset::lightDynamic) != 0u;
+    s.linked = peek<const void*>(entry,light_offset::lightGeometry) != nullptr;
+    return s;
 }
 // ID 108278's marking walk (1575E8A-1575EC3), the same reads and the same write, bounded.
 inline void markLinked(const void* entry) {
@@ -152,7 +186,8 @@ inline void markLinked(const void* entry) {
     if (item) ++runtime->doorLights->truncated;
 }
 // Main thread. want: serve `chosen` (keep); false: restore everything held (off). The arrays are read and every
-// write is made under the light lock; no engine function is called while it is held.
+// write is made under the light lock; no engine function is called while it is held. References are taken there
+// (an atomic increment) and released after it.
 inline void serveDoorLights(bool want,const DoorSelection& chosen,const char* duty,const char* cause) {
     auto& r = *runtime;
     auto& l = *r.doorLights;
@@ -160,56 +195,76 @@ inline void serveDoorLights(bool want,const DoorSelection& chosen,const char* du
     if (l.state != Feature::installed) return;
     if (!want && !l.book.count) { l.book.leftCount = 0; l.last = {}; return; } // nothing held: nothing read
     RE::ShadowSceneNode* const node = lightScene();
-    if (!node) return; // no scene node now: what is held is checked against the lists once there is one
-    const float depth = r.config.frame.doorDepth;
-    const LightCensus& census = r.style->lights;
+    // No scene node (or not the audited class): nothing new is put out; what is held is lit again through its reference.
+    LightFrame f;
+    f.want = want && node; f.chosen = &chosen; f.doors = &r.style->doors; f.census = &r.style->lights; f.feet = r.view.feet;
+    f.depth = r.config.frame.doorDepth; f.radius = r.config.frame.doorRadius; f.now = r.view.seconds;
     std::array<LightSeen,maxSeenLights> seen{};
     std::size_t n = 0;
     LightCounts extra{};
     LightCounts now{};
+    std::array<RE::NiPointer<RE::NiLight>,maxDoorLights> released{}; // dropped references: released after the lock, on this thread
     {
-        auto& data = node->GetRuntimeData();
-        RE::BSSpinLockGuard guard(data.lightQueueLock);
-        for (const auto& entry : data.activeLights) {
+        RE::ShadowSceneNode::RUNTIME_DATA* const data = node ? &node->GetRuntimeData() : nullptr;
+        std::optional<RE::BSSpinLockGuard> guard;
+        if (data) guard.emplace(data->lightQueueLock);
+        if (data) for (const auto& entry : data->activeLights) {
             const void* const e = entry.get();
             const auto light = e ? peek<const std::uint8_t*>(e,light_offset::lightObject) : nullptr;
             if (!light) continue;
-            const Vec at = peek<Vec>(light,light_offset::worldTranslate);
-            const bool held = l.book.holds(e);
-            if (!held && (!want || laneOf(chosen,depth,at) < 0)) continue;
-            // Room for every held entry is kept: a held entry missing from the list would be dropped unwritten.
+            const bool held = l.book.holds(light);
+            if (!held && (!f.want || laneOf(chosen,f.depth,peek<Vec>(light,light_offset::worldTranslate)) < 0)) continue;
+            // Room for every held light is kept.
             if (!held && n >= maxSeenLights-maxDoorLights) { ++extra.full; continue; }
             if (n >= maxSeenLights) { ++extra.full; continue; }
-            seen[n++] = {e,light,at,peek<float>(light,light_offset::lightRadius),
-                (peek<std::uint32_t>(light,light_offset::objectFlags) & light_offset::appCulled) != 0u,peek<std::uintptr_t>(e,0) == l.lightVtable};
+            seen[n++] = readLight(e,light,held,l.lightVtable);
+        }
+        // Every held NiLight no active entry lists: read through our reference (alive while we hold it).
+        for (std::size_t i = 0;i < l.book.count && i < maxDoorLights && n < maxSeenLights;++i) {
+            std::size_t at = 0;
+            if (!findLight(seen.data(),n,l.book.held[i].light,at))
+                seen[n++] = readLight(nullptr,static_cast<const std::uint8_t*>(l.book.held[i].light),true,l.lightVtable);
         }
         // Shadow lights are never written; those in a lane at a placed reference are counted.
-        if (want) for (const auto& entry : data.activeShadowLights) {
+        if (data && f.want) for (const auto& entry : data->activeShadowLights) {
             const void* const e = entry.get();
             const auto light = e ? peek<const std::uint8_t*>(e,light_offset::lightObject) : nullptr;
             const Vec at = light ? peek<Vec>(light,light_offset::worldTranslate) : Vec{};
-            if (light && laneOf(chosen,depth,at) >= 0 && placedAt(census,at)) ++extra.shadow;
+            if (light && laneOf(chosen,f.depth,at) >= 0 && placedAt(r.style->lights,at)) ++extra.shadow;
         }
-        const LightPlan plan = planLights(l.book,seen.data(),n,want,chosen,depth,census);
+        const LightPlan plan = planLights(l.book,seen.data(),n,f);
         for (std::size_t i = 0;i < plan.count;++i) {
             const LightSeen& s = seen[plan.actions[i].seen];
             auto* const light = const_cast<std::uint8_t*>(static_cast<const std::uint8_t*>(s.light));
             std::uint32_t flags = peek<std::uint32_t>(light,light_offset::objectFlags);
             flags = plan.actions[i].act == LightAct::dim ? (flags | light_offset::appCulled) : (flags & ~light_offset::appCulled);
             std::memcpy(light+light_offset::objectFlags,&flags,sizeof(flags));
-            markLinked(s.entry);
+            if (s.entry) markLinked(s.entry); // the entry that lists it this frame, if any
         }
+        // References follow the book: kept ones move, new ones are taken, dropped ones are released below.
+        std::array<RE::NiPointer<RE::NiLight>,maxDoorLights> next{};
+        for (std::size_t i = 0;i < plan.book.count;++i) {
+            const void* const light = plan.book.held[i].light;
+            for (auto& ref : l.refs) if (ref && ref.get() == light) { next[i] = std::move(ref); break; }
+            if (!next[i]) next[i] = RE::NiPointer<RE::NiLight>(static_cast<RE::NiLight*>(const_cast<void*>(light)));
+        }
+        std::size_t dropped = 0;
+        for (auto& ref : l.refs) if (ref) released[dropped++] = std::move(ref);
+        l.refs = std::move(next);
         l.book = plan.book;
         now = plan.counts;
-    } // the light lock ends here: counters and log lines after it
+    } // the light lock ends here: counters and log lines after it, then the dropped references
     now.shadow += extra.shadow; now.full += extra.full;
-    l.window.dimmed += now.dimmed; l.window.restored += now.restored; l.window.lost += now.lost; l.window.conflict += now.conflict;
+    l.window.dimmed += now.dimmed; l.window.restored += now.restored; l.window.gone += now.gone; l.window.unlinked += now.unlinked;
+    l.window.conflict += now.conflict; l.window.lost += now.lost;
     l.last = now;
-    l.dims += now.dimmed; l.restores += now.restored; l.lost += now.lost;
-    if (now.lost) refuse(Refusal::doorLightLost,"a light the door void had put out left the scene's active lights (or holds another NiLight) before "
-        "it was restored; dropped without a write (informative)");
+    l.dims += now.dimmed; l.restores += now.restored; l.gone += now.gone; l.unlinked += now.unlinked;
+    if (now.gone) refuse(Refusal::doorLightGone,"a light the door void had put out left the scene's active lights (or only its BSLight still held "
+        "it) before its door was unchosen; it was lit again through our reference (informative)");
     if (now.conflict) refuse(Refusal::doorLightConflict,"a light the door void had put out was lit again by another writer; it is left as that "
         "writer set it and not put out again while its door stays chosen (informative)");
+    if (now.unlinked) refuse(Refusal::doorLightUnlinked,"a static light the door void had put out was lit again with no geometry linked (the "
+        "engine re-added it while it was out, ID 106342 detached it); it stays dark until the engine links it again (informative)");
 }
 // Main thread: an off pass for a lifecycle request (cell, load, Loading Menu) made on any thread.
 inline void takeDoorLightRequests() {
@@ -305,10 +360,11 @@ inline void traceDoorLights(double now) {
     auto& l = *r.doorLights;
     if (sameHeld(l.book,l.traced) && !l.window.any()) return;
     LightCounts counts = l.last;
-    counts.dimmed = l.window.dimmed; counts.restored = l.window.restored; counts.lost = l.window.lost; counts.conflict = l.window.conflict;
+    counts.dimmed = l.window.dimmed; counts.restored = l.window.restored; counts.gone = l.window.gone; counts.unlinked = l.window.unlinked;
+    counts.conflict = l.window.conflict; counts.lost = l.window.lost;
     LightTrace t;
     t.seconds = now; t.frame = r.frame; t.cell = l.cell; t.duty = l.duty; t.cause = l.cause; t.doors = l.doors; t.book = &l.book;
-    t.counts = counts; t.dims = l.dims; t.restores = l.restores; t.lost = l.lost;
+    t.counts = counts; t.dims = l.dims; t.restores = l.restores; t.gone = l.gone;
     char line[sizeof(TraceRow)]{};
     if (formatDoorLight(line,sizeof(line),t)) r.frameEmitter(line);
     l.traced = l.book; l.window = {};

@@ -91,8 +91,8 @@ enum class Refusal : unsigned { settings = 66, foreign = 67, address = 68, table
     frameSite = 93, frameMemory = 94, frameDevice = 95, frameThread = 96, frameRun = 97,
     fillSite = 98, fillDevice = 99, fillLayout = 100, fillMap = 101,
     tiltPatch = 102, tiltCreate = 103, tiltBuffer = 104, tiltMap = 105,
-    doorLightSite = 106, doorLightScene = 107, doorLightLost = 108, doorLightConflict = 109 };
-constexpr unsigned firstRefusal = 66, lastRefusal = 109;
+    doorLightSite = 106, doorLightScene = 107, doorLightGone = 108, doorLightConflict = 109, doorLightUnlinked = 110 };
+constexpr unsigned firstRefusal = 66, lastRefusal = 110;
 static_assert(lastRefusal-firstRefusal < 64);
 // The refusals a shader preparation can end in, per group.
 struct PrepareCodes { Refusal object,unaudited,patch,create; };

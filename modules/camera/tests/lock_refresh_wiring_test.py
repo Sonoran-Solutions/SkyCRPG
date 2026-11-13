@@ -357,7 +357,7 @@ assert "inline bool publishes(bool installed,bool latched,bool interiorCell,floa
     "std::isfinite(feetZ);" in cut_policy
 void = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_void.h").read_text()
 cut_codes = dict(re.findall(r"(\w+) = (\d+)", cut_policy[cut_policy.index("enum class Refusal : unsigned {"):cut_policy.index("constexpr unsigned firstRefusal")]))
-assert len(cut_codes) == 44 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 110))
+assert len(cut_codes) == 45 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 111))
 sky = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_sky.h").read_text()
 sky_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_sky_policy.h").read_text()
 style = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_style.h").read_text()
@@ -943,7 +943,7 @@ def door_light_body(start, end):
 
 assert "unsigned doorLights{0};" in cut_policy and "    if (f.doorLights > 1u || !f.doorVoid) f.doorLights = 0u;" in cut_policy
 assert gate.count('"FixedCameraSpike","iDoorVoidLights"') == 1 and "\niDoorVoidLights=0\n" in ini
-assert '#include "fixed_spike_shader_door_light_policy.h"' in frame_policy and "lastRefusal = 109" in cut_policy
+assert '#include "fixed_spike_shader_door_light_policy.h"' in frame_policy and "lastRefusal = 110" in cut_policy
 configure_lights = door_light_body("inline void configureDoorLights() {", "// Main thread, publish")
 assert "if (r.config.frame.enabled && r.config.frame.doorVoid && r.config.frame.doorLights) r.doorLights = new DoorLightRuntime;" in configure_lights
 assert door_light.count("= new ") == 1 and cut.count("\n    configureDoorLights();\n") == 1
@@ -957,7 +957,7 @@ assert install_lights.index("l.state = Feature::refused;") < install_lights.inde
 for constant in ("constexpr Address lightStateAddress{390951,0x20d68b0};", "constexpr Address sceneVtableAddress{254646,0x1b3dba0};",
                  "constexpr Address lightVtableAddress{255404,0x1b4ca30};", "constexpr Address lightUpdateAddress{106335,0x150d410};",
                  "constexpr Address lightListAddress{107784,0x1569550};", "constexpr Address lightCullAddress{108278,0x1575d20};",
-                 "constexpr std::size_t lightGeometry = 0x18, lightObject = 0x48;", "constexpr std::size_t itemNext = 0x0, itemElement = 0x10;",
+                 "constexpr std::size_t lightGeometry = 0x18, lightObject = 0x48, lightDynamic = 0x46;", "constexpr std::size_t itemNext = 0x0, itemElement = 0x10;",
                  "constexpr std::size_t objectFlags = 0xf4, worldTranslate = 0xa0, lightRadius = 0x128;", "constexpr std::uint32_t appCulled = 1u;",
                  "constexpr std::size_t geometryShader = 0x128, shaderLightData = 0x70, lightListChanged = 0x20;",
                  "{0x150da8e,updateBytes.data(),updateBytes.size()},{0x150d439,lockBytes.data(),lockBytes.size()}",
@@ -971,22 +971,38 @@ assert note_cell.index("const bool doorLights = doorVoid && runtime->config.fram
 assert "        s.lights = {};\n" in note_cell and style.count("noteLightRef(") == 2
 note_light = style_body("inline void noteLightRef(", "// Stage 3.0, after the census")
 assert "ref->IsDisabled() || ref->IsDeleted()" in note_light and "ref->GetPosition()" in note_light and "Get3D" not in note_light
-# Serve: the arrays are read and every write is made under the light lock, with no engine call inside it.
+# Serve: the arrays are read and every write is made under the light lock, with no engine call inside it. A reference
+# is held on every NiLight in the book (taken under the lock, an atomic increment); every held NiLight is read and
+# restored through it whether or not an active entry lists it; dropped references are released after the lock.
 serve = door_light_body("inline void serveDoorLights(", "// Main thread: an off pass for a lifecycle request")
-locked = serve[serve.index("RE::BSSpinLockGuard guard(data.lightQueueLock);"):serve.index("} // the light lock ends here")]
-assert serve.index("if (!want && !l.book.count)") < serve.index("lightScene();") < serve.index("RE::BSSpinLockGuard guard(data.lightQueueLock);") < \
-    serve.index("for (const auto& entry : data.activeLights) {") < serve.index("planLights(l.book,seen.data(),n,want,chosen,depth,census)") < \
-    serve.index("std::memcpy(light+light_offset::objectFlags,&flags,sizeof(flags));") < serve.index("markLinked(s.entry);") < serve.index("l.book = plan.book;")
-assert "peek<std::uintptr_t>(e,0) == l.lightVtable" in serve and "if (!held && n >= maxSeenLights-maxDoorLights)" in serve
+locked = serve[serve.index("if (data) guard.emplace(data->lightQueueLock);"):serve.index("} // the light lock ends here")]
+assert serve.index("if (!want && !l.book.count)") < serve.index("lightScene();") < serve.index("f.want = want && node;") < \
+    serve.index("std::array<RE::NiPointer<RE::NiLight>,maxDoorLights> released{};") < serve.index("if (data) guard.emplace(data->lightQueueLock);") < \
+    serve.index("if (data) for (const auto& entry : data->activeLights) {") < \
+    serve.index("seen[n++] = readLight(nullptr,static_cast<const std::uint8_t*>(l.book.held[i].light),true,l.lightVtable);") < \
+    serve.index("planLights(l.book,seen.data(),n,f)") < serve.index("std::memcpy(light+light_offset::objectFlags,&flags,sizeof(flags));") < \
+    serve.index("if (s.entry) markLinked(s.entry);") < serve.index("next[i] = RE::NiPointer<RE::NiLight>(") < \
+    serve.index("for (auto& ref : l.refs) if (ref) released[dropped++] = std::move(ref);") < serve.index("l.book = plan.book;") < \
+    serve.index("} // the light lock ends here")
+assert "const bool held = l.book.holds(light);" in serve and "if (!held && n >= maxSeenLights-maxDoorLights)" in serve
+assert "std::array<RE::NiPointer<RE::NiLight>,maxDoorLights> refs{};" in door_light
+read_light = door_light_body("inline LeightSeen".replace("Leight","Light") + " readLight(", "// ID 108278's marking walk")
+assert "peek<std::uintptr_t>(entry,0) == lightVtable" in read_light and "s.orphan = peek<std::int32_t>(light,light_offset::refCount) <= (held ? 2 : 1);" in read_light and \
+    "if (!entry) { s.orphan = true; return s; }" in read_light and "constexpr std::size_t refCount = 0x8;" in door_light
 locked_code = "\n".join(line.split("//")[0] for line in locked.splitlines())
 for call in ("GetSingleton", "invoke<", "RemoveLight", "AddLight", "SetAppCulled", "->Update", "REL::", "logger", "refuse("):
     assert call not in locked_code, call
-assert serve.index("} // the light lock ends here") < serve.index("Refusal::doorLightLost") < serve.index("Refusal::doorLightConflict")
+assert serve.index("} // the light lock ends here") < serve.index("Refusal::doorLightGone") < serve.index("Refusal::doorLightConflict") < \
+    serve.index("Refusal::doorLightUnlinked")
 mark = door_light_body("inline void markLinked(", "// Main thread. want:")
 assert "data[light_offset::lightListChanged] = 1u;" in mark and "hops < maxLinkedGeometry" in mark
 # The policy only asks for writes on entries it read this frame, and only puts out lights that are wanted, plain and lit.
-assert "return slot >= 0 && placed && l.plain;" in door_light_policy and "if (l.culled) { ++p.counts.foreign; continue; }" in door_light_policy and \
-    "if (!want) return p;" in door_light_policy and "if (!l || l->light != h.light) { ++p.counts.lost; continue; }" in door_light_policy
+assert "return slot >= 0 && placed && l.plain && !l.orphan;" in door_light_policy and "if (l.culled) { ++p.counts.foreign; continue; }" in door_light_policy and \
+    "if (!f.want) return p;" in door_light_policy and "const LightSeen* l = findLight(seen,n,h.light,at);" in door_light_policy and \
+    "if (!l->entry || l->orphan) {" in door_light_policy and "if (!l->dynamic && !l->linked) ++p.counts.unlinked;" in door_light_policy
+# Hysteresis: only for a held light, only while wanted, 0.5 s and the radius plus 128.
+assert "constexpr double lightKeepSeconds = .5;" in door_light_policy and "constexpr float lightKeepMargin = 128.0f;" in door_light_policy and \
+    "const bool grace = f.want && l->plain && std::isfinite(f.now) && std::isfinite(h.chosenAt) && f.now >= h.chosenAt &&" in door_light_policy
 for forbidden in ("RE::", "REL::", "GetSingleton", "#include <windows", "std::vector"):
     assert forbidden not in door_light_policy, forbidden
 # Paths: served by publish (eligible, after the sky), off when publish has no view, a lifecycle load/cell, the Loading Menu,
@@ -1022,4 +1038,6 @@ for forbidden in ("safe_write", "VirtualAlloc", "VirtualProtect", "write_vfunc",
 print("PASS shader door void lights wiring: only with iDoorVoidLights=1 (INI 0) and the door void; one census branch (LIGH position and form flags); "
       "IDs and five engine instruction runs checked before use; arrays read and the app-culled bit and lightListChanged written only under the "
       "light lock with no engine call; served from publish with the frame pass's door choice; restored on an inactive publish, lifecycle load/cell, "
-      "the Loading Menu, a latch and ineligible frames by the fill light's menu rule; FixedDoorLight on change through the frame budget; one site per FCS-106..109")
+      "the Loading Menu, a latch and ineligible frames by the fill light's menu rule (at once; 0.5 s hysteresis only for an unchosen door); a reference held on "
+      "every NiLight put out, the bit cleared through it even after its BSLight left the list, released after the lock; FixedDoorLight on change through "
+      "the frame budget; one site per FCS-106..110")
