@@ -381,6 +381,7 @@ void loadSettings() {
         shaderCut.frame.doorDepth = number("FixedCameraSpike","fDoorVoidDepth",shaderCut.frame.doorDepth);
         shaderCut.frame.doorEdge = number("FixedCameraSpike","fDoorVoidEdge",shaderCut.frame.doorEdge);
         shaderCut.frame.doorRadius = number("FixedCameraSpike","fDoorVoidRadius",shaderCut.frame.doorRadius);
+        shaderCut.frame.doorSide = number("FixedCameraSpike","fDoorVoidSide",shaderCut.frame.doorSide);
         fixed::configure(f,shaderCut,settings,cursorSettings.enabled ? cursorSettings.toggleKey : -1,
             std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera_FixedSpike.log",log,thinGoal,fixedPreCollision,fixedCause);
     }

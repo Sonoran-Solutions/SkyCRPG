@@ -29,7 +29,7 @@
 
 namespace skycrpg::camera::fixed::shader {
 // ---- the lane ---------------------------------------------------------------------------------
-// Report, Q2: the lane is the leaf's width plus 32 each side; it starts 8 beyond what the table keeps
+// Report, Q2: the lane is the leaf's width plus 32 each side (fDoorVoidSide); it starts 8 beyond what the table keeps
 // (the leaf's front faces and its reveal); it reaches from 120 under the door's floor to 500 over it
 // (the BFB entrance leaf, 497 tall, gets its height + 64). The player's body is never within
 // doorBodyClear of the feet on the far side of the plane (the frame pass's guard radius).
@@ -63,7 +63,7 @@ struct DoorPlane {
 };
 // The engine's rotation about z (local x -> (cos z, -sin z), local y -> (sin z, cos z)): the convention
 // tools/load_doors.py checks against every vanilla arrival. A tilted reference (x or y angle) has no plane.
-inline DoorPlane doorPlane(const DoorModel& m,Vec position,Vec angle,float scale) {
+inline DoorPlane doorPlane(const DoorModel& m,Vec position,Vec angle,float scale,float side = doorLaneMargin) {
     DoorPlane d;
     if (!finite(position) || !finite(angle) || !std::isfinite(scale) || scale <= .01f || std::abs(angle.x) > doorTilt ||
         std::abs(angle.y) > doorTilt || (m.front != 1 && m.front != -1) || m.thin > 1u) return d;
@@ -72,7 +72,7 @@ inline DoorPlane doorPlane(const DoorModel& m,Vec position,Vec angle,float scale
     const Vec thin = m.thin == 0 ? localX : localY,across = m.thin == 0 ? localY : localX;
     d.point = {position.x+scale*(thin.x*m.centre+across.x*m.lateral),position.y+scale*(thin.y*m.centre+across.y*m.lateral),position.z+scale*m.floor};
     d.nx = thin.x*static_cast<float>(m.front); d.ny = thin.y*static_cast<float>(m.front);
-    d.half = scale*m.halfWidth+doorLaneMargin;
+    d.half = scale*m.halfWidth+side;
     d.start = scale*m.keep+doorStartMargin;
     d.low = d.point.z-doorBelow;
     d.high = d.point.z+(std::max)(doorAbove,scale*m.height+doorOverLeaf);
@@ -99,9 +99,10 @@ struct DoorCensus {
 };
 // One Door reference of the cell. `model` is doorModel(its path) (null: not in the table); `teleport`
 // whether it carries ExtraTeleport (read only for a table model); `off` initially disabled or deleted.
-inline DoorNote noteDoor(DoorCensus& c,std::uint32_t id,const DoorModel* model,Teleport teleport,bool off,Vec position,Vec angle,float scale) {
+inline DoorNote noteDoor(DoorCensus& c,std::uint32_t id,const DoorModel* model,Teleport teleport,bool off,Vec position,Vec angle,float scale,
+    float side = doorLaneMargin) {
     ++c.refs;
-    const DoorPlane plane = model ? doorPlane(*model,position,angle,scale) : DoorPlane{};
+    const DoorPlane plane = model ? doorPlane(*model,position,angle,scale,side) : DoorPlane{};
     DoorNote why = DoorNote::added;
     if (!model) why = DoorNote::notTable;
     else if (off) why = DoorNote::disabled;
