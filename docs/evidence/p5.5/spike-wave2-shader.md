@@ -1527,6 +1527,98 @@ Routes `p55-comb-cave-*` (Embershard Mine) and `p55-comb-bfb-*` (Bleak Falls Bar
 - The Utility depth pre-pass hypothesis (not needed by the design).
 - That the published eye is always in one of the four diagonal quadrants with |offset| well above 1 unit (true for the locked rig; a quadrant flip on the axis would be a hard switch).
 
+## The door void's lights (2026-11-12, base `247cb61`, `iDoorVoidLights`, off by default)
+
+Owner: "fix the leak". With the door void on (`iDoorVoid=1`) the stub behind a dungeon load door is black in the frame pass, but a light placed in the stub still lights the dungeon side: at Embershard Mine (cell `000B6BE6`, door `000B6CCD` MineDoor01Load) the placed light `0008F94C` (base `0008824B` DefaultSunlightBounceAmb01NS, LIGH flags `0x2001` = dynamic + portal-strict, no model, colour 185,208,202, radius 256 + XRDS = 904) sits 651.5 behind the plane, 70 across, 90 over the door's floor, and throws the blue patch in front of the door. `iDoorVoidLights=1` puts such lights out while their door is chosen and lights them again exactly when it no longer is.
+
+### Mechanism and why
+
+| Candidate | Finding (SkyrimSE.exe 1.7.104, objdump) | Verdict |
+| --- | --- | --- |
+| NiLight fade `+134` = 0 | Rewritten every frame for flickering/pulsing lights by the updater at `274EC0`-`274FE1` (`movss [rbx+134h],xmm1` at `274FE1` = LIGH fade × sine table); 3 of the 16 vanilla lane lights flicker (flag `0x8`), as do most dungeon torches. ID 106342 also turns a light off below fade 0.05 (`150E437`-`150E453`), changing its geometry links. | rejected |
+| BSLight dimmer `+14` = 0 | ID 108278 (point-light camera cull, called per light by ID 106335 in every render) recomputes `+14` for every light in the frustum (`1575DD9`-`1575E5A`: 1.0 or the distance fade) and stores it at `1575ED9`. A write before the render is lost. | rejected |
+| BSLight camera cull `+5C` = 0xFF | Written by ID 108278 at `1575ED5` in every render. | rejected |
+| RemoveLight / AddLight (IDs 106331 / 106326) | Hands an engine-owned light back and forth; the BSLight (rooms, portal state, culling process) is rebuilt; the re-add parameters (dynamic, portal-strict, affect land/water, fade) would have to be reconstructed from the reference (ID 17610 at `274786`-`2748B1`). | rejected (riskiest) |
+| **NiLight app-culled, flags `+F4` bit 0** | ID 107784 (per-geometry light list, built when a geometry's passes are rebuilt; callers `151A88C`, `1529F58`, `152CC4C`) skips a point light whose NiLight has bit 0 (`1569713`-`156972D`). ID 106335 detaches a dynamic one from all geometry while the bit is set (`150DA9D`-`150DABA` → ID 108285) and links it again through ID 106342 once it is clear (`150DABC`-`150DAF2`). Nothing in the per-frame light code rewrites it (the light builder ID 17610 sets bit 0 only on a node it finds by name when reference flag `0x80` is set, `274466`-`27448C`, at 3D load). It is the bit the fill light (combined build) is shown and hidden with. | **chosen** |
+| + `lightListChanged` on the light's geometries | A static light's geometry keeps its cached passes until its light data says the list changed: the pass builder rebuilds only when `lightData+20` is set (`151A4C4`-`151A522`) and clears it at `151A528`-`151A52C`. ID 108278 sets it for every geometry in the light's own list when a light appears or disappears (`1575E8A`-`1575EC3`: list head BSLight `+18`, item next `+0` / element `+10`, geometry `+128` shader property, `+70` light data, `+20` = 1). Each of our writes is followed by exactly that walk. | **with it** |
+
+Every write is reversible by clearing the one bit; the light's other flags, fade, colour, radius, BSLight and its links are never written. Stealth light level is unchanged: IDs 106362 / 108292 sum every registered light with no hidden test (combined build audit), so a put-out light still counts as before (visual only).
+
+### Which lights, when (policy: `include/fixed_spike_shader_door_light_policy.h`, engine side: `src/fixed_spike_shader_door_light.h`)
+
+- **Identity.** Read under the scene node's light lock: an entry of `activeLights` (`ssn+130`) of exactly the BSLight class (vtable ID 255404, the one AddLight's non-shadow path constructs, ID 108276 at `157595E`), whose NiLight (`+48`) world position (`+A0`) is inside a chosen door's lane (behind the plane by at least that frame's start, at most `fDoorVoidDepth`, within the lane half width and z range: the void's hard volume) **and** within 8 units of a LIGH reference the cell census noted (initially enabled, not deleted; one more branch in Stage 1's `ForEachReference` walk). The census guard means a light the census did not see placed there is never matched: the player's torch and magic light, an NPC's torch (an inventory item, not a placed LIGH), the fill light, anything spawned after the census. Shadow lights (`activeShadowLights`, `ssn+148`) are never written (their channel admission, ID 107137, is elsewhere); those in a lane at a placed reference are counted (`shadow=`). A light already app-culled by someone else is never touched (`foreign=`).
+- **Survey (Skyrim.esm, 388 load doors of the table, fDoorVoidSide=320, depth 900):** 16 placed lights in lanes (15 doors), none with a model (so the NiLight is the reference's own position), 15 point lights and one omni shadow light (Bthardamz01a `0008A210`, left lit). At fDoorVoidSide=32: 7. Embershard: exactly `0008F94C`.
+- **Match by position, not a form map:** a model-less LIGH reference's NiLight is attached by ID 17610 to the reference's 3D root (the attach node lookup at `274562`-`274589` falls back to the root; AttachChild at `274643`) and ID 17610 writes no local transform, so its world translate is the reference's position (Hypothesis: the NiAVObject constructor's identity local transform; a wrong guess fails safe as `unplaced=`).
+- **Book (after the binary review of `e7b88b0`).** Each put-out light is held as (NiLight, BSLight listing it this frame, door, reference, position, radius, last time chosen); at most 16; and a reference (`NiPointer<RE::NiLight>`, an atomic IncRef) is held on its NiLight, so it is never freed or its address reused while held. Why: RemoveLight's queue (`+178`) is drained by ID 106335 without a camera from IDs 13316 (`1A2C2A`), 15691 (`21B375`), 19411 (`2D7133`), 35780 (`6279BE`) and ResetScene 106385 (`1511E97`), so a held light's BSLight can leave `activeLights` before any exit of ours runs, and when the cell's 3D is attached again the light builder ID 17610 reuses the NiLight it finds under the attach node (call `2757E0` at `27458F`, creation skipped when it returns one) and never clears bit 0. Every frame it is served, under the lock: each held NiLight is looked up among the active entries by its NiLight (`+48`); one no entry lists, or that only its BSLight and our reference still hold (refcount `+8` ≤ 2; the engine drops an entry whose NiLight it alone holds, `+8 == 1` at `150DA97`), is read through the reference and lit again at once (`gone=`, FCS-108 once); a bit cleared by someone else → left as is, not put out again while its door stays chosen (FCS-109 once, `conflict=`); otherwise kept while wanted, else restored (bit cleared; `markLinked` on the entry listing it, if any). Dropped references are released after the lock, on the main thread (our release can be the last one: the NiLight's own `DeleteThis`). A light re-listed under another BSLight is found by its NiLight and kept. A static light restored with an empty geometry list is counted (`unlinked=`, FCS-110): ID 106342 detaches any light whose bit is set (`150E437` → `jmp 108285` at `150E4E9`), static ones included, and only dynamic lights are linked again every frame (106335 `150DABC`-`150DAF2`), so a static light the engine re-added while we held it out stays unlit after our restore until the engine re-adds it. Not repaired: the engine's own relinking of a static light is 106342 called on a light being added (106335's queue processing at `150D57D` / `150D5DA`, and ID 106328 `150CBF0`, which puts a BSLight straight into the active arrays, at `150CCAA` / `150CCFB`), always with the light lock held and the scene's culling state of that moment; calling it ourselves would be our call into the linker (ID 106401 allocates a culling process), not a state the engine reaches by itself, so it is left to a later decision.
+- **When.** Served from `publish` (eligible frames, main thread, before the render) with the frame pass's own `selectDoors` over the same census, feet and radius, only with the frame pass installed and not broken, not latched, in a cell Stage 1 calls flat. Restored: door unchosen (player behind its plane, out of radius, a nearer door takes the slot), after a hysteresis: a held light whose door stops being chosen is kept for 0.5 s while that door is within `fDoorVoidRadius` + 128 of the feet, the player in front of it and the light in its lane (so the radius edge or the slot limit toggle it at most every half second); every other path restores at once: inactive publish (exterior, latch), cell change (style census cell), game load (lifecycle `load`), lifecycle `cell` (player attach/detach), the Loading Menu opening (new MenuOpenCloseEvent branch; a load door, fast travel and `coc` all show it before the cell is detached), a latch at frame start, and every ineligible frame except those the fill light holds on: first person, Camera off, F8, rig disabled, death, special states, a hook lost past the grace. Held (nothing read or written): menu frames (`State::menu`, the console), a hook-silent frame inside the grace or explained by a pausing menu / the Tween state (the fill light's `SilenceHold`, copied); a hold never survives a cell change or a load. A lifecycle request made off the main thread is taken at the next main-thread frame start. There is no plugin shutdown path in this plugin; the bit is runtime scene-graph state and never saved.
+
+### Engine facts relied on (all checked at install unless noted)
+
+| Fact | Evidence on 1.7.104 | Install check |
+| --- | --- | --- |
+| BSShaderManager::State ID 390951 = `20D68B0`; its first pointer is the main ShadowSceneNode | ID 17610 loads `[20D68B0]` as AddLight's `this` (`2748B9`-`2748C0`) | ID → RVA |
+| ShadowSceneNode vtable ID 254646 = `1B3DBA0` | combined audit | ID → RVA; class compared on every use (FCS-107) |
+| BSLight vtable ID 255404 = `1B4CA30` | ID 108276 writes it at `157595E` | ID → RVA; per entry |
+| `activeLights` `+130` (size `+140`), `activeShadowLights` `+148`, light lock `+1A8` | ID 106335 `150DA54`-`150DA79`, lock `150D439`-`150D445` (held to the end, released `150DB9C`-`150DBCA`) | CommonLib `static_assert`s; bytes at `150D439` |
+| BSLight NiLight `+48`, dynamic `+46`, point `+44`; NiLight refcount `+8` (an entry only its BSLight holds is dropped by the engine) | `150DA8E`-`150DABA` | bytes `150DA8E`..`150DABC` (46) |
+| NiAVObject flags `+F4` bit 0 skipped by the light list; world translate `+A0`; NiLight radius `+128` | `1569713`-`156972D`; `1575D45`-`1575D66` | bytes `1569713`..`156972D` (22); CommonLib `static_assert`s on `BSLight::light`, `LIGHT_RUNTIME_DATA::radius` |
+| Marking walk: list `+18`, item next `+0` / element `+10`, geometry `+128`, property `+70`, light data `+20` | `1575E8A`-`1575EC3` | bytes `1575E8A`..`1575EC8` (62) |
+| The pass builder rebuilds on `lightData+20` and clears it | `151A4C4`-`151A52C` | bytes `151A528`..`151A530` (8) |
+| UI `+160` pausing-menu count; PlayerCamera `+28` state, state id `+18`, Tween 7 | `116A552`-`116A559` / `116A0CA`-`116A0D1`; ID 50819 `8F9A06`-`8F9A10`; combined audit | CommonLib `static_assert`s |
+| TESForm `+1A` form type `0x1F` = LIGH (`RE::FormType::Light`) | ID 17610 `274449` | — |
+| Function IDs 106335 `150D410`, 107784 `1569550`, 108278 `1575D20` | address library | ID → RVA |
+
+Any failed check: FCS-106 once, nothing read or written, the door void unchanged.
+
+### Lines
+
+- Log, once per cell (after the door census): `FixedCameraSpike shader door lights cell=000B6BE6 placed=N refs=N off=N full=N doors=1 lane=1 list=0008F94C@000B6CCD/651.5` (light@door/distance behind the plane, the plane's own start).
+- Install: `FixedCameraSpike shader door lights installed lights=installed match=8.0 held=16 depth=900.0`.
+- Trace `FixedDoorLight` (frame row's emitter and budget, on change only: the held set changed, or something was put out, restored, gone, unlinked, in conflict or not read): `cell duty cause doors held dimmed restored gone unlinked conflict lost foreign unplaced shadow other full total=dims,restores,gone lights=door:ref@x,y,z/radius;...` (five listed, `more=N`; widest row 731 of 768 bytes).
+
+### Refusal codes (FCS-106..110; 66..110 in use)
+
+| Code | Site | Meaning |
+| --- | --- | --- |
+| FCS-106 | `installDoorLights` | The frame pass is not installed, or an ID or engine instruction run differs. No lights touched. |
+| FCS-107 | `lightScene` | The scene slot holds another class at run time. Off for the session; what is held is lit again through the references (no list, no lock). |
+| FCS-108 | `serveDoorLights` | Informative: a held light left the active list (or only its BSLight still held it) before its door was unchosen; lit again through our reference. |
+| FCS-109 | `serveDoorLights` | Informative: another writer lit a held light (left as it set it). |
+| FCS-110 | `serveDoorLights` | Informative: a static light was restored with no geometry linked (the engine re-added it while it was out); it stays unlit until the engine links it again. |
+
+### Tests
+
+- New `fixed_spike_shader_door_light_policy_test`: the Embershard lane (the blue light in, the torch in front out, depth, start, width, heights, bounds, NaN), the census match (8 units, off, full), the book (dim, keep, restore when unchosen and when off, gone when no entry lists the held NiLight and when orphaned, re-listed under another BSLight, unlinked for a static light with an empty list and not for a dynamic one, conflict while wanted, at restore and for a gone light, lost when not read, the left list until an off frame, foreign, unplaced at 9 units, other class, orphaned candidates, unlisted never put out, duplicates, full at 16, list cut at 64), the hysteresis (kept to 0.5 s and released after, the clock restarting when chosen again, 1550 kept / 1700 released at radius 1500, the player behind the plane, off frames, NaN and backward clocks, never a new dim, no door in the census), a simulated engine with reference counts (four exits, the BSLight leaving the list included, each puts the flags word back exactly and leaves no reference), the duty, settings, both lines exact and their widest forms (731 / 514 of 768 bytes). Mutants (plain, foreign, Loading Menu, settle, left list, keep-only-if-culled, lane width, left reset; after the review: no grace, grace without the door check, no radius margin, orphan ignored, no unlinked count, orphan candidates dimmed, entry not updated, gone not restored, lost not kept, left kept on off frames) each fail it.
+- `fixed_spike_shader_policy_test`: refusal range 66..109. Wiring audit: new `shader door void lights wiring` section.
+
+### Expected at Embershard (`iDoorVoid=1 iDoorVoidLights=1`, nothing here was run)
+
+Log: `... door lights cell=000B6BE6 ... lane=1 list=0008F94C@000B6CCD/651.5`. From the coc arrival (172 in front of the plane) the door is chosen; the first eligible frame puts `0008F94C` out: `FixedDoorLight ... duty=keep doors=1 held=1 dimmed=1 ... lights=000B6CCD:0008F94C@2251,696,9332/904` (radius as the NiLight holds it). The blue patch on the floor in front of the door is gone from the next rendered frame in all four headings; the torch `000B6CBE` in front of the door is untouched. First person, F8, death, leaving the cell or a load: `restored=1`, `held=0`; a pause menu: no row (held). Walking back to the door so that the feet cross its plane unchooses it: `restored=1` and the patch returns with the stub (as the void itself does).
+
+### Risks
+
+| Risk | How it would show |
+| --- | --- |
+| A light's BSLight leaves the active list while held (RemoveLight's queue drained without a camera) | Lit again through our reference on the next served frame (`gone=`, FCS-108); if the engine re-adds a static light meanwhile it may come back unlinked (`unlinked=`, FCS-110). |
+| Our reference keeps a NiLight alive (and its BSLight listed: the engine's `+8 == 1` drop waits for it) | At most one served frame: a held light only its BSLight and we hold is lit again and released at once. |
+| Our release is the NiLight's last | Its own `DeleteThis`, on the main thread after the light lock, as any engine NiPointer release. |
+| Lens flares or other consumers that do not test bit 0 | A put-out light's flare could still draw (vanilla lane lights have none: no model, no flare data checked). |
+| A light the frame pass would not draw this frame (targets skipped, no capture) | Lights put out while the void is not drawn for that frame. |
+| Lock hold | One pass over the active point lights (and, when wanted, the shadow lights) per served frame, no engine call inside; FCS lines are written after it. |
+
+### What the reviewer must check
+
+1. The five instruction runs and their offsets, and that 107784 is the only point-light list consumer for lit geometry (no other path reads `lightData->lights` without the bit test).
+2. That ID 106335 / 106342 relink a dynamic light whose bit is cleared, that a static light's passes rebuild after the marking, and that a static light re-added while its bit was set (106342 at `150E437` → 108285) is counted as `unlinked=` and not relinked.
+3. That model-less LIGH NiLights sit exactly at the reference position (the 8-unit match).
+4. That every held NiLight is restored through the held reference whatever the order of the Loading Menu, the cell detach and RemoveLight's queue (the Loading Menu branch only makes the restore earlier), and that references are taken under the lock and released after it on the main thread.
+5. MSVC `/W4 /WX`.
+
+### Unverified
+
+- Every game row and the look (no game run).
+- Whether `0008F94C` is built as a dynamic light (its LIGH has the dynamic flag; either path is handled).
+
 ## Reproduce the offline checks
 
 ```sh

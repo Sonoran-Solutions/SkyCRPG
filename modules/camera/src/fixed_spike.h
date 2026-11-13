@@ -228,7 +228,14 @@ inline void lifecycle(Exit cause) {
     requestRestore(cause);
     runtime->roomActive.store(false,std::memory_order_release);
     shader::deactivate(); // wave 2 shader
+    // The door void's lights: a load or a cell change restores them (a menu holds them, as the fill light).
+    shader::doorLightsExit(cause == Exit::load ? shader::lightAskLoad : cause == Exit::cell ? shader::lightAskCell : 0u);
     if (runtime->active.load(std::memory_order_acquire) && thin::onMain()) { restoreAll(cause); settleFade(false); }
+}
+// The Loading Menu opened (any thread): a load door, fast travel or coc is about to detach the cell, so the door
+// void's lights are restored now rather than held as for other menus.
+inline void loadingMenu() {
+    if (runtime) shader::doorLightsExit(shader::lightAskLoading);
 }
 // Plain placed references only. Light references are left out on purpose: the
 // 3D of a light is the light itself, and hiding a ceiling must not put out the
@@ -731,6 +738,7 @@ inline void endFrame() {
         const auto at = player && parent ? player->GetPosition() : RE::NiPoint3{};
         light::frameLight(false,light::fillDuty(false,exiting,cause,r.frameSeen,r.frameState,light::silenceHeld()),cause == Exit::load,parent,
             player && parent ? Vec{at.x,at.y,at.z} : Vec{},{},{},exitNames[static_cast<std::size_t>(cause)]);
+        shader::doorLightsIdle(exiting,cause,cellId,r.now); // the door void's lights: hold or restore (the fill light's rule)
         traceRig(false);
         r.previousEligible = false;
         return;

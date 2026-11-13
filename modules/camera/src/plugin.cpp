@@ -382,6 +382,10 @@ void loadSettings() {
         shaderCut.frame.doorEdge = number("FixedCameraSpike","fDoorVoidEdge",shaderCut.frame.doorEdge);
         shaderCut.frame.doorRadius = number("FixedCameraSpike","fDoorVoidRadius",shaderCut.frame.doorRadius);
         shaderCut.frame.doorSide = number("FixedCameraSpike","fDoorVoidSide",shaderCut.frame.doorSide);
+        // The door void's lights (needs iDoorVoid=1): off unless asked for.
+        shaderCut.frame.doorLights = number("FixedCameraSpike","iDoorVoidLights",shaderCut.frame.doorLights);
+        // The door void's glow cards (needs iDoorVoid=1 and bShaderCutEffect=1): off unless asked for.
+        shaderCut.frame.doorGlow = number("FixedCameraSpike","iDoorVoidGlow",shaderCut.frame.doorGlow);
         // Wave 2 package "light": default off; with both modes 0 nothing is allocated.
         fixed::light::Config l;
         l.fillMode = number("FixedCameraSpike","iLightFillMode",l.fillMode);
@@ -1392,6 +1396,8 @@ public:
             precisionReturn.cancel(false);
             fixed::lifecycle(fixed::Exit::menu);
         }
+        // A load door, fast travel or coc: the door void's lights are restored before the cell is detached.
+        if (event && event->opening && event->menuName == "Loading Menu") fixed::loadingMenu();
         // Queue before any context() can consider releasing the lease.
         if (targetLockEnabled) {
             if (!event) return RE::BSEventNotifyControl::kContinue;
