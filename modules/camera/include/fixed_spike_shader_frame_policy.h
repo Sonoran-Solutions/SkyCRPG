@@ -25,6 +25,7 @@
 // so the frame is the same as before when no door is drawn).
 #include "fixed_spike_shader_frame_shaders.h"
 #include "fixed_spike_shader_door_policy.h"
+#include "fixed_spike_shader_door_light_policy.h" // the door void's lights (iDoorVoidLights=1)
 #include <cstddef>
 
 namespace skycrpg::camera::fixed::shader {

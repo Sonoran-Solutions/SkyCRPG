@@ -48,6 +48,12 @@
 // scene after the main world render returns (fixed_spike_shader_frame.h); this
 // file only captures the main view's matrices during a pass of the published
 // view and calls its install, frame-start check and trace.
+//
+// The door void's lights (iDoorVoidLights=1, fixed_spike_shader_door_light.h):
+// publish serves the doors the frame pass will draw, frameStart takes a
+// lifecycle request made off the main thread or a latch, and trace writes its
+// FixedDoorLight rows; the camera frame service calls its ineligible-frame and
+// lifecycle entries.
 #include "fixed_spike_shader_policy.h"
 #include <cwchar>
 
@@ -70,6 +76,7 @@ struct StyleRuntime; // fixed_spike_shader_style.h: only with iCutStyle=1
 struct FrameRuntime; // fixed_spike_shader_frame.h: only with bFramePass=1
 struct FillRuntime;  // fixed_spike_shader_fill.h: only with iCutFill=1
 struct TiltRuntime;  // fixed_spike_shader_tilt.h: only with iCutTilt=1
+struct DoorLightRuntime; // fixed_spike_shader_door_light.h: only with iDoorVoidLights=1
 struct Runtime {
     Config config;
     void (*logger)(const char*){};
@@ -118,6 +125,7 @@ struct Runtime {
     FrameRuntime* framePass{}; // fifth pass; null with bFramePass=0
     FillRuntime* fill{};       // Stage 3.1; null with iCutFill=0
     TiltRuntime* tilt{};       // Stage 3.2; null with iCutTilt=0
+    DoorLightRuntime* doorLights{}; // the door void's lights; null with iDoorVoidLights=0
     bool openFill{};           // the open pass is cut at a plane (not removed whole) in the main view: a fill candidate
     const void* openPass{};    // the pass the open cut belongs to (set by its SetupGeometry hook; the fill draws only for it)
 };
@@ -457,6 +465,13 @@ inline Feature tiltState();
 inline void configureTilt();
 inline void tiltFrame();
 inline void traceTilt(double now);
+// fixed_spike_shader_door_light.h (included at the end of this file).
+inline void installDoorLights(std::uintptr_t base);
+inline Feature doorLightState();
+inline void configureDoorLights();
+inline void doorLightsFrame(bool active);
+inline void doorLightsStart();
+inline void traceDoorLights(double now);
 // Main thread, from commit, after the Lighting/Utility hooks. The Effect class
 // is hooked only with bShaderCutEffect=1 and when its own guard passes.
 inline void installEffect(std::uintptr_t base) {
@@ -548,6 +563,14 @@ inline void commit() {
                 static_cast<unsigned>(loadDoorModels.size()),static_cast<unsigned>(wrongFacingDoors.size()),static_cast<unsigned>(maxDoorVoids));
             r.logger(text);
         }
+        // The door void's lights (iDoorVoidLights=1): refuse on their own (FCS-106) and leave the void as it is.
+        if (r.doorLights) {
+            installDoorLights(base);
+            std::snprintf(text,sizeof(text),"FixedCameraSpike shader door lights installed lights=%s match=%.1f held=%u depth=%.1f",
+                featureNames[static_cast<std::size_t>(doorLightState())],static_cast<double>(lightMatch),static_cast<unsigned>(maxDoorLights),
+                static_cast<double>(r.config.frame.doorDepth));
+            r.logger(text);
+        }
     }
     // Stage 3.1: only with iCutFill=1; refuses on its own (FCS-98/99) and leaves everything above as it is.
     if (r.fill) {
@@ -596,6 +619,7 @@ inline void frameStart() {
     if (r.voidOffMain.load(std::memory_order_relaxed))
         refuse(Refusal::voidThread,"the main view's clear colour was set off the main thread; those calls kept the engine's colour");
     frameStartFrame(); // fifth pass: an off-thread return of the main world render
+    doorLightsStart(); // the door void's lights: a lifecycle request made off the main thread, or a latch
     if (!r.latched.load(std::memory_order_acquire) && peek<void*>(reinterpret_cast<const void*>(r.base+contextAddress.rva),0) != r.context) {
         latch();
         refuse(Refusal::context,"the engine's device context changed; native rendering for the rest of the session");
@@ -623,13 +647,14 @@ inline void publish(Vec eye,Vec forward,Vec feet,bool interiorCell,unsigned long
     std::optional<View> next;
     if (publishes(r.installed,r.latched.load(std::memory_order_acquire),interiorCell,feet.z))
         next = makeView(r.config,eye,forward,feet,r.plane.update(feet.z,now),frame,now);
-    if (!next) { r.active.store(false,std::memory_order_release); settleSky(false); return; }
+    if (!next) { r.active.store(false,std::memory_order_release); settleSky(false); doorLightsFrame(false); return; }
     r.view = *next; r.haveView = true; r.published = frame;
     for (auto& budget : r.budgets) budget.frame();
     styleFrame(); // fourth pass: the storey line from the frame just drawn
     tiltFrame();  // Stage 3.2: this frame's tilted planes (iCutTilt=1 only)
     r.active.store(true,std::memory_order_release);
     settleSky(true);
+    doorLightsFrame(true); // the door void's lights: the doors the frame pass will draw in this frame's render
 }
 inline void trace(double now) {
     if (!runtime) return;
@@ -667,6 +692,7 @@ inline void trace(double now) {
     traceFrame(now); // fifth pass: FixedShaderFrame, only with bFramePass=1
     traceFill(now); // Stage 3.1: FixedShaderFill, only with iCutFill=1
     traceTilt(now); // Stage 3.2: FixedShaderTilt, only with iCutTilt=1
+    traceDoorLights(now); // FixedDoorLight on change, through the frame row's budget, only with iDoorVoidLights=1
 }
 inline bool tracing() { return runtime && runtime->config.trace; }
 // Shader trace line kinds: FixedShader, FixedShaderLook, FixedShaderVoid, FixedShaderStyle and
@@ -695,6 +721,7 @@ inline void configure(const Config& requested,void (*logger)(const char*),void (
     configureFrame();
     configureFill();
     configureTilt();
+    configureDoorLights();
     if (adjusted) refuse(Refusal::settings,"one or more shader-cut values were out of range; safe values applied");
 }
 } // namespace skycrpg::camera::fixed::shader
@@ -704,3 +731,4 @@ inline void configure(const Config& requested,void (*logger)(const char*),void (
 #include "fixed_spike_shader_frame.h" // fifth pass: Stage 2, the frame pass
 #include "fixed_spike_shader_fill.h" // Stage 3.1: the back-face fill
 #include "fixed_spike_shader_tilt.h" // Stage 3.2: the tilted cut
+#include "fixed_spike_shader_door_light.h" // the door void's lights (iDoorVoidLights=1)

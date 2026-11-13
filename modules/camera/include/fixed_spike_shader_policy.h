@@ -90,8 +90,9 @@ enum class Refusal : unsigned { settings = 66, foreign = 67, address = 68, table
     effectObject = 87, effectThread = 88, skySite = 89, skyLeft = 90, styleBuffers = 91, styleMap = 92,
     frameSite = 93, frameMemory = 94, frameDevice = 95, frameThread = 96, frameRun = 97,
     fillSite = 98, fillDevice = 99, fillLayout = 100, fillMap = 101,
-    tiltPatch = 102, tiltCreate = 103, tiltBuffer = 104, tiltMap = 105 };
-constexpr unsigned firstRefusal = 66, lastRefusal = 105;
+    tiltPatch = 102, tiltCreate = 103, tiltBuffer = 104, tiltMap = 105,
+    doorLightSite = 106, doorLightScene = 107, doorLightLost = 108, doorLightConflict = 109 };
+constexpr unsigned firstRefusal = 66, lastRefusal = 109;
 static_assert(lastRefusal-firstRefusal < 64);
 // The refusals a shader preparation can end in, per group.
 struct PrepareCodes { Refusal object,unaudited,patch,create; };
@@ -144,10 +145,13 @@ struct FrameConfig {
     float doorEdge{48.0f};       // fDoorVoidEdge: the soft edge, world units
     float doorRadius{1500.0f};   // fDoorVoidRadius: doors within this distance of the feet
     float doorSide{32.0f};       // fDoorVoidSide: the lane's half width beyond the doorway's, each side
+    // The door void's lights (fixed_spike_shader_door_light_policy.h): off unless asked for; needs iDoorVoid=1.
+    unsigned doorLights{0};      // iDoorVoidLights: 0 off, 1 placed point lights inside a chosen door's lane are put out
 };
 // Out of range: band 0 or 8..512 (a positive band under 8 is 8), headroom 0..512, radii 0..16384,
 // vignette 0..1; NaN or infinite takes the default. Each change is reported once as FCS-66. The door
 // keys are read only with iDoorVoid=1: depth 128..4096, edge 8..256, radius 256..8192, side 0..1024; iDoorVoid above 1 is 0.
+// iDoorVoidLights above 1, or set without iDoorVoid=1, is 0.
 inline FrameConfig validateFrame(FrameConfig f,bool& adjusted) {
     if (!f.enabled) return f;
     const FrameConfig in = f;
@@ -163,9 +167,11 @@ inline FrameConfig validateFrame(FrameConfig f,bool& adjusted) {
         f.doorRadius = bounded(f.doorRadius,1500.0f,256.0f,8192.0f);
         f.doorSide = bounded(f.doorSide,32.0f,0.0f,1024.0f);
     }
+    if (f.doorLights > 1u || !f.doorVoid) f.doorLights = 0u;
     adjusted = adjusted || f.band != in.band || f.headroom != in.headroom || f.radiusInner != in.radiusInner ||
         f.radiusOuter != in.radiusOuter || f.vignette != in.vignette || f.doorVoid != in.doorVoid ||
-        (f.doorVoid && (f.doorDepth != in.doorDepth || f.doorEdge != in.doorEdge || f.doorRadius != in.doorRadius || f.doorSide != in.doorSide));
+        (f.doorVoid && (f.doorDepth != in.doorDepth || f.doorEdge != in.doorEdge || f.doorRadius != in.doorRadius || f.doorSide != in.doorSide)) ||
+        f.doorLights != in.doorLights;
     return f;
 }
 struct Config {
@@ -215,7 +221,7 @@ inline Config validate(Config c,bool* adjusted = nullptr) {
     bool frameChanged = false;
     c.frame = validateFrame(c.frame,frameChanged);
     // The door void reads Stage 1's census of the cell (fixed_spike_shader_style.h noteCell).
-    if (c.frame.enabled && c.frame.doorVoid && c.style != stageOneStyle) { c.frame.doorVoid = 0u; frameChanged = true; }
+    if (c.frame.enabled && c.frame.doorVoid && c.style != stageOneStyle) { c.frame.doorVoid = 0u; c.frame.doorLights = 0u; frameChanged = true; }
     // Stage 3.2: only with Stage 1 (the census says which cells are flat); the far side's ceiling never under the near plane.
     if (c.tilt > 1u || c.style != stageOneStyle) c.tilt = 0u;
     c.tiltSlope = bounded(c.tiltSlope,0.5f,0.05f,4.0f);

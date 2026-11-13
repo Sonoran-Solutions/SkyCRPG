@@ -27,6 +27,9 @@
 // two more reads, its form flags (TESObjectREFR::IsDisabled / TESForm::IsDeleted,
 // as cursor_mode.h) and the ExtraTeleport presence bit of its extra list, read
 // exactly as plugin.cpp callbackMount reads ExtraInteraction (teleportBit).
+// The door void's lights (iDoorVoidLights=1, fixed_spike_shader_door_light.h)
+// add one more: a reference whose base is a LIGH is noted from its position
+// and the same two form flags (noteLightRef); nothing else of it is read.
 #include "precision_policy.h"
 
 namespace skycrpg::camera::fixed::shader {
@@ -77,6 +80,7 @@ struct StyleRuntime {
     std::size_t uprightCount{};
     unsigned stacks{},openStacks{},uprightOverflow{};
     DoorCensus doors{}; // the door void's load doors of the cell (iDoorVoid=1 only)
+    LightCensus lights{}; // the cell's placed LIGH references (iDoorVoidLights=1 only)
     StyleWindow window{};
 };
 inline Feature styleState() { return runtime && runtime->style ? runtime->style->state : Feature::off; }
@@ -388,6 +392,11 @@ inline void noteDoorRef(DoorCensus& doors,RE::TESObjectREFR* ref,RE::TESBoundObj
     static_cast<void>(noteDoor(doors,ref->GetFormID(),model,teleport,off,{position.x,position.y,position.z},{angle.x,angle.y,angle.z},
         model && teleport == Teleport::present ? ref->GetScale() : 1.0f,runtime->config.frame.doorSide));
 }
+// The door void's lights, census: a placed LIGH reference, from its position and form flags (as noteDoorRef).
+inline void noteLightRef(LightCensus& lights,RE::TESObjectREFR* ref) {
+    const auto position = ref->GetPosition();
+    notePlacedLight(lights,ref->GetFormID(),ref->IsDisabled() || ref->IsDeleted(),{position.x,position.y,position.z});
+}
 // Stage 3.0, after the census: sorted by form ID for the per-pass lookup, then grouped into stacks.
 inline void linkCellStacks() {
     auto& s = *runtime->style;
@@ -411,6 +420,7 @@ inline void noteCell(RE::TESObjectCELL* cell) {
         s.storey.reset(); s.found = std::numeric_limits<float>::infinity();
         s.uprightCount = 0; s.stacks = s.openStacks = s.uprightOverflow = 0;
         s.doors = {};
+        s.lights = {};
         s.entries.fill(StyleEntry{});
         for (auto& set : s.removed) set.fill(nullptr);
     }
@@ -418,13 +428,16 @@ inline void noteCell(RE::TESObjectCELL* cell) {
     if (s.censusTries++ >= censusRetries) { s.cellStyle = CellStyle::flat; return; }
     Census c;
     DoorCensus doors;
+    LightCensus lights;
     const bool doorVoid = runtime->config.frame.enabled && runtime->config.frame.doorVoid != 0u; // nothing is drawn without the frame pass
+    const bool doorLights = doorVoid && runtime->config.frame.doorLights != 0u; // the door void's lights
     s.uprightCount = 0; s.uprightOverflow = 0;
     cell->ForEachReference([&](RE::TESObjectREFR* ref) {
         const auto base = ref ? ref->GetBaseObject() : nullptr;
         if (!base) return RE::BSContainer::ForEachResult::kContinue;
         const auto type = base->GetFormType();
         if (type == RE::FormType::Door && doorVoid) { noteDoorRef(doors,ref,base); return RE::BSContainer::ForEachResult::kContinue; }
+        if (type == RE::FormType::Light && doorLights) { noteLightRef(lights,ref); return RE::BSContainer::ForEachResult::kContinue; }
         if (type != RE::FormType::Static && type != RE::FormType::MovableStatic) return RE::BSContainer::ForEachResult::kContinue;
         ++c.statics;
         const Family family = modelFamily(modelPath(base));
@@ -436,12 +449,18 @@ inline void noteCell(RE::TESObjectCELL* cell) {
     s.census = c;
     s.cellStyle = cellStyle(c);
     s.doors = doors;
+    s.lights = lights;
     linkCellStacks();
     // Once per cell, when the census has decided the cell's style: the door void's doors (the frame pass
     // draws them only in flat cells).
     if (doorVoid && s.cellStyle != CellStyle::unknown) {
         char line[512]{};
         if (formatDoorCensus(line,sizeof(line),id,cellNames[static_cast<std::size_t>(s.cellStyle)],s.doors)) runtime->logger(line);
+    }
+    // The door void's lights, once per cell: the placed lights that sit in a door's lane as the census places it.
+    if (doorLights && s.cellStyle != CellStyle::unknown) {
+        char line[768]{};
+        if (formatDoorLightCensus(line,sizeof(line),id,s.doors,s.lights,runtime->config.frame.doorDepth)) runtime->logger(line);
     }
 }
 // configure, after validate: only iCutStyle=1 has a style runtime.

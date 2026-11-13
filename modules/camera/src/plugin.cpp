@@ -382,6 +382,8 @@ void loadSettings() {
         shaderCut.frame.doorEdge = number("FixedCameraSpike","fDoorVoidEdge",shaderCut.frame.doorEdge);
         shaderCut.frame.doorRadius = number("FixedCameraSpike","fDoorVoidRadius",shaderCut.frame.doorRadius);
         shaderCut.frame.doorSide = number("FixedCameraSpike","fDoorVoidSide",shaderCut.frame.doorSide);
+        // The door void's lights (needs iDoorVoid=1): off unless asked for.
+        shaderCut.frame.doorLights = number("FixedCameraSpike","iDoorVoidLights",shaderCut.frame.doorLights);
         fixed::configure(f,shaderCut,settings,cursorSettings.enabled ? cursorSettings.toggleKey : -1,
             std::filesystem::path(skycrpg::LogDirectory())/L"SkyCRPG_Camera_FixedSpike.log",log,thinGoal,fixedPreCollision,fixedCause);
     }
@@ -1381,6 +1383,8 @@ public:
             precisionReturn.cancel(false);
             fixed::lifecycle(fixed::Exit::menu);
         }
+        // A load door, fast travel or coc: the door void's lights are restored before the cell is detached.
+        if (event && event->opening && event->menuName == "Loading Menu") fixed::loadingMenu();
         // Queue before any context() can consider releasing the lease.
         if (targetLockEnabled) {
             if (!event) return RE::BSEventNotifyControl::kContinue;

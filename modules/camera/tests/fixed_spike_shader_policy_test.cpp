@@ -142,7 +142,8 @@ void codes() {
         Refusal::effectUnaudited,Refusal::effectObject,Refusal::effectThread,Refusal::skySite,Refusal::skyLeft,Refusal::styleBuffers,Refusal::styleMap,
         Refusal::frameSite,Refusal::frameMemory,Refusal::frameDevice,Refusal::frameThread,Refusal::frameRun,
         Refusal::fillSite,Refusal::fillDevice,Refusal::fillLayout,Refusal::fillMap,
-        Refusal::tiltPatch,Refusal::tiltCreate,Refusal::tiltBuffer,Refusal::tiltMap};
+        Refusal::tiltPatch,Refusal::tiltCreate,Refusal::tiltBuffer,Refusal::tiltMap,
+        Refusal::doorLightSite,Refusal::doorLightScene,Refusal::doorLightLost,Refusal::doorLightConflict};
     std::uint64_t seen = 0;
     for (const auto code : all) {
         // The wave 1 once-mask holds codes below 64; these have their own.
@@ -161,8 +162,11 @@ void codes() {
         static_cast<unsigned>(Refusal::fillSite) == 98 && static_cast<unsigned>(Refusal::fillMap) == 101);
     // Stage 3.2 continues at 102 up to 105.
     assert(static_cast<unsigned>(Refusal::tiltPatch) == 102 && static_cast<unsigned>(Refusal::tiltCreate) == 103 &&
-        static_cast<unsigned>(Refusal::tiltBuffer) == 104 && static_cast<unsigned>(Refusal::tiltMap) == 105 && lastRefusal == 105);
-    assert(seen == (std::uint64_t{1} << 40)-1u); // all 40 codes 66..105 in use
+        static_cast<unsigned>(Refusal::tiltBuffer) == 104 && static_cast<unsigned>(Refusal::tiltMap) == 105);
+    // The door void's lights continue at 106 up to 109.
+    assert(static_cast<unsigned>(Refusal::doorLightSite) == 106 && static_cast<unsigned>(Refusal::doorLightScene) == 107 &&
+        static_cast<unsigned>(Refusal::doorLightLost) == 108 && static_cast<unsigned>(Refusal::doorLightConflict) == 109 && lastRefusal == 109);
+    assert(seen == (std::uint64_t{1} << 44)-1u); // all 44 codes 66..109 in use
     assert(refusalBit(Refusal::fillMap) == std::uint64_t{1} << 35 && refusalBit(Refusal::tiltMap) == std::uint64_t{1} << 39);
     // A shader preparation reports through its own group's codes.
     for (std::size_t i = 0;i < 2;++i) {

@@ -113,9 +113,10 @@ for helper in ("inline bool engaged() { return runtime && ",
                "inline void requestRestore(Exit cause) {\n    if (runtime) ",
                "inline void dropSnaps() {\n    if (!runtime) return;",
                "inline void lifecycle(Exit cause) {\n    if (!runtime) return;",
+               "inline void loadingMenu() {\n    if (runtime) ",
                "inline void install(bool prerequisites,bool service) {\n    if (!runtime) return;"):
     assert helper in spike, helper
-unguarded = ("fixed::engaged()", "fixed::dropSnaps()", "fixed::lifecycle(", "fixed::install(", "fixed::Exit::", "fixed::Config f;",
+unguarded = ("fixed::engaged()", "fixed::dropSnaps()", "fixed::lifecycle(", "fixed::loadingMenu()", "fixed::install(", "fixed::Exit::", "fixed::Config f;",
              "fixed::configure(", "fixed::runtime", "fixed::shader::Config shaderCut;")
 guarded_blocks = (body("    if (rig) {", "    previousLook(state,filtered);"),
                   body("        if (fixed::engaged()) {", "        // Deliberate F6 can return from its OWN first-person request"))
@@ -350,12 +351,13 @@ publish = cut_body("inline void publish(", "inline void trace(double now) {")
 assert publish.index("if (r.published+1u != frame) r.plane.reset();") < \
     publish.index("if (publishes(r.installed,r.latched.load(std::memory_order_acquire),interiorCell,feet.z))") < \
     publish.index("makeView(r.config,eye,forward,feet,r.plane.update(feet.z,now),frame,now)") < \
-    publish.index("if (!next) { r.active.store(false,std::memory_order_release); settleSky(false); return; }") < publish.index("r.active.store(true,")
+    publish.index("if (!next) { r.active.store(false,std::memory_order_release); settleSky(false); doorLightsFrame(false); return; }") < \
+    publish.index("r.active.store(true,")
 assert "inline bool publishes(bool installed,bool latched,bool interiorCell,float feetZ) {\n    return installed && !latched && interiorCell && " \
     "std::isfinite(feetZ);" in cut_policy
 void = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_void.h").read_text()
 cut_codes = dict(re.findall(r"(\w+) = (\d+)", cut_policy[cut_policy.index("enum class Refusal : unsigned {"):cut_policy.index("constexpr unsigned firstRefusal")]))
-assert len(cut_codes) == 40 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 106))
+assert len(cut_codes) == 44 and sorted(int(v) for v in cut_codes.values()) == list(range(66, 110))
 sky = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_sky.h").read_text()
 sky_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_sky_policy.h").read_text()
 style = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_style.h").read_text()
@@ -365,11 +367,14 @@ frame_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shade
 fill = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_fill.h").read_text()
 fill_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_fill_policy.h").read_text()
 tilt = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_tilt.h").read_text()
+door_light = (Path(__file__).resolve().parents[1] / "src/fixed_spike_shader_door_light.h").read_text()
+door_light_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_door_light_policy.h").read_text()
 tilt_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_tilt_policy.h").read_text()
 prepare_table = cut_policy[cut_policy.index("constexpr std::array<PrepareCodes,2> prepareCodes{{"):cut_policy.index("// ---- [FixedCameraSpike] shader-cut keys")]
 for name in cut_codes:
     sites = cut.count("Refusal::" + name) + void.count("Refusal::" + name) + sky.count("Refusal::" + name) + style.count("Refusal::" + name) + \
-        frame.count("Refusal::" + name) + fill.count("Refusal::" + name) + tilt.count("Refusal::" + name) + prepare_table.count("Refusal::" + name)
+        frame.count("Refusal::" + name) + fill.count("Refusal::" + name) + tilt.count("Refusal::" + name) + prepare_table.count("Refusal::" + name) + \
+        door_light.count("Refusal::" + name)
     assert sites == 1, name  # one site per code
 for field in ("object", "unaudited", "patch", "create"):
     assert prepare.count("refuse(codes." + field + ",text); return;") == 1, field
@@ -398,7 +403,8 @@ assert cut.endswith('#include "fixed_spike_shader_void.h" // second pass: the vo
                     '#include "fixed_spike_shader_style.h" // fourth pass: Stage 1 of the seamless cutaway\n'
                     '#include "fixed_spike_shader_frame.h" // fifth pass: Stage 2, the frame pass\n'
                     '#include "fixed_spike_shader_fill.h" // Stage 3.1: the back-face fill\n'
-                    '#include "fixed_spike_shader_tilt.h" // Stage 3.2: the tilted cut\n')
+                    '#include "fixed_spike_shader_tilt.h" // Stage 3.2: the tilted cut\n'
+                    '#include "fixed_spike_shader_door_light.h" // the door void\'s lights (iDoorVoidLights=1)\n')
 assert "inline void installVoid(std::uintptr_t base);" in cut and cut.count("installVoid(base);") == 1 and cut.count("installEffect(base);") == 1
 assert void.count("inline void installVoid(std::uintptr_t base) {") == 1 and "runtime = " not in void
 install_effect = cut_body("inline void installEffect(std::uintptr_t base) {", "// Main thread, inside the camera frame service.")
@@ -873,7 +879,7 @@ door_policy = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader
 door_table = (Path(__file__).resolve().parents[1] / "include/fixed_spike_shader_door_table.h").read_text()
 frame_ps = (Path(__file__).resolve().parents[1] / "shaders/fixed_spike_frame_ps.hlsl").read_text()
 assert "unsigned doorVoid{0};" in cut_policy and \
-    "if (c.frame.enabled && c.frame.doorVoid && c.style != stageOneStyle) { c.frame.doorVoid = 0u; frameChanged = true; }" in cut_policy
+    "if (c.frame.enabled && c.frame.doorVoid && c.style != stageOneStyle) { c.frame.doorVoid = 0u; c.frame.doorLights = 0u; frameChanged = true; }" in cut_policy
 assert "    if (f.doorVoid > 1u) f.doorVoid = 0u;\n    if (f.doorVoid) {" in cut_policy
 for key, default in (("iDoorVoid", "1"), ("fDoorVoidDepth", "900"), ("fDoorVoidEdge", "48"), ("fDoorVoidRadius", "1500"), ("fDoorVoidSide", "320")):
     assert gate.count('"FixedCameraSpike","' + key + '"') == 1 and ("\n" + key + "=" + default + "\n") in ini, key
@@ -925,3 +931,95 @@ for forbidden in ("safe_write", "VirtualAlloc", "VirtualProtect", "write_vfunc",
 print("PASS shader door void wiring: only with iDoorVoid=1 (INI default 1, struct default 0), bFramePass=1 and iCutStyle=1; one census branch (ExtraTeleport's bit read only for "
       "table models, one CAS, never a wait); doors chosen in flat cells only, the player never behind a chosen plane; rows written before the one Map; shader "
       "term read only with a door drawn; FixedDoorVoid on change through the frame budget; no hook, code or engine-state write")
+
+# The door void's lights (iDoorVoidLights=1, include/fixed_spike_shader_door_light_policy.h, src/fixed_spike_shader_door_light.h):
+# off by default and only with the door void. One more census branch (LIGH references, position and form flags only);
+# served from publish on eligible frames with the frame pass's own door choice; restored on every other path; the
+# only engine writes are bit 0 of a listed NiLight's flags and lightListChanged on its geometries' light data, both
+# made under the scene node's light lock with no engine call; no hook and no code write.
+def door_light_body(start, end):
+    return door_light[door_light.index(start):door_light.index(end, door_light.index(start))]
+
+
+assert "unsigned doorLights{0};" in cut_policy and "    if (f.doorLights > 1u || !f.doorVoid) f.doorLights = 0u;" in cut_policy
+assert gate.count('"FixedCameraSpike","iDoorVoidLights"') == 1 and "\niDoorVoidLights=0\n" in ini
+assert '#include "fixed_spike_shader_door_light_policy.h"' in frame_policy and "lastRefusal = 109" in cut_policy
+configure_lights = door_light_body("inline void configureDoorLights() {", "// Main thread, publish")
+assert "if (r.config.frame.enabled && r.config.frame.doorVoid && r.config.frame.doorLights) r.doorLights = new DoorLightRuntime;" in configure_lights
+assert door_light.count("= new ") == 1 and cut.count("\n    configureDoorLights();\n") == 1
+# Install: inside the frame pass's block of commit, after the door void, before the fill; every check before the state.
+assert commit.index('"FixedCameraSpike shader door void installed pass=%s') < commit.index("installDoorLights(base);") < \
+    commit.index('"FixedCameraSpike shader door lights installed lights=%s') < commit.index("if (r.fill) {")
+install_lights = door_light_body("inline void installDoorLights(std::uintptr_t base) {", "inline Feature doorLightState()")
+assert install_lights.index("l.state = Feature::refused;") < install_lights.index("frameState() == Feature::installed") < \
+    install_lights.index("REL::ID(ids[i].id).address() != base+ids[i].rva") < install_lights.index("std::memcmp(reinterpret_cast<const void*>(base+lightCode[i].rva)") < \
+    install_lights.index("Refusal::doorLightSite") < install_lights.index("l.state = Feature::installed;")
+for constant in ("constexpr Address lightStateAddress{390951,0x20d68b0};", "constexpr Address sceneVtableAddress{254646,0x1b3dba0};",
+                 "constexpr Address lightVtableAddress{255404,0x1b4ca30};", "constexpr Address lightUpdateAddress{106335,0x150d410};",
+                 "constexpr Address lightListAddress{107784,0x1569550};", "constexpr Address lightCullAddress{108278,0x1575d20};",
+                 "constexpr std::size_t lightGeometry = 0x18, lightObject = 0x48;", "constexpr std::size_t itemNext = 0x0, itemElement = 0x10;",
+                 "constexpr std::size_t objectFlags = 0xf4, worldTranslate = 0xa0, lightRadius = 0x128;", "constexpr std::uint32_t appCulled = 1u;",
+                 "constexpr std::size_t geometryShader = 0x128, shaderLightData = 0x70, lightListChanged = 0x20;",
+                 "{0x150da8e,updateBytes.data(),updateBytes.size()},{0x150d439,lockBytes.data(),lockBytes.size()}",
+                 "{0x1569713,listBytes.data(),listBytes.size()},{0x1575e8a,markBytes.data(),markBytes.size()},{0x151a528,rebuildBytes.data(),rebuildBytes.size()}"):
+    assert constant in door_light, constant
+# Census: one branch after the door's, before the statics filter, only with the key; reset with the cell; logged once per cell.
+assert note_cell.index("const bool doorLights = doorVoid && runtime->config.frame.doorLights != 0u;") < \
+    note_cell.index("if (type == RE::FormType::Door && doorVoid)") < \
+    note_cell.index("if (type == RE::FormType::Light && doorLights) { noteLightRef(lights,ref); return RE::BSContainer::ForEachResult::kContinue; }") < \
+    note_cell.index("if (type != RE::FormType::Static") < note_cell.index("s.lights = lights;") < note_cell.index("formatDoorLightCensus(line,sizeof(line),id,")
+assert "        s.lights = {};\n" in note_cell and style.count("noteLightRef(") == 2
+note_light = style_body("inline void noteLightRef(", "// Stage 3.0, after the census")
+assert "ref->IsDisabled() || ref->IsDeleted()" in note_light and "ref->GetPosition()" in note_light and "Get3D" not in note_light
+# Serve: the arrays are read and every write is made under the light lock, with no engine call inside it.
+serve = door_light_body("inline void serveDoorLights(", "// Main thread: an off pass for a lifecycle request")
+locked = serve[serve.index("RE::BSSpinLockGuard guard(data.lightQueueLock);"):serve.index("} // the light lock ends here")]
+assert serve.index("if (!want && !l.book.count)") < serve.index("lightScene();") < serve.index("RE::BSSpinLockGuard guard(data.lightQueueLock);") < \
+    serve.index("for (const auto& entry : data.activeLights) {") < serve.index("planLights(l.book,seen.data(),n,want,chosen,depth,census)") < \
+    serve.index("std::memcpy(light+light_offset::objectFlags,&flags,sizeof(flags));") < serve.index("markLinked(s.entry);") < serve.index("l.book = plan.book;")
+assert "peek<std::uintptr_t>(e,0) == l.lightVtable" in serve and "if (!held && n >= maxSeenLights-maxDoorLights)" in serve
+locked_code = "\n".join(line.split("//")[0] for line in locked.splitlines())
+for call in ("GetSingleton", "invoke<", "RemoveLight", "AddLight", "SetAppCulled", "->Update", "REL::", "logger", "refuse("):
+    assert call not in locked_code, call
+assert serve.index("} // the light lock ends here") < serve.index("Refusal::doorLightLost") < serve.index("Refusal::doorLightConflict")
+mark = door_light_body("inline void markLinked(", "// Main thread. want:")
+assert "data[light_offset::lightListChanged] = 1u;" in mark and "hops < maxLinkedGeometry" in mark
+# The policy only asks for writes on entries it read this frame, and only puts out lights that are wanted, plain and lit.
+assert "return slot >= 0 && placed && l.plain;" in door_light_policy and "if (l.culled) { ++p.counts.foreign; continue; }" in door_light_policy and \
+    "if (!want) return p;" in door_light_policy and "if (!l || l->light != h.light) { ++p.counts.lost; continue; }" in door_light_policy
+for forbidden in ("RE::", "REL::", "GetSingleton", "#include <windows", "std::vector"):
+    assert forbidden not in door_light_policy, forbidden
+# Paths: served by publish (eligible, after the sky), off when publish has no view, a lifecycle load/cell, the Loading Menu,
+# a latch or an off-thread request at frame start; an ineligible frame holds or restores by the fill light's rule.
+assert publish.index("settleSky(true);") < publish.index("doorLightsFrame(true);") and \
+    "settleSky(false); doorLightsFrame(false); return; }" in publish
+assert frame_start.index("frameStartFrame();") < frame_start.index("doorLightsStart();")
+assert trace_body.index("traceTilt(now);") < trace_body.index("traceDoorLights(now);")
+lifecycle_spike = spike_body("inline void lifecycle(Exit cause) {", "// Plain placed references only.")
+assert "shader::doorLightsExit(cause == Exit::load ? shader::lightAskLoad : cause == Exit::cell ? shader::lightAskCell : 0u);" in lifecycle_spike
+assert "inline void loadingMenu() {\n    if (runtime) shader::doorLightsExit(shader::lightAskLoading);\n}" in lifecycle_spike
+assert end_frame.index("const bool exiting = restoreNow(cause,r.silentFrames);") < end_frame.index("if (exiting) restoreAll(cause);") < \
+    end_frame.index("shader::doorLightsIdle(exiting,cause,cellId,r.now);") < end_frame.index("traceRig(false);")
+assert source.count("fixed::loadingMenu()") == 1 and \
+    'if (event && event->opening && event->menuName == "Loading Menu") fixed::loadingMenu();' in source
+assert "constexpr LightDuty lightDuty(bool eligible,bool exiting,Exit cause,bool silenceHeld,bool loadingMenu) {" in door_light_policy and \
+    "return d == LightDuty::hold && (cellChanged || loaded) ? LightDuty::off : d;" in door_light_policy
+idle = door_light_body("inline void doorLightsIdle(", "// Any thread: a lifecycle exit.")
+assert idle.index("takeDoorLightRequests();") < idle.index("if (!l.book.count)") < idle.index("l.silence.step(paused,tween,now)") < \
+    idle.index("settleLightDuty(lightDuty(false,exiting,cause,held,false),cellId != l.cell,l.loadPending)") < idle.index("serveDoorLights(false,{},\"off\",")
+start_lights = door_light_body("inline void doorLightsStart() {", "// FixedDoorLight, through")
+assert "takeDoorLightRequests();" in start_lights and 'if (r.latched.load(std::memory_order_acquire) && r.doorLights->book.count) serveDoorLights(false,{},"off","latched");' in start_lights
+frame_lights = door_light_body("inline void doorLightsFrame(bool active) {", "// Main thread, the camera frame service's ineligible path")
+assert frame_lights.index("takeDoorLightRequests();") < frame_lights.index("if (cell != l.cell || l.loadPending) {") < \
+    frame_lights.index("selectDoors(r.style->doors,r.view.feet,r.config.frame.doorRadius)")
+assert "r.style->cellStyle == CellStyle::flat" in frame_lights and "!r.framePass->broken" in frame_lights
+trace_lights = door_light_body("inline void traceDoorLights(double now) {", "} // namespace")
+assert trace_lights.index("if (sameHeld(l.book,l.traced) && !l.window.any()) return;") < trace_lights.index("r.frameEmitter(line);")
+door_light_code = "\n".join(line.split("//")[0] for line in door_light.splitlines())  # code only, comments name what is rejected
+for forbidden in ("safe_write", "VirtualAlloc", "VirtualProtect", "write_vfunc", "write_call", "write_branch", "AllocTrampoline", "std::vector",
+                  "RemoveLight", "AddLight", "SetAppCulled"):
+    assert forbidden not in door_light_code, forbidden
+print("PASS shader door void lights wiring: only with iDoorVoidLights=1 (INI 0) and the door void; one census branch (LIGH position and form flags); "
+      "IDs and five engine instruction runs checked before use; arrays read and the app-culled bit and lightListChanged written only under the "
+      "light lock with no engine call; served from publish with the frame pass's door choice; restored on an inactive publish, lifecycle load/cell, "
+      "the Loading Menu, a latch and ineligible frames by the fill light's menu rule; FixedDoorLight on change through the frame budget; one site per FCS-106..109")
