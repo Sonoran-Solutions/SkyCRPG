@@ -1061,7 +1061,7 @@ def door_glow_body(start, end):
 assert "unsigned doorGlow{0};" in cut_policy and "    if (f.doorGlow > 2u || !f.doorVoid) f.doorGlow = 0u;" in cut_policy and \
     "f.doorLights != in.doorLights || f.doorGlow != in.doorGlow;" in cut_policy and \
     "if (c.frame.enabled && c.frame.doorGlow && !c.effect) { c.frame.doorGlow = 0u; frameChanged = true; }" in cut_policy
-assert gate.count('"FixedCameraSpike","iDoorVoidGlow"') == 1 and "\niDoorVoidGlow=0\n" in ini and ini.index("\niDoorVoidLights=0\n") < ini.index("\niDoorVoidGlow=0\n")
+assert gate.count('"FixedCameraSpike","iDoorVoidGlow"') == 1 and "\niDoorVoidGlow=1\n" in ini and ini.index("\niDoorVoidLights=0\n") < ini.index("\niDoorVoidGlow=1\n")
 assert '#include "fixed_spike_shader_door_glow_policy.h"' in frame_policy
 configure_glow = door_glow_body("inline void configureDoorGlow() {", "// Main thread, publish")
 assert "if (r.config.frame.enabled && r.config.frame.doorVoid && r.config.frame.doorGlow) r.doorGlow = new DoorGlowRuntime;" in configure_glow
