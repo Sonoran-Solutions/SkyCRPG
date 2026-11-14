@@ -124,6 +124,10 @@ constexpr std::array<LightCode,5> lightCode{{{0x150da8e,updateBytes.data(),updat
     {0x1569713,listBytes.data(),listBytes.size()},{0x1575e8a,markBytes.data(),markBytes.size()},{0x151a528,rebuildBytes.data(),rebuildBytes.size()}}};
 constexpr unsigned maxLinkedGeometry = 16384; // the marking walk's bound (a light's own geometry list)
 
+// The fill light's NiLight (the combined build's light package sets it when it creates the light and clears it
+// when it removes it): a plain BSLight entry that the door lights must never match, even by a geometric accident.
+// Compared by address only, never dereferenced; null in the shader build.
+inline std::atomic<const void*> foreignLight{nullptr};
 struct DoorLightRuntime {
     Feature state{Feature::pending};
     const std::uint8_t* stateSlot{};
@@ -213,6 +217,7 @@ inline void serveDoorLights(bool want,const DoorSelection& chosen,const char* du
             const auto light = e ? peek<const std::uint8_t*>(e,light_offset::lightObject) : nullptr;
             if (!light) continue;
             const bool held = l.book.holds(light);
+            if (!held && light == foreignLight.load(std::memory_order_acquire)) continue; // the fill light (combined build) is never put out
             if (!held && (!f.want || laneOf(chosen,f.depth,peek<Vec>(light,light_offset::worldTranslate)) < 0)) continue;
             // Room for every held light is kept.
             if (!held && n >= maxSeenLights-maxDoorLights) { ++extra.full; continue; }
