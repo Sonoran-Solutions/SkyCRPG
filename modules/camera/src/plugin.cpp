@@ -387,7 +387,7 @@ void loadSettings() {
         shaderCut.frame.doorLights = number("FixedCameraSpike","iDoorVoidLights",shaderCut.frame.doorLights);
         // The door void's glow cards (needs iDoorVoid=1 and bShaderCutEffect=1): off unless asked for.
         shaderCut.frame.doorGlow = number("FixedCameraSpike","iDoorVoidGlow",shaderCut.frame.doorGlow);
-        // Wave 2 package "light": default off; with both modes 0 nothing is allocated.
+        // Wave 2 package "light": the INI ships iLightFillMode=2 (dungeons); with both modes 0 nothing is allocated.
         fixed::light::Config l;
         l.fillMode = number("FixedCameraSpike","iLightFillMode",l.fillMode);
         l.fillHeight = number("FixedCameraSpike","fLightFillHeight",l.fillHeight);

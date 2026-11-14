@@ -389,6 +389,7 @@ inline bool createFill() {
     }
     l.fill.reset(created);
     stealth.fill.store(created,std::memory_order_release); // before AddLight: the wrappers see it from its first sum
+    shader::foreignLight.store(created,std::memory_order_release); // the door lights never match it (l.fill keeps it alive)
     auto& data = created->GetLightRuntimeData();
     data.ambient = {0.0f,0.0f,0.0f}; // as TESObjectLIGH lights (ID 17610 at 274666)
     data.diffuse = {l.config.fillRed,l.config.fillGreen,l.config.fillBlue};

@@ -856,7 +856,7 @@ inline void install(bool prerequisites,bool service) {
     if (r.config.roomSeedMode) installRoomHook(base);
     shader::install(base); // wave 2 shader: a no-op unless iSeeThroughMode=3
     installFade(base); // base rig: bHoldPlayerFade (FCS-15 on a failed check)
-    light::installLight(base); // wave 2 light: a no-op unless iLightFillMode=1 or iLightTrace=1 (FCS-51..59)
+    light::installLight(base); // wave 2 light: a no-op unless iLightFillMode=1/2 or iLightTrace=1 (FCS-51..59)
     r.active.store(true,std::memory_order_release);
     char line[320]{};
     // The shader build's line; the light fields are appended only when the light package is configured,
@@ -897,7 +897,7 @@ inline void configure(const Config& requested,const shader::Config& shaderReques
             [](const char* text) { emit(runtime->shaderStyleLines,text); },[](const char* text) { emit(runtime->shaderStyle2Lines,text); },
             [](const char* text) { emit(runtime->shaderFrameLines,text); },[](const char* text) { emit(runtime->shaderFillLines,text); },
             [](const char* text) { emit(runtime->shaderTiltLines,text); });
-    // wave 2 light: its runtime exists only with iLightFillMode=1 or iLightTrace=1.
+    // wave 2 light: its runtime exists only with iLightFillMode=1/2 or iLightTrace=1.
     light::configureLight(lightRequested);
     const bool lightTrace = light::lights && light::lights->config.trace;
     // Writer capacity: the sum of every line budget that can write (combined build: shader + fade + light + room pass).
