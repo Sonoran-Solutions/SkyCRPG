@@ -10,7 +10,7 @@
 
 **Stage 3.1 (2026-11-11, base `9573098`).** Owner go "Start solid caps": a back-face fill of plane-cut Lighting draws in caves and ruins, behind `iCutFill` (default 0). See **"Stage 3.1: solid caps by back-face fill"** below. The shader runtime's once-mask is now 64 bits wide (codes 66..101). Its game rows are **NOT_RUN**.
 
-**Status.** Source, portable tests, wiring audit, offline binary audit and offline shader-archive audit are complete and uncommitted. The Windows `/W4 /WX` build is **NOT_RUN** (no MSVC here). **Every in-game row is NOT_RUN**: nothing was launched, no shader was created on a device. The mode is default-off: with `iSeeThroughMode` absent or 0..2 no shader-cut runtime is allocated and no hook is installed.
+**Status.** Source, portable tests, wiring audit, offline binary audit and offline shader-archive audit are complete and uncommitted. The Windows `/W4 /WX` build is **NOT_RUN** (no MSVC here). **Every in-game row is NOT_RUN** *(as written on 2026-11-09, before any run; superseded: the builds have since run in game, see **"Game runs"** near the end of this file, which records each batch, its build commit, verdicts and numbers, and what is still NOT_RUN)*: nothing was launched, no shader was created on a device. The mode is default-off: with `iSeeThroughMode` absent or 0..2 no shader-cut runtime is allocated and no hook is installed.
 
 Each claim is marked **Source** (file:line, binary RVA, Address Library ID, the shipped shader archive, or a URL and revision) or **Hypothesis**. RVAs are relative to image base `0x140000000` of `SkyrimSE.exe`, SHA-256 `846efccf0c1374d71f892907f46549560f2fcb0a75cb87a3eed438baa0f1402f`; IDs are resolved through `session-p4/stage-camera-rc1/Data/SKSE/Plugins/versionlib-1-7-104-0.bin`, SHA-256 `8aab3dd251d135b849bd983f86a4a205c920fa3e81f8e30c0e63ccfef9423842` (ID *n* at file offset `96 + 4n`). Shader archive: `Data/Skyrim - Shaders.bsa`, SHA-256 `fd1ba630f443353ed21ed4ca0380968f9c7091c8434518ea3cc79bc6d38c18e7`, one uncompressed file `shadersfx\shaders011.fxp` (67,768,128 bytes at archive offset 0x66). Disassembly: `objdump -d -M intel`. Scratch tools (ID resolver, PE reader, a scanner for vtable calls on a global COM object, a DXBC disassembler, a reference checksum, a ctypes wrapper for vkd3d-shader) stayed outside the worktree.
 
@@ -310,6 +310,8 @@ python3 -B -I modules/camera/tests/lock_refresh_wiring_test.py
 
 ## Game rows: all NOT_RUN
 
+*Answered later, see "Game runs": the hooks installed under Proton and the cut engaged in Embershard Mine, the Bannered Mare and Bleak Falls Barrow from batch W2S on (frame cost +0.13% p95 there); patched Effect shaders were accepted under DXVK in W3; lifecycle exits, frame cost (S9 pairs PASS) and the look are recorded per batch. The table below is the 2026-11-09 plan and is kept as it was.*
+
 | Row | Result |
 | --- | --- |
 | Hooks install under Proton, no FCS-67..70 | NOT_RUN |
@@ -363,6 +365,8 @@ Build name `shader`. Overrides common to every route: `iSeeThroughMode=3`, `iSha
 4. Is the hard edge acceptable, or is the fade wanted at the cost described under "What a fade would take"?
 5. Shadows of removed ceilings stay, so the lighting does not change. Wanted, or should shadow maps be cut as well (lights above the plane would then light the floor)?
 6. Cut height 160 and the stepwise follow on stairs: acceptable, or should the plane track the feet continuously?
+
+*Answered since: the owner decided the fog-card and light-shaft half of 3 (D049), 5 for pieces Stage 1 removes whole (their shadows are removed, D050; W5b saw no visible difference), and the descending half of 6 (the plane follows the feet down at up to 480 units/s, D060). 1, 2, 4 and the rest of 3 have no owner answer in the ledger; the frame pass adds a soft edge and falloff (D051).*
 
 ## Proposed shared-file changes (not made; outside this package's ownership)
 
@@ -572,6 +576,8 @@ What each screenshot should show: the floor, the player and the lit wooden struc
 - That spell art and enchantment glows hang under the actor's 3D.
 - Windows `/W4 /WX` build and DLL hash.
 
+**Answered by game runs (see "Game runs"; the list above is kept as written):** hooks, DXVK accepting the patched Effect shaders, the void colour and the side effects ran from batch W3 on `6397406` (patched Effect shaders accepted under DXVK; no FCS-80..88 other than the informative FCS-86, so the FCS-83 thread check did not fire; no vanished pieces, floor whole, player visible, no shadow or reflection anomaly in those stills). The void was not black in W3 (19,39,47 in Embershard): the third pass explains it. The Windows build is CI-verified per commit (CI 42959608500 for `6397406`, MSVC `/W4 /WX`). Not recorded as run: the local map, 3D menus and loading screens, and whether spell art hangs under the actor's 3D.
+
 ### Proposed shared-file changes (not made)
 
 - `session-p55/routes/check_spike_log.py`: `OPTIONAL_KINDS = frozenset({'FixedShaderLook'})`; optionally `CAPS['FixedShaderLook'] = 6000`.
@@ -750,6 +756,8 @@ Exceptions to look for: bloom spill near bright lights (image space, unchanged);
 - The CNAM component order (affects only the Mare's prediction by a few levels).
 - Water reflections and save thumbnails in Show Sky interiors while the cut is active.
 
+**Answered by game runs (batch W4 on `8f1248f`, see "Game runs"):** the void is exact black where the sky dome is hidden (most common colour (0,0,0): Embershard 52% of the frame, Bleak Falls Barrow 41%, Jorrvaskr basement 90%); the same build with `bVoidHideSky=0` gave (19,39,47), which confirms the dome as the cause; the wedge at heading 135 is gone (`fxWholeCut=7` per window, Effect refs `0008FB47` and `0008F94E`); S14 PASS (sky held in 5 of 5 windows), S15 PASS (`skyHeld=0` on every exit and outdoor row, the exterior drawn normally). Still open: the dome's blend state, volumetric lighting, water reflections and save thumbnails (not recorded).
+
 ## Fourth pass: Stage 1 of the seamless cutaway (2026-11-10)
 
 Owner decision (verbatim, ledger 2026-11-10T22:35): "go I agree with your recommendations", the recommendations being `session-p55/research/seamless-cutaway.md` decisions 1-5. Built as CPU-side per-draw policy on the existing cut hook: **no new shader patch, no new hook, no new engine write, no new binary site.** Every in-game claim below is **NOT_RUN**.
@@ -867,6 +875,8 @@ New portable rows: codes 91/92; defaults and validation of the three keys; `remo
 - Frame cost: in kit cells every Lighting/Utility pass now finds its owner (under-plane passes included) and each reference is classified once per frame; at the Mare about 18,500 passes per 0.1 s window (W3). Not measured; the 60 fps cap bounds what can be seen.
 - The storey line from bounds versus what a ray would find; galleries other than the Mare's; ramps and sloped floors; cells mixing kit and dungeon pieces (Markarth, Dwemer-built homes); MovableStatic pieces that move (the box is re-read each frame).
 - That 4,096 reference slots and 8,192 removed-geometry slots suffice (`tableFull`, overflowing removals simply keep their shadow).
+
+**Answered by game runs (batches W5-W11 and later, see "Game runs"):** `tableFull=0` in the Stage 1 runs that record it (W5, W9); frame cost at the Mare, Stage 1 against style 0 (W5b, S9 with `--perf-base`): p95 standing +0.17%, turn 0.00%, mouse +0.13%, PASS (60 fps cap, a bound); the shadow rule removed 252 shadow passes per window at the Mare hearth with no visible difference in the floor (W5b: owner rule 5 not demonstrated); other kits (Breezehome, Sleeping Giant Inn, Dragonsreach, Winking Skeever, Candlehearth, Bee and Barb) ran; the looks are the owner's. Still open: ramps and sloped floors, mixed kit and dungeon cells (Markarth), the front-wall Hypothesis.
 
 ### Fix pass after the binary review of 30503e0 (CHANGES 0 / 1 MAJOR / 7 MINOR)
 
@@ -1219,6 +1229,8 @@ From the first pass, still valid per the review: the target and depth tables, th
 - Eye adaptation, banding and TAA behaviour; frame cost (one full-screen triangle, one depth load and about 60 ALU per pixel, ~40 COM calls on the CPU; invisible under the 60 fps cap).
 - The name `kFreezeFrameBackground` for menu flag 0x20.
 
+**Answered by game runs (batches W13 and T2 on `cc2bbf2`, see "Game runs"):** the shipped-container shaders were accepted (S21 PASS: drawn in every engaged window, target 1920x1080 formats 26 and 44, `depth=read`, `skipShared` 0, `skipTargets` 0, `mismatch` 0, `offMain` 0, no FCS-93..97); frame cost 47-198 µs per window and S9 PASS (p95 within 10% standing and turning, 60 fps cap). Still open: eye adaptation, banding and TAA behaviour are the owner's look; the vkd3d shader forms on Windows D3D11 (the runs were Proton only); the flag name.
+
 ## Stage 3.1: solid caps by back-face fill (2026-11-11, base `9573098`)
 
 Owner go "Start solid caps". Specification: the orchestrator's brief, and `session-p55/research/stage3-feasibility.md` Q1/Q2. Key `iCutFill` (default 0). Every game row is **NOT_RUN**, and so is the Windows build.
@@ -1398,6 +1410,8 @@ Routes `p55-comb-cave-*` (Embershard Mine, W12 pose) and `p55-comb-bfb-*` (Bleak
 - The look: lids, slabs, ghosting, fog tint.
 - That the guard's farthest depth also covers the player's weapon and cape (box ±48 and 144 high).
 
+**Answered by game runs (batches F1 and G1, see "Game runs"):** type, cull, blend and depth assumptions hold (`skipType`, `skipCull`, `skipBlend`, `skipDepth` all 0); with `iCutFill=2` caps were drawn (Embershard 105 of 189 sliced Lighting draws, Bleak Falls Barrow 343 of 413; 87 and 211 µs per sample), `mismatch` 0, no FCS-98..101, the player never covered. The look: large dark slabs, some caps tan or dark blue-grey instead of black (not investigated), slabs over water and floor near the player. Frame cost is **NOT_RUN** (the perf pair never ran; focus loss). The owner parked caps (D052); `iCutFill` stays 0.
+
 ## Stage 3.2: the tilted cut (2026-11-11, base `9ba6e86`)
 
 Coordinator brief "Stage 3.2, tilted cut for flat-cut cells"; research `session-p55/research/stage3-feasibility.md` Q4. Key `iCutTilt` (default 0). Every game row is **NOT_RUN**, and so is the Windows build.
@@ -1528,6 +1542,8 @@ Routes `p55-comb-cave-*` (Embershard Mine) and `p55-comb-bfb-*` (Bleak Falls Bar
 - The Utility depth pre-pass hypothesis (not needed by the design).
 - That the published eye is always in one of the four diagonal quadrants with |offset| well above 1 unit (true for the locked rig; a quadrant flip on the axis would be a hard switch).
 
+**Answered by game runs (batches L1/L2, V1/V2, D1/D2, see "Game runs"):** the tilted shaders link under DXVK (6 created in Embershard, 17 in Bleak Falls Barrow; no FCS-102..105 in any run); the quadrants 0, 1, 2, 3 appear over the four headings; the tilt is the default from `bc4ca54` (owner “Yes, tilt on”, D053). Still **NOT_RUN**: the first-use creation hitch (not measurable with the current captures) and the look, which is the owner's.
+
 ## The door void's lights (2026-11-12, base `247cb61`, `iDoorVoidLights`, off by default)
 
 Owner: "fix the leak". With the door void on (`iDoorVoid=1`) the stub behind a dungeon load door is black in the frame pass, but a light placed in the stub still lights the dungeon side: at Embershard Mine (cell `000B6BE6`, door `000B6CCD` MineDoor01Load) the placed light `0008F94C` (base `0008824B` DefaultSunlightBounceAmb01NS, LIGH flags `0x2001` = dynamic + portal-strict, no model, colour 185,208,202, radius 256 + XRDS = 904) sits 651.5 behind the plane, 70 across, 90 over the door's floor, and throws the blue patch in front of the door. `iDoorVoidLights=1` puts such lights out while their door is chosen and lights them again exactly when it no longer is.
@@ -1594,6 +1610,8 @@ Any failed check: FCS-106 once, nothing read or written, the door void unchanged
 
 ### Expected at Embershard (`iDoorVoid=1 iDoorVoidLights=1`, nothing here was run)
 
+*Answered by DL1 (see "Game runs"): the light is put out at the arrival and restored exactly as predicted, but the blue patch is **not** gone: it is the glow cards (`iDoorVoidGlow`, D059), and the arrival and the player go dark. The paragraph below is the prediction as written.*
+
 Log: `... door lights cell=000B6BE6 ... lane=1 list=0008F94C@000B6CCD/651.5`. From the coc arrival (172 in front of the plane) the door is chosen; the first eligible frame puts `0008F94C` out: `FixedDoorLight ... duty=keep doors=1 held=1 dimmed=1 ... lights=000B6CCD:0008F94C@2251,696,9332/904` (radius as the NiLight holds it). The blue patch on the floor in front of the door is gone from the next rendered frame in all four headings; the torch `000B6CBE` in front of the door is untouched. First person, F8, death, leaving the cell or a load: `restored=1`, `held=0`; a pause menu: no row (held). Walking back to the door so that the feet cross its plane unchooses it: `restored=1` and the patch returns with the stub (as the void itself does).
 
 ### Risks
@@ -1619,6 +1637,71 @@ Log: `... door lights cell=000B6BE6 ... lane=1 list=0008F94C@000B6CCD/651.5`. Fr
 
 - Every game row and the look (no game run).
 - Whether `0008F94C` is built as a dynamic light (its LIGH has the dynamic flag; either path is handled).
+
+**Answered by game run DL1 (see "Game runs"):** the mechanism works (the light is put out and restored across menus, load doors, first person and F8, no FCS-106..110), and the look is worse (arrival area and player dark, blue haze stays); the default stays off. The walk step is NOT_RUN.
+
+## Game runs (orchestrator ledger and run folders, 2026-11-10 to 2026-11-15)
+
+Everything above was written before the builds ran; this section records what the runs since then showed. Sources: the orchestrator ledger `session-p55/ledger.md`, the per-run folders `session-p55/routes/runs/<route>-<batch label>/check.md` and the sheets in `session-p55/logs/sheets/` (all outside the repository). Host: Steam Skyrim SE 1.7.104 under Proton Experimental, `20261027b` until the owner accepted `20261105c` on 2026-11-10 06:11, `20261112` from 2026-11-14 (batches PB1-PB4 and later); one Skyrim process at a time on a disposable profile, each stage checked `--verify VERIFIED` and the game folder snapshot 0 of 179 files changed before a batch (stage manifest `session-p55/p55-shader-stage-manifest.json`: head `1fd65e0`, CI 43606696628). Verdict words are the harness's: PASS, FAIL, BLOCKED, NOT_RUN, and **OWNER** for a row that records numbers and leaves the look to the owner; a "look" below is the orchestrator's reading of stills, not an owner acceptance. Wrapper exit 4 only means a known NOT_RUN row (survey routes do not judge S17/S22/S23 in flat cells; paired rows need `--pair` or `--perf-base`, so a stored per-run `check.md` can show NOT_RUN for S9, S30, S31 or S32 where the ledger records the paired PASS). Nothing here is merged to main.
+
+### Batches before the tilt default (summary)
+
+| Batch | Build (CI) | What ran and what it showed |
+| --- | --- | --- |
+| W3, W4 | `6397406` (42959608500), `8f1248f` (42967233281) | W3: patched Effect shaders accepted under DXVK, void not black (19,39,47 in Embershard). W4 (9 of 9 clean): void exact (0,0,0) in the cave (52% of the frame), Bleak Falls Barrow (41%) and the Jorrvaskr basement (90%); the same build with `bVoidHideSky=0` gave (19,39,47), so the sky dome was the cause. S14, S15, S13, S11 PASS; the wedge at heading 135 is gone. |
+| W5-W11 | `2f5d9f6` to `3528e92` | Stage 1 in the Bannered Mare, Breezehome, Sleeping Giant Inn, Dragonsreach, Winking Skeever and others; findings and fixes are in the fix-pass sections above. W11 (8 of 8): player fade hold P2 and F1 PASS on the Mare loft. |
+| W13, T2 | `cc2bbf2` (43036573469) | Stage 2 frame pass: W13 12 of 12 clean, S21 PASS on every pass-on trace route (drawn in every engaged window, `depth=read`, `skipShared`, `skipTargets`, `mismatch`, `offMain` all 0, 47-198 µs per window), S9 PASS (p95 within 10%, 60 fps cap), no FCS-93..97. T2 (8 of 8): S21 and G2 PASS; one Mare run (`p55-shader-frame-mare-r500-T2`) kept the roof rafters (overheadRemoved max 84 against 546 in seven other Mare runs); held floor 84.96 against feet 68.0, fixed in `8f80cfd`. Sheets `w13-*.png`, `t2-*.png`. |
+| S1 | `9573098` (43135264165) | Column stack rule and the rafter fix: 10 of 10; the rafter state reproduced and fixed (S22 PASS); Dragonsreach census 19 of 19, `stackRemoved` 70 per window with the rule on and 0 off. Four S23 FAILs were a harness expectation (`slicedFar` is recorded, not asserted). Sheets `s1-*.png`. |
+| F1, G1 | `12a702d` (43149494880), `9ba6e86` (43155976568) | Solid caps. F1: `filled=0` everywhere (alpha-test and write-mask gates), S24 FAIL on the four flat routes, S9 NOT_RUN. G1 with `iCutFill=2`: caps drawn for the first time (Embershard 105 of 189 sliced Lighting draws, Bleak Falls Barrow 343 of 413; 87 and 211 µs per sample), S24 OWNER; only 6 of 11 routes ran (the 7th **BLOCKED**, four **NOT_RUN**, host focus loss). Parked by the owner (D052). |
+| L1, V1/V2, W1, X1/X2, Y1/Y2, Za-Zp | `2cbe3fe` (43162755556), `7ac3001` (43183495906) | Tilted cut and room seeding. L1 12 routes and L2 4: all ran, S25 OWNER/PASS on every tilt route, no FCS-102..105, 6 tilted shaders created in Embershard and 17 in Bleak Falls Barrow, Mare control untouched; the one FAIL (S21 on `tilt-cave-walk`) was a window-boundary artefact of the check and PASSes after the check was corrected. V1/V2 (16 of 16): three dungeons 88-97% black at `iRoomSeedMode=0`; W1 with seeding: dark share 0.51-0.64; X1/X2 (20 of 20) and Y1/Y2 (16 of 16) with the seed default, no FAIL, BLOCKED or NOT_RUN row; Za-Zp second survey (16 of 16): no cell black (near-black 16-78%), S22 FAIL on five kit cells was a harness over-assertion. Sheets `l1-*.png`, `sv-*.png`, `w1-*.png`, `s2-*.png`. |
+
+### Tilted cut on by default (D053): D1, WK1
+
+- **D1** (2026-11-12, shader `bc4ca54`, CI 43225013910; combined side in `spike-wave3-combined.md`): 14 shader routes ran, no FCS code of any kind, no FAIL or BLOCKED row. Flat cells on the default (`cave`, `cave-h0`, `bfb-seed1`, `s2-ratway`, `s2-alftand`) have `FixedShaderTilt` rows with `tilted>0` in 407-508 rows and `band=tilt`; kit cells (`mare`, `frame-mare-stepdown`, `stacks-dragonsreach`, `kit-dragonsreach-style1`, `lifecycle`) show `tilted=0` and `band=kit`; pinned flat records (`frame-cave`, `frame-bfb`) have no tilt rows. NOT_RUN: S17/S22/S23 on `s2-ratway` and `s2-alftand` (flat cells, auto). S9 on the cave pair: PASS with `--perf-base f-cave-base-D1` (p95 within 10% standing and turning; the 60 fps cap makes this a bound). Look (orchestrator): Embershard default against flat differs little at this pose; Bleak Falls Barrow shows more far rock and the far wall at h0/h1; the player is hard to see in Bleak Falls Barrow and Embershard h1/h2 in both modes (dark, no fill light in this build). Sheets `d1-cave-default-vs-flat.png`, `d1-bfb-default-vs-flat.png`.
+- **WK1** (`p55-shader-tilt-cave-walk`, `bc4ca54`, no fill light): player-box luma at the Embershard walk end, mean/max, h0 6.1/16, h1 11.6/113, h2 31.9/251, h3 7.7/28; the probe's rays read "blocked" in 20 of 20 samples by the old test and 0 covered against the plane by the new S27 test. The research note `embershard-walkway.md` concludes the player stands on a scaffold deck outside every light (nearest torch 313 units, radius 256), not under an overhead structure. Sheet `wk-walk-end-nofill-vs-fill.png` (with the combined route).
+
+### Load-door void (D056, D057): `iDoorVoid`, `fDoorVoidSide`
+
+Built in the frame pass as "option A" of `session-p55/research/load-doors.md`: behind each nearby dungeon load door (a vanilla door model in the generated table that leads to a loading screen, read with its `ExtraTeleport`), surfaces in a lane as wide as the doorway (plus `fDoorVoidSide`) fade to the void colour; flat cells only; the nearest 4 doors within `fDoorVoidRadius` 1500 of which the player stands in front. Shader `baadf91` (default off), review fixes `03e5323` (binary review PASS WITH NOTES; census only with the frame pass on, bounded `ExtraTeleport` read), `03dcdfc` (`iDoorVoid=1` in the INI), `84201aa` (`fDoorVoidSide`, default 32), `247cb61` (default 320). Trace row `FixedDoorVoid` on change.
+
+| Batch | Build (CI) | Result |
+| --- | --- | --- |
+| DV1, DV2 | `03e5323` (43317515094) | 16 of 16 ran, postflight ok, no FCS beyond informative. Void-off routes S30 PASS (no rows, no install line). Void-on routes that reached their door (6 of 8: Embershard, Bleak Falls Barrow entrance and inner, Ustengrav alcove, Dustman's Cairn front, Fort Greymoor front): install line, census lists the expected door, door active with side>0 in every window. Paired player-box luma PASS Embershard 0.96-1.03, BFB entrance 0.99-1.02, Ustengrav 0.93-1.02, Dustman 0.98-1.00; FAIL BFB inner 0.62-0.74 and Greymoor (h1/h2 0.54): not the void (draugr and bandit combat, a frost spell, a motion-blurred frame; the player is never inside the void). **BLOCKED for the void**: `mzinch-front` and `halted-mine` (the exterior-hop activation never left the interior, tp-3 FAIL, player more than 1500 from the door). Look: the blue tunnel behind the Embershard door goes black at all four headings, but straight soft lane edges show over the blue floor at h0/h3 and some blue floor outside the lane stays; BFB inner and Ustengrav: the stub floor and arch go black. Sheets `dv-*.png`. |
+| DD1 | `03dcdfc` (43329660932) | Default on, 8 shader routes (14 with the combined DD2): install line on every default route; flat cells census their doors (cave 1, `bfb-seed1` 2) with `active=1`; kit cells (`mare`, `lifecycle`) `style=kit doors=0`. S30 pairs PASS (Embershard 0.97-1.00, BFB inner 0.77-1.07). `bfb-inner` door pair still lands displaced from the fixture pose (stored runner verdict FAIL; S3 and S21 NOT_RUN, recorded). Sheets `dd-embershard-old-vs-new-defaults.png`, `dd-bfb-old-vs-new-defaults.png`. |
+| DW1, DW2 | `84201aa` (43343808246) | Width sweep 160/320/640 at four doors, 12 of 12 ran; S30 PASS with the void-off pair (lane half = halfWidth × scale + side within 1 unit; player-box luma 0.93-1.58 of void-off). Embershard: 160 removes most side strips, 320 removes them, 640 changes nothing more; the blue patch left around the player at h0/h3 is light on the dungeon side of the door plane, which no lane width reaches. BFB inner: 160 and up remove the leftover grey floor patches; Ustengrav and Dustman: no change across widths. Default 320 was the orchestrator's choice under the owner's “Yes, widen it”. Run folders of the Dustman routes carry the label `DW`, those of Ustengrav none (listed in `batch-DW2.tsv`). Sheets `dw-*.png`. |
+| DS1 | `247cb61` (43349522327) | Default 320: 9 of 9 ran (with 4 combined). S30 PASS: Embershard lane half 492.8 (172.8 + 320), luma 0.93-1.03; BFB inner 464.7, 0.88-1.07. Sheet `ds-embershard-narrow-vs-wide.png`. |
+| DR1, DR2 | `dcd4021` | The two door routes that never reached their door were fixed (owner “Yes, fix the routes”): Mzinchaleft reaches the door, lane half 454.1, luma 0.95-1.03; Halted Stream reaches it, its landing pose z corrected from 635.02 to the measured 586.24 (the first landing assert failed by 48.8 against a band of 48), lane half 487.8, luma 0.97-1.04. DR1 6 of 6, DR2 3 of 3 ran; all eight survey doors now reached. Sheets `dr-*.png`. |
+
+### Door lights (D058): `iDoorVoidLights`, DL1
+
+Shader `e7b88b0`, `add09d8`; default off. Binary review PASS WITH NOTES (two MEDIUM: a culled light could stay culled, a detached static light was not relinked), fixed in `add09d8`, re-review PASS WITH NOTES. **DL1** (`add09d8`, CI 43361702662): 9 of 9 ran, no FCS-106..110, no FAIL. The mechanism works: Embershard light `0008F94C` is put out at the arrival (`held=1`) and restored exactly across the Loading Menu (door out), first person, F8 and the Loading Menu (door in); the walk step is **NOT_RUN** (the player stayed inside the radius); the other three doors have no lane lights (`lane=0`). The look is worse: with `0008F94C` out the arrival area and the player go dark (player-box luma 0.23-0.25 of the door-fix-only run at h0/h3; S31 OWNER) and the blue patch stays as a flat haze, because it is the `FXGlowFillRoundBrt` glow cards, not that light. Engineering recommendation after the run, not an owner ruling: keep `iDoorVoidLights=0`. The "Expected at Embershard" paragraph below was a prediction; the run did not match its claim that the blue patch is gone. Sheet `dl-embershard.png`.
+
+### Door glow cards (D059): `iDoorVoidGlow`, DG1, GD1
+
+Shader `1628eba` (default 0; the first CI run failed MSVC C3861, `doorGlowPass` declared after `consider()`), `eecd03a` (fix; review then PASS WITH NOTES, N1-N4), `22ce7fc` (`iDoorVoidGlow=1`). Mode 1 clips whole the Effect-class glow cards (`FXGlowFill*`, `FXGlowFlat*`, `FXAmbBeam*`, `FX_RainAndMistBeam*`; 116 vanilla models) in the door's lane behind its plane; mode 2 also those up to 512 in front. Survey: mode 1 hides 18 cards at 16 doors. **DG1** (`eecd03a`, CI 43370360138): 9 of 9 ran, no FAIL; S32 PASS: Embershard modes 1 and 2 hide `0008F94E` and `0008F94D` at door `000B6CCD` in every window (`removed=1391`, `native=0`); player-box luma 0.85-1.01 of the plain void run; the other three doors have no cards in their lanes (0 hidden, recorded); the void-only partners show no glow lines. Look: the blue haze in front of the Embershard door is gone at h0/h3, the arrival keeps its light, mode 2 adds nothing visible. **GD1** (`22ce7fc`, CI 43374815074): 10 of 10 ran (5 shader, 5 combined), no FAIL or BLOCKED; the glow install line is on every default route; the Embershard default routes hide 2 cards, other cells 0; the pinned record `frame-cave` has no glow line and no FCS-66. Sheets `dg-embershard.png`, `gd-embershard-start-vs-now.png`.
+
+### Ramp follow-down (D060): `fShaderCutFollowDown`, RP1
+
+Shader `dcd4021` (CI 43433129377; pure policy, no binary review): once the feet are 24 below the held floor, the floor follows them down at up to 480 units/s, never below the feet, until 0.6 s without being below; up moves, jumps and in-band steps unchanged; 0 is the old rule. Offline replay of eight Embershard feet series before the run: lag 77 to 24, ceiling margin -34 to +19, largest one-frame move 80 to 8. **RP1**: 9 of 9 ran (5 shader, 4 combined), no FAIL or BLOCKED. S28 on the combined ramp route `p55-comb-fsw-cave-ramp`, FS1 (old rule) to RP1: first descent held-floor lag max 62.5 to 23.8, plane over the feet 222 to 184, model ceiling margin -19.5 to +19.3; second descent lag 78.3 to 20.2, plane 238 to 180, margin -35.3 to +22.8; descent rows with lag above 8 went from 41 of 115 to 31 of 118 and from 20 of 68 to 3 of 69; ascent unchanged (up to 85 below, the safe direction); real probe ray margin above the plane at the descent poses 16.0 to 30.6/31.4 and 18.3 to 30.5. Shader routes: step-down latch regression `p55-shader-frame-mare-stepdown` and Mare S22 PASS. No sheet recorded.
+
+### Wide survey with every current default (WS1-WS3, shader `1fd65e0`, 2026-11-15)
+
+24 of 24 places ran (WS1 and WS2 the 16 `s2` places, WS3 the eight `sv` survey cells with tilt), postflight ok, no FAIL or BLOCKED, no FCS beyond informative 75 and 90; wrapper exit 4 only for the known survey NOT_RUN rows. Frame brightness against each place's previous run on the same route: 19 places unchanged (0.97-1.03); Ratway and Dawnstar Sanctuary 1-6% brighter (dark share down); changed by the door void: Left Hand Mine 0.50-0.88 (the bright daylight tunnel behind its entrance door is gone at two headings, glow card `000B8251` hidden), Silver-Blood Inn 0.93-0.99 (the alcove behind the Markarth exit door darkens at h0; the owner kept it, D061), Ustengrav 0.91-1.03, Mzinchaleft 0.91-1.10. Hall of the Elements, Blue Palace, Hjerim, Proudspire, High Hrothgar, Understone and the White palace: unchanged (kit cells: no door void). Sheets `ws-lefthand.png`, `ws-silverblood.png`, `ws-ustengrav.png`.
+
+### Proton 20261112 baseline (D062): PB1-PB4, SM1, 2026-11-14
+
+- **SM1** (`1fd65e0` / combined `46c5b3c`): **BLOCKED** before any launch: the harness pin asserted `20261105c` and Steam had updated Proton Experimental to `20261112` at 03:09. Nothing started, nothing in the game folder changed.
+- **PB1** (shader, 6 routes) and **PB2** (combined, 4 routes): 10 of 10 ran, postflight ok, no FAIL or BLOCKED, FCS-75 and FCS-90 informative only. S9 on the cave pair was **NOT_RUN**: the standing p95 was 16.55 against 16.56 (-0.04%), but the snap-turn capture came out empty in both the base and the f run. **PB3** (diagnostic retry of the pair): the same NOT_RUN.
+- Diagnosis (read-only, not Proton input and not the camera): the seven-tap snap-key cycle (6 × 1.4 s plus a focus check per tap) took 10.10-10.14 s against a 10 s slot (9.87 s on `20261105c`, already marginal), so the executor ended the turn capture after one cycle; all 7 taps were delivered. Fix: `cycle_s=12` on every shader perf pair (`f-cave`, `f-mare`, `f-frame` and their bases; `f-fill` and `f-tilt` already had it), test updated, routes regenerated.
+- **PB4** (cave pair, 12 s cycles): S9 PASS: p95 standing 0.0%, snap turn -0.05%, mouse turn +0.05% (60 fps cap, a bound). Frame brightness old (GD1 on `20261105c`) against new (PB1/PB2 on `20261112`) on the same routes: ratios 0.99-1.006. Verdict: the `20261112` baseline matches; the only change needed was the perf cycle slot.
+
+### Still NOT_RUN or open after these runs
+
+- Frame cost with the solid caps (parked), with the door void and with the tilt: only the S9 pairs on the cave (D1 and PB4, PASS, 60 fps cap) exist; a first-use creation hitch of the tilted shaders is not measurable with the current captures.
+- The Windows `/W4 /WX` build is CI-verified per commit (CI runs named above); it is not a game result.
+- The `bfb-inner` door route lands displaced from its fixture pose (S3 and S21 NOT_RUN in every run of it); the DL1 walk step; the combined caps pair, widened-mode Mare control and walk (G2 **BLOCKED**/NOT_RUN).
+- No owner acceptance of any look; every OWNER row and every "look" above is for the owner's judgement from the sheets.
+- Window placement on monitor 1 and the sound mute were not achieved or verified (D064): the survey ran on the usual placement, and no run recorded that the game was silent.
 
 ## Reproduce the offline checks
 
